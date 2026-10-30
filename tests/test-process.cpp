@@ -235,8 +235,9 @@ TEST_CASE("a child that closes its pipes and exits soon after is reaped soon, no
     REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
     CHECK(result.code_ == 7);
   }
-  // The old wait slept a whole 100 ms step after the pipes closed, so no run could take under 110 ms; the fastest of
-  // five is checked against 95 ms, which only a load delaying every run by over 80 ms could fail.
+  // The old wait slept a whole 100 ms step once the pipes had closed, so its runs took about 105-113 ms; the new one
+  // takes a few milliseconds more than the child's 10 ms. The fastest of five is checked against 95 ms, a margin that
+  // eight busy workers on eight cores did not exhaust in 100 runs; it is a timing check, not a guarantee.
   CHECK(*std::min_element(took.begin(), took.end()) < 95.0);
 }
 
