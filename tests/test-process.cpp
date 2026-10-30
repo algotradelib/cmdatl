@@ -17,6 +17,8 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/resource.h>
+#include <algorithm>
+#include <chrono>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
@@ -220,6 +222,22 @@ TEST_CASE("run_child tells a signal from an exit code and a missing program from
   CHECK(open_fds() == before);
   CHECK(no_children());
   CHECK(cmdatl::run_child({}, ignore_lines).kind_ == cmdatl::ChildResult::Kind::NOT_STARTED);
+}
+
+TEST_CASE("a child that closes its pipes and exits soon after is reaped soon, not a poll step later") {
+  const Watchdog watchdog("the reap after end of file", 30);
+  // atlc run's shape: its replay closes the pipes, and atlc exits a moment later.
+  std::vector<double> took;
+  for (int i = 0; i < 5; ++i) {
+    const auto started = std::chrono::steady_clock::now();
+    const auto result = cmdatl::run_child({"/bin/sh", "-c", "exec >&- 2>&-; sleep 0.01; exit 7"}, ignore_lines);
+    took.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count());
+    REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
+    CHECK(result.code_ == 7);
+  }
+  std::sort(took.begin(), took.end());
+  // The median, well under the 100 ms step the loop once slept before looking again.
+  CHECK(took[2] < 60.0);
 }
 
 TEST_CASE("a throwing callback kills the child's whole group with its grandchild") {

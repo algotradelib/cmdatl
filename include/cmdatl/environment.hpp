@@ -532,6 +532,7 @@ inline ChildResult run_child(
   std::optional<Clock::time_point> give_up_at;
   bool terminated = false;
   bool leader_ended = false;
+  int idle_ms = 1;
   char buffer[16384];
   while (true) {
     const auto now = Clock::now();
@@ -575,6 +576,12 @@ inline ChildResult run_child(
       }
     }
     int timeout = CHILD_POLL_MS;
+    if (count == 0) {
+      // Both pipes closed and the leader not yet reaped: it usually exits a moment later, so look again soon,
+      // backing off to the usual step for a child that closed its pipes and goes on running.
+      timeout = idle_ms;
+      idle_ms = std::min(idle_ms * 2, CHILD_POLL_MS);
+    }
     if (kill_at && !give_up_at) {
       const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(*kill_at - now).count();
       timeout = static_cast<int>(std::max<long long>(0, std::min<long long>(timeout, left)));
