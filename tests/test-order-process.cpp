@@ -241,6 +241,8 @@ struct Swept {
   bool consumed_{false};
   /** @brief Whether the run kept the promises: no descriptor or child left, and the send invariant. */
   bool ok_{false};
+  /** @brief The reply's `reason`, or empty. */
+  std::string reason_;
 };
 
 /**
@@ -277,6 +279,7 @@ Swept swept(const PaperFixture& fixture, const std::vector<std::string>& args, l
       answer.reason_ = std::string(reason->as_string());
     }
   }
+  result.reason_ = answer.reason_;
   result.ok_ = open_fds() == before && no_children() && no_send_ok(answer, log, slurp(fixture.log()));
   return result;
 }
@@ -326,7 +329,7 @@ TEST_CASE("an allocation failing anywhere in a place that sends leaks nothing an
   const Watchdog watchdog("the send allocation sweep", 1800);
   long injected = 0;
   long bad = 0;
-  for (long n = 1; n < 400000; n += (n < 1500 ? 1 : 17)) {
+  for (long n = 1; n < 400000; ++n) {
     const PaperFixture fixture;
     fixture.arm();
     REQUIRE(ask(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
@@ -335,6 +338,8 @@ TEST_CASE("an allocation failing anywhere in a place that sends leaks nothing an
     const int before = open_fds();
     const auto result = swept(fixture, {"order", "place", std::string(planned.body_.at("plan_id").as_string())}, n, before);
     if (!result.consumed_) {
+      // The run the failure never reached is an ordinary placement.
+      CHECK(result.reason_ == "placed");
       break;
     }
     ++injected;
