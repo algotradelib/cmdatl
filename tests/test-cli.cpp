@@ -1,3 +1,5 @@
+#include "./support.hpp"
+
 #include <cmdatl/cli.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -22,26 +24,14 @@
 #include <cerrno>
 #include <new>
 
-namespace {
-
-/** @brief When above zero, the allocation that brings it to zero throws `std::bad_alloc` (a one-shot failure). */
-std::atomic<long> g_fail_allocation{0};
-
-/** @brief Fails the n-th allocation from now (1 for the next one); 0 disarms. */
-void fail_allocation(long n) {
-  g_fail_allocation.store(n);
-}
-
-}  // namespace
-
 /**
- * @brief The test binary's operator new: the usual one, except for the allocation `fail_allocation` arms.
+ * @brief The test binary's operator new: the usual one, except for the allocation `support::fail_allocation` arms.
  * @param size The size.
  * @return The memory.
  */
 void* operator new(std::size_t size) {
-  long armed = g_fail_allocation.load();
-  while (armed > 0 && !g_fail_allocation.compare_exchange_weak(armed, armed - 1)) {
+  long armed = support::fail_at.load();
+  while (armed > 0 && !support::fail_at.compare_exchange_weak(armed, armed - 1)) {
   }
   if (armed == 1) {
     throw std::bad_alloc();
@@ -68,61 +58,9 @@ void operator delete(void* memory, std::size_t) noexcept {
   std::free(memory);
 }
 
+using namespace support;
+
 namespace {
-
-/** @brief What one command line wrote and returned. */
-struct Ran {
-  /** @brief The exit code. */
-  int exit_;
-  /** @brief What it wrote on stdout. */
-  std::string out_;
-  /** @brief What it wrote on stderr. */
-  std::string err_;
-};
-
-/**
- * @brief Runs a command line in process against cmdatl's commands.
- * @param args The command line, without the program's name.
- * @param terminal Whether to behave as if writing to a terminal.
- * @return What it wrote and returned.
- */
-Ran run(const std::vector<std::string>& args, bool terminal = false) {
-  std::ostringstream out;
-  std::ostringstream err;
-  const auto exit = cmdatl::run(args, out, err, terminal);
-  return {exit, out.str(), err.str()};
-}
-
-/**
- * @brief Runs a command line in process against a given table.
- * @param args The command line, without the program's name.
- * @param table The commands.
- * @return What it wrote and returned.
- */
-Ran run_with(const std::vector<std::string>& args, const cmdatl::Table& table) {
-  std::ostringstream out;
-  std::ostringstream err;
-  const auto exit = cmdatl::run(args, out, err, false, table);
-  return {exit, out.str(), err.str()};
-}
-
-/**
- * @brief A JSON reply's object.
- * @param text The reply.
- * @return The object.
- */
-boost::json::object reply_of(const std::string& text) {
-  return boost::json::parse(text).as_object();
-}
-
-/**
- * @brief The error code of a JSON reply.
- * @param text The reply.
- * @return The code.
- */
-std::string code_of(const std::string& text) {
-  return std::string(reply_of(text).at("error").as_object().at("code").as_string());
-}
 
 /**
  * @brief A table with one command that "does something" and records that it ran, as a sending command would.
@@ -149,50 +87,6 @@ cmdatl::Table acting_table(const std::shared_ptr<int>& ran) {
       })
   );
   return cmdatl::Table(std::move(commands));
-}
-
-/**
- * @brief Splits a shell-like line into words without running anything: double and single quotes keep spaces,
- *   and `#` after a space, outside quotes, starts a comment.
- * @param text The line.
- * @return The words, or nothing for an unfinished quote (a shell would wait for more).
- */
-std::optional<std::vector<std::string>> shell_words(const std::string& text) {
-  std::vector<std::string> words;
-  std::string word;
-  bool in_word = false;
-  char quote = 0;
-  for (std::size_t i = 0; i < text.size(); ++i) {
-    const char c = text[i];
-    if (quote != 0) {
-      if (c == quote) {
-        quote = 0;
-      } else {
-        word.push_back(c);
-      }
-    } else if (c == '"' || c == '\'') {
-      quote = c;
-      in_word = true;
-    } else if (c == ' ' || c == '\t') {
-      if (in_word) {
-        words.push_back(word);
-        word.clear();
-        in_word = false;
-      }
-    } else if (c == '#' && !in_word) {
-      break;
-    } else {
-      word.push_back(c);
-      in_word = true;
-    }
-  }
-  if (quote != 0) {
-    return std::nullopt;
-  }
-  if (in_word) {
-    words.push_back(word);
-  }
-  return words;
 }
 
 /**
@@ -307,10 +201,61 @@ TEST_CASE("arguments are checked against the command before anything runs") {
   const auto two = run({"order", "place", "p1", "p2"});
   CHECK(two.exit_ == 2);
   CHECK(code_of(two.out_) == "usage.bad_option");
-  CHECK(run({"strategy", "check", "a.atls", "b.atls"}).exit_ == 2);
-  // A repeated option takes one value per occurrence.
+  CHECK(run({"strategy", "backtest", "a.toml", "b.toml"}).exit_ == 2);
+  // A repeated option takes one value per occurrence; the line that parses runs, and finds no atlc here.
   CHECK(run({"strategy", "backtest", "s.toml", "-P", "a=1", "stray"}).exit_ == 2);
-  CHECK(run({"strategy", "backtest", "s.toml", "-P", "a=1", "-P", "b=2"}).exit_ == 1);
+  ::setenv("CMDATL_ATLC", "/nonexistent/atlc", 1);
+  const auto parsed = run({"strategy", "backtest", "s.toml", "-P", "a=1", "-P", "b=2"});
+  ::unsetenv("CMDATL_ATLC");
+  CHECK(parsed.exit_ == 1);
+  CHECK(code_of(parsed.out_) == "atlc.missing");
+}
+
+TEST_CASE("tune and check are gone; new and backtest are the strategy commands that work") {
+  const cmdatl::Table table(cmdatl::command_list());
+  const auto help = run({"--help"}).out_;
+  const auto schema = reply_of(run({"schema"}).out_);
+  for (const auto* gone : {"tune", "check"}) {
+    INFO(gone);
+    CHECK(help.find(std::string("strategy ") + gone) == std::string::npos);
+    CHECK(table.resolve({"strategy", gone}).command_ == nullptr);
+    const auto ran = run({"strategy", gone, "dip.toml"});
+    CHECK(ran.exit_ == 2);
+    CHECK(code_of(ran.out_) == "usage.unknown_command");
+    for (const auto& entry : schema.at("commands").as_array()) {
+      CHECK(entry.as_object().at("command").as_string() != std::string("strategy.") + gone);
+    }
+  }
+  CHECK(help.find("tuning") == std::string::npos);
+  std::vector<std::string> available;
+  for (const auto* command : table.select({"strategy"})) {
+    if (command->available_) {
+      available.push_back(cmdatl::join(command->path_));
+    }
+  }
+  CHECK(available == std::vector<std::string>{"strategy new", "strategy backtest"});
+  const auto reference = table.resolve({"strategy", "reference"});
+  REQUIRE(reference.command_ != nullptr);
+  CHECK(!reference.command_->available_);
+  CHECK(cmdatl::SCHEMA_VERSION == 2);
+  const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
+  CHECK(backtest.at("returns").as_object().contains("params_given"));
+  CHECK(!backtest.at("returns").as_object().contains("params"));
+  const auto& exits = backtest.at("exits").as_array();
+  CHECK(std::find(exits.begin(), exits.end(), boost::json::value(130)) != exits.end());
+  CHECK(std::find(exits.begin(), exits.end(), boost::json::value(5)) != exits.end());
+  CHECK(declares({"strategy", "new"}, 130, "interrupted"));
+  // Each catalog code's own exit is among the exits of every command that declares it.
+  for (const auto& command : table.commands()) {
+    for (const auto& code : command.errors_) {
+      const auto spec = std::find_if(cmdatl::error_catalog().begin(), cmdatl::error_catalog().end(), [&code](const auto& e) {
+        return e.code_ == code;
+      });
+      REQUIRE(spec != cmdatl::error_catalog().end());
+      INFO(cmdatl::join(command.path_) << " " << code);
+      CHECK(declares(command.path_, static_cast<int>(spec->exit_), code));
+    }
+  }
 }
 
 TEST_CASE("global options never take another option as their value and stop at --") {
@@ -850,41 +795,6 @@ TEST_CASE("after a sending command ran, a failure to report keeps exit 4") {
   CHECK(err.str().find("outcome is unknown") != std::string::npos);
   CHECK(*ran == 3);
 }
-
-#if !defined(_WIN32)
-TEST_CASE("an allocation failing anywhere in a process probe leaks no descriptor and leaves no child") {
-  const auto open_fds = [] {
-    int n = 0;
-    for (const auto& entry : std::filesystem::directory_iterator("/dev/fd")) {
-      (void)entry;
-      ++n;
-    }
-    return n;
-  };
-  const std::vector<std::string> argv{"/bin/echo", std::string(256, 'x')};
-  const int before = open_fds();
-  int threw = 0;
-  for (long n = 1; n <= 12; ++n) {
-    fail_allocation(n);
-    try {
-      (void)cmdatl::capture(argv);
-    } catch (const std::bad_alloc&) {
-      ++threw;
-    }
-    fail_allocation(0);
-    INFO("allocation " << n);
-    CHECK(open_fds() == before);
-    errno = 0;
-    CHECK(::waitpid(-1, nullptr, WNOHANG) == -1);
-    CHECK(errno == ECHILD);
-  }
-  CHECK(threw > 0);
-  const auto normal = cmdatl::capture(argv);
-  REQUIRE(normal);
-  CHECK(normal->size() == 257);
-  CHECK(open_fds() == before);
-}
-#endif
 
 TEST_CASE("a successful send whose reply is lost silently, or at the flush, still exits 4") {
   const auto ran = std::make_shared<int>(0);
