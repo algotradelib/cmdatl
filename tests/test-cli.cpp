@@ -62,6 +62,7 @@ using namespace support;
 
 namespace {
 
+
 /**
  * @brief A table with one command that "does something" and records that it ran, as a sending command would.
  * @param ran Set when the command runs.
@@ -237,7 +238,7 @@ TEST_CASE("tune and check are gone; new and backtest are the strategy commands t
   const auto reference = table.resolve({"strategy", "reference"});
   REQUIRE(reference.command_ != nullptr);
   CHECK(!reference.command_->available_);
-  CHECK(cmdatl::SCHEMA_VERSION == 2);
+  CHECK(cmdatl::SCHEMA_VERSION == 3);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
   CHECK(backtest.at("returns").as_object().contains("params_given"));
   CHECK(!backtest.at("returns").as_object().contains("params"));

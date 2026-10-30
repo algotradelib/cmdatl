@@ -13,7 +13,7 @@
 namespace cmdatl {
 
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
-inline constexpr int SCHEMA_VERSION = 2;
+inline constexpr int SCHEMA_VERSION = 3;
 
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
@@ -65,6 +65,22 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"strategy.template", Exit::USAGE, false, "cmdatl strategy new --help lists the templates"},
     {"strategy.exists", Exit::FAILED, false, "choose another NAME or --dir, or --force to replace regular files"},
     {"file.unwritable", Exit::FAILED, false, "check the directory and its permissions"},
+    {"usage.bad_value", Exit::USAGE, false, "cmdatl COMMAND --help shows what each argument takes"},
+    {"config.missing", Exit::FAILED, false, "set CMDATL_CONFIG to the operator's file"},
+    {"config.invalid", Exit::FAILED, false, "fix the operator's file at the line and column given; cmdatl env shows it"},
+    {"unsupported.broker", Exit::FAILED, false, "this version trades the paper broker only"},
+    {"state.unavailable", Exit::FAILED, false, "set XDG_STATE_HOME or HOME, and check the account's directory"},
+    {"busy.locked", Exit::FAILED, true, "another command holds the account: run it again when it is free"},
+    {"unknown.lock_lost", Exit::UNKNOWN, false, "the account's lock file was replaced: find what replaced it, then cmdatl status"},
+    {"unknown.journal_missing", Exit::UNKNOWN, false, "the operator reads the broker's orders and holdings, then restores the journal"},
+    {"unknown.journal_damaged", Exit::UNKNOWN, false, "the operator reads the broker's orders and holdings, then restores the journal"},
+    {"journal.unopened", Exit::FAILED, false, "check the account's directory and its permissions"},
+    {"paper.data", Exit::FAILED, false, "fix the paper bars file the operator's file names"},
+    {"unknown.paper_state", Exit::UNKNOWN, false, "restore paper.jsonl, or move the account's directory aside to start a fresh paper account"},
+    {"quote.no_data", Exit::FAILED, false, "quote a symbol the paper bars have; cmdatl env shows the bars file"},
+    {"clock.backwards", Exit::FAILED, false, "the clock only moves forward: cmdatl clock shows where it stands"},
+    {"clock.past_data", Exit::FAILED, false, "the paper data ends there: cmdatl clock shows where"},
+    {"unknown.clock_advance", Exit::UNKNOWN, false, "cmdatl clock shows where the clock stands; do not repeat the advance before reading it"},
   };
   return catalog;
 }
@@ -76,6 +92,24 @@ inline const std::vector<std::string> COMMON_ERRORS{
   "usage.bad_format",
   "usage.no_such_field",
   "internal.error",
+};
+
+/** @brief The error codes every available account command can answer with, from opening the account. */
+inline const std::vector<std::string> ACCOUNT_ERRORS{
+  "unavailable.platform",
+  "config.missing",
+  "config.invalid",
+  "unsupported.broker",
+  "state.unavailable",
+  "busy.locked",
+  "interrupted",
+  "unknown.lock_lost",
+  "unknown.journal_missing",
+  "unknown.journal_damaged",
+  "journal.unopened",
+  "paper.data",
+  "unknown.paper_state",
+  "file.unwritable",
 };
 
 /** @brief An option every command takes. */
@@ -105,7 +139,8 @@ inline const std::vector<GlobalSpec>& global_options() {
 }
 
 /**
- * @brief A command's error codes: the common ones, `unavailable.not_yet` while it is not built, and its own.
+ * @brief A command's error codes: the common ones, `unavailable.not_yet` while it is not built, `unknown.internal`
+ *   for a command that may send or changes the account, the account errors for an account command, and its own.
  * @param command The command.
  * @return The codes.
  */
@@ -114,10 +149,17 @@ inline std::vector<std::string> errors_of(const Command& command) {
   if (!command.available_) {
     errors.push_back("unavailable.not_yet");
   }
-  if (command.may_send_) {
+  if (command.may_send_ || command.mutates_) {
     errors.push_back("unknown.internal");
   }
-  errors.insert(errors.end(), command.errors_.begin(), command.errors_.end());
+  if (command.run_account_) {
+    errors.insert(errors.end(), ACCOUNT_ERRORS.begin(), ACCOUNT_ERRORS.end());
+  }
+  for (const auto& error : command.errors_) {
+    if (std::find(errors.begin(), errors.end(), error) == errors.end()) {
+      errors.push_back(error);
+    }
+  }
   return errors;
 }
 
@@ -261,7 +303,7 @@ inline void write_command_help(std::ostream& out, const Command& command) {
   for (const auto exit : command.exits_) {
     out << " " << static_cast<int>(exit);
   }
-  out << (command.may_send_ ? "  (may send to a broker)" : "") << "\n";
+  out << (command.may_send_ ? "  (may send to a broker)" : "") << (command.mutates_ ? "  (changes the account)" : "") << "\n";
   for (const auto& alias : command.aliases_) {
     out << "Also called as: cmdatl " << join(alias) << "\n";
   }
@@ -349,6 +391,7 @@ inline json::object schema_entry(const Command& command) {
   }
   entry["errors"] = std::move(errors);
   entry["may_send"] = command.may_send_;
+  entry["mutates"] = command.mutates_;
   entry["available"] = command.available_;
   return entry;
 }
@@ -408,8 +451,9 @@ inline Reply schema_reply(const Table& table, const std::vector<std::string>& wo
 
 /**
  * @brief Checks the table's invariants: unique paths and aliases, positional layouts the parser can read, unique
- *   argument and option names and short names, no option named like a global one, errors in the catalog, and
- *   exit codes 3 and 4 on every command that may send.
+ *   argument and option names and short names, no option named like a global one, errors in the catalog, exit codes
+ *   3 and 4 on every command that may send, exit 4 on every command that changes the account, and code exactly when
+ *   available, of one kind.
  * @param table The commands.
  * @return One line per problem; empty when the table is sound.
  */
@@ -454,8 +498,16 @@ inline std::vector<std::string> check_table(const Table& table) {
         problems.push_back(name + ": the example '" + example + "' does not call it");
       }
     }
-    if (command.available_ != static_cast<bool>(command.run_)) {
-      problems.push_back(name + ": available without code, or code without available");
+    const bool runs = static_cast<bool>(command.run_);
+    const bool runs_on_account = static_cast<bool>(command.run_account_);
+    if (command.available_ != (runs || runs_on_account) || (runs && runs_on_account)) {
+      problems.push_back(name + ": available without code, code without available, or two kinds of code");
+    }
+    if (runs_on_account && command.env_ != "account") {
+      problems.push_back(name + ": runs on the account but its replies do not carry the account's environment");
+    }
+    if (command.mutates_ && std::find(command.exits_.begin(), command.exits_.end(), Exit::UNKNOWN) == command.exits_.end()) {
+      problems.push_back(name + ": changes the account but cannot answer unknown (4)");
     }
     std::set<std::string> keys;
     std::set<std::string> shorts;

@@ -66,6 +66,10 @@ struct Invocation {
 };
 
 class Table;
+class Account;
+
+/** @brief The exit codes of an account command: 4 when the account's state is unknown, 130 from the lock's wait. */
+inline const std::vector<Exit> ACCOUNT_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE, Exit::UNKNOWN, Exit::INTERRUPTED};
 
 /** @brief One command: everything the parser, the help and the schema know about it, in one place. */
 struct Command {
@@ -93,6 +97,13 @@ struct Command {
   std::vector<std::string> errors_;
   /** @brief Whether it can send anything to a broker. */
   bool may_send_{false};
+  /**
+   * @brief Whether it changes the account's state without sending (`clock advance`): an outcome it cannot report is
+   *   unknown (exit 4), with `mutates_hint_` as what to do.
+   */
+  bool mutates_{false};
+  /** @brief What to do when a change's outcome is unknown. */
+  std::string mutates_hint_;
   /** @brief The reply's environment when it touches no account (`offline`), or `account` for the account's. */
   std::string env_{"offline"};
   /** @brief Whether it works yet; a command not built answers `unavailable.not_yet`. */
@@ -102,6 +113,15 @@ struct Command {
    *   reply. The code never sees the command's name, so renaming it touches only the path.
    */
   std::function<Reply(const Invocation&, const Table&, Output&)> run_;
+  /**
+   * @brief What it does on an open account, for an account command: `run_on_account` (cli.hpp) opens the account,
+   *   holding its lock, and calls it.
+   *
+   * Set instead of `run_`, never with it.
+   */
+  std::function<Reply(const Invocation&, Account&, Output&)> run_account_;
+  /** @brief An account command's checks of its arguments, before the account is opened; empty for none. */
+  std::function<std::optional<Reply>(const Invocation&)> check_account_;
 
   /**
    * @brief Adds an earlier or alternative path that still calls the command.
@@ -226,6 +246,36 @@ struct Command {
    */
   Command& account() {
     env_ = "account";
+    return *this;
+  }
+
+  /**
+   * @brief Marks it as changing the account's state without sending: an outcome it cannot report is unknown (exit 4).
+   * @param hint What to do then, such as the command that shows the state.
+   * @return The command.
+   */
+  Command& mutates(std::string hint) {
+    mutates_ = true;
+    mutates_hint_ = std::move(hint);
+    return *this;
+  }
+
+  /**
+   * @brief Gives an account command its code, which makes it available: it runs on the open account, its replies
+   *   carry the account's environment, and its exit codes are `ACCOUNT_EXITS`.
+   * @param run What it does on the account.
+   * @param check Its checks of its arguments before the account is opened, or empty.
+   * @return The command.
+   */
+  Command& on_account(
+    std::function<Reply(const Invocation&, Account&, Output&)> run,
+    std::function<std::optional<Reply>(const Invocation&)> check = {}
+  ) {
+    run_account_ = std::move(run);
+    check_account_ = std::move(check);
+    env_ = "account";
+    available_ = true;
+    exits_ = ACCOUNT_EXITS;
     return *this;
   }
 

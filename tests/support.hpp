@@ -29,6 +29,25 @@
 
 namespace support {
 
+#if !defined(_WIN32)
+/**
+ * @brief Points the state root at a scratch directory and forgets any operator's file before the first test, so no
+ *   test reads the operator's real file or writes under the real home.
+ */
+struct Isolated {
+  /** @brief Sets the variables. */
+  Isolated() {
+    const auto root = std::filesystem::temp_directory_path() / ("cmdatl-test-state-" + std::to_string(::getpid()));
+    std::filesystem::create_directories(root);
+    ::setenv("XDG_STATE_HOME", root.c_str(), 1);
+    ::unsetenv("CMDATL_CONFIG");
+  }
+};
+
+/** @brief The isolation, set up before main, once per test executable. */
+inline const Isolated ISOLATED{};
+#endif
+
 /** @brief When above zero, the allocation that brings it to zero throws `std::bad_alloc` (a one-shot failure). */
 inline std::atomic<long> fail_at{0};
 

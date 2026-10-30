@@ -2,6 +2,7 @@
 
 #include "./describe.hpp"
 #include "./environment.hpp"
+#include "./reads.hpp"
 #include "./strategy.hpp"
 #include "./table.hpp"
 
@@ -38,40 +39,77 @@ inline std::vector<Command> command_list() {
     list.push_back(command);
   };
 
-  add(make_command({"status"}, "Read", "clock, phase, armed, run, positions, cash, owed and working orders")
+  add(make_command({"status"}, "Read", "clock, phase, readiness, positions, cash, owed and working orders, quotes")
     .example("cmdatl status")
-    .returns("now", "the account's time")
-    .returns("phase", "the market phase")
-    .returns("armed", "whether orders may go out")
-    .returns("run", "the run that owns the account, or null")
-    .returns("positions", "holdings")
-    .returns("cash", "cash")
+    .example("cmdatl status --fields now,orders_accepted_now,not_accepted")
+    .returns("now", "the account's time, KST with its offset")
+    .returns("phase", "the market phase: pre_open, open, post_close, closed or unknown")
+    .returns("armed", "whether the operator's armed file exists")
+    .returns("orders_accepted_now", "whether the preliminary gates of a placement pass now (a place still checks more)")
+    .returns("not_accepted", "the gates that fail, in a fixed order; empty exactly when orders_accepted_now")
+    .returns("orders_left_today", "placements the operator still allows today; null when the journal is damaged")
+    .returns("positions", "holdings: symbol, quantity, sellable, average_price, last_price, market_value")
+    .returns("cash", "the paper market's cash after every fill's value, commission and tax")
+    .returns("buying_power", "the broker's buying power")
     .returns("owed", "orders the journal still waits on")
     .returns("orders", "working orders")
-    .account());
+    .returns("quotes", "each allowed symbol, as quote's rows")
+    .returns("data_end", "the last session's close in the paper data")
+    .returns("capabilities", "what the account's broker offers")
+    .returns("state_dir", "the account's state directory")
+    .on_account([](const Invocation& invocation, Account& account, Output& output) {
+      return status_reply(invocation, account, account.desk(), output);
+    }));
   add(make_command({"account"}, "Read", "positions, cash, buying power, owed orders, orders left today")
     .example("cmdatl account")
     .example("cmdatl account --value cash")
     .example("cmdatl account --symbol 005930 --fields positions.quantity")
     .option("symbol", "SYMBOL", "only this instrument's rows")
-    .returns("positions", "holdings")
-    .returns("cash", "cash")
-    .returns("buying_power", "buying power")
-    .returns("owed", "orders the journal still waits on")
-    .returns("orders_left_today", "orders the operator still allows today")
-    .account());
+    .returns("now", "the account's time, KST with its offset")
+    .returns("positions", "holdings: symbol, quantity, sellable, average_price, last_price, market_value")
+    .returns("cash", "the paper market's cash after every fill's value, commission and tax")
+    .returns("buying_power", "the broker's buying power")
+    .returns("owed", "orders the journal still waits on: symbol, side, quantity, journal_id, state, order_id, broker_status, next")
+    .returns("orders_left_today", "placements the operator still allows today; null when the journal is damaged")
+    .error("usage.bad_value")
+    .on_account(
+      [](const Invocation& invocation, Account& account, Output& output) {
+        return account_reply(invocation, account, account.desk(), output);
+      },
+      check_symbols
+    ));
   add(make_command({"quote"}, "Read", "last price, price band, and whether orders are accepted now")
     .example("cmdatl quote 005930 000660")
     .arg("SYMBOL", "an instrument", true, true)
-    .returns("quotes", "one per symbol: symbol, last, band, symbol_allowed, orders_accepted_now")
-    .account());
+    .returns("now", "the account's time, KST with its offset")
+    .returns("phase", "the market phase")
+    .returns(
+      "quotes",
+      "one per symbol: symbol, last_price, upper_limit, lower_limit, symbol_allowed, orders_accepted_now, not_accepted"
+    )
+    .error("quote.no_data")
+    .error("usage.bad_value")
+    .on_account(
+      [](const Invocation& invocation, Account& account, Output& output) {
+        return quote_reply(invocation, account, account.desk(), output);
+      },
+      check_symbols
+    ));
   add(make_command({"env"}, "Read", "configuration: cmdatl, algotradelib, atlc, the operator's file (no secrets)")
     .example("cmdatl env")
     .example("cmdatl env --value atlc.ok")
     .returns("cmdatl", "cmdatl's version")
     .returns("algotradelib", "the library's version")
-    .returns("atlc", "requested, path, source, version, minimum, ok")
-    .returns("config", "the operator's file: path, exists")
+    .returns("atlc", "requested, path, source, version, minimum, ok, and error when the operator's file was not read")
+    .returns("config", "the operator's file: path, exists, state (unset, missing, invalid, ok), and error")
+    .returns("account", "broker, env and number, or null")
+    .returns("limits", "every limit, defaults filled, or null")
+    .returns("armed", "the armed file: path, exists")
+    .returns("state_dir", "the account's state directory")
+    .returns("owner", "who last held the account, or null")
+    .returns("capabilities", "what the account's broker offers")
+    .returns("paper", "the paper market: bars, start, cash, costs")
+    .returns("schema_version", "the version of cmdatl schema's format")
     .returns("modes", "the trading modes this build offers")
     .runs([](const Invocation&, const Table&, Output&) { return env_reply(); }));
 
@@ -118,8 +156,11 @@ inline std::vector<Command> command_list() {
     .account());
   add(make_command({"order", "list"}, "Trade", "working orders")
     .example("cmdatl order list")
-    .returns("orders", "working orders")
-    .account());
+    .returns("now", "the account's time, KST with its offset")
+    .returns("orders", "working orders: order_id, symbol, side, quantity, filled, price, status")
+    .on_account([](const Invocation& invocation, Account& account, Output& output) {
+      return order_list_reply(invocation, account, account.desk(), output);
+    }));
   add(make_command({"order", "release"}, "Trade", "operator only: settle an unknown order")
     .example("cmdatl order release 005930 --reason \"checked the broker's order list\"")
     .arg("SYMBOL", "an instrument")
@@ -168,6 +209,8 @@ inline std::vector<Command> command_list() {
     .error("build.failed")
     .error("replay.failed")
     .error("unavailable.platform")
+    .error("config.missing")
+    .error("config.invalid")
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return backtest_reply(invocation, output);
     }));
@@ -216,19 +259,39 @@ inline std::vector<Command> command_list() {
 
   add(make_command({"clock"}, "Paper account", "the paper account's time and phase")
     .example("cmdatl clock")
-    .returns("now", "the account's time")
+    .returns("now", "the account's time, KST with its offset")
     .returns("phase", "the market phase")
-    .account());
+    .returns("data_end", "the last session's close in the paper data")
+    .on_account([](const Invocation& invocation, Account& account, Output& output) {
+      return clock_reply(invocation, account, account.desk(), output);
+    }));
   add(make_command({"clock", "advance"}, "Paper account", "move the paper clock")
     .example("cmdatl clock advance --next-open")
     .example("cmdatl clock advance --minutes 30")
-    .option("minutes", "N", "by N minutes")
-    .option("hours", "N", "by N hours")
-    .option("to", "TIME", "to a time")
-    .flag("next-open", "to the next open")
-    .returns("now", "the account's time")
-    .returns("fills", "fills on the way")
-    .account());
+    .example("cmdatl clock advance --to 2024-03-26T09:30")
+    .describe(
+      "Moves the paper clock forward by exactly one of the options, filling or expiring resting orders on the way.\n"
+      "Exit 4 means the advance may have happened: read cmdatl clock before advancing again."
+    )
+    .option("minutes", "N", "by N minutes, 1 to 20160")
+    .option("hours", "N", "by N hours, 1 to 336")
+    .option("to", "TIME", "to a KST time, YYYY-MM-DDTHH:MM")
+    .flag("next-open", "to the next session's open in the data")
+    .returns("from", "the time before, KST with its offset")
+    .returns("now", "the time after")
+    .returns("phase", "the market phase after")
+    .returns("events", "what the market did: at, kind, order_id, symbol, side, quantity, price, commission, tax")
+    .error("usage.bad_value")
+    .error("clock.backwards")
+    .error("clock.past_data")
+    .error("unknown.clock_advance")
+    .mutates("cmdatl clock shows where the clock stands; do not repeat the advance before reading it")
+    .on_account(
+      [](const Invocation& invocation, Account& account, Output& output) {
+        return advance_reply(invocation, account, account.desk(), output);
+      },
+      check_advance
+    ));
 
   add(make_command({"help"}, "Help", "help for cmdatl, a group or a command (as --help)")
     .example("cmdatl help")

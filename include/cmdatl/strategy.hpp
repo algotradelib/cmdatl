@@ -276,7 +276,17 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   if (interrupted()) {
     return interrupted_reply();
   }
-  const auto atlc = find_atlc();
+  // The operator's file is read only when CMDATL_ATLC does not decide, and once.
+  std::optional<ConfigSnapshot> snapshot;
+  if (!variable("CMDATL_ATLC")) {
+    snapshot = load_operator_config();
+  }
+  const auto atlc = find_atlc(snapshot ? &*snapshot : nullptr);
+  if (atlc.config_error_) {
+    auto reply = config_reply(*snapshot);
+    reply.body_["error"].as_object()["code"] = atlc.config_error_->code_;
+    return reply;
+  }
   if (interrupted()) {
     return interrupted_reply();
   }
@@ -287,7 +297,8 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     return error_reply(Exit::FAILED, "atlc.missing", where, install);
   }
   if (atlc.version_.empty()) {
-    return error_reply(Exit::FAILED, "atlc.missing", atlc.path_ + " did not answer --version", install);
+    const auto from = atlc.source_ == "config" ? " (the operator's file's atlc)" : std::string();
+    return error_reply(Exit::FAILED, "atlc.missing", atlc.path_ + from + " did not answer --version", install);
   }
   if (!at_least(atlc.version_, MINIMUM_ATLC)) {
     return error_reply(

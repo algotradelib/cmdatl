@@ -1,7 +1,9 @@
 #pragma once
 
+#include "./account.hpp"
 #include "./command_list.hpp"
 #include "./describe.hpp"
+#include "./operator.hpp"
 
 #include <CLI/CLI.hpp>
 
@@ -297,17 +299,21 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
 }
 
 /**
- * @brief The last resort after a command ran and its reply could not be written: one fixed line on stderr, written
- *   without allocating, and the exit code that does not overstate what is known.
+ * @brief The last resort after a command ran and its reply could not be written: one fixed line on stderr, and the
+ *   exit code that does not overstate what is known.
  * @param err stderr.
  * @param may_send Whether the command may have sent.
- * @return 4 (unknown: reconcile first) for a command that may have sent, 1 otherwise.
+ * @param hint For a command that changes the account without sending, what to do; empty otherwise.
+ * @return 4 (unknown) for a command that may have sent or changed the account, 1 otherwise.
  */
-inline int report_lost_outcome(std::ostream& err, bool may_send) noexcept {
+inline int report_lost_outcome(std::ostream& err, bool may_send, const std::string& hint = "") noexcept {
   try {
     if (may_send) {
       err << "cmdatl: the command ran but its reply could not be written; its outcome is unknown: ";
       err << "run cmdatl order reconcile before anything else\n";
+    } else if (!hint.empty()) {
+      err << "cmdatl: the command changed the account but its reply could not be written; its outcome is unknown: ";
+      err << hint << "\n";
     } else {
       err << "cmdatl: the command ran but its reply could not be written\n";
     }
@@ -315,7 +321,158 @@ inline int report_lost_outcome(std::ostream& err, bool may_send) noexcept {
   } catch (...) {
     // stderr itself failed: there is nowhere left to report to, and the exit code below still says what is known.
   }
-  return may_send ? static_cast<int>(Exit::UNKNOWN) : static_cast<int>(Exit::FAILED);
+  return may_send || !hint.empty() ? static_cast<int>(Exit::UNKNOWN) : static_cast<int>(Exit::FAILED);
+}
+
+/**
+ * @brief The environment an account's replies carry, from its broker's session, never from the file: the one place
+ *   a broker's name is mapped.
+ * @param config The operator's file.
+ * @return The environment, such as `paper`.
+ */
+inline std::string account_env(const OperatorConfig& config) {
+  if (config.broker_ == paper::PaperDesk::broker_name) {
+    return paper::PaperDesk::env_name;
+  }
+  throw std::logic_error("no session for the broker " + config.broker_);
+}
+
+/**
+ * @brief The command and its positional arguments, for the owner record.
+ * @param command The command.
+ * @param invocation Its arguments.
+ * @return The text, at most 200 bytes.
+ */
+inline std::string owner_what(const Command& command, const Invocation& invocation) {
+  auto what = join(command.path_);
+  for (const auto& arg : command.args_) {
+    const auto found = invocation.values_.find(arg.name_);
+    if (found != invocation.values_.end()) {
+      for (const auto& value : found->second) {
+        what += " " + value;
+      }
+    }
+  }
+  return what.substr(0, 200);
+}
+
+/**
+ * @brief An account command on its open account: the account opened (its lock held for the whole command), the
+ *   owner record written once it is open, the handler, and the lock checked once more before the reply.
+ * @param command The command.
+ * @param invocation Its arguments.
+ * @param snapshot The operator's file, read and `OK`.
+ * @param output The output, carrying the account's environment.
+ * @return The reply.
+ */
+inline Reply account_command_reply(
+  const Command& command,
+  const Invocation& invocation,
+  const ConfigSnapshot& snapshot,
+  Output& output
+) {
+#if defined(_WIN32)
+  (void)command;
+  (void)invocation;
+  (void)snapshot;
+  (void)output;
+  return error_reply(Exit::FAILED, "unavailable.platform", "account commands run on macOS and Linux only in this version");
+#else
+  auto opened = Account::open(snapshot, output, [] { return interrupted(); });
+  if (opened.refusal_) {
+    return std::move(*opened.refusal_);
+  }
+  auto& account = *opened.account_;
+  write_owner_record(account.dir(), owner_what(command, invocation));
+  Reply reply;
+  try {
+    reply = command.run_account_(invocation, account, output);
+  } catch (const paper::LockLost&) {
+    reply = lock_lost_reply();
+  } catch (const paper::OutOfRange& error) {
+    reply = paper_state_reply(error.what());
+  } catch (const paper::PaperStateError& error) {
+    reply = paper_state_reply(error.what());
+  }
+  if (!account.lock().still_at_path()) {
+    reply = lock_lost_reply();
+  }
+  return reply;
+#endif
+}
+
+/**
+ * @brief Runs an account command: its arguments checked, the operator's file read once, the reply's environment
+ *   taken from the broker, then the account opened and the command run (`account_command_reply`).
+ * @param command The command.
+ * @param prepared The command line, read and checked.
+ * @param out stdout.
+ * @param err stderr.
+ * @return The exit code.
+ */
+inline int run_on_account(const Command& command, const Prepared& prepared, std::ostream& out, std::ostream& err) {
+  const auto& rendering = prepared.globals_.rendering_;
+  const bool unknown_if_lost = command.may_send_ || command.mutates_;
+  const auto hint = command.may_send_ ? std::string() : command.mutates_hint_;
+  // Before the account is opened nothing can have changed: a reply that cannot be written is a plain failure.
+  const auto offline = [&](const Reply& reply) {
+    try {
+      Output output(out, err, rendering, "offline");
+      return static_cast<int>(output.finish(reply));
+    } catch (...) {
+      return report_lost_outcome(err, false);
+    }
+  };
+#if defined(_WIN32)
+  return offline(error_reply(
+    Exit::FAILED,
+    "unavailable.platform",
+    "account commands run on macOS and Linux only in this version"
+  ));
+#else
+  std::optional<ConfigSnapshot> snapshot;
+  try {
+    if (command.check_account_) {
+      if (auto refused = command.check_account_(prepared.invocation_)) {
+        refused->body_["usage"] = "cmdatl " + join(command.path_) + " " + usage(command);
+        return offline(*refused);
+      }
+    }
+    snapshot = load_operator_config();
+  } catch (const std::exception& e) {
+    return offline(error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line"));
+  }
+  if (snapshot->state_ != ConfigSnapshot::State::OK) {
+    return offline(config_reply(*snapshot));
+  }
+  std::string env;
+  try {
+    env = account_env(*snapshot->config_);
+  } catch (const std::exception& e) {
+    return offline(error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line"));
+  }
+  try {
+    Output output(out, err, rendering, env);
+    Reply reply;
+    try {
+      reply = account_command_reply(command, prepared.invocation_, *snapshot, output);
+    } catch (const std::exception& e) {
+      reply = unknown_if_lost ?
+        error_reply(Exit::UNKNOWN, "unknown.internal", e.what(), hint.empty() ? "cmdatl order reconcile" : hint) :
+        error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line");
+    } catch (...) {
+      reply = unknown_if_lost ?
+        error_reply(Exit::UNKNOWN, "unknown.internal", "an unknown exception", hint.empty() ? "cmdatl order reconcile" : hint) :
+        error_reply(Exit::FAILED, "internal.error", "an unknown exception", "report the defect with the command line");
+    }
+    if (prepared.found_.alias_) {
+      reply.body_["note"] = "cmdatl " + join(*prepared.found_.alias_) + " is now cmdatl " + join(command.path_);
+    }
+    return static_cast<int>(output.finish(reply));
+  } catch (...) {
+    return report_lost_outcome(err, command.may_send_, unknown_if_lost ? hint : std::string());
+  }
+#endif
 }
 
 /**
@@ -369,7 +526,10 @@ inline int run(
     );
     return write(not_yet, "offline");
   }
-  // An account command's environment comes from the account it reads (branch 3); until then, offline.
+  if (command.run_account_) {
+    return run_on_account(command, prepared, out, err);
+  }
+  // A command not built that touches an account has no account to take an environment from: offline.
   const auto env = command.env_ == "account" ? std::string("offline") : command.env_;
   Output output(out, err, rendering, env);
   // From here the command may act: nothing below may let an exception reach main, whose fallback says nothing was
@@ -393,7 +553,7 @@ inline int run(
     }
     return static_cast<int>(output.finish(reply));
   } catch (...) {
-    return report_lost_outcome(err, command.may_send_);
+    return report_lost_outcome(err, command.may_send_, command.mutates_ ? command.mutates_hint_ : std::string());
   }
 }
 

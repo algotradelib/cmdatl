@@ -1,6 +1,11 @@
 #pragma once
 
+#include "./capabilities.hpp"
+#include "./describe.hpp"
 #include "./files.hpp"
+#include "./lock.hpp"
+#include "./operator.hpp"
+#include "./paper/broker.hpp"
 #include "./reply.hpp"
 
 #include <algotradelib/version>
@@ -45,10 +50,17 @@ struct Atlc {
   std::string requested_;
   /** @brief The executable, or empty when none was found. */
   std::string path_;
-  /** @brief Where the path came from: `CMDATL_ATLC`, `PATH`, or empty. */
+  /** @brief Where the path came from: `CMDATL_ATLC`, `config` (the operator's file), `PATH`, or empty. */
   std::string source_;
   /** @brief What `atlc --version` printed after the name, or empty. */
   std::string version_;
+  /**
+   * @brief When `CMDATL_ATLC` is unset and the operator's file was named but not read: `config.missing` or
+   *   `config.invalid` and why.
+   *
+   * No atlc is looked for then: one the person did not choose is never run.
+   */
+  std::optional<ConfigError> config_error_;
 };
 
 /**
@@ -629,11 +641,35 @@ inline std::optional<std::string> capture(const std::vector<std::string>& argv) 
 }
 
 /**
- * @brief Finds atlc: `CMDATL_ATLC`, else `atlc` on `PATH`; then asks it for its version.
+ * @brief Finds atlc: `CMDATL_ATLC`, else the operator's file's `atlc` key, else `atlc` on `PATH`; then asks it for
+ *   its version.
+ * @param snapshot The operator's file as this invocation read it, or null when it was not read (`CMDATL_ATLC` set,
+ *   or a caller that does not consult it); consulted only when `CMDATL_ATLC` is unset.
  * @return What was found.
  */
-inline Atlc find_atlc() {
+inline Atlc find_atlc(const ConfigSnapshot* snapshot = nullptr) {
   Atlc atlc;
+  const bool overridden = variable("CMDATL_ATLC").has_value();
+  if (!overridden && snapshot != nullptr) {
+    if (snapshot->state_ == ConfigSnapshot::State::MISSING || snapshot->state_ == ConfigSnapshot::State::INVALID) {
+      // The person named a file: falling through to PATH would run an atlc they did not choose.
+      const auto code = snapshot->state_ == ConfigSnapshot::State::MISSING ? "config.missing" : "config.invalid";
+      atlc.config_error_ = ConfigError{code, snapshot->error_.message_, snapshot->error_.line_, snapshot->error_.column_};
+      return atlc;
+    }
+    if (snapshot->state_ == ConfigSnapshot::State::OK && !snapshot->config_->atlc_.empty()) {
+      // A path that does not run stays unresolved: reported, never replaced by another atlc.
+      atlc.requested_ = snapshot->config_->atlc_;
+      atlc.path_ = snapshot->config_->atlc_;
+      atlc.source_ = "config";
+      if (const auto printed = capture({atlc.path_, "--version"})) {
+        const auto line = printed->substr(0, printed->find('\n'));
+        const auto space = line.find(' ');
+        atlc.version_ = space == std::string::npos ? line : line.substr(space + 1);
+      }
+      return atlc;
+    }
+  }
   if (const auto set = variable("CMDATL_ATLC")) {
     // A path is used as given; a bare name is looked up on PATH only, never in the current directory. An override
     // that resolves to nothing stays unresolved: it is reported, never replaced by another atlc.
@@ -703,38 +739,37 @@ inline bool at_least(const std::string& version, const std::string& minimum) {
   return found && wanted && *found >= *wanted;
 }
 
-/** @brief Where the operator's file is: named by `CMDATL_CONFIG` only, never by an argument. */
-struct OperatorFile {
-  /** @brief The path, or empty when `CMDATL_CONFIG` is unset. */
-  std::string path_;
-  /** @brief Whether the file exists. */
-  bool exists_{false};
-};
-
 /**
- * @brief The operator's file's location. Its contents are read by the commands that need them.
- * @return Where it is.
+ * @brief Whether a path names a regular file.
+ * @param path The path.
+ * @return Whether it does.
  */
-inline OperatorFile find_operator_file() {
-  OperatorFile file;
-  if (const auto set = variable("CMDATL_CONFIG")) {
-    file.path_ = *set;
-    std::error_code ec;
-    file.exists_ = std::filesystem::is_regular_file(*set, ec);
-  }
-  return file;
+inline bool regular_file(const std::string& path) {
+  std::error_code ec;
+  return !path.empty() && std::filesystem::is_regular_file(path, ec);
 }
 
 /**
  * @brief `cmdatl env`: what cmdatl found, without secrets or the process environment.
+ *
+ * The operator's file is read once, and atlc is looked up in that same reading; always exit 0.
  * @return The reply.
  */
 inline Reply env_reply() {
   Reply reply;
   reply.body_["cmdatl"] = CMDATL_VERSION;
   reply.body_["algotradelib"] = ATL_VERSION_STRING;
-  const auto atlc = find_atlc();
+  const auto snapshot = load_operator_config();
+  const auto atlc = find_atlc(&snapshot);
   const auto or_null = [](const std::string& text) { return text.empty() ? json::value(nullptr) : json::value(text); };
+  const auto error_json = [](const ConfigError& error) {
+    return json::object{
+      {"code", error.code_},
+      {"message", error.message_},
+      {"line", error.line_ == 0 ? json::value(nullptr) : json::value(error.line_)},
+      {"column", error.column_ == 0 ? json::value(nullptr) : json::value(error.column_)},
+    };
+  };
   json::object found;
   found["requested"] = or_null(atlc.requested_);
   found["path"] = or_null(atlc.path_);
@@ -742,13 +777,73 @@ inline Reply env_reply() {
   found["version"] = or_null(atlc.version_);
   found["minimum"] = MINIMUM_ATLC;
   found["ok"] = !atlc.version_.empty() && at_least(atlc.version_, MINIMUM_ATLC);
+  if (atlc.config_error_) {
+    found["error"] = error_json(*atlc.config_error_);
+  }
   reply.body_["atlc"] = std::move(found);
-  const auto file = find_operator_file();
   json::object config;
-  config["path"] = or_null(file.path_);
-  config["exists"] = file.exists_;
+  config["path"] = or_null(snapshot.path_);
+  config["exists"] = regular_file(snapshot.path_);
+  config["state"] = snapshot.state_name();
+  if (snapshot.state_ != ConfigSnapshot::State::OK) {
+    config["error"] = error_json(snapshot.error_);
+  }
   reply.body_["config"] = std::move(config);
-  reply.body_["modes"] = json::array{};
+  if (snapshot.state_ != ConfigSnapshot::State::OK) {
+    for (const char* key : {"account", "limits", "armed", "state_dir", "owner", "capabilities", "paper"}) {
+      reply.body_[key] = nullptr;
+    }
+  } else {
+    const auto& c = *snapshot.config_;
+    reply.body_["account"] = json::object{{"broker", c.broker_}, {"env", c.env_}, {"number", c.number_}};
+    json::object position;
+    for (const auto& entry : c.limits_.position_) {
+      position[entry.first] = entry.second;
+    }
+    json::array symbols;
+    for (const auto& symbol : c.limits_.symbols_) {
+      symbols.push_back(json::value(symbol));
+    }
+    json::array phases;
+    for (const auto& phase : c.limits_.phases_) {
+      phases.push_back(json::value(phase));
+    }
+    reply.body_["limits"] = json::object{
+      {"symbols", std::move(symbols)},
+      {"position", std::move(position)},
+      {"order_value", c.limits_.order_value_},
+      {"daily_orders", c.limits_.daily_orders_},
+      {"order_type", c.limits_.order_type_},
+      {"collar", c.limits_.collar_},
+      {"phases", std::move(phases)},
+      {"plan_ttl", c.limits_.plan_ttl_},
+      {"portfolio_age", c.limits_.portfolio_age_},
+    };
+    std::error_code ec;
+    reply.body_["armed"] = json::object{{"path", c.armed_path()}, {"exists", std::filesystem::exists(c.armed_path(), ec)}};
+    const auto dir = account_dir(c);
+    reply.body_["state_dir"] = dir ? json::value(*dir) : json::value(nullptr);
+#if defined(_WIN32)
+    reply.body_["owner"] = nullptr;
+#else
+    const auto owner = dir ? read_owner_record(*dir) : std::nullopt;
+    reply.body_["owner"] = owner ? json::value(*owner) : json::value(nullptr);
+#endif
+    reply.body_["capabilities"] = account_capabilities<paper::PaperClient>(true);
+    const paper::Costs costs;
+    reply.body_["paper"] = json::object{
+      {"bars", c.paper_.bars_},
+      {"start", c.paper_.start_},
+      {"cash", std::to_string(c.paper_.cash_)},
+      {"costs", json::object{
+        {"commission", costs.commission_},
+        {"sell_tax", costs.sell_tax_},
+        {"slippage_ticks", costs.slippage_ticks_},
+      }},
+    };
+  }
+  reply.body_["schema_version"] = SCHEMA_VERSION;
+  reply.body_["modes"] = json::array{"paper"};
   return reply;
 }
 
