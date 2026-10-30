@@ -133,6 +133,11 @@ if(CMDATL_BUILD_TESTS)
     CMDATL_FAKE_ATLC="$<TARGET_FILE:fake-atlc>"
     CMDATL_HOLD_LOCK="$<TARGET_FILE:hold-lock>"
   )
+  # On Linux the journal's own fsync, compiled into the test from the header-only library, can be failed too.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(test-faults PRIVATE LINKER:--wrap=fsync)
+    target_compile_definitions(test-faults PRIVATE CMDATL_WRAP_FSYNC)
+  endif()
   add_test(NAME test-faults COMMAND test-faults)
   # Against a real atlc and algotradelib, named by CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX; skipped, and reported
   # as skipped, without them.

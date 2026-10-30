@@ -2,7 +2,7 @@
 // cmdatl::sys below.
 // So no translation unit sees both the inline system calls and these stand-ins.
 
-#include "./paper-support.hpp"
+#include "./order-support.hpp"
 
 #include <cmdatl/cli.hpp>
 #include <cmdatl/syscalls.hpp>
@@ -13,6 +13,7 @@
 #include <csignal>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -22,6 +23,7 @@
 
 #include <fcntl.h>
 #include <sys/param.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -48,6 +50,10 @@ struct Plan {
 inline Plan plan;
 /** @brief The kill point that raises SIGKILL, or empty. */
 inline std::string kill_at;
+/** @brief What a kill point does besides killing: the test's hook, called with the point's name. */
+inline std::function<void(const std::string&)> hook;
+/** @brief Whether the next `fsync` of the journal fails (Linux, through `--wrap=fsync`). */
+inline bool fail_journal_fsync = false;
 /** @brief How many matching calls were seen. */
 inline int seen = 0;
 /** @brief How many faults were injected. */
@@ -98,6 +104,8 @@ inline bool hit(const char* call, const std::string& file) {
 inline void clear() {
   plan = Plan{};
   kill_at.clear();
+  hook = nullptr;
+  fail_journal_fsync = false;
   seen = 0;
   injected = 0;
 }
@@ -192,10 +200,31 @@ void kill_point(const char* name) {
   if (!fault::kill_at.empty() && fault::kill_at == name) {
     std::raise(SIGKILL);
   }
+  if (fault::hook) {
+    fault::hook(name);
+  }
 }
 
 }  // namespace sys
 }  // namespace cmdatl
+
+#if defined(CMDATL_WRAP_FSYNC)
+extern "C" int __real_fsync(int fd);
+
+/**
+ * @brief The linker's stand-in for `fsync`, the library's included: fails the journal's next one when asked.
+ * @param fd The descriptor.
+ * @return As `fsync`.
+ */
+extern "C" int __wrap_fsync(int fd) {
+  if (fault::fail_journal_fsync && fault::name_of(fd) == "journal.jsonl") {
+    fault::fail_journal_fsync = false;
+    errno = EIO;
+    return -1;
+  }
+  return __real_fsync(fd);
+}
+#endif
 
 using namespace support;
 
@@ -433,4 +462,502 @@ TEST_CASE("an initialization stopped after the journal was created, or partway t
   CHECK(result.second == "unknown.journal_damaged");
   CHECK(slurp(fixture.journal()) == header.substr(0, header.size() / 2));
   CHECK(slurp(fixture.log()) == log);
+}
+
+namespace {
+
+/** @brief What a forked command left: its wait status and its reply. */
+struct Forked {
+  /** @brief The wait status. */
+  int status_{0};
+  /** @brief What it wrote to stdout, or empty when it was killed. */
+  std::string out_;
+
+  /**
+   * @brief The exit code, or -1 when it did not exit.
+   * @return The code.
+   */
+  int exit() const { return WIFEXITED(status_) ? WEXITSTATUS(status_) : -1; }
+
+  /**
+   * @brief The error code of its reply.
+   * @return The code, or empty.
+   */
+  std::string code() const {
+    if (out_.empty()) {
+      return {};
+    }
+    const auto reply = reply_of(out_);
+    const auto* error = reply.if_contains("error");
+    return error == nullptr ? std::string() : std::string(error->as_object().at("code").as_string());
+  }
+};
+
+/**
+ * @brief Runs a command line in a forked child with a hook at the kill points, and waits for it.
+ * @param fixture The account (for a scratch file the reply goes through).
+ * @param args The command line, without `--json`.
+ * @param hook The hook, called with each kill point's name in the child.
+ * @param kill_at A kill point that raises SIGKILL, or empty.
+ * @return What it left.
+ */
+Forked run_forked(
+  const PaperFixture& fixture,
+  std::vector<std::string> args,
+  const std::function<void(const std::string&)>& hook,
+  const std::string& kill_at = ""
+) {
+  args.insert(args.begin(), "--json");
+  const auto out_path = fixture.dir() / "forked.out";
+  std::filesystem::remove(out_path);
+  std::fflush(nullptr);
+  const pid_t pid = ::fork();
+  REQUIRE(pid >= 0);
+  if (pid == 0) {
+    fault::clear();
+    fault::kill_at = kill_at;
+    fault::hook = hook;
+    std::signal(SIGXFSZ, SIG_IGN);
+    struct rlimit saved{};
+    ::getrlimit(RLIMIT_FSIZE, &saved);
+    std::ostringstream out;
+    std::ostringstream err;
+    const int exit = cmdatl::run(args, out, err, false);
+    // A hook may have limited the size of every file this process writes: lifted for the reply's own file.
+    ::setrlimit(RLIMIT_FSIZE, &saved);
+    const auto text = out.str() + err.str();
+    const int fd = ::open(out_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd >= 0) {
+      (void)!::write(fd, text.data(), text.size());
+      ::close(fd);
+    }
+    ::_exit(exit);
+  }
+  Forked forked;
+  REQUIRE(::waitpid(pid, &forked.status_, 0) == pid);
+  if (std::filesystem::exists(out_path)) {
+    forked.out_ = slurp(out_path);
+  }
+  return forked;
+}
+
+/**
+ * @brief A hook that sets the file-size limit at one kill point, so the next append to a file writes nothing or only
+ *   a prefix and fails with `EFBIG`.
+ *
+ * Linux checks the limit against where an appending write lands, the file's end; macOS checks it against the
+ * descriptor's offset, which is 0 for a file opened for appending after the hook and nothing written through it yet.
+ * @param point The kill point.
+ * @param file The file.
+ * @param extra Bytes past the file's end (or past offset 0, for a descriptor not yet written) the limit allows.
+ * @param fresh Whether the descriptor the append goes through is opened after the hook.
+ * @return The hook.
+ */
+std::function<void(const std::string&)> limit_at(
+  const std::string& point,
+  const std::filesystem::path& file,
+  off_t extra,
+  bool fresh
+) {
+  return [point, file, extra, fresh](const std::string& name) {
+    if (name != point) {
+      return;
+    }
+    struct stat info{};
+    REQUIRE(::stat(file.c_str(), &info) == 0);
+#if defined(__APPLE__)
+    const off_t base = fresh ? 0 : info.st_size;
+#else
+    (void)fresh;
+    const off_t base = info.st_size;
+#endif
+    struct rlimit limit{};
+    ::getrlimit(RLIMIT_FSIZE, &limit);
+    limit.rlim_cur = static_cast<rlim_t>(base + extra);
+    ::setrlimit(RLIMIT_FSIZE, &limit);
+  };
+}
+
+/**
+ * @brief Moves an account to the first session's open, armed, and returns a plan id for 10 shares of 005930 at a limit
+ *   below the day's prices (so it rests).
+ * @param fixture The account.
+ * @param limit The limit.
+ * @return The plan id.
+ */
+std::string ready_plan(const PaperFixture& fixture, const std::string& limit = "75000") {
+  fixture.arm();
+  REQUIRE(outcome(fixture, {"clock", "advance", "--next-open"}).first == 0);
+  return plan_id(fixture, "005930", "10", limit);
+}
+
+/**
+ * @brief The journal's lines.
+ * @param fixture The account.
+ * @return The lines.
+ */
+std::vector<std::string> journal_lines(const PaperFixture& fixture) {
+  return lines_of(slurp(fixture.journal()));
+}
+
+}  // namespace
+
+TEST_CASE("a place killed after its plan was marked used: plan_used, nothing journaled or logged, a new plan works") {
+  const PaperFixture fixture;
+  const auto id = ready_plan(fixture);
+  const auto journal = slurp(fixture.journal());
+  const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, "order.before_once");
+  REQUIRE(WIFSIGNALED(forked.status_));
+  CHECK(slurp(fixture.journal()) == journal);
+  CHECK(ops_of(slurp(fixture.log()), "place").empty());
+  CHECK(ask_checked(fixture, {"order", "place", id}).code_ == "refused.plan_used");
+  const auto next = plan_id(fixture, "005930", "10", "75000");
+  CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
+}
+
+TEST_CASE("a place killed after its PENDING, before the paper line: owed unnamed, never a second order, release") {
+  const PaperFixture fixture;
+  const auto id = ready_plan(fixture);
+  const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, "send.before_input");
+  REQUIRE(WIFSIGNALED(forked.status_));
+  CHECK(ops_of(slurp(fixture.log()), "place").empty());
+  for (int round = 0; round < 2; ++round) {
+    const auto account = ask(fixture, {"account"});
+    const auto& owed = account.body_.at("owed").as_array();
+    REQUIRE(owed.size() == 1);
+    CHECK(owed[0].as_object().at("state").as_string() == "unnamed");
+    CHECK(owed[0].as_object().at("broker_status").is_null());
+    const auto plan = ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
+    CHECK(plan.exit_ == 4);
+    CHECK((plan.code_ == "unknown.unresolved" || plan.code_ == "unknown.unaccounted"));
+    CHECK(ask_checked(fixture, {"order", "cancel", "005930"}).exit_ == 4);
+    CHECK(ask_checked(fixture, {"order", "reconcile"}).exit_ == 4);
+    CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read"}).code_ == "refused.not_approved");
+  }
+  CHECK(ops_of(slurp(fixture.log()), "place").empty());
+  const auto journal_id = std::string(ask(fixture, {"account"}).body_.at("owed").as_array()[0].as_object().at("journal_id").as_string());
+  spit(fixture.dir() / "paper.release", "005930 " + journal_id + "\n");
+  CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read the order list and holdings"}).reason_ == "released");
+  CHECK(ask_checked(fixture, {"order", "reconcile"}).reason_ == "clean");
+  const auto next = plan_id(fixture, "005930", "10", "75000");
+  CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
+  CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+}
+
+TEST_CASE("a place killed after its paper line or its result: the market has it, and the next commands name it") {
+  for (const auto* point : {"send.after_input", "send.after_result"}) {
+    INFO(point);
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, point);
+    REQUIRE(WIFSIGNALED(forked.status_));
+    CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+    const auto account = ask(fixture, {"account"});
+    REQUIRE(account.body_.at("owed").as_array().size() == 1);
+    CHECK(ops_of(slurp(fixture.log()), "result").size() == 1);
+    // A limit away from the next prices keeps it listed: the plan finds the target met by it.
+    const auto plan = ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
+    INFO(boost::json::serialize(plan.body_));
+    CHECK(plan.exit_ == 0);
+    CHECK(plan.reason_ == "met");
+    const auto reconciled = ask_checked(fixture, {"order", "reconcile"});
+    CHECK(reconciled.code_ == "refused.awaiting");
+    CHECK(reconciled.body_.at("checked").as_array()[0].as_object().at("state").as_string() == "working");
+    REQUIRE(ask(fixture, {"order", "cancel", "005930"}).reason_ == "withdrawal_sent");
+    CHECK(ask_checked(fixture, {"order", "reconcile"}).reason_ == "clean");
+    CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+  }
+}
+
+TEST_CASE("a place killed after once() returned: owed, named, pending") {
+  const PaperFixture fixture;
+  const auto id = ready_plan(fixture);
+  const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, "order.after_once");
+  REQUIRE(WIFSIGNALED(forked.status_));
+  const auto owed = ask(fixture, {"account"}).body_.at("owed").as_array();
+  REQUIRE(owed.size() == 1);
+  CHECK(owed[0].as_object().at("state").as_string() == "named");
+  CHECK(owed[0].as_object().at("broker_status").as_string() == "pending");
+}
+
+TEST_CASE("an exception after a send, inside once() or after it, is unknown.internal") {
+  for (const auto* point : {"send.after_result", "order.after_once"}) {
+    INFO(point);
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const std::string at = point;
+    const auto forked = run_forked(fixture, {"order", "place", id}, [at](const std::string& name) {
+      if (name == at) {
+        throw std::runtime_error("a defect at " + at);
+      }
+    });
+    CHECK(forked.exit() == 4);
+    CHECK(forked.code() == "unknown.internal");
+    CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+    CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().size() == 1);
+  }
+}
+
+TEST_CASE("B1: the armed file removed before once(), or before the paper line, sends nothing") {
+  {
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const auto armed = fixture.armed();
+    const auto forked = run_forked(fixture, {"order", "place", id}, [armed](const std::string& name) {
+      if (name == "order.before_once") {
+        std::filesystem::remove(armed);
+      }
+    });
+    CHECK(forked.exit() == 3);
+    CHECK(forked.code() == "refused.not_armed");
+    CHECK(ops_of(slurp(fixture.log()), "place").empty());
+  }
+  {
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const auto armed = fixture.armed();
+    const auto forked = run_forked(fixture, {"order", "place", id}, [armed](const std::string& name) {
+      if (name == "send.before_input") {
+        std::filesystem::remove(armed);
+      }
+    });
+    INFO(forked.out_);
+    CHECK(forked.exit() == 3);
+    CHECK(forked.code() == "refused.not_reached");
+    CHECK(ops_of(slurp(fixture.log()), "place").empty());
+    // The journal answered the PENDING (a local refusal is journaled as REJECTED): nothing is owed.
+    CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().empty());
+    fixture.arm();
+    const auto next = plan_id(fixture, "005930", "10", "75000");
+    CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
+  }
+}
+
+TEST_CASE("B5: the journal moved aside, emptied or replaced by a copy before once(): journal_missing, none created") {
+  for (const auto* how : {"moved", "emptied", "copied"}) {
+    INFO(how);
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const auto journal = fixture.journal();
+    const std::string mode = how;
+    const auto aside = fixture.dir() / "journal.aside";
+    const auto forked = run_forked(fixture, {"order", "place", id}, [journal, mode, aside](const std::string& name) {
+      if (name != "order.before_once") {
+        return;
+      }
+      if (mode == "moved") {
+        std::filesystem::rename(journal, aside);
+      } else if (mode == "emptied") {
+        std::filesystem::resize_file(journal, 0);
+      } else {
+        std::filesystem::copy_file(journal, aside);
+        std::filesystem::rename(aside, journal);
+        std::filesystem::copy_file(journal, aside);
+      }
+    });
+    CHECK(forked.exit() == 4);
+    CHECK(forked.code() == "unknown.journal_missing");
+    CHECK(ops_of(slurp(fixture.log()), "place").empty());
+    if (mode == "moved") {
+      CHECK(!std::filesystem::exists(journal));
+    } else if (mode == "emptied") {
+      CHECK(std::filesystem::file_size(journal) == 0);
+    } else {
+      CHECK(slurp(journal) == slurp(aside));
+    }
+  }
+}
+
+TEST_CASE("the paper line not written whole is refused.not_reached; its fsync failing is unknown.indeterminate") {
+  for (const auto* mode : {"short", "zero", "fail"}) {
+    INFO(mode);
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    {
+      // The first write is the command's simulated second; the second is the place line.
+      const fault::Scoped scoped({"write", "paper.jsonl", mode, 1, 1, ENOSPC});
+      const auto result = ask(fixture, {"order", "place", id});
+      INFO(boost::json::serialize(result.body_));
+      CHECK(result.exit_ == 3);
+      CHECK(result.code_ == "refused.not_reached");
+    }
+    CHECK(ops_of(slurp(fixture.log()), "place").empty());
+    CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().empty());
+    CHECK(ops_of(slurp(fixture.log()), "place").empty());
+    const auto next = plan_id(fixture, "005930", "10", "75000");
+    CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
+  }
+  const PaperFixture fixture;
+  const auto id = ready_plan(fixture);
+  {
+    const fault::Scoped scoped({"fsync", "paper.jsonl", "fail", 1, 1, EIO});
+    const auto result = ask(fixture, {"order", "place", id});
+    CHECK(result.exit_ == 4);
+    CHECK(result.code_ == "unknown.indeterminate");
+  }
+  // The line survived: the replay applies it, and the order rests.
+  CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+  const auto reconciled = ask_checked(fixture, {"order", "reconcile"});
+  CHECK(reconciled.exit_ != 0);
+  CHECK(ask(fixture, {"order", "list"}).body_.at("orders").as_array().size() == 1);
+}
+
+TEST_CASE("the journal's PENDING failing at zero bytes or as a prefix: refused.journal_unwritable, nothing sent") {
+  {
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const auto journal = slurp(fixture.journal());
+    const auto forked = run_forked(fixture, {"order", "place", id}, limit_at("order.before_once", fixture.journal(), 0, true));
+    INFO(forked.out_);
+    CHECK(forked.exit() == 3);
+    CHECK(forked.code() == "refused.journal_unwritable");
+    CHECK(ops_of(slurp(fixture.log()), "place").empty());
+    CHECK(slurp(fixture.journal()) == journal);
+    // Nothing journaled: a new plan works.
+    const auto next = plan_id(fixture, "005930", "10", "75000");
+    CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
+  }
+  {
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const auto forked = run_forked(fixture, {"order", "place", id}, limit_at("order.before_once", fixture.journal(), 20, true));
+    INFO(forked.out_);
+    CHECK(forked.exit() == 3);
+    CHECK(forked.code() == "refused.journal_unwritable");
+    CHECK(ops_of(slurp(fixture.log()), "place").empty());
+    // The torn line: every command refuses, nothing is repaired.
+    const auto torn = slurp(fixture.journal());
+    for (int round = 0; round < 2; ++round) {
+      CHECK(ask_checked(fixture, {"account"}).code_ == "unknown.journal_damaged");
+      CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "75000"}).code_ == "unknown.journal_damaged");
+    }
+    CHECK(slurp(fixture.journal()) == torn);
+  }
+#if defined(CMDATL_WRAP_FSYNC)
+  {
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const auto forked = run_forked(fixture, {"order", "place", id}, [](const std::string& name) {
+      if (name == "order.before_once") {
+        fault::fail_journal_fsync = true;
+      }
+    });
+    CHECK(forked.exit() == 3);
+    CHECK(forked.code() == "refused.journal_unwritable");
+    CHECK(ops_of(slurp(fixture.log()), "place").empty());
+    // The PENDING is whole and unanswered: owed until the operator releases it.
+    CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().size() == 1);
+  }
+#endif
+}
+
+TEST_CASE("the journal's answer failing after the market answered: unknown.journal_write") {
+  const PaperFixture fixture;
+  const auto id = ready_plan(fixture);
+  const auto forked = run_forked(fixture, {"order", "place", id}, limit_at("send.after_result", fixture.journal(), 0, false));
+  INFO(forked.out_);
+  CHECK(forked.exit() == 4);
+  CHECK(forked.code() == "unknown.journal_write");
+  CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+  // The PENDING is unanswered and the order rests: owed, and the next plan finds it.
+  const auto owed = ask(fixture, {"account"}).body_.at("owed").as_array();
+  REQUIRE(owed.size() == 1);
+  CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"}).reason_ == "met");
+}
+
+TEST_CASE("a market-refused place whose journal answer fails: unknown.journal_write, then unresolved") {
+  ConfigParts parts;
+  parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
+  const PaperFixture fixture(parts);
+  fixture.arm();
+  REQUIRE(outcome(fixture, {"clock", "advance", "--to", "2024-03-26T08:10"}).first == 0);
+  const auto id = plan_id(fixture, "005930", "10", "78500");
+  const auto forked = run_forked(fixture, {"order", "place", id}, limit_at("send.after_result", fixture.journal(), 0, false));
+  INFO(forked.out_);
+  CHECK(forked.exit() == 4);
+  CHECK(forked.code() == "unknown.journal_write");
+  const auto plan = ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "78500"});
+  CHECK(plan.exit_ == 4);
+}
+
+TEST_CASE("a cancel killed after its paper line: canceled on replay, unresolved until the match window closes") {
+  const PaperFixture fixture;
+  const auto id = ready_plan(fixture);
+  REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
+  const auto forked = run_forked(fixture, {"order", "cancel", "005930"}, nullptr, "send.after_input");
+  REQUIRE(WIFSIGNALED(forked.status_));
+  CHECK(ops_of(slurp(fixture.log()), "cancel").size() == 1);
+  CHECK(ask(fixture, {"order", "list"}).body_.at("orders").as_array().empty());
+  const auto plan = ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
+  INFO(boost::json::serialize(plan.body_));
+  CHECK(plan.exit_ == 4);
+  REQUIRE(ask(fixture, {"clock", "advance", "--minutes", "3"}).exit_ == 0);
+  const auto reconciled = ask_checked(fixture, {"order", "reconcile"});
+  INFO(boost::json::serialize(reconciled.body_));
+  CHECK(reconciled.reason_ == "clean");
+  CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+}
+
+TEST_CASE("an interrupt before once() is 130 and sends nothing; after once() is called, the call's own reply") {
+  {
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const auto forked = run_forked(fixture, {"order", "place", id}, [](const std::string& name) {
+      if (name == "order.before_once") {
+        cmdatl::interruption = 1;
+      }
+    });
+    CHECK(forked.exit() == 130);
+    CHECK(forked.code() == "interrupted");
+    CHECK(ops_of(slurp(fixture.log()), "place").empty());
+    CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().empty());
+  }
+  for (const auto* command : {"place", "cancel"}) {
+    INFO(command);
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    if (std::string(command) == "cancel") {
+      REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
+    }
+    const auto args = std::string(command) == "place" ? std::vector<std::string>{"order", "place", id} :
+      std::vector<std::string>{"order", "cancel", "005930"};
+    const auto forked = run_forked(fixture, args, [](const std::string& name) {
+      if (name == "send.after_input") {
+        cmdatl::interruption = 1;
+      }
+    });
+    INFO(forked.out_);
+    CHECK(forked.exit() == 0);
+    CHECK(forked.code().empty());
+  }
+}
+
+TEST_CASE("the plan book's rename failing: exit 1, the plan unused, nothing sent") {
+  const PaperFixture fixture;
+  const auto id = ready_plan(fixture);
+  {
+    const fault::Scoped scoped({"rename", "plans.json", "fail", 0, 1, EIO});
+    const auto result = ask(fixture, {"order", "place", id});
+    CHECK(result.exit_ == 1);
+    CHECK(result.code_ == "file.unwritable");
+  }
+  for (const auto& entry : std::filesystem::directory_iterator(fixture.account())) {
+    CHECK(entry.path().extension() != ".tmp");
+  }
+  CHECK(ops_of(slurp(fixture.log()), "place").empty());
+  // Unused: the same plan places now (the clock moved two seconds; the plan is still fresh).
+  CHECK(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
+}
+
+TEST_CASE("the per-call second not written whole is exit 1 with nothing sent") {
+  const PaperFixture fixture;
+  const auto id = ready_plan(fixture);
+  for (const auto* call : {"write", "fsync"}) {
+    INFO(call);
+    const fault::Scoped scoped({call, "paper.jsonl", "fail", 0, 1, EIO});
+    const auto result = ask(fixture, {"order", "place", id});
+    CHECK(result.exit_ == 1);
+    CHECK(result.code_ == "file.unwritable");
+  }
+  CHECK(ops_of(slurp(fixture.log()), "place").empty());
 }
