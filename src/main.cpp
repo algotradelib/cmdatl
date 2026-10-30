@@ -31,8 +31,8 @@ static bool stdout_is_terminal() {
  * @return The exit code.
  */
 int main(int argc, char** argv) {
-  // cmdatl::run turns a command's exception into a reply; this catches only a failure outside any command (no
-  // command ran, so nothing was sent).
+  // cmdatl::run turns everything after a command starts into a reply or a minimal report with its exit code; an
+  // exception reaching here was thrown before any command started, so nothing was sent.
   try {
     const std::vector<std::string> args(argv + 1, argv + argc);
     return cmdatl::run(args, std::cout, std::cerr, stdout_is_terminal());

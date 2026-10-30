@@ -14,8 +14,59 @@
 #include <vector>
 
 #if !defined(_WIN32)
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
+
+#include <atomic>
+#include <cerrno>
+#include <new>
+
+namespace {
+
+/** @brief When above zero, the allocation that brings it to zero throws `std::bad_alloc` (a one-shot failure). */
+std::atomic<long> g_fail_allocation{0};
+
+/** @brief Fails the n-th allocation from now (1 for the next one); 0 disarms. */
+void fail_allocation(long n) {
+  g_fail_allocation.store(n);
+}
+
+}  // namespace
+
+/**
+ * @brief The test binary's operator new: the usual one, except for the allocation `fail_allocation` arms.
+ * @param size The size.
+ * @return The memory.
+ */
+void* operator new(std::size_t size) {
+  long armed = g_fail_allocation.load();
+  while (armed > 0 && !g_fail_allocation.compare_exchange_weak(armed, armed - 1)) {
+  }
+  if (armed == 1) {
+    throw std::bad_alloc();
+  }
+  if (void* memory = std::malloc(size == 0 ? 1 : size)) {
+    return memory;
+  }
+  throw std::bad_alloc();
+}
+
+/**
+ * @brief The matching operator delete.
+ * @param memory The memory.
+ */
+void operator delete(void* memory) noexcept {
+  std::free(memory);
+}
+
+/**
+ * @brief The matching sized operator delete.
+ * @param memory The memory.
+ */
+void operator delete(void* memory, std::size_t) noexcept {
+  std::free(memory);
+}
 
 namespace {
 
@@ -691,3 +742,101 @@ TEST_CASE("an exception in a command becomes a reply: unknown if it may have sen
   CHECK(code_of(send.out_) == "unknown.internal");
   CHECK(cmdatl::check_table(table).empty());
 }
+
+namespace {
+
+/** @brief A stream buffer that refuses every write, as a closed pipe or a full disk would. */
+class RefusingBuffer : public std::streambuf {
+protected:
+  /**
+   * @brief Refuses a character.
+   * @return End of file.
+   */
+  int_type overflow(int_type) override { return traits_type::eof(); }
+};
+
+/**
+ * @brief A table of one sending command that returns an unknown outcome and can arm an allocation failure first.
+ * @param ran Counts the runs.
+ * @param fail_after_return Arms a failure of the next allocation after the handler returns, when true.
+ * @return The table.
+ */
+cmdatl::Table outcome_table(const std::shared_ptr<int>& ran, bool fail_after_return) {
+  std::vector<cmdatl::Command> commands;
+  commands.push_back(
+    cmdatl::make_command({"send"}, "Trade", "sends, outcome unknown")
+      .alias({"old", "send"})
+      .example("cmdatl send")
+      .returns("order", "the order")
+      .exits(cmdatl::SEND_EXITS)
+      .sends()
+      .runs([ran, fail_after_return](const cmdatl::Invocation&, const cmdatl::Table&, cmdatl::Output&) {
+        ++*ran;
+        auto reply = cmdatl::error_reply(cmdatl::Exit::UNKNOWN, "unknown.no_reply", "no reply", "reconcile");
+        reply.body_["order"] = "o1";
+        if (fail_after_return) {
+          fail_allocation(1);
+        }
+        return reply;
+      })
+  );
+  return cmdatl::Table(std::move(commands));
+}
+
+}  // namespace
+
+TEST_CASE("after a sending command ran, a failure to report keeps exit 4") {
+  const auto ran = std::make_shared<int>(0);
+  for (const auto& args : std::vector<std::vector<std::string>>{{"send"}, {"old", "send"}}) {
+    const auto table = outcome_table(ran, true);
+    std::ostringstream out;
+    std::ostringstream err;
+    const auto exit = cmdatl::run(args, out, err, false, table);
+    fail_allocation(0);
+    CHECK(exit == 4);
+  }
+  CHECK(*ran == 2);
+  const auto table = outcome_table(ran, false);
+  RefusingBuffer refusing;
+  std::ostream broken(&refusing);
+  broken.exceptions(std::ios::badbit);
+  std::ostringstream err;
+  CHECK(cmdatl::run({"send"}, broken, err, false, table) == 4);
+  CHECK(err.str().find("outcome is unknown") != std::string::npos);
+  CHECK(*ran == 3);
+}
+
+#if !defined(_WIN32)
+TEST_CASE("an allocation failing anywhere in a process probe leaks no descriptor and leaves no child") {
+  const auto open_fds = [] {
+    int n = 0;
+    for (const auto& entry : std::filesystem::directory_iterator("/dev/fd")) {
+      (void)entry;
+      ++n;
+    }
+    return n;
+  };
+  const std::vector<std::string> argv{"/bin/echo", std::string(256, 'x')};
+  const int before = open_fds();
+  int threw = 0;
+  for (long n = 1; n <= 12; ++n) {
+    fail_allocation(n);
+    try {
+      (void)cmdatl::capture(argv);
+    } catch (const std::bad_alloc&) {
+      ++threw;
+    }
+    fail_allocation(0);
+    INFO("allocation " << n);
+    CHECK(open_fds() == before);
+    errno = 0;
+    CHECK(::waitpid(-1, nullptr, WNOHANG) == -1);
+    CHECK(errno == ECHILD);
+  }
+  CHECK(threw > 0);
+  const auto normal = cmdatl::capture(argv);
+  REQUIRE(normal);
+  CHECK(normal->size() == 257);
+  CHECK(open_fds() == before);
+}
+#endif

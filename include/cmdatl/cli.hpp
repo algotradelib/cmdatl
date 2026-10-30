@@ -297,6 +297,28 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
 }
 
 /**
+ * @brief The last resort after a command ran and its reply could not be written: one fixed line on stderr, written
+ *   without allocating, and the exit code that does not overstate what is known.
+ * @param err stderr.
+ * @param may_send Whether the command may have sent.
+ * @return 4 (unknown: reconcile first) for a command that may have sent, 1 otherwise.
+ */
+inline int report_lost_outcome(std::ostream& err, bool may_send) noexcept {
+  try {
+    if (may_send) {
+      err << "cmdatl: the command ran but its reply could not be written; its outcome is unknown: ";
+      err << "run cmdatl order reconcile before anything else\n";
+    } else {
+      err << "cmdatl: the command ran but its reply could not be written\n";
+    }
+    err.flush();
+  } catch (...) {
+    // stderr itself failed: there is nowhere left to report to, and the exit code below still says what is known.
+  }
+  return may_send ? static_cast<int>(Exit::UNKNOWN) : static_cast<int>(Exit::FAILED);
+}
+
+/**
  * @brief Runs one command line against a table of commands and writes its reply.
  * @param args The command line, without the program's name.
  * @param out stdout: replies, help, and failures in JSON.
@@ -344,23 +366,29 @@ inline int run(
   // An account command's environment comes from the account it reads (branch 3); until then, offline.
   const auto env = command.env_ == "account" ? std::string("offline") : command.env_;
   Output output(out, err, rendering, env);
-  Reply reply;
+  // From here the command may act: nothing below may let an exception reach main, whose fallback says nothing was
+  // sent. A failure to report the outcome is reported as a minimal line and, for a command that may send, exit 4.
   try {
-    reply = command.run_(prepared.invocation_, table, output);
-  } catch (const std::exception& e) {
-    // A command that may have sent cannot say nothing was sent: unknown, and reconcile first.
-    reply = command.may_send_ ?
-      error_reply(Exit::UNKNOWN, "unknown.internal", e.what(), "cmdatl order reconcile, then report the defect") :
-      error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line");
+    Reply reply;
+    try {
+      reply = command.run_(prepared.invocation_, table, output);
+    } catch (const std::exception& e) {
+      // A command that may have sent cannot say nothing was sent: unknown, and reconcile first.
+      reply = command.may_send_ ?
+        error_reply(Exit::UNKNOWN, "unknown.internal", e.what(), "cmdatl order reconcile, then report the defect") :
+        error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line");
+    } catch (...) {
+      reply = command.may_send_ ?
+        error_reply(Exit::UNKNOWN, "unknown.internal", "an unknown exception", "cmdatl order reconcile") :
+        error_reply(Exit::FAILED, "internal.error", "an unknown exception", "report the defect with the command line");
+    }
+    if (prepared.found_.alias_) {
+      reply.body_["note"] = "cmdatl " + join(*prepared.found_.alias_) + " is now cmdatl " + join(command.path_);
+    }
+    return static_cast<int>(output.finish(reply));
   } catch (...) {
-    reply = command.may_send_ ?
-      error_reply(Exit::UNKNOWN, "unknown.internal", "an unknown exception", "cmdatl order reconcile") :
-      error_reply(Exit::FAILED, "internal.error", "an unknown exception", "report the defect with the command line");
+    return report_lost_outcome(err, command.may_send_);
   }
-  if (prepared.found_.alias_) {
-    reply.body_["note"] = "cmdatl " + join(*prepared.found_.alias_) + " is now cmdatl " + join(command.path_);
-  }
-  return static_cast<int>(output.finish(reply));
 }
 
 /**

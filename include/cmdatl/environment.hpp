@@ -14,6 +14,7 @@
 
 #if !defined(_WIN32)
 #include <fcntl.h>
+#include <signal.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -96,11 +97,126 @@ inline std::optional<std::string> find_on_path(const std::string& name) {
   return std::nullopt;
 }
 
+#if !defined(_WIN32)
+/** @brief A file descriptor, closed when its owner goes, on every path, an exception's included. */
+class ScopedFd {
+public:
+  /**
+   * @brief Takes a descriptor.
+   * @param fd The descriptor, or -1 for none.
+   */
+  explicit ScopedFd(int fd = -1) noexcept
+  : fd_(fd) {}
+
+  ScopedFd(const ScopedFd&) = delete;
+  ScopedFd& operator=(const ScopedFd&) = delete;
+
+  /** @brief Closes the descriptor, if any. */
+  ~ScopedFd() { reset(); }
+
+  /**
+   * @brief The descriptor.
+   * @return It, or -1.
+   */
+  int get() const noexcept { return fd_; }
+
+  /** @brief Closes the descriptor now. */
+  void reset() noexcept {
+    if (fd_ >= 0) {
+      ::close(fd_);
+      fd_ = -1;
+    }
+  }
+
+private:
+  int fd_;
+};
+
+/** @brief `posix_spawn_file_actions_t`, destroyed when its owner goes if it was initialized. */
+class ScopedSpawnActions {
+public:
+  /** @brief Initializes the actions; `ok()` says whether that worked. */
+  ScopedSpawnActions() noexcept
+  : ok_(posix_spawn_file_actions_init(&actions_) == 0) {}
+
+  ScopedSpawnActions(const ScopedSpawnActions&) = delete;
+  ScopedSpawnActions& operator=(const ScopedSpawnActions&) = delete;
+
+  /** @brief Destroys the actions, only if they were initialized. */
+  ~ScopedSpawnActions() {
+    if (ok_) {
+      posix_spawn_file_actions_destroy(&actions_);
+    }
+  }
+
+  /**
+   * @brief Whether the actions were initialized.
+   * @return Whether they were.
+   */
+  bool ok() const noexcept { return ok_; }
+
+  /**
+   * @brief The actions.
+   * @return A pointer to them.
+   */
+  posix_spawn_file_actions_t* get() noexcept { return &actions_; }
+
+private:
+  posix_spawn_file_actions_t actions_{};
+  bool ok_;
+};
+
+/**
+ * @brief A spawned child that is always reaped: waited for normally, or, when its owner goes first (an exception
+ *   while reading its output), killed and then waited for, so it never blocks on a full pipe or stays a zombie.
+ */
+class ReapedChild {
+public:
+  /**
+   * @brief Takes a spawned child.
+   * @param pid The child's process id.
+   */
+  explicit ReapedChild(pid_t pid) noexcept
+  : pid_(pid) {}
+
+  ReapedChild(const ReapedChild&) = delete;
+  ReapedChild& operator=(const ReapedChild&) = delete;
+
+  /** @brief Kills and reaps the child if it was not waited for. */
+  ~ReapedChild() {
+    if (pid_ > 0) {
+      ::kill(pid_, SIGKILL);
+      int status = 0;
+      while (::waitpid(pid_, &status, 0) < 0 && errno == EINTR) {
+      }
+    }
+  }
+
+  /**
+   * @brief Waits for the child to end.
+   * @return Whether it exited with status 0.
+   */
+  bool wait() noexcept {
+    int status = 0;
+    pid_t waited = 0;
+    do {
+      waited = ::waitpid(pid_, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    pid_ = -1;
+    return waited >= 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  }
+
+private:
+  pid_t pid_;
+};
+#endif
+
 /**
  * @brief Runs a program with arguments, no shell, and returns what it printed on stdout.
  *
  * Only for short probes such as `atlc --version`: there is no time limit, and a failure to run and a failing exit
- * read alike. Never use it for a command whose outcome must be known (a send).
+ * read alike. Never use it for a command whose outcome must be known (a send). Every descriptor, the spawn actions
+ * and the child are owned, so an exception (an allocation failing) leaks none of them.
  *
  * @param argv The program (a path) and its arguments.
  * @return The output, or nothing when it could not run or exited with an error.
@@ -110,62 +226,57 @@ inline std::optional<std::string> capture(const std::vector<std::string>& argv) 
   (void)argv;
   return std::nullopt;
 #else
-  int raw[2];
-  if (::pipe(raw) != 0) {
+  if (argv.empty()) {
     return std::nullopt;
   }
-  // Move both ends above the standard descriptors, so the child's dup2 onto stdout cannot close its own pipe end.
-  const int read_fd = ::fcntl(raw[0], F_DUPFD_CLOEXEC, 3);
-  const int write_fd = ::fcntl(raw[1], F_DUPFD_CLOEXEC, 3);
-  ::close(raw[0]);
-  ::close(raw[1]);
-  if (read_fd < 0 || write_fd < 0) {
-    if (read_fd >= 0) {
-      ::close(read_fd);
-    }
-    if (write_fd >= 0) {
-      ::close(write_fd);
-    }
-    return std::nullopt;
-  }
-  posix_spawn_file_actions_t actions{};
-  const bool initialized = posix_spawn_file_actions_init(&actions) == 0;
-  const bool ready = initialized && posix_spawn_file_actions_adddup2(&actions, write_fd, STDOUT_FILENO) == 0;
+  // Everything that allocates before any resource is taken.
   std::vector<char*> args;
+  args.reserve(argv.size() + 1);
   for (const auto& arg : argv) {
     args.push_back(const_cast<char*>(arg.c_str()));
   }
   args.push_back(nullptr);
-  pid_t pid = 0;
-  const int spawned = ready ? posix_spawn(&pid, args[0], &actions, nullptr, args.data(), environ) : -1;
-  if (initialized) {
-    posix_spawn_file_actions_destroy(&actions);
-  }
-  ::close(write_fd);
-  std::string out;
-  if (spawned == 0) {
-    char buffer[4096];
-    while (true) {
-      const auto n = ::read(read_fd, buffer, sizeof(buffer));
-      if (n > 0) {
-        out.append(buffer, static_cast<std::size_t>(n));
-      } else if (n < 0 && errno == EINTR) {
-        continue;
-      } else {
-        break;
-      }
-    }
-  }
-  ::close(read_fd);
-  if (spawned != 0) {
+  int raw[2];
+  if (::pipe(raw) != 0) {
     return std::nullopt;
   }
-  int status = 0;
-  pid_t waited = 0;
-  do {
-    waited = ::waitpid(pid, &status, 0);
-  } while (waited < 0 && errno == EINTR);
-  if (waited < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+  // Move both ends above the standard descriptors, so the child's dup2 onto stdout cannot close its own pipe end,
+  // and close the originals at once: an open copy of the write end would keep the read below from ever ending.
+  ScopedFd raw_read(raw[0]);
+  ScopedFd raw_write(raw[1]);
+  ScopedFd read_fd(::fcntl(raw_read.get(), F_DUPFD_CLOEXEC, 3));
+  ScopedFd write_fd(::fcntl(raw_write.get(), F_DUPFD_CLOEXEC, 3));
+  raw_read.reset();
+  raw_write.reset();
+  if (read_fd.get() < 0 || write_fd.get() < 0) {
+    return std::nullopt;
+  }
+  pid_t pid = 0;
+  {
+    ScopedSpawnActions actions;
+    if (!actions.ok() || posix_spawn_file_actions_adddup2(actions.get(), write_fd.get(), STDOUT_FILENO) != 0) {
+      return std::nullopt;
+    }
+    if (posix_spawn(&pid, args[0], actions.get(), nullptr, args.data(), environ) != 0) {
+      return std::nullopt;
+    }
+  }
+  ReapedChild child(pid);
+  write_fd.reset();
+  std::string out;
+  char buffer[4096];
+  while (true) {
+    const auto n = ::read(read_fd.get(), buffer, sizeof(buffer));
+    if (n > 0) {
+      out.append(buffer, static_cast<std::size_t>(n));
+    } else if (n < 0 && errno == EINTR) {
+      continue;
+    } else {
+      break;
+    }
+  }
+  read_fd.reset();
+  if (!child.wait()) {
     return std::nullopt;
   }
   return out;
