@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -559,6 +560,101 @@ TEST_CASE("a journal not established leaves the paper log unrepaired and writes 
     CHECK(slurp(fixture.log()) == placed);
     CHECK(slurp(fixture.journal()) == good);
     CHECK(slurp(owner) != record);
+  }
+}
+
+namespace {
+
+/**
+ * @brief An operator-only placement line with its `at` replaced and no `at_text`, its checksum made again by the
+ *   library's own helpers.
+ * @param at The microseconds `at` states.
+ * @return The line.
+ */
+std::string operator_only_line(std::int64_t at) {
+  auto entry = place_entry("op1", runner::JournalOutcome::PENDING, kst("2024-03-26T09:00"));
+  entry.requires_operator_ = true;
+  entry.scope_ = SCOPE;
+  auto line = runner::journal_entry_to_line(entry);
+  line = line.substr(0, line.size() - runner::journal_detail::kChecksumSuffixSize) + "}";
+  auto row = boost::json::parse(line).as_object();
+  row["at"] = at;
+  row.erase("at_text");
+  line = boost::json::serialize(row);
+  const auto checksum = runner::journal_detail::checksum_text(runner::journal_detail::line_checksum(line));
+  line.pop_back();
+  line += std::string(runner::journal_detail::kChecksumMember) + checksum + "\"}";
+  REQUIRE(runner::journal_entry_from_line(line).has_value());
+  return line;
+}
+
+}  // namespace
+
+TEST_CASE("an operator-only line at an instant outside the interval makes the count unknown, never an overflow") {
+  const PaperFixture fixture;
+  fixture.arm();
+  initialize(fixture);
+  const auto good = slurp(fixture.journal());
+  const auto log = slurp(fixture.log());
+  const auto micros = [](paper::Clock::time_point at) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(at.time_since_epoch()).count();
+  };
+  const std::vector<std::pair<const char*, std::int64_t>> extreme{
+    {"INT64_MAX", std::numeric_limits<std::int64_t>::max()},
+    {"INT64_MIN", std::numeric_limits<std::int64_t>::min()},
+    {"-1", -1},
+    {"just before 1990 KST", micros(paper::first_instant()) - 1},
+    {"2101 KST", micros(paper::end_instant())},
+  };
+  for (const auto& c : extreme) {
+    INFO(c.first);
+    const auto text = good + operator_only_line(c.second) + "\n";
+    spit(fixture.journal(), text);
+    for (const char* command : {"status", "account"}) {
+      const auto ran = fixture.json({command});
+      CHECK(ran.exit_ == 4);
+      CHECK(code_of(ran.out_) == "unknown.journal_damaged");
+      CHECK(ran.out_.find("outside 1990 to 2100") != std::string::npos);
+      CHECK(reply_of(ran.out_).at("orders_left_today").is_null());
+    }
+    CHECK(slurp(fixture.journal()) == text);
+    CHECK(slurp(fixture.log()) == log);
+  }
+  // A salvaged line at the epoch is no placement on any date: not counted, never an error of its own.
+  {
+    cmdatl::JournalView view;
+    auto replay = runner::read_journal_file(fixture.journal().string());
+    replay.entries_.clear();
+    auto salvaged = place_entry("s~damaged", runner::JournalOutcome::ACCEPTED, paper::Clock::time_point{});
+    salvaged.requires_operator_ = true;
+    auto counted = place_entry("c1", runner::JournalOutcome::ACCEPTED, kst("2024-03-25T10:00"));
+    auto far = place_entry("x1", runner::JournalOutcome::ACCEPTED, paper::Clock::time_point::max());
+    far.requires_operator_ = true;
+    const auto opened = open_account();
+    REQUIRE(opened->account_);
+    auto& desk = opened->account_->desk();
+    const auto today = paper::kst_day(desk.now());
+    replay.entries_ = {counted};
+    const auto alone = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
+    CHECK(alone.placed_today_ == 1);
+    replay.entries_ = {salvaged, counted};
+    view = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
+    CHECK(view.placed_today_ == 1);
+    CHECK(view.intact_ == alone.intact_);
+    replay.entries_ = {salvaged, counted, far};
+    view = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
+    CHECK(!view.intact_);
+    CHECK(view.placed_today_ == 1);
+    CHECK(!cmdatl::orders_left(opened->snapshot_.config_.value(), view));
+  }
+  {
+    const auto text = good + operator_only_line(0) + "\n";
+    spit(fixture.journal(), text);
+    const auto ran = fixture.json({"status"});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 0);
+    CHECK(slurp(fixture.journal()) == text);
+    CHECK(slurp(fixture.log()) == log);
   }
 }
 

@@ -151,7 +151,8 @@ inline void check_ownership(const algotradelib::runner::JournalReplay& replay, c
  * @param replay The journal, read once.
  * @param scope The account's scope.
  * @param today The KST date to count placements on, as days from 1970-01-01.
- * @return The view.
+ * @return The view; not intact when a placement's instant is outside the supported interval, as its date is then
+ *   unknown (a salvaged operator-only line at the epoch is not counted at all).
  */
 template <typename Session>
 JournalView journal_view(
@@ -195,6 +196,18 @@ JournalView journal_view(
   std::map<std::string, std::chrono::system_clock::time_point> first_line;
   for (const auto& entry : replay.entries_) {
     if (entry.action_ != atl::runner::JournalAction::PLACE || entry.id_.empty()) {
+      continue;
+    }
+    if (entry.requires_operator_ && entry.recorded_at_ == std::chrono::system_clock::time_point{}) {
+      // A salvaged operator-only line records the epoch because it has no time: no date to count it on.
+      continue;
+    }
+    if (!paper::in_interval(entry.recorded_at_)) {
+      // The library does not bound an operator-only line's instant; one outside the interval gives no KST date.
+      if (view.intact_) {
+        view.intact_ = false;
+        view.detail_ = "the journal's entry " + entry.id_ + " was written at an instant outside 1990 to 2100";
+      }
       continue;
     }
     const auto found = first_line.find(entry.id_);
