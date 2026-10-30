@@ -336,16 +336,22 @@ inline int run(
 ) {
   const auto prepared = prepare(args, table, terminal);
   const auto& rendering = prepared.globals_.rendering_;
+  // Before any command starts nothing can have been sent, so a reply that could not be written is a plain failure.
+  const auto written = [](std::ostream& stream, int exit) {
+    stream.flush();
+    return stream ? exit : static_cast<int>(Exit::FAILED);
+  };
   const auto write = [&](const Reply& reply, const std::string& env) {
-    return static_cast<int>(write_reply(stream_for(reply, rendering, out, err), reply, rendering, env));
+    auto& stream = stream_for(reply, rendering, out, err);
+    return written(stream, static_cast<int>(write_reply(stream, reply, rendering, env)));
   };
   switch (prepared.action_) {
     case Prepared::Action::VERSION:
       out << "cmdatl " << CMDATL_VERSION << "\n";
-      return 0;
+      return written(out, 0);
     case Prepared::Action::HELP:
       write_help_for(out, table, prepared.words_);
-      return 0;
+      return written(out, 0);
     case Prepared::Action::REFUSE:
       if (!prepared.refusal_) {
         return write(error_reply(Exit::FAILED, "internal.error", "a refusal without a reason"), "offline");

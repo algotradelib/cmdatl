@@ -755,6 +755,51 @@ protected:
   int_type overflow(int_type) override { return traits_type::eof(); }
 };
 
+/** @brief A stream buffer that takes every write but fails when flushed, as a buffered pipe that broke would. */
+class FailingFlushBuffer : public std::stringbuf {
+protected:
+  /**
+   * @brief Fails the flush.
+   * @return -1.
+   */
+  int sync() override { return -1; }
+};
+
+/**
+ * @brief A table of one sending command that places an order successfully, and one reader.
+ * @param ran Counts the runs.
+ * @return The table.
+ */
+cmdatl::Table placing_table(const std::shared_ptr<int>& ran) {
+  std::vector<cmdatl::Command> commands;
+  commands.push_back(
+    cmdatl::make_command({"place"}, "Trade", "places an order")
+      .example("cmdatl place")
+      .returns("order", "the order")
+      .exits(cmdatl::SEND_EXITS)
+      .sends()
+      .runs([ran](const cmdatl::Invocation&, const cmdatl::Table&, cmdatl::Output&) {
+        ++*ran;
+        cmdatl::Reply reply;
+        reply.body_["result"] = "placed";
+        reply.body_["order"] = "o7";
+        return reply;
+      })
+  );
+  commands.push_back(
+    cmdatl::make_command({"read"}, "Read", "reads")
+      .example("cmdatl read")
+      .returns("x", "x")
+      .exits(cmdatl::READ_EXITS)
+      .runs([](const cmdatl::Invocation&, const cmdatl::Table&, cmdatl::Output&) {
+        cmdatl::Reply reply;
+        reply.body_["x"] = 1;
+        return reply;
+      })
+  );
+  return cmdatl::Table(std::move(commands));
+}
+
 /**
  * @brief A table of one sending command that returns an unknown outcome and can arm an allocation failure first.
  * @param ran Counts the runs.
@@ -840,3 +885,31 @@ TEST_CASE("an allocation failing anywhere in a process probe leaks no descriptor
   CHECK(open_fds() == before);
 }
 #endif
+
+TEST_CASE("a successful send whose reply is lost silently, or at the flush, still exits 4") {
+  const auto ran = std::make_shared<int>(0);
+  const auto table = placing_table(ran);
+  for (const auto* format : {"json", "jsonl", "text"}) {
+    INFO(format);
+    RefusingBuffer refusing;
+    std::ostream refused(&refusing);
+    std::ostringstream err;
+    CHECK(cmdatl::run({"--format", format, "place"}, refused, err, false, table) == 4);
+    CHECK(err.str().find("outcome is unknown") != std::string::npos);
+    FailingFlushBuffer flushing;
+    std::ostream deferred(&flushing);
+    std::ostringstream err2;
+    CHECK(cmdatl::run({"--format", format, "place"}, deferred, err2, false, table) == 4);
+    CHECK(err2.str().find("outcome is unknown") != std::string::npos);
+    RefusingBuffer refusing_read;
+    std::ostream read_out(&refusing_read);
+    std::ostringstream err3;
+    CHECK(cmdatl::run({"--format", format, "read"}, read_out, err3, false, table) == 1);
+  }
+  CHECK(*ran == 6);
+  RefusingBuffer refusing;
+  std::ostream refused(&refusing);
+  std::ostringstream err;
+  CHECK(cmdatl::run({"--help"}, refused, err, false, table) == 1);
+  CHECK(cmdatl::run({"--version"}, refused, err, false, table) == 1);
+}

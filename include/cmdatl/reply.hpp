@@ -8,6 +8,7 @@
 #include <optional>
 #include <ostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -421,6 +422,18 @@ inline std::ostream& stream_for(const Reply& reply, const Rendering& rendering, 
   return is_failure(reply) && rendering.format_ == Format::TEXT ? err : out;
 }
 
+/**
+ * @brief Flushes a stream and throws when anything written to it was lost: a stream that does not throw by itself
+ *   (`std::cout`) reports a failed write only through its state, and a buffered failure only when flushed.
+ * @param stream The stream.
+ */
+inline void require_written(std::ostream& stream) {
+  stream.flush();
+  if (!stream) {
+    throw std::runtime_error("the reply could not be written");
+  }
+}
+
 /** @brief Where a command writes: its final reply, and, for a stream, one event at a time before it. */
 class Output {
 public:
@@ -437,6 +450,7 @@ public:
   /**
    * @brief Writes one event of a stream at once (a JSON line, or a text line on a terminal), flushed.
    * @param event The event; it should carry `event` (its kind) and `at` (its time).
+   * @throws std::runtime_error When the event could not be written.
    */
   void emit(const json::object& event) {
     Reply line;
@@ -444,16 +458,20 @@ public:
     auto rendering = rendering_;
     rendering.value_.reset();
     write_reply(out_, line, rendering, env_);
-    out_.flush();
+    require_written(out_);
   }
 
   /**
-   * @brief Writes the command's final reply.
+   * @brief Writes the command's final reply, flushed.
    * @param reply The reply.
    * @return The exit code.
+   * @throws std::runtime_error When the reply could not be written (`run` turns that into its last resort).
    */
   Exit finish(const Reply& reply) {
-    return write_reply(stream_for(reply, rendering_, out_, err_), reply, rendering_, env_);
+    auto& stream = stream_for(reply, rendering_, out_, err_);
+    const auto exit = write_reply(stream, reply, rendering_, env_);
+    require_written(stream);
+    return exit;
   }
 
   /**
