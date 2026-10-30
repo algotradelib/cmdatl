@@ -519,9 +519,10 @@ public:
     auto& fd = from_err ? err_ : out_;
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
     while (buffer.find('\n') == std::string::npos) {
-      if (fd.get() < 0 || std::chrono::steady_clock::now() > until || !read_some(fd, buffer, 100)) {
+      if (fd.get() < 0 || std::chrono::steady_clock::now() > until) {
         return std::nullopt;
       }
+      read_some(fd, buffer, 100);
     }
     const auto end = buffer.find('\n');
     auto out = buffer.substr(0, end);
