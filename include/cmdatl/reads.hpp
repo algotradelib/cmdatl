@@ -316,7 +316,8 @@ Reply account_reply(const Invocation& invocation, Account& account, Desk& desk, 
 }
 
 /**
- * @brief `cmdatl quote SYMBOL...`: one row per symbol; a symbol with no rows in the bars answers `quote.no_data`.
+ * @brief `cmdatl quote SYMBOL...`: one row per symbol; a symbol with no rows in the bars answers `quote.no_data`,
+ *   or `unknown.journal_damaged` naming it when the journal is not intact.
  * @tparam Desk The desk type.
  * @param invocation The arguments.
  * @param account The account.
@@ -339,6 +340,14 @@ Reply quote_reply(const Invocation& invocation, Account& account, Desk& desk, Ou
     std::string names;
     for (const auto& symbol : missing) {
       names += (names.empty() ? "" : ", ") + symbol;
+    }
+    if (!account.journal_intact()) {
+      // The journal's unknown state comes first; the missing symbols stay in its message, and no quote is given.
+      auto reply = account.journal_damaged_reply();
+      auto& error = reply.body_["error"].as_object();
+      error["message"] =
+        std::string(error["message"].as_string()) + "; the paper market's bars have no rows for " + names;
+      return reply;
     }
     return error_reply(
       Exit::FAILED,

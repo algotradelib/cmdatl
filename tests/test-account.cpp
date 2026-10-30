@@ -462,6 +462,13 @@ TEST_CASE("a journal that is not this account's, or damaged, makes every account
     const auto quote = reply_of(fixture.json({"quote", "005930"}).out_);
     CHECK(quote.at("error").as_object().at("code").as_string() == "unknown.journal_damaged");
     CHECK(!quote.at("quotes").as_array()[0].as_object().at("orders_accepted_now").as_bool());
+    // A symbol without bars: the journal's unknown state first, the symbol named, no partial quotes.
+    const auto missing = fixture.json({"quote", "005930", "MISSING"});
+    CHECK(missing.exit_ == 4);
+    const auto missing_reply = reply_of(missing.out_);
+    CHECK(missing_reply.at("error").as_object().at("code").as_string() == "unknown.journal_damaged");
+    CHECK(std::string(missing_reply.at("error").as_object().at("message").as_string()).find("MISSING") != std::string::npos);
+    CHECK(!missing_reply.contains("quotes"));
     const auto advance = fixture.json({"clock", "advance", "--minutes", "5"});
     CHECK(advance.exit_ == 4);
     CHECK(code_of(advance.out_) == "unknown.journal_damaged");
