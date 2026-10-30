@@ -390,7 +390,9 @@ TEST_CASE("the journal's view: today's placements, what is owed, and what the ma
   CHECK(row("j1").at("broker_status").as_string() == "pending");
   CHECK(row("j2").at("state").as_string() == "unnamed");
   CHECK(row("j2").at("broker_status").is_null());
-  CHECK(row("j2").at("next").as_string() == cmdatl::OWED_NEXT);
+  CHECK(row("j2").at("next").as_string() == cmdatl::owed_next("000660", "unnamed", std::nullopt));
+  CHECK(row("j2").at("next").as_string().find("cmdatl order release 000660") != std::string::npos);
+  CHECK(row("j1").at("next").as_string().find("cmdatl order cancel 005930") != std::string::npos);
   // Listing them settles nothing: the journal is byte for byte what it was.
   const auto journal_text = slurp(fixture.journal());
   reply(fixture, {"status"});
@@ -1069,7 +1071,7 @@ TEST_CASE("the account directory read-only, a file size limit, descriptors exhau
     CHECK(fixture.json({"status"}).exit_ == 0);
   }
 }
-TEST_CASE("the table: the commands that work, the one that changes the account, and the errors they declare") {
+TEST_CASE("the table: the commands that work, the ones that change the account, and the errors they declare") {
   const cmdatl::Table table(cmdatl::command_list());
   std::vector<std::string> available;
   std::vector<std::string> mutating;
@@ -1080,17 +1082,19 @@ TEST_CASE("the table: the commands that work, the one that changes the account, 
     if (command.mutates_) {
       mutating.push_back(cmdatl::join(command.path_));
     }
-    // Nothing in this version sends.
-    CHECK((!command.available_ || !command.may_send_));
+    // Only order place and order cancel send.
+    const auto name = cmdatl::join(command.path_);
+    CHECK((!command.available_ || !command.may_send_ || name == "order place" || name == "order cancel"));
   }
   std::sort(available.begin(), available.end());
+  std::sort(mutating.begin(), mutating.end());
   const std::vector<std::string> expected{
-    "account", "clock", "clock advance", "env", "help", "order list", "quote", "schema", "status", "strategy backtest",
-    "strategy new",
+    "account", "clock", "clock advance", "env", "help", "order cancel", "order list", "order place", "order plan",
+    "order reconcile", "order release", "quote", "schema", "status", "strategy backtest", "strategy new",
   };
   CHECK(available == expected);
-  CHECK(mutating == std::vector<std::string>{"clock advance"});
-  CHECK(cmdatl::SCHEMA_VERSION == 3);
+  CHECK(mutating == std::vector<std::string>{"clock advance", "order release"});
+  CHECK(cmdatl::SCHEMA_VERSION == 4);
   CHECK(declares({"clock", "advance"}, 4, "unknown.internal"));
   CHECK(!declares({"clock"}, 4, "unknown.internal"));
   const auto entry = reply_of(run({"schema", "clock.advance"}).out_).at("commands").as_array()[0].as_object();
