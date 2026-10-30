@@ -105,17 +105,20 @@ if(CMDATL_BUILD_TESTS)
   endif()
   # A stand-in for atlc whose behaviour each test writes in a script.
   add_executable(fake-atlc tests/fake-atlc.cpp)
+  # Holds an account's lock, as another cmdatl process would.
+  add_executable(hold-lock tests/hold-lock.cpp)
   add_executable(test-cli
     tests/test-cli.cpp tests/test-process.cpp tests/test-strategy.cpp tests/test-acceptance.cpp tests/test-operator.cpp
-    tests/test-paper.cpp
+    tests/test-account.cpp tests/test-paper.cpp
   )
   target_link_libraries(test-cli PRIVATE cmdatl_core Catch2::Catch2WithMain)
-  add_dependencies(test-cli cmdatl fake-atlc)
+  add_dependencies(test-cli cmdatl fake-atlc hold-lock)
   # The documentation check reads README.md and docs/ from the source tree; the process tests run cmdatl itself.
   target_compile_definitions(test-cli PRIVATE
     CMDATL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     CMDATL_BINARY="$<TARGET_FILE:cmdatl>"
     CMDATL_FAKE_ATLC="$<TARGET_FILE:fake-atlc>"
+    CMDATL_HOLD_LOCK="$<TARGET_FILE:hold-lock>"
   )
   add_test(NAME test-cli COMMAND test-cli "~[acceptance]")
   # Against a real atlc and algotradelib, named by CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX; skipped, and reported

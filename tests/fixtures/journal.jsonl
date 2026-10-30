@@ -1,0 +1,2 @@
+{"journal":"algotradelib-order-journal","version":1,"scope":"paper:paper:paper-0001","integrity":"crc32"}
+{"id":"j1","action":"place","outcome":"pending","country":"KR","venue":"COMBINED","symbol":"005930","side":"BUY","type":"LIMIT","time_in_force":"DAY","session":"REGULAR","route":"UNSPECIFIED","quantity":"10","price":"78000","baseline":"0","at":1711411200000000,"at_text":"2024-03-26T00:00:00Z","scope":"paper:paper:paper-0001","crc":"2f5c689d"}
