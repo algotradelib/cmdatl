@@ -605,6 +605,19 @@ inline std::optional<Reply> write_pair(
     discard();
     return refused;
   }
+  // Two names for one file (hard links): writing the spec would destroy the program just written.
+  struct stat program_info{};
+  struct stat spec_info{};
+  if (::fstat(program_fd.get(), &program_info) == 0 && ::fstat(spec_fd.get(), &spec_info) == 0 &&
+      program_info.st_dev == spec_info.st_dev && program_info.st_ino == spec_info.st_ino) {
+    discard();
+    return error_reply(
+      Exit::FAILED,
+      "strategy.exists",
+      program.string() + " and " + spec.string() + " are one file",
+      "remove one of the two names, or choose another NAME"
+    );
+  }
   const auto write = [](const ScopedFd& fd, bool created, const std::string& text) -> int {
     if (!created && ::ftruncate(fd.get(), 0) != 0) {
       return errno;
@@ -670,7 +683,12 @@ inline Reply new_reply(const Invocation& invocation) {
   const auto cwd = std::filesystem::current_path(cwd_error);
   const auto typed = [&](const std::filesystem::path& path) {
     const auto relative = cwd_error ? std::filesystem::path() : path.lexically_relative(cwd);
-    return shell_quoted((relative.empty() ? path : relative).string());
+    auto text = (relative.empty() ? path : relative).string();
+    // A relative path starting with `-` would read as an option.
+    if (!text.empty() && text.front() == '-') {
+      text = "./" + text;
+    }
+    return shell_quoted(text);
   };
   Reply reply;
   reply.body_["program"] = program.string();

@@ -539,6 +539,20 @@ TEST_CASE("strategy new --force replaces regular files and refuses a directory o
   CHECK(!std::filesystem::exists(path("first.toml")));
 }
 
+TEST_CASE("strategy new --force refuses two names for one file and leaves its bytes") {
+  const ScratchDir dir;
+  const auto program = dir.path() / "dip.atls";
+  const auto spec = dir.path() / "dip.toml";
+  spit(program, "saved program\n");
+  std::filesystem::create_hard_link(program, spec);
+  const auto ran = strategy_new({"dip", "--dir", dir.path().string(), "--force"});
+  CHECK(ran.exit_ == 1);
+  CHECK(code_of(ran.out_) == "strategy.exists");
+  CHECK(slurp(program) == "saved program\n");
+  CHECK(slurp(spec) == "saved program\n");
+  CHECK(std::filesystem::equivalent(program, spec));
+}
+
 TEST_CASE("strategy new in a directory with spaces gives a next command usable from the working directory") {
   const ScratchDir dir;
   std::filesystem::create_directories(dir.path() / "work");
@@ -565,6 +579,29 @@ TEST_CASE("strategy new in a directory with spaces gives a next command usable f
   REQUIRE(check->size() == 3);
   CHECK((*check)[0] == "atlc");
   CHECK(std::filesystem::equivalent((*check)[2], expected / "dip.atls"));
+}
+
+TEST_CASE("strategy new in a directory starting with a dash gives next commands that are not options") {
+  const ScratchDir dir;
+  const InDir here(dir.path());
+  std::filesystem::create_directories(dir.path() / "-strategies");
+  const auto ran = strategy_new({"dip", "--dir", "./-strategies"});
+  REQUIRE(ran.exit_ == 0);
+  const auto reply = reply_of(ran.out_);
+  const auto& next = reply.at("next").as_array();
+  REQUIRE(next.size() == 2);
+  const auto backtest = shell_words(std::string(next[0].as_string()));
+  REQUIRE(backtest);
+  REQUIRE(backtest->size() == 4);
+  CHECK((*backtest)[3].front() != '-');
+  CHECK(std::filesystem::equivalent((*backtest)[3], dir.path() / "-strategies" / "dip.toml"));
+  const cmdatl::Table table(cmdatl::command_list());
+  const std::vector<std::string> words(backtest->begin() + 1, backtest->end());
+  CHECK(cmdatl::prepare(words, table, false).action_ == cmdatl::Prepared::Action::RUN);
+  const auto check = shell_words(std::string(next[1].as_string()));
+  REQUIRE(check);
+  REQUIRE(check->size() == 3);
+  CHECK((*check)[2].front() != '-');
 }
 
 TEST_CASE("strategy new stops before writing anything once interrupted") {
