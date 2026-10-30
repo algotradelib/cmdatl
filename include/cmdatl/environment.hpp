@@ -128,7 +128,7 @@ inline std::optional<std::string> capture(const std::vector<std::string>& argv) 
     }
     return std::nullopt;
   }
-  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_t actions{};
   const bool initialized = posix_spawn_file_actions_init(&actions) == 0;
   const bool ready = initialized && posix_spawn_file_actions_adddup2(&actions, write_fd, STDOUT_FILENO) == 0;
   std::vector<char*> args;

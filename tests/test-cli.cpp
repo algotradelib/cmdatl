@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
+#include <stdexcept>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -102,9 +104,9 @@ cmdatl::Table acting_table(const std::shared_ptr<int>& ran) {
  * @brief Splits a shell-like line into words without running anything: double and single quotes keep spaces,
  *   and `#` after a space, outside quotes, starts a comment.
  * @param text The line.
- * @return The words.
+ * @return The words, or nothing for an unfinished quote (a shell would wait for more).
  */
-std::vector<std::string> shell_words(const std::string& text) {
+std::optional<std::vector<std::string>> shell_words(const std::string& text) {
   std::vector<std::string> words;
   std::string word;
   bool in_word = false;
@@ -132,6 +134,9 @@ std::vector<std::string> shell_words(const std::string& text) {
       word.push_back(c);
       in_word = true;
     }
+  }
+  if (quote != 0) {
+    return std::nullopt;
   }
   if (in_word) {
     words.push_back(word);
@@ -162,7 +167,7 @@ std::vector<std::string> inline_references(const std::string& line) {
 bool accepts_invocation(const std::string& line, const cmdatl::Table& table) {
   const auto at = line.find("cmdatl ");
   const auto args = shell_words(line.substr(at + 7));
-  return cmdatl::prepare(args, table, false).action_ != cmdatl::Prepared::Action::REFUSE;
+  return args && cmdatl::prepare(*args, table, false).action_ != cmdatl::Prepared::Action::REFUSE;
 }
 
 /**
@@ -173,7 +178,11 @@ bool accepts_invocation(const std::string& line, const cmdatl::Table& table) {
  * @return Whether it names something cmdatl has.
  */
 bool names_command(const std::string& span, const cmdatl::Table& table) {
-  auto words = shell_words(span);
+  const auto read = shell_words(span);
+  if (!read) {
+    return false;
+  }
+  auto words = *read;
   if (words.empty() || words.front() != "cmdatl") {
     return false;
   }
@@ -513,7 +522,11 @@ TEST_CASE("a bare CMDATL_ATLC is looked up on PATH only, never in the current di
 
 TEST_CASE("the documentation scanner reads what a shell would, and names only what exists") {
   const cmdatl::Table table(cmdatl::command_list());
-  CHECK(shell_words(R"(order release 005930 --reason "operator checked holdings" # why)").size() == 5);
+  const auto quoted = shell_words(R"(order release 005930 --reason "operator checked holdings" # why)");
+  REQUIRE(quoted);
+  CHECK(quoted->size() == 5);
+  CHECK(!shell_words(R"(order release 005930 --reason "unfinished)"));
+  CHECK(!accepts_invocation(R"(cmdatl order release 005930 --reason "unfinished)", table));
   CHECK(accepts_invocation(R"(cmdatl order release 005930 --reason "operator checked holdings")", table));
   CHECK(accepts_invocation("cmdatl --help", table));
   CHECK(accepts_invocation("cmdatl --version", table));
@@ -584,6 +597,9 @@ TEST_CASE("every example in the table parses as cmdatl would read it") {
     for (const auto& example : command.examples_) {
       INFO(example);
       CHECK(accepts_invocation(example, table));
+      const auto words = shell_words(example.substr(7));
+      REQUIRE(words);
+      CHECK(cmdatl::prepare(*words, table, false).found_.command_ == &command);
       ++checked;
     }
   }
@@ -604,4 +620,74 @@ TEST_CASE("a usage error names the command's usage, and a text failure goes to s
   CHECK(text.err_.find("usage: cmdatl order plan SYMBOL --target N --limit P") != std::string::npos);
   const auto field = reply_of(run({"env", "--value", "nope"}).out_);
   CHECK(field.at("usage").as_string() == "cmdatl env");
+}
+
+TEST_CASE("an example belongs to its own command, and the schema keeps the examples") {
+  std::vector<cmdatl::Command> commands;
+  commands.push_back(
+    cmdatl::make_command({"clock"}, "Paper", "time").example("cmdatl clock advance --minutes 30").returns("now", "t")
+  );
+  commands.push_back(
+    cmdatl::make_command({"clock", "advance"}, "Paper", "move").example("cmdatl clock advance").returns("now", "t")
+  );
+  const auto problems = cmdatl::check_table(cmdatl::Table(std::move(commands)));
+  const auto about_clock = [](const std::string& problem) { return problem.rfind("clock: the example", 0) == 0; };
+  CHECK(std::count_if(problems.begin(), problems.end(), about_clock) == 1);
+  const auto env = reply_of(run({"schema", "env"}).out_);
+  CHECK(!env.at("commands").as_array()[0].as_object().at("examples").as_array().empty());
+}
+
+TEST_CASE("a document never hides the fields beside it") {
+  cmdatl::Reply reply;
+  reply.body_["result"] = "done";
+  reply.body_["order"] = "o1";
+  reply.text_ = "Operation completed\n";
+  std::ostringstream out;
+  std::ostringstream err;
+  cmdatl::Rendering rendering;
+  rendering.format_ = cmdatl::Format::TEXT;
+  cmdatl::Output output(out, err, rendering, "paper");
+  CHECK(output.finish(reply) == cmdatl::Exit::OK);
+  CHECK(out.str().rfind("Operation completed\n", 0) == 0);
+  CHECK(out.str().find("order: o1") != std::string::npos);
+  CHECK(out.str().find("result: done") != std::string::npos);
+  CHECK(run({"help"}, true).out_ == run({"--help"}, true).out_);
+}
+
+TEST_CASE("--help wins over a malformed option, as clig.dev asks") {
+  const auto help = run({"env", "--format", "yaml", "--help"}, true);
+  CHECK(help.exit_ == 0);
+  CHECK(help.out_.rfind("cmdatl env", 0) == 0);
+  CHECK(run({"env", "--fields", "--help"}, true).exit_ == 0);
+  CHECK(run({"env", "--format", "yaml"}).exit_ == 2);
+}
+
+TEST_CASE("an exception in a command becomes a reply: unknown if it may have sent") {
+  std::vector<cmdatl::Command> commands;
+  const auto thrower = [](const cmdatl::Invocation&, const cmdatl::Table&, cmdatl::Output&) -> cmdatl::Reply {
+    throw std::runtime_error("boom");
+  };
+  commands.push_back(
+    cmdatl::make_command({"read"}, "Read", "reads")
+      .example("cmdatl read")
+      .returns("x", "x")
+      .exits(cmdatl::READ_EXITS)
+      .runs(thrower)
+  );
+  commands.push_back(
+    cmdatl::make_command({"send"}, "Trade", "sends")
+      .example("cmdatl send")
+      .returns("x", "x")
+      .exits(cmdatl::SEND_EXITS)
+      .sends()
+      .runs(thrower)
+  );
+  const cmdatl::Table table(std::move(commands));
+  const auto read = run_with({"read"}, table);
+  CHECK(read.exit_ == 1);
+  CHECK(code_of(read.out_) == "internal.error");
+  const auto send = run_with({"send"}, table);
+  CHECK(send.exit_ == 4);
+  CHECK(code_of(send.out_) == "unknown.internal");
+  CHECK(cmdatl::check_table(table).empty());
 }

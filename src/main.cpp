@@ -1,6 +1,7 @@
 #include <cmdatl/cli.hpp>
 
 #include <cstdio>
+#include <exception>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -30,6 +31,15 @@ static bool stdout_is_terminal() {
  * @return The exit code.
  */
 int main(int argc, char** argv) {
-  const std::vector<std::string> args(argv + 1, argv + argc);
-  return cmdatl::run(args, std::cout, std::cerr, stdout_is_terminal());
+  // cmdatl::run turns a command's exception into a reply; this catches only a failure outside any command (no
+  // command ran, so nothing was sent).
+  try {
+    const std::vector<std::string> args(argv + 1, argv + argc);
+    return cmdatl::run(args, std::cout, std::cerr, stdout_is_terminal());
+  } catch (const std::exception& e) {
+    std::cerr << "cmdatl: internal error: " << e.what() << "\n";
+  } catch (...) {
+    std::cerr << "cmdatl: internal error\n";
+  }
+  return 1;
 }

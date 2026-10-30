@@ -395,7 +395,8 @@ public:
       std::vector<std::vector<std::string>> paths{command.path_};
       paths.insert(paths.end(), command.aliases_.begin(), command.aliases_.end());
       for (const auto& path : paths) {
-        const auto prefix = std::vector<std::string>(path.begin(), path.begin() + std::min(path.size(), words.size()));
+        const auto length = static_cast<std::ptrdiff_t>(std::min(path.size(), words.size()));
+        const auto prefix = std::vector<std::string>(path.begin(), path.begin() + length);
         const auto distance = edit_distance(typed, join(prefix));
         if (distance <= std::max<std::size_t>(2, typed.size() / 3)) {
           scored.emplace_back(distance, join(command.path_));

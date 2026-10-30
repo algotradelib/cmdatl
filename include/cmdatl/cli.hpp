@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <exception>
 #include <map>
 #include <memory>
 #include <ostream>
@@ -212,6 +213,19 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
   globals.rendering_.format_ = terminal ? Format::TEXT : Format::JSON;
   std::vector<std::string> rest;
   if (auto bad = take_globals(args, globals, rest)) {
+    // clig.dev: -h works at the end of anything, even beside a malformed option (before `--`).
+    const auto end = std::find(args.begin(), args.end(), "--");
+    if (std::find(args.begin(), end, "--help") != end || std::find(args.begin(), end, "-h") != end) {
+      for (const auto& word : args) {
+        if (word.empty() || word.front() == '-') {
+          break;
+        }
+        prepared.words_.push_back(word);
+      }
+      prepared.found_ = table.resolve(prepared.words_);
+      prepared.action_ = Prepared::Action::HELP;
+      return prepared;
+    }
     prepared.refusal_ = std::move(bad);
     return prepared;
   }
@@ -311,6 +325,9 @@ inline int run(
       write_help_for(out, table, prepared.words_);
       return 0;
     case Prepared::Action::REFUSE:
+      if (!prepared.refusal_) {
+        return write(error_reply(Exit::FAILED, "internal.error", "a refusal without a reason"), "offline");
+      }
       return write(*prepared.refusal_, "offline");
     case Prepared::Action::RUN:
       break;
@@ -327,7 +344,19 @@ inline int run(
   // An account command's environment comes from the account it reads (branch 3); until then, offline.
   const auto env = command.env_ == "account" ? std::string("offline") : command.env_;
   Output output(out, err, rendering, env);
-  auto reply = command.run_(prepared.invocation_, table, output);
+  Reply reply;
+  try {
+    reply = command.run_(prepared.invocation_, table, output);
+  } catch (const std::exception& e) {
+    // A command that may have sent cannot say nothing was sent: unknown, and reconcile first.
+    reply = command.may_send_ ?
+      error_reply(Exit::UNKNOWN, "unknown.internal", e.what(), "cmdatl order reconcile, then report the defect") :
+      error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line");
+  } catch (...) {
+    reply = command.may_send_ ?
+      error_reply(Exit::UNKNOWN, "unknown.internal", "an unknown exception", "cmdatl order reconcile") :
+      error_reply(Exit::FAILED, "internal.error", "an unknown exception", "report the defect with the command line");
+  }
   if (prepared.found_.alias_) {
     reply.body_["note"] = "cmdatl " + join(*prepared.found_.alias_) + " is now cmdatl " + join(command.path_);
   }

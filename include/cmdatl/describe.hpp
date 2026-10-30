@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <ostream>
 #include <set>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"usage.bad_format", Exit::USAGE, false, "--format is json, jsonl or text"},
     {"usage.no_such_field", Exit::USAGE, false, "cmdatl schema COMMAND lists each command's fields"},
     {"unavailable.not_yet", Exit::FAILED, false, "this command is planned but not built in this version"},
+    {"internal.error", Exit::FAILED, false, "a defect in cmdatl: report it with the command line"},
+    {"unknown.internal", Exit::UNKNOWN, false, "a defect in cmdatl after it may have sent: reconcile, then report it"},
   };
   return catalog;
 }
@@ -59,6 +62,7 @@ inline const std::vector<std::string> COMMON_ERRORS{
   "usage.bad_option",
   "usage.bad_format",
   "usage.no_such_field",
+  "internal.error",
 };
 
 /** @brief An option every command takes. */
@@ -96,6 +100,9 @@ inline std::vector<std::string> errors_of(const Command& command) {
   auto errors = COMMON_ERRORS;
   if (!command.available_) {
     errors.push_back("unavailable.not_yet");
+  }
+  if (command.may_send_) {
+    errors.push_back("unknown.internal");
   }
   errors.insert(errors.end(), command.errors_.begin(), command.errors_.end());
   return errors;
@@ -419,8 +426,18 @@ inline std::vector<std::string> check_table(const Table& table) {
     if (command.examples_.empty()) {
       problems.push_back(name + ": no example");
     }
+    // An example calls its own command: its leading words resolve to this entry, not to a longer path (an
+    // example of `clock` must not be `clock advance`). Its arguments and options are checked by the tests.
     for (const auto& example : command.examples_) {
-      if (example.rfind("cmdatl " + join(command.path_), 0) != 0) {
+      std::vector<std::string> words;
+      std::istringstream in(example);
+      std::string program;
+      in >> program;
+      std::string word;
+      while (in >> word && word.front() != '-' && word.front() != '"' && word.front() != '\'') {
+        words.push_back(word);
+      }
+      if (program != "cmdatl" || words.empty() || table.resolve(words).command_ != &command) {
         problems.push_back(name + ": the example '" + example + "' does not call it");
       }
     }

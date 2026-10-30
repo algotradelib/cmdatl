@@ -372,9 +372,20 @@ inline Exit write_reply(std::ostream& out, const Reply& reply, const Rendering& 
     return reply.exit_;
   }
   if (!failed && reply.text_ && rendering.fields_.empty() && !rendering.value_) {
+    // The document as it is, then any other field beside it (an outcome, a note), never hidden by the document.
     out << *reply.text_;
     if (!reply.text_->empty() && reply.text_->back() != '\n') {
       out << "\n";
+    }
+    json::object rest;
+    for (const auto& entry : body) {
+      if (entry.key() != "env" && entry.key() != "text") {
+        rest[entry.key()] = entry.value();
+      }
+    }
+    if (!rest.empty()) {
+      out << "\n";
+      write_text(out, rest);
     }
     return reply.exit_;
   }
