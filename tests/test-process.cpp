@@ -234,6 +234,23 @@ TEST_CASE("a throwing callback kills the child's whole group with its grandchild
   CHECK(all_gone(pids));
 }
 
+TEST_CASE("a leader that ends while its grandchild holds the pipes is reported and the grandchild killed") {
+  const Watchdog watchdog("the held pipes", 30);
+  const FakeAtlc fake("run grandchild hold\nrun pid\nrun out done\nrun exit 4\n");
+  const auto start = std::chrono::steady_clock::now();
+  const auto result = run_fake();
+  const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+  REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
+  CHECK(!result.signaled_);
+  CHECK(result.code_ == 4);
+  CHECK(result.stdout_ == "done\n");
+  CHECK(all_gone(fake.pids()));
+  CHECK(no_children());
+  // The two seconds' grace after the leader ended, give or take the scheduler.
+  CHECK(seconds > 1.5);
+  CHECK(seconds < 8.0);
+}
+
 TEST_CASE("run_child works with stdin or stdout or stderr closed") {
   const Watchdog watchdog("closed standard descriptors", 30);
   const FakeAtlc fake("run out hello\nrun err world\n");
