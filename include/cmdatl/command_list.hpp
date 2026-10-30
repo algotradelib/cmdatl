@@ -2,6 +2,7 @@
 
 #include "./describe.hpp"
 #include "./environment.hpp"
+#include "./orders.hpp"
 #include "./reads.hpp"
 #include "./strategy.hpp"
 #include "./table.hpp"
@@ -35,6 +36,11 @@ inline std::vector<Command> command_list() {
   const auto add = [&list](Command& command) {
     if (command.exits_.empty()) {
       command.exits_ = command.may_send_ ? SEND_EXITS : READ_EXITS;
+    }
+    if (command.available_ && command.path_.size() == 2 && command.path_[0] == "order" && command.path_[1] != "list") {
+      for (const auto& code : order_error_codes()) {
+        command.error(code);
+      }
     }
     list.push_back(command);
   };
@@ -119,41 +125,78 @@ inline std::vector<Command> command_list() {
     .describe(
       "What `order place` would send to move SYMBOL to N shares with a limit at P, checked against the\n"
       "operator's limits, the market phase and the account. Sends nothing. The plan id expires when the\n"
-      "account changes or after the operator's plan lifetime."
+      "account changes or after the operator's plan lifetime. Each order command takes one simulated second."
     )
     .arg("SYMBOL", "an instrument the operator allows")
     .option("target", "N", "the position to hold, whole shares (0 to sell out)", true)
     .option("limit", "P", "limit price, on the tick grid, inside the operator's collar", true)
-    .returns("plan_id", "the plan, for order place")
-    .returns("would", "buy, sell or nothing")
-    .returns("quantity", "shares")
+    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("symbol", "the instrument")
+    .returns("target", "the position asked for")
     .returns("limit", "the limit price")
+    .returns("phase", "the market phase the decision was made in")
+    .returns("reason", "plan or met; on a refusal, once()'s reason")
+    .returns("detail", "what the plan would do")
     .returns("held", "the position now")
-    .returns("result", "done, refused or unknown")
+    .returns("plan_id", "the plan, for order place")
+    .returns("would", "buy, sell or withdraw")
+    .returns("quantity", "shares, for a buy or a sell")
+    .returns("expires_at", "when the plan id lapses, KST with its offset")
     .returns("next", "the command to run next")
-    .exits(SEND_EXITS)
-    .account());
+    .returns("owed", "orders the journal still waits on, for this symbol")
+    .returns("events", "what the market did in the command's simulated second")
+    .returns("result", "done, refused or unknown")
+    .on_account(plan_reply, check_order_args)
+    .exits(ORDER_EXITS));
   add(make_command({"order", "place"}, "Trade", "send that plan, if nothing moved since")
     .example("cmdatl order place p9cc4b94da4")
     .arg("PLAN_ID", "a plan id from order plan")
-    .returns("order", "the order sent")
+    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("plan_id", "the plan")
+    .returns("symbol", "the instrument")
+    .returns("target", "the position asked for")
+    .returns("limit", "the limit price")
+    .returns("phase", "the market phase the decision was made in")
+    .returns("reason", "placed, met or withdrawal_sent; on a refusal or unknown, the reason")
+    .returns("detail", "what happened")
+    .returns("order", "the order sent: order_id (null until the market names it), side, quantity, limit")
+    .returns("withdrawals", "the order ids a withdrawal was sent for")
+    .returns("next", "the command to run next")
+    .returns("owed", "orders the journal still waits on, for this symbol")
+    .returns("events", "what the market did in the command's simulated second")
     .returns("result", "done, refused or unknown")
     .sends()
-    .account());
+    .on_account(place_reply, check_order_args)
+    .exits(ORDER_EXITS));
   add(make_command({"order", "cancel"}, "Trade", "withdraw working orders on SYMBOL (never places)")
     .example("cmdatl order cancel 005930")
     .arg("SYMBOL", "an instrument")
-    .returns("result", "withdrawal_sent or nothing_working")
+    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("symbol", "the instrument")
+    .returns("phase", "the market phase")
+    .returns("reason", "withdrawal_sent or nothing_working; on a refusal or unknown, the reason")
+    .returns("detail", "what happened")
+    .returns("withdrawals", "the order ids a withdrawal was sent for (sent, not confirmed)")
+    .returns("owed", "orders the journal still waits on, for this symbol")
+    .returns("events", "what the market did in the command's simulated second")
+    .returns("result", "done, refused or unknown")
+    .error("quote.no_data")
     .sends()
-    .account());
+    .on_account(cancel_reply, check_order_args)
+    .exits(ORDER_EXITS));
   add(make_command({"order", "reconcile"}, "Trade", "record fills from holdings (never places)")
     .example("cmdatl order reconcile")
     .example("cmdatl order reconcile 005930")
     .arg("SYMBOL", "an instrument", false)
-    .returns("checked", "instruments read")
-    .returns("owed", "what is still owed")
-    .exits(SEND_EXITS)
-    .account());
+    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("checked", "each symbol read: symbol, state (clean, working, holding_moved or a reason), detail")
+    .returns("owed", "what is still owed, after the call")
+    .returns("reason", "clean, awaiting, or the first row's reason")
+    .returns("events", "what the market did in the command's simulated second")
+    .returns("result", "done, refused or unknown")
+    .error("quote.no_data")
+    .on_account(reconcile_reply, check_order_args)
+    .exits(ORDER_EXITS));
   add(make_command({"order", "list"}, "Trade", "working orders")
     .example("cmdatl order list")
     .returns("now", "the account's time, KST with its offset")
@@ -165,9 +208,18 @@ inline std::vector<Command> command_list() {
     .example("cmdatl order release 005930 --reason \"checked the broker's order list\"")
     .arg("SYMBOL", "an instrument")
     .option("reason", "TEXT", "why the operator settles it", true)
-    .returns("result", "done or refused")
-    .sends()
-    .account());
+    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("symbol", "the instrument")
+    .returns("reason", "released; on a refusal or unknown, the reason")
+    .returns("detail", "what was released")
+    .returns("released", "the journal ids settled")
+    .returns("approval_kept", "whether the approval file could not be renamed after its use (harmless)")
+    .returns("owed", "orders the journal still waits on, for this symbol")
+    .returns("events", "what the market did in the command's simulated second")
+    .returns("result", "done, refused or unknown")
+    .mutates("cmdatl account shows what is still owed; read it before releasing again")
+    .on_account(release_reply, check_order_args)
+    .exits(ORDER_EXITS));
 
   add(make_command({"strategy", "new"}, "Strategy", "a program and a run spec to start from")
     .example("cmdatl strategy new dip --template mean-reversion")

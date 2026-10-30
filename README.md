@@ -5,8 +5,8 @@ With [algotradelib](https://github.com/algotradelib/algotradelib) alone you writ
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
 
 Status: in development, before its first release; commands and replies may change without notice.
-This version answers `cmdatl strategy new`, `cmdatl strategy backtest`, the paper account's reads (`cmdatl status`, `cmdatl account`, `cmdatl quote`, `cmdatl order list`, `cmdatl clock`) and `cmdatl clock advance`, `cmdatl env`, `cmdatl schema` and `cmdatl help`.
-Every other command is listed and answers that it is not built yet; nothing in this version places or cancels an order.
+This version answers `cmdatl strategy new`, `cmdatl strategy backtest`, the paper account's reads (`cmdatl status`, `cmdatl account`, `cmdatl quote`, `cmdatl order list`, `cmdatl clock`), `cmdatl clock advance`, the order commands (`cmdatl order plan`, `cmdatl order place`, `cmdatl order cancel`, `cmdatl order reconcile`, `cmdatl order release`), `cmdatl env`, `cmdatl schema` and `cmdatl help`: every command an agent uses answers.
+The run commands, `cmdatl strategy reference` and `cmdatl guide` are listed and answer that they are not built yet; orders reach only the paper market.
 
 ```sh
 cmdatl strategy new dip --template mean-reversion      # dip.atls and dip.toml to start from
@@ -96,13 +96,44 @@ cmdatl clock advance --minutes 30
 - A journal or a paper log that is missing, damaged or not this account's is exit 4, with what to do in `error.next`, and nothing is written.
   Only a torn last line of an otherwise sound paper log is cut: an input a killed process did not finish writing.
 
+## Orders
+
+An agent moves a position to a target in two steps, a plan and its placement, and nothing places or cancels except through them.
+
+```sh
+cmdatl order plan 005930 --target 10 --limit 78200     # what would be sent; a plan id
+cmdatl order place p9cc4b94da4                         # sends that plan, if nothing moved since
+cmdatl order cancel 005930                             # withdraws every working order on 005930; never places
+cmdatl order reconcile                                 # records fills from holdings for every owed order; sends nothing
+cmdatl order reconcile 005930
+cmdatl order release 005930 --reason "read the order list and holdings"
+```
+
+- A target is a position, not a quantity: `--target 0` sells out, and a target the holding and the working orders already meet sends nothing (`met`).
+- Every limit comes from the operator's file at the moment of sending; no option of an order command names a limit, phase, collar or order type.
+  Every placement is a limit order inside `limits.collar` of the last price and on the tick grid.
+- A plan id is bound to what the plan saw: the account, the request, the holding and working orders of the symbol, the cash and the journal's size.
+  It is used once, it lapses after `limits.plan_ttl` simulated seconds (60 by default), and anything moving makes it stale (`refused.stale_plan`): plan again.
+- Each order command takes one simulated second, as a broker call takes time; `events` is what the market did in that second, which can fill or expire an order already resting, even on a plan or a refusal.
+- Exit 3 means nothing reached the market in this call: safe to plan again.
+  Exit 4 means an order may have gone out, or the journal cannot say: run `cmdatl order reconcile SYMBOL` before anything else, and read `error.next`.
+  A request the market itself refused is exit 4 `unknown.broker_refused`, since it reached the market; `cmdatl order reconcile SYMBOL` then shows nothing owed.
+- No reply at all (a killed process): treat it as exit 4.
+- `cmdatl order cancel SYMBOL` withdraws by symbol, needs no armed file and runs in any phase; `withdrawal_sent` means sent, not confirmed, and `cmdatl order list` shows when the orders are gone.
+- `cmdatl order reconcile` reports each symbol as `clean`, `working` (an order rests), `holding_moved` (holdings changed between two reads) or a refusal's reason; anything still owed afterwards is exit 3 `refused.awaiting`.
+- `owed` rows say what to do next; reading them never settles them, only an order command writes the journal.
+- An order the broker never named stays owed until the listing settles it or the operator releases it.
+  `cmdatl order release SYMBOL --reason TEXT` needs the armed file and the operator's approval `<stem>.release` beside the operator's file (`paper.toml` gives `paper.release`): one line per owed order, `SYMBOL JOURNAL_ID` with one space, naming exactly the journal ids `cmdatl account` shows as owed on that symbol.
+  The approval is renamed after one use.
+- A damaged journal has no cmdatl remedy: on paper, keep the account's directory for inspection and move it aside, which abandons that paper market with it.
+
 ## Output
 
 - Text on a terminal, compact JSON otherwise; `--json` or `--format json|jsonl|text` chooses.
 - `--fields a,b.c` keeps only those fields; `--value PATH` prints one value bare, the one reply without `env`.
 - Every other reply carries `env`; a failure carries one `error` object with a stable code, such as `refused.position_limit`.
 - A field name no reply of the command has is refused before the command runs; one missing from a reply the command already produced comes back with the whole reply and a `warning`.
-- Exit codes: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (safe to retry), 4 unknown (reconcile before anything else), 5 strategy errors, 130 interrupted (Ctrl-C or SIGTERM stopped a command that sends nothing; it still replies).
+- Exit codes: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (safe to retry), 4 unknown (reconcile before anything else), 5 strategy errors, 130 interrupted (Ctrl-C or SIGTERM stopped a command before anything could be sent; it still replies, and once an order command has begun to send it answers with its own outcome instead).
 - On a terminal a failure is written to stderr; in JSON it is the reply, on stdout.
 - `cmdatl help COMMAND` (or `--help`) shows a command's usage and examples; `cmdatl schema` describes every command, its fields and its error codes for a program.
 

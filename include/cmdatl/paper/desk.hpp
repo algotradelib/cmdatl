@@ -496,6 +496,10 @@ private:
  * Only `place` and `cancel` change the market, so only they are logged; reads go to `PaperClient` unchanged.
  * A placement is refused, not reached and not logged, while the armed file is missing; the armed file is always the
  * operator's `<stem>.armed`, so the check cannot be switched off.
+ * An input line not written whole is refused, not reached; a whole line whose flush failed is an unknown outcome
+ * (a transport error that reached the broker); a `result` line that cannot be written leaves the market's answer
+ * standing.
+ * After any failed append the log is latched, so every later input of this process is refused, not reached.
  * The log is shared, so no copy of a session that holds this client can outlive it.
  */
 class LoggedClient : public PaperClient {
@@ -513,11 +517,10 @@ public:
    * @brief Places an order: the armed file, the shared rules, the `place` line, the market, the `result` line.
    * @param account The account.
    * @param request The request.
-   * @return The acknowledgement, or a refusal (not reached when refused before the log).
-   * @throws LockLost When the lock was replaced before a line was written.
-   * @throws PaperStateError When a line could not be written.
+   * @return The acknowledgement, or a refusal (not reached when refused before the line was written whole).
    */
   atl::Result<PaperAck> place(const PaperAccount& account, const atl::OrderRequest& request) {
+    sys::kill_point("send.before_input");
     std::error_code ec;
     if (armed_.empty() || !std::filesystem::exists(armed_, ec)) {
       return refusal("NOT_ARMED", "the operator's armed file does not exist: " + armed_, false);
@@ -530,12 +533,13 @@ public:
     if (auto problem = check_place(market(), fields, checked)) {
       return refusal("invalid_order", *problem, false);
     }
-    log_->append_or_throw(place_line(nanos(market().now()), fields), "place");
+    if (auto failed = log_input(place_line(nanos(market().now()), fields), "place")) {
+      return *failed;
+    }
+    sys::kill_point("send.after_input");
     auto result = place_checked(account, request, checked.quantity_, checked.limit_);
-    log_->append_or_throw(
-      result_line("place", result ? result.value().id_ : std::string(), result ? std::string() : result.error().message_),
-      "result"
-    );
+    log_result(result_line("place", result ? result.value().id_ : std::string(), result ? std::string() : result.error().message_));
+    sys::kill_point("send.after_result");
     return result;
   }
 
@@ -543,26 +547,71 @@ public:
    * @brief Cancels an order: an id of the market's form, the `cancel` line, the market, the `result` line.
    * @param account The account.
    * @param amendment The order.
-   * @return The acknowledgement, or a refusal.
-   * @throws LockLost When the lock was replaced before a line was written.
-   * @throws PaperStateError When a line could not be written.
+   * @return The acknowledgement, or a refusal (not reached when refused before the line was written whole).
    */
   atl::Result<PaperAck> cancel(const PaperAccount& account, const PaperAmendment& amendment) {
+    sys::kill_point("send.before_input");
     if (!valid_order_id(amendment.id_)) {
       return refusal("invalid_order", "no order of the paper market has the id " + amendment.id_, false);
     }
-    log_->append_or_throw(cancel_line(nanos(market().now()), amendment.id_), "cancel");
+    if (auto failed = log_input(cancel_line(nanos(market().now()), amendment.id_), "cancel")) {
+      return *failed;
+    }
+    sys::kill_point("send.after_input");
     auto result = PaperClient::cancel(account, amendment);
-    log_->append_or_throw(
-      result_line("cancel", amendment.id_, result ? std::string() : result.error().message_),
-      "result"
-    );
+    log_result(result_line("cancel", amendment.id_, result ? std::string() : result.error().message_));
+    sys::kill_point("send.after_result");
     return result;
   }
 
+  /**
+   * @brief How many `place` and `cancel` lines this process wrote whole, counted when the last byte was written.
+   * @return The count.
+   */
+  std::uint64_t inputs_logged() const noexcept { return inputs_logged_; }
+
 private:
+  /**
+   * @brief Appends an input line.
+   * @param line The line.
+   * @param point The kill points' prefix.
+   * @return The refusal to answer with, or nothing when the line is whole and flushed.
+   */
+  std::optional<atl::BrokerError> log_input(const std::string& line, const char* point) {
+    int error = 0;
+    switch (log_->append(line, point, error)) {
+      case Appended::OK:
+        ++inputs_logged_;
+        return std::nullopt;
+      case Appended::LOCK_LOST:
+        return refusal("lock_lost", "the account's lock file was replaced; nothing was written", false);
+      case Appended::NOT_WRITTEN:
+        return refusal("paper_log", "the paper log could not be written (" + std::string(std::strerror(error)) + "); nothing reached the market", false);
+      case Appended::NOT_SYNCED:
+        break;
+    }
+    ++inputs_logged_;
+    atl::BrokerError unknown;
+    unknown.category_ = atl::ErrorCategory::TRANSPORT;
+    unknown.reached_broker_ = true;
+    unknown.broker_code_ = "paper_log_unsynced";
+    unknown.message_ = "the input was written to the paper log but not flushed (" + std::string(std::strerror(error)) +
+      "); the market may have it on the next replay";
+    return unknown;
+  }
+
+  /**
+   * @brief Appends a `result` line; a failure leaves the market's answer standing (the next open writes it again).
+   * @param line The line.
+   */
+  void log_result(const std::string& line) {
+    int error = 0;
+    (void)log_->append(line, "result", error);
+  }
+
   std::shared_ptr<OpsLog> log_;
   std::string armed_;
+  std::uint64_t inputs_logged_{0};
 };
 #endif
 
@@ -806,6 +855,12 @@ public:
     sys::kill_point("advance.applied");
     return outcome;
   }
+
+  /**
+   * @brief How many `place` and `cancel` lines this process wrote whole (not those replayed at open).
+   * @return The count.
+   */
+  std::uint64_t inputs_logged() const noexcept { return client_->inputs_logged(); }
 
   /**
    * @brief How many inputs were replayed.

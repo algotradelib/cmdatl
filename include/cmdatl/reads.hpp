@@ -21,9 +21,27 @@
 
 namespace cmdatl {
 
-/** @brief What an owed row says to do in this version, which has no command that settles it. */
-inline constexpr const char* OWED_NEXT =
-  "settled by cmdatl order reconcile SYMBOL, which this version does not have yet; nothing here settles it";
+/**
+ * @brief What an owed row says to do, by what the market shows and the library's state.
+ * @param symbol The symbol.
+ * @param state The library's state: `named`, `unnamed` or `operator`.
+ * @param status What the market shows for its order (`pending`, `filled`, `canceled`), or nothing.
+ * @return The hint.
+ */
+inline std::string owed_next(const std::string& symbol, const std::string& state, const std::optional<std::string>& status) {
+  if (state == "operator") {
+    return "only the operator settles it: cmdatl order release " + symbol + " with the approval file";
+  }
+  if (status && *status == "pending") {
+    return "still working: cmdatl order cancel " + symbol + " withdraws it, or wait (cmdatl clock advance on paper); "
+      "then cmdatl order reconcile " + symbol;
+  }
+  if (status) {
+    return "cmdatl order reconcile " + symbol + " records it from holdings; sends nothing";
+  }
+  return "the broker never named it: cmdatl order reconcile " + symbol + "; if it stays owed, the operator reads the "
+    "order list and holdings, then cmdatl order release " + symbol;
+}
 
 /**
  * @brief A whole amount as the reply's text.
@@ -202,7 +220,7 @@ json::array owed_json(const Account& account, Desk& desk, const std::optional<st
     row["order_id"] = owed.order_id_.empty() ? json::value(nullptr) : json::value(owed.order_id_);
     const auto status = owed.order_id_.empty() ? std::nullopt : desk.order_status(owed.order_id_);
     row["broker_status"] = status ? json::value(*status) : json::value(nullptr);
-    row["next"] = OWED_NEXT;
+    row["next"] = owed_next(owed.symbol_, owed.state_, status);
     rows.push_back(std::move(row));
   }
   return rows;
@@ -486,6 +504,33 @@ inline std::optional<Reply> check_symbols(const Invocation& invocation) {
 }
 
 /**
+ * @brief What the market did since the last drain, as reply rows.
+ * @tparam Desk The desk type.
+ * @param desk The desk.
+ * @return The rows: at, kind, order_id, symbol, side, quantity, and for a fill its price, commission and tax.
+ */
+template <typename Desk>
+json::array events_json(Desk& desk) {
+  json::array events;
+  for (const auto& event : desk.drain_events()) {
+    json::object row;
+    row["at"] = paper::kst_iso(event.at_);
+    row["kind"] = event.kind_;
+    row["order_id"] = event.order_id_;
+    row["symbol"] = event.symbol_;
+    row["side"] = event.side_;
+    row["quantity"] = std::to_string(event.quantity_);
+    if (event.price_) {
+      row["price"] = money(paper::amount_of(*event.price_));
+      row["commission"] = money(paper::amount_of(event.commission_));
+      row["tax"] = money(paper::amount_of(event.tax_));
+    }
+    events.push_back(std::move(row));
+  }
+  return events;
+}
+
+/**
  * @brief The reply after an advance whose line may have reached the disk, or did: its outcome is not known.
  * @param what What happened.
  * @return The reply (exit 4).
@@ -581,22 +626,7 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
     body["from"] = paper::kst_iso(from);
     body["now"] = paper::kst_iso(desk.now());
     body["phase"] = phase_of(desk);
-    json::array events;
-    for (const auto& event : desk.drain_events()) {
-      json::object row;
-      row["at"] = paper::kst_iso(event.at_);
-      row["kind"] = event.kind_;
-      row["order_id"] = event.order_id_;
-      row["symbol"] = event.symbol_;
-      row["side"] = event.side_;
-      row["quantity"] = std::to_string(event.quantity_);
-      if (event.price_) {
-        row["price"] = money(paper::amount_of(*event.price_));
-        row["commission"] = money(paper::amount_of(event.commission_));
-        row["tax"] = money(paper::amount_of(event.tax_));
-      }
-      events.push_back(std::move(row));
-    }
+    auto events = events_json(desk);
     body["events"] = std::move(events);
     Reply reply;
     reply.body_ = std::move(body);

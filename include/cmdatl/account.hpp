@@ -459,10 +459,41 @@ public:
   paper::PaperDesk& desk() { return *desk_; }
 
   /**
-   * @brief The journal's view, computed at open.
+   * @brief The journal's view, computed at open, or at the last `refresh_view`.
    * @return The view.
    */
   const JournalView& journal() const noexcept { return journal_; }
+
+  /**
+   * @brief The journal's path.
+   * @return The path.
+   */
+  std::string journal_path() const { return dir() + "/journal.jsonl"; }
+
+#if !defined(_WIN32)
+  /**
+   * @brief Whether the journal at its path is still the file `open` classified: a regular file with one name, not
+   *   empty, on the same device and inode.
+   * @return Whether it is.
+   */
+  bool journal_unchanged() const {
+    struct stat info{};
+    if (::lstat(journal_path().c_str(), &info) != 0) {
+      return false;
+    }
+    return S_ISREG(info.st_mode) && info.st_nlink == 1 && info.st_size > 0 && journal_identity_ &&
+      info.st_dev == journal_identity_->first && info.st_ino == journal_identity_->second;
+  }
+
+  /**
+   * @brief Reads the journal again and recomputes the view and the readiness, with the ownership checks of `open`.
+   */
+  void refresh_view() {
+    replay_ = algotradelib::runner::read_journal_file(journal_path());
+    journal_ = journal_view(desk_->session(), replay_, config_.scope(), paper::kst_day(desk_->now()));
+    readiness_.reset();
+  }
+#endif
 
   /**
    * @brief The readiness gates, computed once.
@@ -721,6 +752,10 @@ private:
         "the operator restores the journal as a regular file; nothing was written"
       );
     }
+    struct stat identity{};
+    if (::lstat(journal_path().c_str(), &identity) == 0) {
+      journal_identity_ = std::make_pair(identity.st_dev, identity.st_ino);
+    }
     replay_ = algotradelib::runner::read_journal_file(dir() + "/journal.jsonl");
     try {
       desk_ = std::make_unique<paper::PaperDesk>(paper::DeskKey{}, config_, lock_, std::move(data));
@@ -768,6 +803,9 @@ private:
   JournalView journal_;
   std::unique_ptr<paper::PaperDesk> desk_;
   std::optional<Readiness> readiness_;
+#if !defined(_WIN32)
+  std::optional<std::pair<dev_t, ino_t>> journal_identity_;
+#endif
 };
 
 }  // namespace cmdatl

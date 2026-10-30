@@ -13,7 +13,7 @@
 namespace cmdatl {
 
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
-inline constexpr int SCHEMA_VERSION = 3;
+inline constexpr int SCHEMA_VERSION = 4;
 
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
@@ -53,7 +53,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"internal.error", Exit::FAILED, false, "a defect in cmdatl: report it with the command line"},
     {"unknown.internal", Exit::UNKNOWN, false, "a defect in cmdatl after it may have sent: reconcile, then report it"},
     {"unavailable.platform", Exit::FAILED, false, "this command does not run on this platform yet"},
-    {"interrupted", Exit::INTERRUPTED, true, "SIGINT or SIGTERM stopped the command before it sent anything: run it again"},
+    {"interrupted", Exit::INTERRUPTED, true, "SIGINT or SIGTERM stopped the command before anything could be sent: run it again"},
     {"atlc.missing", Exit::FAILED, false, "install atlc, or name it with CMDATL_ATLC; cmdatl env shows what was found"},
     {"atlc.unsupported", Exit::FAILED, false, "install a newer atlc"},
     {"atlc.failed", Exit::FAILED, false, "atlc ended unexpectedly: read stderr, and check atlc with cmdatl env"},
@@ -72,8 +72,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"state.unavailable", Exit::FAILED, false, "set XDG_STATE_HOME or HOME, and check the account's directory"},
     {"busy.locked", Exit::FAILED, true, "another command holds the account: run it again when it is free"},
     {"unknown.lock_lost", Exit::UNKNOWN, false, "the account's lock file was replaced: find what replaced it, then cmdatl status"},
-    {"unknown.journal_missing", Exit::UNKNOWN, false, "the operator reads the broker's orders and holdings, then restores the journal"},
-    {"unknown.journal_damaged", Exit::UNKNOWN, false, "the operator reads the broker's orders and holdings, then restores the journal"},
+    {"unknown.journal_missing", Exit::UNKNOWN, false, "restore the journal from where it was; on paper, keep the account's directory for inspection and move it aside, which abandons that paper market with it"},
+    {"unknown.journal_damaged", Exit::UNKNOWN, false, "restore the journal from where it was; on paper, keep the account's directory for inspection and move it aside, which abandons that paper market with it"},
     {"journal.unopened", Exit::FAILED, false, "check the account's directory and its permissions"},
     {"paper.data", Exit::FAILED, false, "fix the paper bars file the operator's file names"},
     {"unknown.paper_state", Exit::UNKNOWN, false, "restore paper.jsonl, or move the account's directory aside to start a fresh paper account"},
@@ -81,6 +81,41 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"clock.backwards", Exit::FAILED, false, "the clock only moves forward: cmdatl clock shows where it stands"},
     {"clock.past_data", Exit::FAILED, false, "the paper data ends there: cmdatl clock shows where"},
     {"unknown.clock_advance", Exit::UNKNOWN, false, "cmdatl clock shows where the clock stands; do not repeat the advance before reading it"},
+    {"refused.symbol_not_allowed", Exit::REFUSED, false, "cmdatl env shows the operator's limits.symbols"},
+    {"refused.position_limit", Exit::REFUSED, false, "cmdatl env shows the operator's limits.position"},
+    {"refused.not_armed", Exit::REFUSED, true, "the operator creates the armed file cmdatl env names"},
+    {"refused.daily_order_limit", Exit::REFUSED, true, "cmdatl env shows limits.daily_orders; the count starts again on the next KST date"},
+    {"refused.order_value", Exit::REFUSED, false, "cmdatl env shows limits.order_value; plan a smaller change"},
+    {"refused.no_plan", Exit::REFUSED, false, "cmdatl order plan gives a plan id"},
+    {"refused.plan_used", Exit::REFUSED, false, "a plan sends once: cmdatl order plan again"},
+    {"refused.stale_plan", Exit::REFUSED, false, "the account moved or the plan lapsed: cmdatl order plan again"},
+    {"refused.phase", Exit::REFUSED, true, "cmdatl env shows limits.phases; on paper, cmdatl clock advance --next-open"},
+    {"refused.collar", Exit::REFUSED, false, "cmdatl quote shows the last price; cmdatl env shows limits.collar"},
+    {"refused.off_tick", Exit::REFUSED, false, "a limit on the market's tick grid"},
+    {"refused.no_price", Exit::REFUSED, true, "cmdatl quote shows whether the symbol has a last price"},
+    {"refused.reference_unread", Exit::REFUSED, true, "run the command again"},
+    {"refused.order_list_unread", Exit::REFUSED, true, "run the command again"},
+    {"refused.holdings_unread", Exit::REFUSED, true, "run the command again"},
+    {"refused.awaiting_confirmation", Exit::REFUSED, true, "holdings have not shown an order yet: cmdatl order reconcile SYMBOL, then plan again"},
+    {"refused.unjournaled_order", Exit::REFUSED, false, "an order no cmdatl journal line names rests on the symbol: the operator withdraws it where it was placed"},
+    {"refused.guard", Exit::REFUSED, false, "a risk limit refused it: cmdatl env shows the limits"},
+    {"refused.not_reached", Exit::REFUSED, true, "the paper client refused before writing the request (the armed file, the input rules, the lock, the log): read the message"},
+    {"refused.withheld", Exit::REFUSED, true, "the runner withheld the plan (unknown or stale book, or a hold): cmdatl order reconcile SYMBOL, then plan again"},
+    {"refused.journal_unwritable", Exit::REFUSED, false, "nothing reached the market; the next cmdatl account shows whether the unsent request was journaled"},
+    {"refused.not_approved", Exit::REFUSED, false, "the operator writes the approval file beside the operator's file, one SYMBOL JOURNAL_ID line per owed order"},
+    {"refused.nothing_owed", Exit::REFUSED, false, "cmdatl account shows what is owed"},
+    {"refused.named", Exit::REFUSED, true, "the broker named the order: cmdatl order reconcile SYMBOL records it from holdings"},
+    {"refused.awaiting", Exit::REFUSED, true, "an order is owed or resting: cmdatl clock advance on paper, then cmdatl order reconcile again"},
+    {"refused.holding_moved", Exit::REFUSED, true, "holdings changed between two reads: cmdatl order reconcile again"},
+    {"unknown.unaccounted", Exit::UNKNOWN, false, "only the operator settles it: read cmdatl order list and holdings, then cmdatl order release SYMBOL"},
+    {"unknown.unresolved", Exit::UNKNOWN, false, "cmdatl order reconcile SYMBOL first; on paper the listing settles it after cmdatl clock advance --minutes 3"},
+    {"unknown.unconfirmed", Exit::UNKNOWN, false, "cmdatl order reconcile SYMBOL first; then the operator reads the order list and holdings"},
+    {"unknown.indeterminate", Exit::UNKNOWN, false, "cmdatl order reconcile SYMBOL first; cmdatl order list shows whether the order rests"},
+    {"unknown.withdrawal", Exit::UNKNOWN, false, "cmdatl order reconcile SYMBOL first; an order may have filled"},
+    {"unknown.mixed", Exit::UNKNOWN, false, "cmdatl order reconcile SYMBOL first"},
+    {"unknown.unmapped", Exit::UNKNOWN, false, "cmdatl order reconcile SYMBOL first, then report the defect"},
+    {"unknown.journal_write", Exit::UNKNOWN, false, "cmdatl order reconcile SYMBOL first; cmdatl account shows what the journal holds"},
+    {"unknown.broker_refused", Exit::UNKNOWN, false, "the market refused it and nothing rests: cmdatl order reconcile SYMBOL shows nothing owed before planning again"},
   };
   return catalog;
 }

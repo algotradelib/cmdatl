@@ -109,7 +109,7 @@ if(CMDATL_BUILD_TESTS)
   add_executable(hold-lock tests/hold-lock.cpp)
   add_executable(test-cli
     tests/test-cli.cpp tests/test-process.cpp tests/test-strategy.cpp tests/test-acceptance.cpp tests/test-operator.cpp
-    tests/test-account.cpp tests/test-paper.cpp
+    tests/test-account.cpp tests/test-paper.cpp tests/test-orders.cpp tests/test-order-process.cpp
   )
   target_link_libraries(test-cli PRIVATE cmdatl_core Catch2::Catch2WithMain)
   add_dependencies(test-cli cmdatl fake-atlc hold-lock)
@@ -133,6 +133,11 @@ if(CMDATL_BUILD_TESTS)
     CMDATL_FAKE_ATLC="$<TARGET_FILE:fake-atlc>"
     CMDATL_HOLD_LOCK="$<TARGET_FILE:hold-lock>"
   )
+  # On Linux the journal's own fsync, compiled into the test from the header-only library, can be failed too.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(test-faults PRIVATE LINKER:--wrap=fsync)
+    target_compile_definitions(test-faults PRIVATE CMDATL_WRAP_FSYNC)
+  endif()
   add_test(NAME test-faults COMMAND test-faults)
   # Against a real atlc and algotradelib, named by CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX; skipped, and reported
   # as skipped, without them.

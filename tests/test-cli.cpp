@@ -238,7 +238,7 @@ TEST_CASE("tune and check are gone; new and backtest are the strategy commands t
   const auto reference = table.resolve({"strategy", "reference"});
   REQUIRE(reference.command_ != nullptr);
   CHECK(!reference.command_->available_);
-  CHECK(cmdatl::SCHEMA_VERSION == 3);
+  CHECK(cmdatl::SCHEMA_VERSION == 4);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
   CHECK(backtest.at("returns").as_object().contains("params_given"));
   CHECK(!backtest.at("returns").as_object().contains("params"));
@@ -272,7 +272,7 @@ TEST_CASE("global options never take another option as their value and stop at -
 }
 
 TEST_CASE("a planned command answers that it is not built yet") {
-  const auto ran = run({"order", "plan", "005930", "--target", "10", "--limit", "78200"});
+  const auto ran = run({"run", "status"});
   CHECK(ran.exit_ == 1);
   CHECK(code_of(ran.out_) == "unavailable.not_yet");
   CHECK(reply_of(ran.out_).at("env").as_string() == "offline");
@@ -431,8 +431,10 @@ TEST_CASE("the schema declares the errors its commands return") {
   const auto declares = [&plan_errors](const char* code) {
     return std::find(plan_errors.begin(), plan_errors.end(), boost::json::value(code)) != plan_errors.end();
   };
-  CHECK(declares("unavailable.not_yet"));
+  CHECK(!declares("unavailable.not_yet"));
   CHECK(declares("usage.missing_argument"));
+  CHECK(declares("refused.stale_plan"));
+  CHECK(declares("unknown.broker_refused"));
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_);
   const auto& options = backtest.at("commands").as_array()[0].as_object().at("options").as_array();
   CHECK(options[0].as_object().at("short").as_string() == "-P");

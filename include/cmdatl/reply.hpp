@@ -4,12 +4,14 @@
 
 #include <charconv>
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <optional>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -237,6 +239,82 @@ inline json::value select_fields(const json::value& value, const std::vector<std
 }
 
 /**
+ * @brief A text with every byte that is not part of well-formed UTF-8 replaced by U+FFFD, so JSON written from it
+ *   parses (an argument echoed in a message can carry any bytes).
+ * @param text The text.
+ * @return The text, well-formed.
+ */
+inline std::string well_formed(std::string_view text) {
+  std::string out;
+  out.reserve(text.size());
+  std::size_t i = 0;
+  while (i < text.size()) {
+    const auto c = static_cast<unsigned char>(text[i]);
+    std::size_t more = 0;
+    std::uint32_t point = 0;
+    if (c < 0x80) {
+      out += static_cast<char>(c);
+      ++i;
+      continue;
+    }
+    if ((c & 0xe0) == 0xc0) {
+      more = 1;
+      point = c & 0x1fu;
+    } else if ((c & 0xf0) == 0xe0) {
+      more = 2;
+      point = c & 0x0fu;
+    } else if ((c & 0xf8) == 0xf0) {
+      more = 3;
+      point = c & 0x07u;
+    }
+    bool ok = more > 0 && i + more < text.size();
+    for (std::size_t k = 1; ok && k <= more; ++k) {
+      const auto next = static_cast<unsigned char>(text[i + k]);
+      ok = (next & 0xc0) == 0x80;
+      point = (point << 6) | (next & 0x3fu);
+    }
+    const std::uint32_t least[] = {0, 0x80, 0x800, 0x10000};
+    if (ok && point >= least[more] && point <= 0x10ffff && (point < 0xd800 || point > 0xdfff)) {
+      out.append(text.substr(i, more + 1));
+      i += more + 1;
+    } else {
+      out += "\xef\xbf\xbd";
+      ++i;
+    }
+  }
+  return out;
+}
+
+/**
+ * @brief Makes every string and key in a value well-formed UTF-8 (`well_formed`).
+ * @param value The value, changed in place.
+ */
+inline void make_well_formed(json::value& value) {
+  if (value.is_string()) {
+    const auto text = well_formed(value.as_string());
+    if (text != value.as_string()) {
+      value = json::string(text);
+    }
+  } else if (value.is_array()) {
+    for (auto& element : value.as_array()) {
+      make_well_formed(element);
+    }
+  } else if (value.is_object()) {
+    json::object fixed;
+    bool changed = false;
+    for (auto& entry : value.as_object()) {
+      make_well_formed(entry.value());
+      const auto key = well_formed(entry.key());
+      changed = changed || key != entry.key();
+      fixed[key] = entry.value();
+    }
+    if (changed) {
+      value = std::move(fixed);
+    }
+  }
+}
+
+/**
  * @brief A scalar as text: strings without quotes, other values as compact JSON.
  * @param value The value.
  * @return The text.
@@ -369,6 +447,7 @@ inline Exit write_reply(std::ostream& out, const Reply& reply, const Rendering& 
     }
   }
   if (rendering.format_ != Format::TEXT) {
+    make_well_formed(shown);
     out << json::serialize(shown) << "\n";
     return reply.exit_;
   }
@@ -469,7 +548,8 @@ public:
    */
   void progress(const std::string& message) {
     if (rendering_.format_ == Format::JSONL) {
-      const json::object event{{"env", env_}, {"event", "progress"}, {"message", message}};
+      json::value event = json::object{{"env", env_}, {"event", "progress"}, {"message", message}};
+      make_well_formed(event);
       out_ << json::serialize(event) << "\n";
       require_written(out_);
       return;
