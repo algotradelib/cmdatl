@@ -487,18 +487,24 @@ inline Reply unwritable_reply(const std::filesystem::path& path, int error) {
  * @param force Whether an existing regular file may be replaced.
  * @param fd Where the descriptor goes.
  * @param created Set when this call created the file.
+ * @param info The open file's status, read once from the descriptor; its device and inode tell two names for one
+ *   file apart.
  * @return The refusal, or nothing when it is open.
  */
 inline std::optional<Reply> open_destination(
   const std::filesystem::path& path,
   bool force,
   ScopedFd& fd,
-  bool& created
+  bool& created,
+  struct stat& info
 ) {
   const int flags = O_WRONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
   fd.reset(::open(path.c_str(), flags | O_CREAT | O_EXCL, 0666));
   if (fd.get() >= 0) {
     created = true;
+    if (::fstat(fd.get(), &info) != 0) {
+      return unwritable_reply(path, errno);
+    }
     return std::nullopt;
   }
   if (errno != EEXIST) {
@@ -516,7 +522,6 @@ inline std::optional<Reply> open_destination(
     }
     return unwritable_reply(path, error);
   }
-  struct stat info{};
   if (::fstat(fd.get(), &info) != 0) {
     return unwritable_reply(path, errno);
   }
@@ -598,18 +603,19 @@ inline std::optional<Reply> write_pair(
       ::unlink(spec.c_str());
     }
   };
-  if (auto refused = open_destination(program, force, program_fd, program_created)) {
-    return refused;
-  }
-  if (auto refused = open_destination(spec, force, spec_fd, spec_created)) {
+  struct stat program_info{};
+  struct stat spec_info{};
+  if (auto refused = open_destination(program, force, program_fd, program_created, program_info)) {
     discard();
     return refused;
   }
-  // Two names for one file (hard links): writing the spec would destroy the program just written.
-  struct stat program_info{};
-  struct stat spec_info{};
-  if (::fstat(program_fd.get(), &program_info) == 0 && ::fstat(spec_fd.get(), &spec_info) == 0 &&
-      program_info.st_dev == spec_info.st_dev && program_info.st_ino == spec_info.st_ino) {
+  if (auto refused = open_destination(spec, force, spec_fd, spec_created, spec_info)) {
+    discard();
+    return refused;
+  }
+  // Two names for one file (hard links): writing the spec would destroy the program just written. The statuses
+  // are the ones each open read, so no separate lookup can fail and let the pair through.
+  if (program_info.st_dev == spec_info.st_dev && program_info.st_ino == spec_info.st_ino) {
     discard();
     return error_reply(
       Exit::FAILED,
