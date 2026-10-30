@@ -104,7 +104,7 @@ using Report = atl::runner::DryRunReport<cmdatl::paper::PaperDesk::Session::Brok
 
 }  // namespace
 
-TEST_CASE("order arguments: each grammar at its edges, refused before the account opens") {
+TEST_CASE("order arguments: each grammar at its edges and refused before the account opens") {
   const PaperFixture fixture;
   const std::vector<std::vector<std::string>> bad{
     {"order", "plan", "005930", "--target", "50.5", "--limit", "78500"},
@@ -150,7 +150,7 @@ TEST_CASE("order arguments: each grammar at its edges, refused before the accoun
   CHECK(cmdatl::valid_reason("읽었습니다: 주문 목록과 보유 주식"));
 }
 
-TEST_CASE("plan, then place by id: one limit order, once, and the plan cannot send again") {
+TEST_CASE("plan and then place by id: one limit order and once and and the plan cannot send again") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto id = plan_id(fixture, "005930", "10", "75000");
@@ -175,7 +175,7 @@ TEST_CASE("plan, then place by id: one limit order, once, and the plan cannot se
   CHECK(atl::runner::read_journal_file(fixture.journal().string()).scope_ == SCOPE);
 }
 
-TEST_CASE("plan checks, in order, each refusing alone with nothing sent") {
+TEST_CASE("plan checks and in order and each refusing alone with nothing sent") {
   ConfigParts parts;
   parts.limits_ =
     "symbols = [\"005930\"]\n"
@@ -204,7 +204,7 @@ TEST_CASE("plan checks, in order, each refusing alone with nothing sent") {
   CHECK(withdraw.body_.at("would").as_string() == "withdraw");
 }
 
-TEST_CASE("place checks the operator's file as it is now: a lowered cap, a removed symbol, the armed file") {
+TEST_CASE("place checks the operator's file as it is now: a lowered cap and a removed symbol and the armed file") {
   const PaperFixture fixture;
   open_session(fixture);
   auto id = plan_id(fixture, "005930", "10", "75000");
@@ -227,7 +227,7 @@ TEST_CASE("place checks the operator's file as it is now: a lowered cap, a remov
   CHECK(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
 }
 
-TEST_CASE("the plan book: stale when the account moves or the plan ages, and bound to the account") {
+TEST_CASE("the plan book: stale when the account moves or the plan ages and and bound to the account") {
   const PaperFixture fixture;
   open_session(fixture);
   // The journal's size: another placement moved it.
@@ -298,7 +298,7 @@ TEST_CASE("a damaged plan book is an empty book: place answers no_plan and plan 
   plan_id(fixture, "005930", "10", "75000");
 }
 
-TEST_CASE("the plan book's values: every rule refuses the whole book, and the age is computed only in range") {
+TEST_CASE("the plan book's values: every rule refuses the whole book and and the age is computed only in range") {
   const auto book = [](const std::string& key, const std::string& members) {
     return "{\"format\":1,\"plans\":{\"" + key + "\":{" + members + "}}}";
   };
@@ -345,7 +345,7 @@ TEST_CASE("the plan book's values: every rule refuses the whole book, and the ag
   CHECK(!cmdatl::PlanBook::parse(many + "}}").has_value());
 }
 
-TEST_CASE("a plan's age: exactly plan_ttl is accepted, one clock tick more is stale, a future instant is damage") {
+TEST_CASE("a plan's age: exactly plan_ttl is accepted and one clock tick more is stale and a future instant is damage") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto path = fixture.account() / "plans.json";
@@ -382,7 +382,7 @@ TEST_CASE("a plan's age: exactly plan_ttl is accepted, one clock tick more is st
   }
 }
 
-TEST_CASE("map_report: every step reached, and its precedence") {
+TEST_CASE("map_report: every step reached and and its precedence") {
   using sending::OnceExit;
   const auto mapped = [](const Report& report, std::uint64_t logged, bool failed, std::size_t withdrawals) {
     return sending::map_report(report, logged, failed, withdrawals);
@@ -426,7 +426,7 @@ TEST_CASE("map_report: every step reached, and its precedence") {
   CHECK(mapped(mixed, 1, false, 0).reason_ == "mixed");
 }
 
-TEST_CASE("reconcile's rows and its overall exit, as a table") {
+TEST_CASE("reconcile's rows and its overall exit and as a table") {
   sending::OnceResult result;
   result.exit_ = sending::OnceExit::DONE;
   result.reason_ = "met";
@@ -451,7 +451,7 @@ TEST_CASE("reconcile's rows and its overall exit, as a table") {
   CHECK(cmdatl::reconcile_exit({}, false).first == cmdatl::Exit::OK);
 }
 
-TEST_CASE("the owed rows' next, by case") {
+TEST_CASE("the owed rows' next and by case") {
   CHECK(cmdatl::owed_next("005930", "named", std::string("pending")).find("cmdatl order cancel 005930") != std::string::npos);
   CHECK(cmdatl::owed_next("005930", "named", std::string("filled")).find("records it from holdings") != std::string::npos);
   CHECK(cmdatl::owed_next("005930", "named", std::string("canceled")).find("records it from holdings") != std::string::npos);
@@ -459,7 +459,7 @@ TEST_CASE("the owed rows' next, by case") {
   CHECK(cmdatl::owed_next("005930", "operator", std::nullopt).find("only the operator") != std::string::npos);
 }
 
-TEST_CASE("approval files: the grammar, line by line") {
+TEST_CASE("approval files: the grammar and line by line") {
   const auto symbol = [](std::string_view text) { return paper::valid_symbol(text); };
   CHECK(sending::parse_approval("005930 j1\n005930 j2\r\n000660 j3\n", "005930", symbol).ids_ == std::vector<std::string>{"j1", "j2"});
   CHECK(sending::parse_approval("000660 j3\n", "005930", symbol).ids_.empty());
@@ -474,7 +474,7 @@ TEST_CASE("approval files: the grammar, line by line") {
   CHECK(!sending::valid_journal_id("a/b"));
 }
 
-TEST_CASE("order release: the approval names exactly the owed set, renamed after one use") {
+TEST_CASE("order release: the approval names exactly the owed set and renamed after one use") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto at = paper::Clock::time_point(std::chrono::duration_cast<paper::Clock::duration>(
@@ -527,7 +527,7 @@ TEST_CASE("order release: the approval names exactly the owed set, renamed after
   plan_id(fixture, "005930", "1", "75000");
 }
 
-TEST_CASE("order release refuses a named order, which waits for holdings") {
+TEST_CASE("order release refuses a named order and which waits for holdings") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto id = plan_id(fixture, "005930", "10", "75000");
@@ -538,7 +538,7 @@ TEST_CASE("order release refuses a named order, which waits for holdings") {
   CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read"}).code_ == "refused.named");
 }
 
-TEST_CASE("H5: a cancel needs no armed file and no permitted phase, and never places") {
+TEST_CASE("H5: a cancel needs no armed file and no permitted phase and and never places") {
   ConfigParts parts;
   parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
   const PaperFixture fixture(parts);
@@ -561,7 +561,7 @@ TEST_CASE("H5: a cancel needs no armed file and no permitted phase, and never pl
   CHECK(ops_of(slurp(fixture.log()), "cancel").size() == 1);
 }
 
-TEST_CASE("H6: a cancel reports what it sent, never met; nothing listed is nothing_working") {
+TEST_CASE("H6: a cancel reports what it sent and never met; nothing listed is nothing_working") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto empty = ask_checked(fixture, {"order", "cancel", "005930"});
@@ -613,7 +613,7 @@ TEST_CASE("two journaled orders on one symbol are the operator's: a cancel sends
   CHECK(ops_of(slurp(fixture.log()), "cancel").size() == ops_of(log, "cancel").size());
 }
 
-TEST_CASE("H12: an order the journal does not name refuses plan, place and cancel, and reconcile says so") {
+TEST_CASE("H12: an order the journal does not name refuses plan and place and cancel and and reconcile says so") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto id = plan_id(fixture, "005930", "10", "75000");
@@ -631,7 +631,7 @@ TEST_CASE("H12: an order the journal does not name refuses plan, place and cance
   CHECK(reconciled.body_.at("checked").as_array()[0].as_object().at("state").as_string() == "unjournaled_order");
 }
 
-TEST_CASE("review 2's wording: a place whose plan withdraws answers withdrawal_sent, exit 0, the plan used") {
+TEST_CASE("review 2's wording: a place whose plan withdraws answers withdrawal_sent and exit 0 and the plan used") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto first = plan_id(fixture, "005930", "10", "75000");
@@ -650,7 +650,7 @@ TEST_CASE("review 2's wording: a place whose plan withdraws answers withdrawal_s
   CHECK(ask_checked(fixture, {"order", "place", id}).code_ == "refused.plan_used");
 }
 
-TEST_CASE("reconcile: working while an order rests, awaiting, then clean after the fill") {
+TEST_CASE("reconcile: working while an order rests and awaiting and then clean after the fill") {
   const PaperFixture fixture;
   open_session(fixture);
   CHECK(ask_checked(fixture, {"order", "reconcile"}).reason_ == "clean");
@@ -673,7 +673,7 @@ TEST_CASE("reconcile: working while an order rests, awaiting, then clean after t
   CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
 }
 
-TEST_CASE("the per-call second: an order command past the data's end is clock.past_data, nothing written") {
+TEST_CASE("the per-call second: an order command past the data's end is clock.past_data and nothing written") {
   const PaperFixture fixture;
   fixture.arm();
   REQUIRE(ask(fixture, {"clock", "advance", "--to", "2024-03-28T15:30"}).exit_ == 0);
@@ -684,7 +684,7 @@ TEST_CASE("the per-call second: an order command past the data's end is clock.pa
   CHECK(slurp(fixture.log()) == log);
 }
 
-TEST_CASE("the market refusing a logged request is unknown.broker_refused, and the journal's answer settles it") {
+TEST_CASE("the market refusing a logged request is unknown.broker_refused and and the journal's answer settles it") {
   ConfigParts parts;
   parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
   const PaperFixture fixture(parts);

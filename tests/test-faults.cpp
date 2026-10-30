@@ -602,7 +602,7 @@ std::vector<std::string> journal_lines(const PaperFixture& fixture) {
 
 }  // namespace
 
-TEST_CASE("a place killed after its plan was marked used: plan_used, nothing journaled or logged, a new plan works") {
+TEST_CASE("a place killed after its plan was marked used: plan_used and nothing journaled or logged and a new plan works") {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
   const auto journal = slurp(fixture.journal());
@@ -615,7 +615,7 @@ TEST_CASE("a place killed after its plan was marked used: plan_used, nothing jou
   CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
 }
 
-TEST_CASE("a place killed after its PENDING, before the paper line: owed unnamed, never a second order, release") {
+TEST_CASE("a place killed after its PENDING and before the paper line: owed unnamed and never a second order and release") {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
   const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, "send.before_input");
@@ -644,7 +644,7 @@ TEST_CASE("a place killed after its PENDING, before the paper line: owed unnamed
   CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
 }
 
-TEST_CASE("a place killed after its paper line or its result: the market has it, and the next commands name it") {
+TEST_CASE("a place killed after its paper line or its result: the market has it and and the next commands name it") {
   for (const auto* point : {"send.after_input", "send.after_result"}) {
     INFO(point);
     const PaperFixture fixture;
@@ -669,7 +669,7 @@ TEST_CASE("a place killed after its paper line or its result: the market has it,
   }
 }
 
-TEST_CASE("a place killed after once() returned: owed, named, pending") {
+TEST_CASE("a place killed after once() returned: owed and named and pending") {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
   const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, "order.after_once");
@@ -680,7 +680,7 @@ TEST_CASE("a place killed after once() returned: owed, named, pending") {
   CHECK(owed[0].as_object().at("broker_status").as_string() == "pending");
 }
 
-TEST_CASE("an exception after a send, inside once() or after it, is unknown.internal") {
+TEST_CASE("an exception after a send and inside once() or after it and is unknown.internal") {
   for (const auto* point : {"send.after_result", "order.after_once"}) {
     INFO(point);
     const PaperFixture fixture;
@@ -698,7 +698,7 @@ TEST_CASE("an exception after a send, inside once() or after it, is unknown.inte
   }
 }
 
-TEST_CASE("B1: the armed file removed before once(), or before the paper line, sends nothing") {
+TEST_CASE("B1: the armed file removed before once() and or before the paper line and sends nothing") {
   {
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
@@ -733,7 +733,7 @@ TEST_CASE("B1: the armed file removed before once(), or before the paper line, s
   }
 }
 
-TEST_CASE("B5: the journal moved aside, emptied or replaced by a copy before once(): journal_missing, none created") {
+TEST_CASE("B5: the journal moved aside and emptied or replaced by a copy before once(): journal_missing and none created") {
   for (const auto* how : {"moved", "emptied", "copied"}) {
     INFO(how);
     const PaperFixture fixture;
@@ -802,7 +802,7 @@ TEST_CASE("the paper line not written whole is refused.not_reached; its fsync fa
   CHECK(ask(fixture, {"order", "list"}).body_.at("orders").as_array().size() == 1);
 }
 
-TEST_CASE("the journal's PENDING failing at zero bytes or as a prefix: refused.journal_unwritable, nothing sent") {
+TEST_CASE("the journal's PENDING failing at zero bytes or as a prefix: refused.journal_unwritable and nothing sent") {
   {
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
@@ -865,7 +865,7 @@ TEST_CASE("the journal's answer failing after the market answered: unknown.journ
   CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"}).reason_ == "met");
 }
 
-TEST_CASE("a market-refused place whose journal answer fails: unknown.journal_write, then unresolved") {
+TEST_CASE("a market-refused place whose journal answer fails: unknown.journal_write and then unresolved") {
   ConfigParts parts;
   parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
   const PaperFixture fixture(parts);
@@ -880,7 +880,7 @@ TEST_CASE("a market-refused place whose journal answer fails: unknown.journal_wr
   CHECK(plan.exit_ == 4);
 }
 
-TEST_CASE("a cancel killed after its paper line: canceled on replay, unresolved until the match window closes") {
+TEST_CASE("a cancel killed after its paper line: canceled on replay and unresolved until the match window closes") {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
   REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
@@ -898,7 +898,7 @@ TEST_CASE("a cancel killed after its paper line: canceled on replay, unresolved 
   CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
 }
 
-TEST_CASE("an interrupt before once() is 130 and sends nothing; after once() is called, the call's own reply") {
+TEST_CASE("an interrupt before once() is 130 and sends nothing; after once() is called and the call's own reply") {
   {
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
@@ -932,7 +932,7 @@ TEST_CASE("an interrupt before once() is 130 and sends nothing; after once() is 
   }
 }
 
-TEST_CASE("the plan book's rename failing: exit 1, the plan unused, nothing sent") {
+TEST_CASE("the plan book's rename failing: exit 1 and the plan unused and nothing sent") {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
   {
