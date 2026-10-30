@@ -340,7 +340,13 @@ TEST_CASE("an allocation failing anywhere in run_child or its lines or its tail 
   }
   INFO("allocations swept: " << n << ", first leak at " << first_bad);
   CHECK(first_bad == 0);
+#if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+  // The sanitizer's runtime takes the allocations libc++ makes inside its own library (std::string's members), so
+  // this binary's operator new sees, and fails, only the inlined ones.
+  CHECK(threw > 5);
+#else
   CHECK(threw > 50);
+#endif
   CHECK(n < 2000);
 }
 
