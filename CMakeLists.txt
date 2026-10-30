@@ -1,0 +1,54 @@
+cmake_minimum_required(VERSION 3.20)
+# The release, then the development part (9000: unreleased work after it), as algotradelib and pyatl number theirs.
+project(cmdatl VERSION 0.0.0.9000 LANGUAGES CXX)
+
+option(CMDATL_BUILD_TESTS "Build the tests" ON)
+option(CMDATL_FETCH_DEPS "Fetch CLI11 and Catch2 with FetchContent when they are not installed" ON)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# An installed algotradelib: CMAKE_PREFIX_PATH or algotradelib_DIR points at it. Its target brings Boost.JSON.
+find_package(algotradelib CONFIG REQUIRED)
+
+include(FetchContent)
+find_package(CLI11 2.4 CONFIG QUIET)
+if(NOT CLI11_FOUND)
+  if(NOT CMDATL_FETCH_DEPS)
+    message(FATAL_ERROR "CLI11 2.4 or later is needed: install it, or configure with -DCMDATL_FETCH_DEPS=ON")
+  endif()
+  FetchContent_Declare(cli11 GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git GIT_TAG v2.4.2 GIT_SHALLOW TRUE)
+  FetchContent_MakeAvailable(cli11)
+endif()
+
+add_library(cmdatl_core INTERFACE)
+target_include_directories(cmdatl_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(cmdatl_core INTERFACE algotradelib::algotradelib CLI11::CLI11)
+target_compile_definitions(cmdatl_core INTERFACE CMDATL_VERSION="${PROJECT_VERSION}")
+
+add_executable(cmdatl src/main.cpp)
+target_link_libraries(cmdatl PRIVATE cmdatl_core)
+# The library's target names OpenSSL and the brokers' dependencies; cmdatl links only what it uses.
+target_link_options(cmdatl PRIVATE
+  $<$<PLATFORM_ID:Darwin>:LINKER:-dead_strip_dylibs>
+  $<$<PLATFORM_ID:Linux>:LINKER:--as-needed>
+)
+install(TARGETS cmdatl RUNTIME DESTINATION bin)
+
+if(CMDATL_BUILD_TESTS)
+  enable_testing()
+  find_package(Catch2 3 CONFIG QUIET)
+  if(NOT Catch2_FOUND)
+    if(NOT CMDATL_FETCH_DEPS)
+      message(FATAL_ERROR "Catch2 3 is needed for the tests: install it, or configure with -DCMDATL_FETCH_DEPS=ON")
+    endif()
+    FetchContent_Declare(catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG v3.8.1 GIT_SHALLOW TRUE)
+    FetchContent_MakeAvailable(catch2)
+  endif()
+  add_executable(test-cli tests/test-cli.cpp)
+  target_link_libraries(test-cli PRIVATE cmdatl_core Catch2::Catch2WithMain)
+  # The documentation check reads README.md and docs/ from the source tree.
+  target_compile_definitions(test-cli PRIVATE CMDATL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+  add_test(NAME test-cli COMMAND test-cli)
+endif()

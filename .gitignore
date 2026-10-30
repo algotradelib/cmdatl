@@ -1,0 +1,11 @@
+# Build directories.
+/build/
+/build-*/
+
+# cmdatl's caches and state, when kept inside a checkout.
+/.cmdatl/
+
+# Editors and the OS.
+.vscode/
+.idea/
+*.DS_Store
