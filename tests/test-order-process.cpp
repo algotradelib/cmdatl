@@ -347,3 +347,28 @@ TEST_CASE("an allocation failing anywhere in an order command leaks nothing and 
   CHECK(refusal_runs > 10);
 }
 #endif
+
+#if !defined(_WIN32)
+TEST_CASE("descriptors and children: 200 in-process runs of each order command leave the counts as they were", "[orders][process]") {
+  const Watchdog watchdog("the descriptor count", 600);
+  const PaperFixture fixture;
+  fixture.arm();
+  REQUIRE(ask(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
+  const int before = open_fds();
+  for (int i = 0; i < 200; ++i) {
+    const auto planned = ask(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
+    REQUIRE(planned.exit_ == 0);
+    // A place of a plan the book does not hold, a cancel with nothing working, a reconcile, a release refused.
+    CHECK(ask(fixture, {"order", "place", "p0123456789"}).code_ == "refused.no_plan");
+    CHECK(ask(fixture, {"order", "cancel", "005930"}).reason_ == "nothing_working");
+    CHECK(ask(fixture, {"order", "reconcile"}).reason_ == "clean");
+    CHECK(ask(fixture, {"order", "release", "005930", "--reason", "read"}).code_ == "refused.not_approved");
+    if (i % 50 == 0) {
+      CHECK(open_fds() == before);
+      CHECK(no_children());
+    }
+  }
+  CHECK(open_fds() == before);
+  CHECK(no_children());
+}
+#endif
