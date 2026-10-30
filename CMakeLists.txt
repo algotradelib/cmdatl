@@ -121,6 +121,19 @@ if(CMDATL_BUILD_TESTS)
     CMDATL_HOLD_LOCK="$<TARGET_FILE:hold-lock>"
   )
   add_test(NAME test-cli COMMAND test-cli "~[acceptance]")
+  # The fault tests: their own executable, whose one translation unit defines CMDATL_FAULT_HOOKS and gives the
+  # system calls of the account's state files their stand-ins, so no inline definition is mixed with them.
+  add_executable(test-faults tests/test-faults.cpp)
+  target_link_libraries(test-faults PRIVATE cmdatl_core Catch2::Catch2WithMain)
+  add_dependencies(test-faults cmdatl fake-atlc hold-lock)
+  target_compile_definitions(test-faults PRIVATE
+    CMDATL_FAULT_HOOKS
+    CMDATL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    CMDATL_BINARY="$<TARGET_FILE:cmdatl>"
+    CMDATL_FAKE_ATLC="$<TARGET_FILE:fake-atlc>"
+    CMDATL_HOLD_LOCK="$<TARGET_FILE:hold-lock>"
+  )
+  add_test(NAME test-faults COMMAND test-faults)
   # Against a real atlc and algotradelib, named by CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX; skipped, and reported
   # as skipped, without them.
   add_test(NAME test-acceptance COMMAND test-cli "[acceptance]")
