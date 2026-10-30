@@ -678,11 +678,15 @@ inline Reply plan_reply(const Invocation& invocation, Account& account, Output& 
     plan.snapshot_ = snapshot_of(account.desk().session(), account.config().scope(), symbol, target, limit, journal_size(account));
     plan.sim_ = paper::nanos(account.desk().now());
     const auto id = book.issue(plan);
-    if (const int error = book.save()) {
+    const auto saved = book.save(account.lock());
+    if (saved.lock_lost_) {
+      return with_body(lock_lost_reply(), std::move(body));
+    }
+    if (saved.error_ != 0) {
       return finish(account, with_body(error_reply(
         Exit::FAILED,
         "file.unwritable",
-        "the plan book could not be written (" + std::string(std::strerror(error)) + "); no plan was issued and nothing was sent",
+        "the plan book could not be written (" + std::string(std::strerror(saved.error_)) + "); no plan was issued and nothing was sent",
         "check the account's directory"
       ), std::move(body)), symbol);
     }
@@ -752,11 +756,16 @@ inline Reply place_reply(const Invocation& invocation, Account& account, Output&
     return interrupted_before_send(std::move(body));
   }
   book.use(id);
-  if (const int error = book.save()) {
+  const auto saved = book.save(account.lock());
+  if (saved.lock_lost_) {
+    // Nothing published: the plan book is the newer holder's, and once() is never called.
+    return with_body(lock_lost_reply(), std::move(body));
+  }
+  if (saved.error_ != 0) {
     return finish(account, with_body(error_reply(
       Exit::FAILED,
       "file.unwritable",
-      "the plan book could not be written (" + std::string(std::strerror(error)) + "); the plan is unused and nothing was sent",
+      "the plan book could not be written (" + std::string(std::strerror(saved.error_)) + "); the plan is unused and nothing was sent",
       "check the account's directory"
     ), std::move(body)), plan->symbol_);
   }

@@ -7,6 +7,7 @@
 // empty book as a whole, so a damaged entry never becomes an authorization.
 
 #include "./files.hpp"
+#include "./lock.hpp"
 #include "./paper/bars.hpp"
 #include "./paper/time.hpp"
 #include "./syscalls.hpp"
@@ -391,33 +392,56 @@ public:
   }
 
 #if !defined(_WIN32)
+  /** @brief How writing the book ended. */
+  struct Written {
+    /** @brief Whether the account's lock was no longer this process's, so nothing was published. */
+    bool lock_lost_{false};
+    /** @brief The error number of a failed write, or 0. */
+    int error_{0};
+  };
+
   /**
-   * @brief Writes the book: a temporary created exclusively, written whole, flushed, then renamed onto the book; a
-   *   failure removes the temporary.
-   * @return 0, or the error number.
+   * @brief Writes the book under the account's lock: the lock checked, a temporary created exclusively, written whole
+   *   and flushed, the lock checked again, then the temporary renamed onto the book; a failure or a lost lock removes
+   *   only this call's temporary and leaves the book as it was.
+   * @param lock The account's lock, held.
+   * @return How it ended.
    */
-  int save() const {
+  Written save(const OwnerLock& lock) const {
+    Written written;
     const auto content = text();
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto salt = paper::fnv1a(std::to_string(stamp) + "|" + std::to_string(::getpid()) + "|" + content);
     const auto temporary = dir_ + "/plans." + std::to_string(::getpid()) + "." + hex_digits(salt, 16) + ".tmp";
+    if (!lock.still_at_path()) {
+      written.lock_lost_ = true;
+      return written;
+    }
     ScopedFd fd(open_lifted(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
     if (fd.get() < 0) {
-      return errno;
+      written.error_ = errno;
+      return written;
     }
-    std::size_t written = 0;
-    int error = write_whole(fd.get(), content.data(), content.size(), written);
+    std::size_t count = 0;
+    int error = write_whole(fd.get(), content.data(), content.size(), count);
     if (error == 0 && sys::fsync(fd.get()) != 0) {
       error = errno;
     }
     fd.reset();
+    sys::kill_point("plans.written");
+    if (error == 0 && !lock.still_at_path()) {
+      ::unlink(temporary.c_str());
+      written.lock_lost_ = true;
+      return written;
+    }
     if (error == 0 && sys::rename(temporary.c_str(), path().c_str()) != 0) {
       error = errno;
     }
     if (error != 0) {
       ::unlink(temporary.c_str());
     }
-    return error;
+    written.error_ = error;
+    return written;
   }
 #endif
 

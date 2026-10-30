@@ -58,6 +58,8 @@ inline std::string kill_at;
 inline std::function<void(const std::string&)> hook;
 /** @brief Whether the next `fsync` of the journal fails (Linux, through `--wrap=fsync`). */
 inline bool fail_journal_fsync = false;
+/** @brief What runs right after a `replace-lock` fault replaced the lock: another process taking the account. */
+inline std::function<void()> after_replace;
 /** @brief How many matching calls were seen. */
 inline int seen = 0;
 /** @brief How many faults were injected. */
@@ -131,6 +133,7 @@ inline void clear() {
   plan = Plan{};
   kill_at.clear();
   hook = nullptr;
+  after_replace = nullptr;
   fail_journal_fsync = false;
   seen = 0;
   injected = 0;
@@ -218,6 +221,9 @@ int fstat(int fd, struct stat* info) {
   if (fault::hit("fstat", fault::name_of(fd))) {
     if (fault::plan.mode_ == "replace-lock") {
       fault::replace_lock_beside(fd);
+      if (fault::after_replace) {
+        fault::after_replace();
+      }
       return ::fstat(fd, info);
     }
     errno = fault::plan.error_;
@@ -1006,4 +1012,57 @@ TEST_CASE("the per-call second not written whole is exit 1 with nothing sent") {
     CHECK(result.code_ == "file.unwritable");
   }
   CHECK(ops_of(slurp(fixture.log()), "place").empty());
+}
+
+TEST_CASE("a former lock holder never publishes its plan book over a newer holder's") {
+  for (const auto* command : {"place", "plan"}) {
+    for (const auto* when : {"before the save", "between the temporary and its publication"}) {
+      INFO("order " << command << ", the lock replaced " << when);
+      const PaperFixture fixture;
+      const auto id = ready_plan(fixture);
+      const auto journal_before = slurp(fixture.journal());
+      std::string new_id;
+      const auto newer_holder = [&] {
+        new_id = plan_id(fixture, "000660", "1", "180000");
+        REQUIRE(cmdatl::PlanBook::load(fixture.account().string()).find(new_id).has_value());
+      };
+      const auto line = std::string(command) == "place" ? std::vector<std::string>{"order", "place", id} :
+        std::vector<std::string>{"order", "plan", "005930", "--target", "20", "--limit", "75000"};
+      Answer answer;
+      if (std::string(when) == "before the save") {
+        // The book's third status read comes after it was read, before it is written.
+        const fault::Scoped scoped({"fstat", "plans.json", "replace-lock", 2, 1, 0});
+        fault::after_replace = newer_holder;
+        answer = ask_checked(fixture, line);
+        REQUIRE(fault::injected == 1);
+      } else {
+        const fault::Scoped scoped({});
+        bool fired = false;
+        fault::hook = [&](const std::string& name) {
+          if (name != "plans.written" || fired) {
+            return;
+          }
+          fired = true;
+          const auto fresh = fixture.account() / "lock.replacement";
+          spit(fresh, "");
+          std::filesystem::rename(fresh, fixture.account() / "lock");
+          newer_holder();
+        };
+        answer = ask_checked(fixture, line);
+        REQUIRE(fired);
+      }
+      CHECK(answer.exit_ == 4);
+      CHECK(answer.code_ == "unknown.lock_lost");
+      CHECK(slurp(fixture.journal()) == journal_before);
+      CHECK(ops_of(slurp(fixture.log()), "place").empty());
+      const auto book = cmdatl::PlanBook::load(fixture.account().string());
+      CHECK(!book.damaged());
+      CHECK(book.find(new_id).has_value());
+      REQUIRE(book.find(id).has_value());
+      CHECK(!book.find(id)->used_);
+      for (const auto& entry : std::filesystem::directory_iterator(fixture.account())) {
+        CHECK(entry.path().extension() != ".tmp");
+      }
+    }
+  }
 }
