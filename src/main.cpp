@@ -31,6 +31,8 @@ static bool stdout_is_terminal() {
  * @return The exit code.
  */
 int main(int argc, char** argv) {
+  // SIGINT and SIGTERM stop a command's child and still give a reply; a closed output fails through its stream.
+  cmdatl::handle_signals();
   // cmdatl::run turns everything after a command starts into a reply or a minimal report with its exit code; an
   // exception reaching here was thrown before any command started, so nothing was sent.
   try {
