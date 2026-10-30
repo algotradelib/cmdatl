@@ -14,6 +14,7 @@
 #include <algotradelib/runner>
 
 #include <climits>
+#include <random>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -756,6 +757,142 @@ TEST_CASE("--fields and --value accept each new field before the command runs") 
   CHECK(fixture.json({"--value", "nonsense", "order", "place", "p0123456789"}).exit_ == 2);
   CHECK(fixture.json({"--value", "withdrawals", "order", "cancel", "005930"}).exit_ == 0);
   CHECK(fixture.json({"--value", "checked", "order", "reconcile"}).exit_ == 0);
+}
+
+TEST_CASE("hostile inputs: mutated plan books never authorize a send their snapshot does not match", "[hostile]") {
+  const PaperFixture fixture;
+  open_session(fixture);
+  const auto id = plan_id(fixture, "005930", "10", "75000");
+  const auto path = fixture.account() / "plans.json";
+  const auto good = slurp(path);
+  const auto original = cmdatl::PlanBook::parse(good);
+  REQUIRE(original);
+  std::mt19937 random(20261031);
+  const std::string alphabet = "{}[]\":,0123456789abcdefp-. truefalsnul\\\n";
+  int placed = 0;
+  for (int i = 0; i < 1000; ++i) {
+    auto text = good;
+    const int edits = 1 + static_cast<int>(random() % 4);
+    for (int k = 0; k < edits; ++k) {
+      const auto at = random() % (text.size() + 1);
+      switch (random() % 3) {
+        case 0:
+          text.insert(at, 1, alphabet[random() % alphabet.size()]);
+          break;
+        case 1:
+          if (at < text.size()) {
+            text.erase(at, 1);
+          }
+          break;
+        default:
+          if (at < text.size()) {
+            text[at] = alphabet[random() % alphabet.size()];
+          }
+          break;
+      }
+    }
+    spit(path, text);
+    const auto ran = fixture.json({"order", "place", id});
+    INFO(text);
+    REQUIRE(lines_of(ran.out_).size() == 1);
+    const auto body = reply_of(ran.out_);
+    CHECK((ran.exit_ == 0 || ran.exit_ == 1 || ran.exit_ == 3 || ran.exit_ == 4));
+    if (ran.exit_ == 0 && body.contains("reason") && body.at("reason").as_string() == "placed") {
+      ++placed;
+      const auto mutated = cmdatl::PlanBook::parse(text);
+      REQUIRE(mutated);
+      bool same = false;
+      for (const auto& entry : *mutated) {
+        if (entry.first == id) {
+          const auto& plan = entry.second;
+          const auto& was = original->front().second;
+          same = plan.symbol_ == was.symbol_ && plan.target_ == was.target_ && plan.limit_ == was.limit_ &&
+            plan.snapshot_ == was.snapshot_ && !plan.used_;
+        }
+      }
+      CHECK(same);
+      // Back to an account with nothing working, for the next mutation.
+      REQUIRE(ask(fixture, {"order", "cancel", "005930"}).exit_ == 0);
+      REQUIRE(ask(fixture, {"order", "reconcile"}).exit_ == 0);
+    }
+  }
+  CHECK(placed <= 1);
+}
+
+TEST_CASE("hostile inputs: mutated approval files never release a set they do not name exactly", "[hostile]") {
+  const PaperFixture fixture;
+  open_session(fixture);
+  const auto at = paper::Clock::time_point(std::chrono::duration_cast<paper::Clock::duration>(
+    std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
+  ));
+  int serial = 0;
+  const auto owe = [&] {
+    journal(fixture, {place_entry("j" + std::to_string(++serial), atl::runner::JournalOutcome::PENDING, at)});
+  };
+  owe();
+  std::mt19937 random(31102026);
+  const std::string alphabet = "0123456789j 005930\r\n\t:.-~_x";
+  int released = 0;
+  for (int i = 0; i < 1000; ++i) {
+    const auto wanted = "j" + std::to_string(serial);
+    auto text = "005930 " + wanted + "\n000660 j0\n";
+    const int edits = static_cast<int>(random() % 4);
+    for (int k = 0; k < edits; ++k) {
+      const auto pos = random() % (text.size() + 1);
+      if (random() % 2 == 0) {
+        text.insert(pos, 1, alphabet[random() % alphabet.size()]);
+      } else if (pos < text.size()) {
+        text.erase(pos, 1);
+      }
+    }
+    const auto approval = fixture.dir() / "paper.release";
+    spit(approval, text);
+    const auto ran = fixture.json({"order", "release", "005930", "--reason", "read"});
+    INFO(text);
+    REQUIRE(lines_of(ran.out_).size() == 1);
+    CHECK((ran.exit_ == 0 || ran.exit_ == 3));
+    if (ran.exit_ == 0) {
+      ++released;
+      const auto parsed = sending::parse_approval(text, "005930", [](std::string_view t) { return paper::valid_symbol(t); });
+      CHECK(parsed.refused_.empty());
+      CHECK(parsed.ids_ == std::vector<std::string>{wanted});
+      owe();
+    }
+    std::filesystem::remove(approval);
+  }
+  CHECK(released > 0);
+}
+
+TEST_CASE("hostile inputs: generated order command lines end in a declared exit with one JSON object", "[hostile]") {
+  const PaperFixture fixture;
+  open_session(fixture);
+  const std::vector<std::string> words{
+    "order", "plan", "place", "cancel", "reconcile", "release", "005930", "000660", "999999", "--target", "--limit",
+    "--reason", "10", "0", "-1", "1e3", "75000", "75000.5", "0.0001", "p0123456789", "pXYZ", "", " ", "--json",
+    "--fields", "now", "--value", "plan_id", "read", "\xff", "--", "-x", "100000000000",
+  };
+  std::mt19937 random(7);
+  for (int i = 0; i < 2000; ++i) {
+    std::vector<std::string> line{"order"};
+    const int length = 1 + static_cast<int>(random() % 7);
+    for (int k = 0; k < length; ++k) {
+      line.push_back(words[random() % words.size()]);
+    }
+    const auto before = slurp(fixture.log());
+    const auto ran = fixture.json(line);
+    INFO(cmdatl::join(line));
+    REQUIRE(lines_of(ran.out_).size() <= 1);
+    CHECK((ran.exit_ == 0 || ran.exit_ == 1 || ran.exit_ == 2 || ran.exit_ == 3 || ran.exit_ == 4));
+    if (!ran.out_.empty() && ran.out_.front() == '{') {
+      Answer answer;
+      answer.exit_ = ran.exit_;
+      answer.body_ = reply_of(ran.out_);
+      if (const auto* reason = answer.body_.if_contains("reason"); reason != nullptr && reason->is_string()) {
+        answer.reason_ = std::string(reason->as_string());
+      }
+      CHECK(no_send_ok(answer, before, slurp(fixture.log())));
+    }
+  }
 }
 
 TEST_CASE("snapshots: a failed read is written ? and never matches a good read") {
