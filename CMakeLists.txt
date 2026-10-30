@@ -107,6 +107,7 @@ if(CMDATL_BUILD_TESTS)
   add_executable(fake-atlc tests/fake-atlc.cpp)
   add_executable(test-cli
     tests/test-cli.cpp tests/test-process.cpp tests/test-strategy.cpp tests/test-acceptance.cpp tests/test-operator.cpp
+    tests/test-paper.cpp
   )
   target_link_libraries(test-cli PRIVATE cmdatl_core Catch2::Catch2WithMain)
   add_dependencies(test-cli cmdatl fake-atlc)
