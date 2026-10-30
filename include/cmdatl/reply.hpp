@@ -440,7 +440,7 @@ public:
   /**
    * @brief Sets up the output of one command.
    * @param out stdout.
-   * @param err stderr, for failures written as text.
+   * @param err stderr, for failures written as text and for progress.
    * @param rendering How the caller asked to see replies.
    * @param env The command's environment.
    */
@@ -459,6 +459,23 @@ public:
     rendering.value_.reset();
     write_reply(out_, line, rendering, env_);
     require_written(out_);
+  }
+
+  /**
+   * @brief Writes a progress message at once, flushed: a line on stderr in text and `json`, a
+   *   `{"event":"progress","message":...}` line on stdout in `jsonl`, never selected by `--fields` or `--value`.
+   * @param message The message.
+   * @throws std::runtime_error When it could not be written.
+   */
+  void progress(const std::string& message) {
+    if (rendering_.format_ == Format::JSONL) {
+      const json::object event{{"env", env_}, {"event", "progress"}, {"message", message}};
+      out_ << json::serialize(event) << "\n";
+      require_written(out_);
+      return;
+    }
+    err_ << message << "\n";
+    require_written(err_);
   }
 
   /**
