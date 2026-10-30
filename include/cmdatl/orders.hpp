@@ -761,6 +761,10 @@ inline Reply place_reply(const Invocation& invocation, Account& account, Output&
     ), std::move(body)), plan->symbol_);
   }
   sys::kill_point("order.before_once");
+  if (interrupted()) {
+    // The plan is used and nothing was sent: a new plan works.
+    return finish(account, interrupted_before_send(std::move(body)), plan->symbol_);
+  }
   sending::OnceResult result;
   {
     auto opened = open_journal(account);
