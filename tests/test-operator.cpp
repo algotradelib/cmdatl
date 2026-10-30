@@ -481,7 +481,12 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
     CHECK(body.at("paper").as_object().at("cash").as_string() == "100000000");
     CHECK(body.at("capabilities").as_object().at("clock").as_bool());
     CHECK(!body.at("capabilities").as_object().at("trigger_price").as_bool());
-    CHECK(body.at("limits").as_object().at("collar").as_double() == 0.05);
+    CHECK(body.at("limits").as_object().at("collar").as_string() == "0.05");
+    const auto& costs = body.at("paper").as_object().at("costs").as_object();
+    CHECK(costs.at("commission").as_string() == "0.00015");
+    CHECK(costs.at("sell_tax").as_string() == "0.002");
+    CHECK(cmdatl::decimal_text(0.3) == "0.3");
+    CHECK(cmdatl::decimal_text(0.00001) == "0.00001");
     CHECK(!body.at("armed").as_object().at("exists").as_bool());
     CHECK(body.at("owner").is_null());
   }
