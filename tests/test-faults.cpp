@@ -646,15 +646,6 @@ std::string ready_plan(const PaperFixture& fixture, const std::string& limit = "
   return plan_id(fixture, "005930", "10", limit);
 }
 
-/**
- * @brief The journal's lines.
- * @param fixture The account.
- * @return The lines.
- */
-std::vector<std::string> journal_lines(const PaperFixture& fixture) {
-  return lines_of(slurp(fixture.journal()));
-}
-
 }  // namespace
 
 TEST_CASE("a place killed after its plan was marked used: plan_used and nothing journaled or logged and a new plan works") {
