@@ -169,6 +169,9 @@ int main(int argc, char** argv) {
       grandchild(text, base + ".pids");
     } else if (action == "touch") {
       append(base + "." + text, "");
+    } else if (action == "spoil") {
+      // A line no TOML reader takes, appended to a file beside the script (an operator's file rewritten meanwhile).
+      append(base + "." + text, "!!! not toml");
     } else if (action == "args") {
       for (int i = 2; i < argc; ++i) {
         append(base + "." + mode + ".args", argv[i]);
