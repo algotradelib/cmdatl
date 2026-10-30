@@ -15,6 +15,7 @@
 #include <charconv>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -750,6 +751,22 @@ inline bool regular_file(const std::string& path) {
 }
 
 /**
+ * @brief A fraction as the shortest plain decimal that reads back as it (`0.05`, `0.00015`), never in exponent form.
+ * @param value The fraction, finite and at least 0.
+ * @return The text.
+ */
+inline std::string decimal_text(double value) {
+  char text[64];
+  for (int digits = 1; digits <= 30; ++digits) {
+    std::snprintf(text, sizeof(text), "%.*f", digits, value);
+    if (std::strtod(text, nullptr) == value) {
+      break;
+    }
+  }
+  return text;
+}
+
+/**
  * @brief `cmdatl env`: what cmdatl found, without secrets or the process environment.
  *
  * The operator's file is read once, and atlc is looked up in that same reading; always exit 0.
@@ -814,7 +831,7 @@ inline Reply env_reply() {
       {"order_value", c.limits_.order_value_},
       {"daily_orders", c.limits_.daily_orders_},
       {"order_type", c.limits_.order_type_},
-      {"collar", c.limits_.collar_},
+      {"collar", decimal_text(c.limits_.collar_)},
       {"phases", std::move(phases)},
       {"plan_ttl", c.limits_.plan_ttl_},
       {"portfolio_age", c.limits_.portfolio_age_},
@@ -836,8 +853,8 @@ inline Reply env_reply() {
       {"start", c.paper_.start_},
       {"cash", std::to_string(c.paper_.cash_)},
       {"costs", json::object{
-        {"commission", costs.commission_},
-        {"sell_tax", costs.sell_tax_},
+        {"commission", decimal_text(costs.commission_)},
+        {"sell_tax", decimal_text(costs.sell_tax_)},
         {"slippage_ticks", costs.slippage_ticks_},
       }},
     };

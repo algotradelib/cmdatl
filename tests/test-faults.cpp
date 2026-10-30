@@ -13,6 +13,7 @@
 #include <csignal>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <string>
 #include <vector>
@@ -36,7 +37,10 @@ struct Plan {
   std::string call_;
   /** @brief The file's name the call is on (its last component); empty for any. */
   std::string file_;
-  /** @brief For `read`: `prefix`; for `write`: `short`, `zero`, `fail`, `eintr`; otherwise `fail`. */
+  /**
+   * @brief For `read`: `prefix`; for `write`: `short`, `zero`, `fail`, `eintr`; for `fstat`: `fail` or `replace-lock`
+   *   (the call succeeds after another file is renamed onto the `lock` beside its file); otherwise `fail`.
+   */
   std::string mode_{"fail"};
   /** @brief Matching calls let through first. */
   int skip_{0};
@@ -60,17 +64,17 @@ inline int seen = 0;
 inline int injected = 0;
 
 /**
- * @brief The last component of the file a descriptor is open on.
+ * @brief The file a descriptor is open on.
  * @param fd The descriptor.
- * @return The name, or empty.
+ * @return The path, or empty.
  */
-inline std::string name_of(int fd) {
+inline std::filesystem::path path_of(int fd) {
 #if defined(__APPLE__)
   char path[MAXPATHLEN];
   if (::fcntl(fd, F_GETPATH, path) != 0) {
     return {};
   }
-  return std::filesystem::path(path).filename().string();
+  return path;
 #else
   char path[4096];
   const auto n = ::readlink(("/proc/self/fd/" + std::to_string(fd)).c_str(), path, sizeof(path) - 1);
@@ -78,8 +82,30 @@ inline std::string name_of(int fd) {
     return {};
   }
   path[n] = '\0';
-  return std::filesystem::path(path).filename().string();
+  return path;
 #endif
+}
+
+/**
+ * @brief The last component of the file a descriptor is open on.
+ * @param fd The descriptor.
+ * @return The name, or empty.
+ */
+inline std::string name_of(int fd) {
+  return path_of(fd).filename().string();
+}
+
+/**
+ * @brief Replaces the `lock` beside a descriptor's file with a new file, as another process taking the account would.
+ * @param fd The descriptor.
+ */
+inline void replace_lock_beside(int fd) {
+  const auto dir = path_of(fd).parent_path();
+  const auto fresh = dir / "lock.replacement";
+  {
+    std::ofstream out(fresh);
+  }
+  std::filesystem::rename(fresh, dir / "lock");
 }
 
 /**
@@ -190,6 +216,10 @@ int rename(const char* from, const char* to) {
 
 int fstat(int fd, struct stat* info) {
   if (fault::hit("fstat", fault::name_of(fd))) {
+    if (fault::plan.mode_ == "replace-lock") {
+      fault::replace_lock_beside(fd);
+      return ::fstat(fd, info);
+    }
     errno = fault::plan.error_;
     return -1;
   }
@@ -379,6 +409,31 @@ TEST_CASE("the owner record's rename failing is ignored, and its temporary remov
   for (const auto& entry : std::filesystem::directory_iterator(fixture.account())) {
     CHECK(entry.path().extension() != ".tmp");
   }
+}
+
+TEST_CASE("the lock lost before the owner record is written: no record replaced, and lock_lost") {
+  const PaperFixture fixture;
+  REQUIRE(outcome(fixture, {"status"}).first == 0);
+  const auto owner = fixture.account() / "owner.json";
+  const std::string record = "{\"role\":\"operator\",\"pid\":1}\n";
+  spit(owner, record);
+  const auto log = slurp(fixture.log());
+  {
+    // Replaced while the account opens, after the lock was taken and before anything is written.
+    const fault::Scoped scoped({"fstat", "paper.jsonl", "replace-lock", 0, -1, 0});
+    const auto result = outcome(fixture, {"status"});
+    CHECK(fault::injected > 0);
+    CHECK(result.first == 4);
+    CHECK(result.second == "unknown.lock_lost");
+  }
+  CHECK(slurp(owner) == record);
+  CHECK(slurp(fixture.log()) == log);
+  for (const auto& entry : std::filesystem::directory_iterator(fixture.account())) {
+    CHECK(entry.path().extension() != ".tmp");
+  }
+  // The new lock is free: the next command takes it and writes its own record.
+  CHECK(outcome(fixture, {"status"}).first == 0);
+  CHECK(slurp(owner) != record);
 }
 
 TEST_CASE("a failed status read refuses before anything destructive") {

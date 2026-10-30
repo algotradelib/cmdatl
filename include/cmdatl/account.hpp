@@ -151,7 +151,8 @@ inline void check_ownership(const algotradelib::runner::JournalReplay& replay, c
  * @param replay The journal, read once.
  * @param scope The account's scope.
  * @param today The KST date to count placements on, as days from 1970-01-01.
- * @return The view.
+ * @return The view; not intact when a placement's instant is outside the supported interval, as its date is then
+ *   unknown (a salvaged operator-only line at the epoch is not counted at all).
  */
 template <typename Session>
 JournalView journal_view(
@@ -195,6 +196,18 @@ JournalView journal_view(
   std::map<std::string, std::chrono::system_clock::time_point> first_line;
   for (const auto& entry : replay.entries_) {
     if (entry.action_ != atl::runner::JournalAction::PLACE || entry.id_.empty()) {
+      continue;
+    }
+    if (entry.requires_operator_ && entry.recorded_at_ == std::chrono::system_clock::time_point{}) {
+      // A salvaged operator-only line records the epoch because it has no time: no date to count it on.
+      continue;
+    }
+    if (!paper::in_interval(entry.recorded_at_)) {
+      // The library does not bound an operator-only line's instant; one outside the interval gives no KST date.
+      if (view.intact_) {
+        view.intact_ = false;
+        view.detail_ = "the journal's entry " + entry.id_ + " was written at an instant outside 1990 to 2100";
+      }
       continue;
     }
     const auto found = first_line.find(entry.id_);
@@ -347,8 +360,8 @@ public:
 #if !defined(_WIN32)
   /**
    * @brief Opens the account: the directory, the lock (waiting at most 10 s, printing who holds it once), the bars,
-   *   the state files and their classification (initializing a fresh account), the journal, the desk and the
-   *   journal's view, in that order.
+   *   the state files and their classification (initializing a fresh account), the journal, the desk, the journal's
+   *   view, and the paper log's repair only when that view is this account's and intact, in that order.
    *
    * Each refusal changes nothing it has not said it changes.
    * @param snapshot The operator's file, read.
@@ -754,6 +767,17 @@ private:
       return paper_state_reply(error.what());
     }
     journal_ = journal_view(desk_->session(), replay_, config_.scope(), paper::kst_day(desk_->now()));
+    if (!journal_.intact_) {
+      // A journal not this account's or damaged: the reads are built from the log as it is, and nothing is written.
+      return std::nullopt;
+    }
+    try {
+      desk_->repair();
+    } catch (const paper::LockLost&) {
+      return lock_lost_reply();
+    } catch (const paper::PaperStateError& error) {
+      return paper_state_reply(error.what());
+    }
     return std::nullopt;
   }
 #endif

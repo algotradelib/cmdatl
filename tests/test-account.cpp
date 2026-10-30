@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -464,6 +465,13 @@ TEST_CASE("a journal that is not this account's, or damaged, makes every account
     const auto quote = reply_of(fixture.json({"quote", "005930"}).out_);
     CHECK(quote.at("error").as_object().at("code").as_string() == "unknown.journal_damaged");
     CHECK(!quote.at("quotes").as_array()[0].as_object().at("orders_accepted_now").as_bool());
+    // A symbol without bars: the journal's unknown state first, the symbol named, no partial quotes.
+    const auto missing = fixture.json({"quote", "005930", "MISSING"});
+    CHECK(missing.exit_ == 4);
+    const auto missing_reply = reply_of(missing.out_);
+    CHECK(missing_reply.at("error").as_object().at("code").as_string() == "unknown.journal_damaged");
+    CHECK(std::string(missing_reply.at("error").as_object().at("message").as_string()).find("MISSING") != std::string::npos);
+    CHECK(!missing_reply.contains("quotes"));
     const auto advance = fixture.json({"clock", "advance", "--minutes", "5"});
     CHECK(advance.exit_ == 4);
     CHECK(code_of(advance.out_) == "unknown.journal_damaged");
@@ -490,6 +498,166 @@ TEST_CASE("a journal that is not this account's, or damaged, makes every account
     CHECK(code_of(ran.out_) == "unknown.journal_damaged");
   }
   ::chmod(fixture.journal().c_str(), 0600);
+}
+
+TEST_CASE("a journal not established leaves the paper log unrepaired and writes no owner record") {
+  const PaperFixture fixture;
+  fixture.arm();
+  initialize(fixture);
+  {
+    const auto opened = open_account();
+    REQUIRE(opened->account_);
+    auto& desk = opened->account_->desk();
+    REQUIRE(desk.advance_to(kst("2024-03-26T09:00")).status_ == paper::Appended::OK);
+    REQUIRE(desk.session().place(order("005930", true, "10", "60000")));
+  }
+  const auto placed = slurp(fixture.log());
+  auto lines = lines_of(placed);
+  REQUIRE(lines.size() == 4);
+  REQUIRE(lines.back().find("\"op\":\"result\"") != std::string::npos);
+  lines.pop_back();
+  std::string unanswered;
+  for (const auto& line : lines) {
+    unanswered += line + "\n";
+  }
+  const auto good = slurp(fixture.journal());
+  auto foreign_entry = place_entry("f1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:00"));
+  foreign_entry.scope_ = "paper:paper:other";
+  const std::vector<std::pair<const char*, std::string>> journals{
+    {"a foreign header", runner::journal_header_line("paper:paper:other") + "\n"},
+    {"a foreign entry", good + runner::journal_entry_to_line(foreign_entry) + "\n"},
+    {"a damaged line", good + "not a journal line\n"},
+  };
+  const std::vector<std::pair<const char*, std::string>> logs{
+    {"a torn paper tail", placed + "{\"op\":\"adv"},
+    {"an unanswered input", unanswered},
+  };
+  const auto owner = fixture.account() / "owner.json";
+  const std::string record = "{\"role\":\"operator\",\"pid\":1}\n";
+  for (const auto& j : journals) {
+    for (const auto& l : logs) {
+      INFO(j.first << " with " << l.first);
+      spit(fixture.journal(), j.second);
+      spit(fixture.log(), l.second);
+      spit(owner, record);
+      for (const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
+             {"status"}, {"account"}, {"quote", "005930"}, {"clock"}, {"clock", "advance", "--minutes", "5"}}) {
+        INFO(args.front());
+        const auto ran = fixture.json(args);
+        CHECK(ran.exit_ == 4);
+        CHECK(code_of(ran.out_) == "unknown.journal_damaged");
+        CHECK(slurp(fixture.log()) == l.second);
+        CHECK(slurp(fixture.journal()) == j.second);
+        CHECK(slurp(owner) == record);
+      }
+    }
+  }
+  // Beneath this account's journal, the same logs are repaired and the record written.
+  for (const auto& l : logs) {
+    INFO(l.first);
+    spit(fixture.journal(), good);
+    spit(fixture.log(), l.second);
+    spit(owner, record);
+    CHECK(fixture.json({"status"}).exit_ == 0);
+    CHECK(slurp(fixture.log()) == placed);
+    CHECK(slurp(fixture.journal()) == good);
+    CHECK(slurp(owner) != record);
+  }
+}
+
+namespace {
+
+/**
+ * @brief An operator-only placement line with its `at` replaced and no `at_text`, its checksum made again by the
+ *   library's own helpers.
+ * @param at The microseconds `at` states.
+ * @return The line.
+ */
+std::string operator_only_line(std::int64_t at) {
+  auto entry = place_entry("op1", runner::JournalOutcome::PENDING, kst("2024-03-26T09:00"));
+  entry.requires_operator_ = true;
+  entry.scope_ = SCOPE;
+  auto line = runner::journal_entry_to_line(entry);
+  line = line.substr(0, line.size() - runner::journal_detail::kChecksumSuffixSize) + "}";
+  auto row = boost::json::parse(line).as_object();
+  row["at"] = at;
+  row.erase("at_text");
+  line = boost::json::serialize(row);
+  const auto checksum = runner::journal_detail::checksum_text(runner::journal_detail::line_checksum(line));
+  line.pop_back();
+  line += std::string(runner::journal_detail::kChecksumMember) + checksum + "\"}";
+  REQUIRE(runner::journal_entry_from_line(line).has_value());
+  return line;
+}
+
+}  // namespace
+
+TEST_CASE("an operator-only line at an instant outside the interval makes the count unknown, never an overflow") {
+  const PaperFixture fixture;
+  fixture.arm();
+  initialize(fixture);
+  const auto good = slurp(fixture.journal());
+  const auto log = slurp(fixture.log());
+  const auto micros = [](paper::Clock::time_point at) {
+    return std::chrono::duration_cast<std::chrono::microseconds>(at.time_since_epoch()).count();
+  };
+  const std::vector<std::pair<const char*, std::int64_t>> extreme{
+    {"INT64_MAX", std::numeric_limits<std::int64_t>::max()},
+    {"INT64_MIN", std::numeric_limits<std::int64_t>::min()},
+    {"-1", -1},
+    {"just before 1990 KST", micros(paper::first_instant()) - 1},
+    {"2101 KST", micros(paper::end_instant())},
+  };
+  for (const auto& c : extreme) {
+    INFO(c.first);
+    const auto text = good + operator_only_line(c.second) + "\n";
+    spit(fixture.journal(), text);
+    for (const char* command : {"status", "account"}) {
+      const auto ran = fixture.json({command});
+      CHECK(ran.exit_ == 4);
+      CHECK(code_of(ran.out_) == "unknown.journal_damaged");
+      CHECK(ran.out_.find("outside 1990 to 2100") != std::string::npos);
+      CHECK(reply_of(ran.out_).at("orders_left_today").is_null());
+    }
+    CHECK(slurp(fixture.journal()) == text);
+    CHECK(slurp(fixture.log()) == log);
+  }
+  // A salvaged line at the epoch is no placement on any date: not counted, never an error of its own.
+  {
+    cmdatl::JournalView view;
+    auto replay = runner::read_journal_file(fixture.journal().string());
+    replay.entries_.clear();
+    auto salvaged = place_entry("s~damaged", runner::JournalOutcome::ACCEPTED, paper::Clock::time_point{});
+    salvaged.requires_operator_ = true;
+    auto counted = place_entry("c1", runner::JournalOutcome::ACCEPTED, kst("2024-03-25T10:00"));
+    auto far = place_entry("x1", runner::JournalOutcome::ACCEPTED, paper::Clock::time_point::max());
+    far.requires_operator_ = true;
+    const auto opened = open_account();
+    REQUIRE(opened->account_);
+    auto& desk = opened->account_->desk();
+    const auto today = paper::kst_day(desk.now());
+    replay.entries_ = {counted};
+    const auto alone = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
+    CHECK(alone.placed_today_ == 1);
+    replay.entries_ = {salvaged, counted};
+    view = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
+    CHECK(view.placed_today_ == 1);
+    CHECK(view.intact_ == alone.intact_);
+    replay.entries_ = {salvaged, counted, far};
+    view = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
+    CHECK(!view.intact_);
+    CHECK(view.placed_today_ == 1);
+    CHECK(!cmdatl::orders_left(opened->snapshot_.config_.value(), view));
+  }
+  {
+    const auto text = good + operator_only_line(0) + "\n";
+    spit(fixture.journal(), text);
+    const auto ran = fixture.json({"status"});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 0);
+    CHECK(slurp(fixture.journal()) == text);
+    CHECK(slurp(fixture.log()) == log);
+  }
 }
 
 TEST_CASE("the journal's bytes from the library's writer are the fixture's") {

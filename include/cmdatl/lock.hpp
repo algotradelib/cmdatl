@@ -103,45 +103,6 @@ inline std::string holder_text(const std::string& dir) {
 }
 
 /**
- * @brief Writes the owner record after an account opened: to `owner.<pid>.tmp`, created exclusively (never an
- *   existing file, never truncated), then renamed onto `owner.json`.
- *
- * The record describes; the lock decides: every failure is ignored, and a temporary this call created is removed.
- * @param dir The account's directory.
- * @param what The command, at most 200 bytes.
- */
-inline void write_owner_record(const std::string& dir, const std::string& what) noexcept {
-  try {
-    const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    std::tm utc{};
-    gmtime_r(&now, &utc);
-    char since[32];
-    std::strftime(since, sizeof(since), "%Y-%m-%dT%H:%M:%SZ", &utc);
-    const boost::json::object body{
-      {"role", "agent"},
-      {"pid", static_cast<std::int64_t>(::getpid())},
-      {"what", what.substr(0, 200)},
-      {"since", since},
-    };
-    const auto text = boost::json::serialize(body) + "\n";
-    const auto temporary = dir + "/owner." + std::to_string(::getpid()) + ".tmp";
-    const auto record = dir + "/owner.json";
-    ScopedFd fd(open_lifted(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
-    if (fd.get() < 0) {
-      return;
-    }
-    std::size_t written = 0;
-    const bool ok = write_whole(fd.get(), text.data(), text.size(), written) == 0;
-    fd.reset();
-    if (!ok || sys::rename(temporary.c_str(), record.c_str()) != 0) {
-      ::unlink(temporary.c_str());
-    }
-  } catch (...) {
-    // A description only: an allocation failing here leaves the last holder's record.
-  }
-}
-
-/**
  * @brief Whether an open descriptor is the file now at a path (same device and inode).
  * @param fd The descriptor.
  * @param path The path.
@@ -302,6 +263,59 @@ private:
   bool held_{false};
   std::string error_;
 };
+
+/**
+ * @brief Writes the owner record after an account opened: to `owner.<pid>.tmp`, created exclusively (never an
+ *   existing file, never truncated), then renamed onto `owner.json`; the lock checked before each.
+ *
+ * The record describes; the lock decides: every other failure is ignored, and a temporary this call created is
+ * removed.
+ * @param lock The account's lock, held.
+ * @param what The command, at most 200 bytes.
+ * @return False when the lock was no longer this process's, so nothing more may be written; true otherwise.
+ */
+inline bool write_owner_record(const OwnerLock& lock, const std::string& what) noexcept {
+  try {
+    const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm utc{};
+    gmtime_r(&now, &utc);
+    char since[32];
+    std::strftime(since, sizeof(since), "%Y-%m-%dT%H:%M:%SZ", &utc);
+    const boost::json::object body{
+      {"role", "agent"},
+      {"pid", static_cast<std::int64_t>(::getpid())},
+      {"what", what.substr(0, 200)},
+      {"since", since},
+    };
+    const auto text = boost::json::serialize(body) + "\n";
+    const auto temporary = lock.dir() + "/owner." + std::to_string(::getpid()) + ".tmp";
+    const auto record = lock.dir() + "/owner.json";
+    if (!lock.still_at_path()) {
+      return false;
+    }
+    ScopedFd fd(open_lifted(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
+    if (fd.get() < 0) {
+      return true;
+    }
+    std::size_t written = 0;
+    const bool ok = write_whole(fd.get(), text.data(), text.size(), written) == 0;
+    fd.reset();
+    if (!ok) {
+      ::unlink(temporary.c_str());
+      return true;
+    }
+    if (!lock.still_at_path()) {
+      ::unlink(temporary.c_str());
+      return false;
+    }
+    if (sys::rename(temporary.c_str(), record.c_str()) != 0) {
+      ::unlink(temporary.c_str());
+    }
+  } catch (...) {
+    // A description only: an allocation failing here leaves the last holder's record.
+  }
+  return true;
+}
 #endif
 
 }  // namespace cmdatl

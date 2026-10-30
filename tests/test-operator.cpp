@@ -317,6 +317,63 @@ TEST_CASE("CMDATL_CONFIG unset, empty, missing, a directory, a FIFO, a dangling 
   }
 }
 
+TEST_CASE("an operator's file nesting tables past the bound is refused before toml++ recurses into it") {
+  const PaperFixture fixture;
+  REQUIRE(fixture.json({"status"}).exit_ == 0);
+  const auto log = slurp(fixture.log());
+  const auto journal = slurp(fixture.journal());
+  const auto dots = [](const std::string& segment, int count) {
+    std::string path = segment;
+    for (int i = 1; i < count; ++i) {
+      path += "." + segment;
+    }
+    return path;
+  };
+  struct Deep {
+    std::string what_;
+    std::string text_;
+    std::int64_t line_;
+  };
+  const std::vector<Deep> cases{
+    // 16,000 segments in 32 KiB: deep enough to exhaust toml++'s stack.
+    {"a dotted header", "[" + dots("x", 16000) + "]\na = 1\n", 1},
+    {"a dotted header of array tables", ConfigParts{}.text() + "[[" + dots("x", 16000) + "]]\n", 15},
+    {"a dotted key", ConfigParts{}.text() + dots("x", 16000) + " = 1\n", 15},
+    {"a dotted key of quoted segments", ConfigParts{}.text() + dots("\"x\"", 9000) + " = 1\n", 15},
+    {"a dotted key in an inline table", ConfigParts{}.text() + "t = { " + dots("x", 16000) + " = 1 }\n", 15},
+    {"nested arrays", ConfigParts{}.text() + "t = " + std::string(16000, '[') + std::string(16000, ']') + "\n", 15},
+    {"nested inline tables", ConfigParts{}.text() + "t = { a = { a = { a = { a = { a = { a = { a = { a = { a = 1 } } } } } } } } }\n", 15},
+    {"nine segments", ConfigParts{}.text() + dots("x", 9) + " = 1\n", 15},
+  };
+  for (const auto& c : cases) {
+    INFO(c.what_);
+    fixture.write_config(c.text_);
+    Spawned cmdatl({"--json", "status"});
+    const int status = cmdatl.wait(30);
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 1);
+    const auto reply = reply_of(cmdatl.out());
+    const auto& error = reply.at("error").as_object();
+    CHECK(error.at("code").as_string() == "config.invalid");
+    CHECK(error.at("line").as_int64() == c.line_);
+    CHECK(error.at("column").as_int64() > 0);
+    CHECK(slurp(fixture.log()) == log);
+    CHECK(slurp(fixture.journal()) == journal);
+  }
+  // What the bound leaves alone: dots in strings and comments, floats, times, and eight segments.
+  auto parts = ConfigParts{};
+  parts.top_ = "# a.b.c.d.e.f.g.h.i.j.k\n";
+  parts.limits_ += "collar = 0.05 # 1.2.3.4.5.6.7.8.9\n";
+  parts.paper_ = "bars = \"./x/../bars.csv\"\ncash = 100000000\nstart = '2024-03-25T16:00'\n";
+  fixture.write_config(parts.text());
+  CHECK(cmdatl::load_operator_config().state_ == cmdatl::ConfigSnapshot::State::OK);
+  using cmdatl::config_detail::nesting_refusal;
+  CHECK(!nesting_refusal("[a.b.c.d]\n" + dots("x", 8) + " = { y = [[1.5, 2.5], [\"a.b.c.d.e.f.g.h.i\"]] }\n"));
+  CHECK(!nesting_refusal("s = \"\"\"a.b.c.d.e.f.g.h.i\"\"\"\"\"\nt = '''a.b.c.d.e.f.g.h.i'''''\n"));
+  CHECK(!nesting_refusal("x = [\n  [1, 2],\n]\n  [ a . b ]\n"));
+  CHECK(nesting_refusal("s = \"\"\"a\"\"\"\"\"\nt = { " + dots("x", 9) + " = 1 }\n"));
+}
+
 TEST_CASE("the state root: XDG_STATE_HOME when absolute, else HOME, else state.unavailable; the directory 0700") {
   const PaperFixture fixture;
   CHECK(cmdatl::state_root() == (fixture.dir() / "state" / "cmdatl").string());
@@ -424,7 +481,12 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
     CHECK(body.at("paper").as_object().at("cash").as_string() == "100000000");
     CHECK(body.at("capabilities").as_object().at("clock").as_bool());
     CHECK(!body.at("capabilities").as_object().at("trigger_price").as_bool());
-    CHECK(body.at("limits").as_object().at("collar").as_double() == 0.05);
+    CHECK(body.at("limits").as_object().at("collar").as_string() == "0.05");
+    const auto& costs = body.at("paper").as_object().at("costs").as_object();
+    CHECK(costs.at("commission").as_string() == "0.00015");
+    CHECK(costs.at("sell_tax").as_string() == "0.002");
+    CHECK(cmdatl::decimal_text(0.3) == "0.3");
+    CHECK(cmdatl::decimal_text(0.00001) == "0.00001");
     CHECK(!body.at("armed").as_object().at("exists").as_bool());
     CHECK(body.at("owner").is_null());
   }
