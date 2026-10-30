@@ -31,5 +31,5 @@ static bool stdout_is_terminal() {
  */
 int main(int argc, char** argv) {
   const std::vector<std::string> args(argv + 1, argv + argc);
-  return cmdatl::run(args, std::cout, stdout_is_terminal());
+  return cmdatl::run(args, std::cout, std::cerr, stdout_is_terminal());
 }

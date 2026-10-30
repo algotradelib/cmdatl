@@ -14,6 +14,17 @@ namespace cmdatl {
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
 inline constexpr int SCHEMA_VERSION = 1;
 
+/** @brief Where the documentation and the issue tracker are. */
+inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
+
+/** @brief The examples `cmdatl --help` opens with: the most common uses (each parsed by the tests). */
+inline const std::vector<std::string> TOP_EXAMPLES{
+  "cmdatl status",
+  "cmdatl strategy backtest mean-reversion.toml -P lookback=30",
+  "cmdatl run start mean-reversion.toml --mode paper",
+  "cmdatl order plan 005930 --target 10 --limit 78200",
+};
+
 /** @brief One error code: what it means for the caller. */
 struct ErrorSpec {
   /** @brief The code. */
@@ -139,6 +150,10 @@ inline std::string pad_to(const std::string& text, std::size_t width) {
 inline void write_help(std::ostream& out, const Table& table) {
   out << "cmdatl: algotradelib from the command line - strategies in atls, backtests, tuning and trading loops\n\n";
   out << "Usage: cmdatl [--json | --format json|jsonl|text] [--fields a,b.c] [--value PATH] COMMAND ...\n";
+  out << "\nExamples\n";
+  for (const auto& example : TOP_EXAMPLES) {
+    out << "  " << example << "\n";
+  }
   std::vector<std::string> groups;
   for (const auto& command : table.commands()) {
     if (std::find(groups.begin(), groups.end(), command.group_) == groups.end()) {
@@ -164,8 +179,8 @@ inline void write_help(std::ostream& out, const Table& table) {
     }
   }
   out << "\nExit: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (safe to retry), 4 unknown (reconcile),\n";
-  out << "5 strategy errors. Output: text on a terminal, compact JSON otherwise. cmdatl COMMAND --help for one\n";
-  out << "command; cmdatl schema for the machine contract.\n";
+  out << "5 strategy errors. Output: text on a terminal, compact JSON otherwise. cmdatl help COMMAND for one\n";
+  out << "command; cmdatl schema for the machine contract. Docs and issues: " << HOME_PAGE << "\n";
 }
 
 /**
@@ -198,6 +213,12 @@ inline void write_command_help(std::ostream& out, const Command& command) {
   if (!command.available_) {
     out << "Not built in this version yet.\n";
   }
+  if (!command.examples_.empty()) {
+    out << "\nExamples:\n";
+    for (const auto& example : command.examples_) {
+      out << "  " << example << "\n";
+    }
+  }
   if (!command.args_.empty() || !command.options_.empty()) {
     out << "\n";
   }
@@ -227,6 +248,32 @@ inline void write_command_help(std::ostream& out, const Command& command) {
 }
 
 /**
+ * @brief Writes the help some words ask for: a command's (and, for a command that is also a group such as
+ *   `clock`, its subcommands), a group's, or every command's for no words. Used by `--help` and `cmdatl help`.
+ * @param out The stream.
+ * @param table The commands.
+ * @param words The words, such as `order plan`; extra words after a command (its arguments) are ignored.
+ * @return Whether the words named a command or a group (always, for no words).
+ */
+inline bool write_help_for(std::ostream& out, const Table& table, const std::vector<std::string>& words) {
+  const auto found = table.resolve(words);
+  if (found.command_ != nullptr) {
+    write_command_help(out, *found.command_);
+    if (found.used_ == words.size() && table.is_group(words)) {
+      out << "\n";
+      write_group_help(out, table, words);
+    }
+    return true;
+  }
+  if (!words.empty() && table.is_group(words)) {
+    write_group_help(out, table, words);
+    return true;
+  }
+  write_help(out, table);
+  return words.empty();
+}
+
+/**
  * @brief One command as `cmdatl schema` describes it.
  * @param command The command.
  * @return Its entry.
@@ -245,6 +292,11 @@ inline json::object schema_entry(const Command& command) {
   }
   entry["aliases"] = std::move(aliases);
   entry["summary"] = command.summary_;
+  json::array examples;
+  for (const auto& example : command.examples_) {
+    examples.push_back(json::value(example));
+  }
+  entry["examples"] = std::move(examples);
   json::array args;
   for (const auto& arg : command.args_) {
     args.push_back(json::object{{"name", arg.name_}, {"required", arg.required_}, {"variadic", arg.variadic_}});
@@ -363,6 +415,14 @@ inline std::vector<std::string> check_table(const Table& table) {
     }
     if (command.summary_.empty() || command.group_.empty() || command.returns_.empty() || command.exits_.empty()) {
       problems.push_back(name + ": a summary, group, reply field or exit code is missing");
+    }
+    if (command.examples_.empty()) {
+      problems.push_back(name + ": no example");
+    }
+    for (const auto& example : command.examples_) {
+      if (example.rfind("cmdatl " + join(command.path_), 0) != 0) {
+        problems.push_back(name + ": the example '" + example + "' does not call it");
+      }
     }
     if (command.available_ != static_cast<bool>(command.run_)) {
       problems.push_back(name + ": available without code, or code without available");

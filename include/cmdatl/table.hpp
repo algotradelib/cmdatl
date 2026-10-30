@@ -79,6 +79,8 @@ struct Command {
   std::string summary_;
   /** @brief A longer description for `cmdatl COMMAND --help`, or empty. */
   std::string description_;
+  /** @brief Example invocations, each a whole `cmdatl ...` line; the help leads with them, and a test parses them. */
+  std::vector<std::string> examples_;
   /** @brief Its positional arguments. */
   std::vector<ArgSpec> args_;
   /** @brief Its options. */
@@ -118,6 +120,16 @@ struct Command {
    */
   Command& describe(std::string text) {
     description_ = std::move(text);
+    return *this;
+  }
+
+  /**
+   * @brief Adds an example invocation.
+   * @param line A whole command line, starting with `cmdatl `.
+   * @return The command.
+   */
+  Command& example(std::string line) {
+    examples_.push_back(std::move(line));
     return *this;
   }
 

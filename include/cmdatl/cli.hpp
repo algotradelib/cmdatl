@@ -251,8 +251,12 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
     return prepared;
   }
   const auto& command = *prepared.found_.command_;
+  const auto command_usage = usage(command);
+  const auto usage_line = "cmdatl " + join(command.path_) + (command_usage.empty() ? "" : " " + command_usage);
   const std::vector<std::string> own(rest.begin() + static_cast<std::ptrdiff_t>(prepared.found_.used_), rest.end());
   if (auto bad = parse_command(command, own, prepared.invocation_)) {
+    // clig.dev: on a usage error, show the command's usage, not only the error.
+    bad->body_["usage"] = usage_line;
     prepared.refusal_ = std::move(bad);
     return prepared;
   }
@@ -270,6 +274,7 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
         "cmdatl " + join(command.path_) + " replies have no field " + field,
         "cmdatl schema " + join(command.path_, ".") + " lists its fields"
       );
+      prepared.refusal_->body_["usage"] = usage_line;
       return prepared;
     }
   }
@@ -278,63 +283,50 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
 }
 
 /**
- * @brief Writes the help a command line asked for: a command's (and, for a command that is also a group such as
- *   `clock`, its subcommands), a group's, or every command's.
- * @param out The stream.
- * @param table The commands.
- * @param prepared The command line.
- */
-inline void write_requested_help(std::ostream& out, const Table& table, const Prepared& prepared) {
-  const auto& words = prepared.words_;
-  const auto& found = prepared.found_;
-  if (found.command_ != nullptr) {
-    write_command_help(out, *found.command_);
-    if (found.used_ == words.size() && table.is_group(words)) {
-      out << "\n";
-      write_group_help(out, table, words);
-    }
-  } else if (!words.empty() && table.is_group(words)) {
-    write_group_help(out, table, words);
-  } else {
-    write_help(out, table);
-  }
-}
-
-/**
  * @brief Runs one command line against a table of commands and writes its reply.
  * @param args The command line, without the program's name.
- * @param out The stream for replies and help.
+ * @param out stdout: replies, help, and failures in JSON.
+ * @param err stderr: failures written as text.
  * @param terminal Whether `out` is a terminal (text by default) or not (compact JSON by default).
  * @param table The commands.
  * @return The exit code.
  */
-inline int run(const std::vector<std::string>& args, std::ostream& out, bool terminal, const Table& table) {
+inline int run(
+  const std::vector<std::string>& args,
+  std::ostream& out,
+  std::ostream& err,
+  bool terminal,
+  const Table& table
+) {
   const auto prepared = prepare(args, table, terminal);
+  const auto& rendering = prepared.globals_.rendering_;
+  const auto write = [&](const Reply& reply, const std::string& env) {
+    return static_cast<int>(write_reply(stream_for(reply, rendering, out, err), reply, rendering, env));
+  };
   switch (prepared.action_) {
     case Prepared::Action::VERSION:
       out << "cmdatl " << CMDATL_VERSION << "\n";
       return 0;
     case Prepared::Action::HELP:
-      write_requested_help(out, table, prepared);
+      write_help_for(out, table, prepared.words_);
       return 0;
     case Prepared::Action::REFUSE:
-      return static_cast<int>(write_reply(out, *prepared.refusal_, prepared.globals_.rendering_, "offline"));
+      return write(*prepared.refusal_, "offline");
     case Prepared::Action::RUN:
       break;
   }
   const auto& command = *prepared.found_.command_;
-  const auto& rendering = prepared.globals_.rendering_;
   if (!command.available_) {
     const auto not_yet = error_reply(
       Exit::FAILED,
       "unavailable.not_yet",
       "cmdatl " + join(command.path_) + " is not built in this version"
     );
-    return static_cast<int>(write_reply(out, not_yet, rendering, "offline"));
+    return write(not_yet, "offline");
   }
   // An account command's environment comes from the account it reads (branch 3); until then, offline.
   const auto env = command.env_ == "account" ? std::string("offline") : command.env_;
-  Output output(out, rendering, env);
+  Output output(out, err, rendering, env);
   auto reply = command.run_(prepared.invocation_, table, output);
   if (prepared.found_.alias_) {
     reply.body_["note"] = "cmdatl " + join(*prepared.found_.alias_) + " is now cmdatl " + join(command.path_);
@@ -345,13 +337,14 @@ inline int run(const std::vector<std::string>& args, std::ostream& out, bool ter
 /**
  * @brief Runs one command line against cmdatl's commands and writes its reply.
  * @param args The command line, without the program's name.
- * @param out The stream for replies and help.
+ * @param out stdout: replies, help, and failures in JSON.
+ * @param err stderr: failures written as text.
  * @param terminal Whether `out` is a terminal (text by default) or not (compact JSON by default).
  * @return The exit code.
  */
-inline int run(const std::vector<std::string>& args, std::ostream& out, bool terminal) {
+inline int run(const std::vector<std::string>& args, std::ostream& out, std::ostream& err, bool terminal) {
   const Table table(command_list());
-  return run(args, out, terminal, table);
+  return run(args, out, err, terminal, table);
 }
 
 }  // namespace cmdatl

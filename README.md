@@ -5,7 +5,7 @@ With [algotradelib](https://github.com/algotradelib/algotradelib) alone you writ
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
 
 Status: in development, before its first release; commands and replies may change without notice.
-This version answers `cmdatl env`, `cmdatl schema` and `--help`; every other command is listed and answers that it is not built yet.
+This version answers `cmdatl env`, `cmdatl schema` and `cmdatl help`; every other command is listed and answers that it is not built yet.
 
 ```sh
 cmdatl status                                          # the account in one read
@@ -41,7 +41,8 @@ Running strategies also needs `atlc`, the atls compiler, on `PATH` or named by `
 - Every other reply carries `env`; a failure carries one `error` object with a stable code, such as `refused.position_limit`.
 - A field name no reply of the command has is refused before the command runs; one missing from a reply the command already produced comes back with the whole reply and a `warning`.
 - Exit codes: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (safe to retry), 4 unknown (reconcile before anything else), 5 strategy errors.
-- `cmdatl schema` describes every command, its fields and its error codes.
+- On a terminal a failure is written to stderr; in JSON it is the reply, on stdout.
+- `cmdatl help COMMAND` (or `--help`) shows a command's usage and examples; `cmdatl schema` describes every command, its fields and its error codes for a program.
 
 ## Acknowledgements
 

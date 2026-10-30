@@ -21,8 +21,10 @@ namespace {
 struct Ran {
   /** @brief The exit code. */
   int exit_;
-  /** @brief What it wrote. */
+  /** @brief What it wrote on stdout. */
   std::string out_;
+  /** @brief What it wrote on stderr. */
+  std::string err_;
 };
 
 /**
@@ -33,8 +35,9 @@ struct Ran {
  */
 Ran run(const std::vector<std::string>& args, bool terminal = false) {
   std::ostringstream out;
-  const auto exit = cmdatl::run(args, out, terminal);
-  return {exit, out.str()};
+  std::ostringstream err;
+  const auto exit = cmdatl::run(args, out, err, terminal);
+  return {exit, out.str(), err.str()};
 }
 
 /**
@@ -45,8 +48,9 @@ Ran run(const std::vector<std::string>& args, bool terminal = false) {
  */
 Ran run_with(const std::vector<std::string>& args, const cmdatl::Table& table) {
   std::ostringstream out;
-  const auto exit = cmdatl::run(args, out, false, table);
-  return {exit, out.str()};
+  std::ostringstream err;
+  const auto exit = cmdatl::run(args, out, err, false, table);
+  return {exit, out.str(), err.str()};
 }
 
 /**
@@ -77,6 +81,7 @@ cmdatl::Table acting_table(const std::shared_ptr<int>& ran) {
   commands.push_back(
     cmdatl::make_command({"trade", "plan"}, "Trade", "a stand-in that acts")
       .alias({"order", "plan"})
+      .example("cmdatl trade plan 005930")
       .arg("SYMBOL", "an instrument")
       .returns("order", "what was done")
       .exits(cmdatl::SEND_EXITS)
@@ -339,9 +344,10 @@ TEST_CASE("the format follows the terminal unless asked, and text errors keep en
   CHECK(run({"--json", "env"}, true).out_.front() == '{');
   CHECK(run({"--format", "text", "env"}, false).out_.front() != '{');
   CHECK(run({"--format=json", "env"}, true).out_.front() == '{');
-  const auto error = run({"--format", "text", "env", "--bad"}).out_;
-  CHECK(error.find("error: ") == 0);
-  CHECK(error.find("env: offline") != std::string::npos);
+  const auto error = run({"--format", "text", "env", "--bad"});
+  CHECK(error.out_.empty());
+  CHECK(error.err_.find("error: ") == 0);
+  CHECK(error.err_.find("env: offline") != std::string::npos);
 }
 
 TEST_CASE("every cmdatl invocation in the docs and skills parses, and every inline reference exists") {
@@ -425,7 +431,7 @@ TEST_CASE("the schema declares the errors its commands return") {
   const auto& options = backtest.at("commands").as_array()[0].as_object().at("options").as_array();
   CHECK(options[0].as_object().at("short").as_string() == "-P");
   std::vector<cmdatl::Command> bad;
-  bad.push_back(cmdatl::make_command({"x"}, "Read", "x").returns("x", "x").error("bogus.code"));
+  bad.push_back(cmdatl::make_command({"x"}, "Read", "x").example("cmdatl x").returns("x", "x").error("bogus.code"));
   const auto problems = cmdatl::check_table(cmdatl::Table(std::move(bad)));
   const auto names_bogus = [](const std::string& problem) { return problem.find("bogus.code") != std::string::npos; };
   CHECK(std::any_of(problems.begin(), problems.end(), names_bogus));
@@ -442,6 +448,7 @@ TEST_CASE("a command streams events before its final reply") {
   std::vector<cmdatl::Command> commands;
   commands.push_back(
     cmdatl::make_command({"stream"}, "Read", "two events, then the end")
+      .example("cmdatl stream")
       .returns("events", "how many")
       .runs([](const cmdatl::Invocation&, const cmdatl::Table&, cmdatl::Output& output) {
         output.emit(boost::json::object{{"event", "start"}});
@@ -531,6 +538,7 @@ TEST_CASE("a failure is written whole, whatever was selected") {
   std::vector<cmdatl::Command> commands;
   commands.push_back(
     cmdatl::make_command({"send"}, "Trade", "an order whose outcome is unknown")
+      .example("cmdatl send")
       .returns("order", "the order")
       .exits(cmdatl::SEND_EXITS)
       .sends()
@@ -551,4 +559,49 @@ TEST_CASE("a failure is written whole, whatever was selected") {
     CHECK(reply.at("error").as_object().at("code").as_string() == "unknown.no_reply");
     CHECK(reply.at("order").as_object().at("symbol").as_string() == "005930");
   }
+}
+
+TEST_CASE("cmdatl help is --help as a command, and help leads with examples") {
+  const auto top = run({"help"}, true);
+  CHECK(top.exit_ == 0);
+  CHECK(top.out_ == run({"--help"}, true).out_);
+  CHECK(top.out_.find("Examples") != std::string::npos);
+  CHECK(top.out_.find(cmdatl::HOME_PAGE) != std::string::npos);
+  const auto plan = run({"help", "order", "plan"}, true);
+  CHECK(plan.out_ == run({"order", "plan", "--help"}, true).out_);
+  CHECK(plan.out_.find("Examples:\n  cmdatl order plan 005930") != std::string::npos);
+  const auto json = reply_of(run({"help", "order"}).out_);
+  CHECK(json.at("text").as_string().find("order plan SYMBOL") != std::string::npos);
+  const auto unknown = run({"help", "ordr"});
+  CHECK(unknown.exit_ == 2);
+  CHECK(code_of(unknown.out_) == "usage.unknown_command");
+}
+
+TEST_CASE("every example in the table parses as cmdatl would read it") {
+  const cmdatl::Table table(cmdatl::command_list());
+  std::size_t checked = 0;
+  for (const auto& command : table.commands()) {
+    for (const auto& example : command.examples_) {
+      INFO(example);
+      CHECK(accepts_invocation(example, table));
+      ++checked;
+    }
+  }
+  for (const auto& example : cmdatl::TOP_EXAMPLES) {
+    INFO(example);
+    CHECK(accepts_invocation(example, table));
+    ++checked;
+  }
+  CHECK(checked > table.commands().size());
+}
+
+TEST_CASE("a usage error names the command's usage, and a text failure goes to stderr") {
+  const auto missing = run({"order", "plan", "005930", "--target", "10"});
+  CHECK(reply_of(missing.out_).at("usage").as_string() == "cmdatl order plan SYMBOL --target N --limit P");
+  CHECK(missing.err_.empty());
+  const auto text = run({"order", "plan", "005930", "--target", "10"}, true);
+  CHECK(text.out_.empty());
+  CHECK(text.err_.find("usage: cmdatl order plan SYMBOL --target N --limit P") != std::string::npos);
+  const auto field = reply_of(run({"env", "--value", "nope"}).out_);
+  CHECK(field.at("usage").as_string() == "cmdatl env");
 }

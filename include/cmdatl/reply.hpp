@@ -40,6 +40,10 @@ struct Reply {
   json::object body_;
   /** @brief The exit code. */
   Exit exit_{Exit::OK};
+  /**
+   * @brief A text document (a help page, a guide), written as it is on a terminal and as the `text` field in JSON.
+   */
+  std::optional<std::string> text_;
 };
 
 /**
@@ -299,7 +303,19 @@ inline json::object envelope(const Reply& reply, const std::string& env) {
       body[entry.key()] = entry.value();
     }
   }
+  if (reply.text_) {
+    body["text"] = *reply.text_;
+  }
   return body;
+}
+
+/**
+ * @brief Whether a reply is a failure (it carries an `error` object).
+ * @param reply The reply.
+ * @return Whether it is.
+ */
+inline bool is_failure(const Reply& reply) {
+  return reply.body_.contains("error");
 }
 
 /**
@@ -355,6 +371,13 @@ inline Exit write_reply(std::ostream& out, const Reply& reply, const Rendering& 
     out << json::serialize(shown) << "\n";
     return reply.exit_;
   }
+  if (!failed && reply.text_ && rendering.fields_.empty() && !rendering.value_) {
+    out << *reply.text_;
+    if (!reply.text_->empty() && reply.text_->back() != '\n') {
+      out << "\n";
+    }
+    return reply.exit_;
+  }
   if (failed) {
     const auto& error = body.at("error").as_object();
     out << "error: " << bare(error.at("message")) << "\n";
@@ -374,17 +397,31 @@ inline Exit write_reply(std::ostream& out, const Reply& reply, const Rendering& 
   return reply.exit_;
 }
 
+/**
+ * @brief The stream a reply goes to: a failure written as text goes to stderr for a person (clig.dev: messages on
+ *   stderr); everything else, a failure in JSON included, goes to stdout, the one stream a program parses.
+ * @param reply The reply.
+ * @param rendering How it is written.
+ * @param out stdout.
+ * @param err stderr.
+ * @return The stream.
+ */
+inline std::ostream& stream_for(const Reply& reply, const Rendering& rendering, std::ostream& out, std::ostream& err) {
+  return is_failure(reply) && rendering.format_ == Format::TEXT ? err : out;
+}
+
 /** @brief Where a command writes: its final reply, and, for a stream, one event at a time before it. */
 class Output {
 public:
   /**
    * @brief Sets up the output of one command.
-   * @param out The stream.
+   * @param out stdout.
+   * @param err stderr, for failures written as text.
    * @param rendering How the caller asked to see replies.
    * @param env The command's environment.
    */
-  Output(std::ostream& out, Rendering rendering, std::string env)
-  : out_(out), rendering_(std::move(rendering)), env_(std::move(env)) {}
+  Output(std::ostream& out, std::ostream& err, Rendering rendering, std::string env)
+  : out_(out), err_(err), rendering_(std::move(rendering)), env_(std::move(env)) {}
 
   /**
    * @brief Writes one event of a stream at once (a JSON line, or a text line on a terminal), flushed.
@@ -404,7 +441,9 @@ public:
    * @param reply The reply.
    * @return The exit code.
    */
-  Exit finish(const Reply& reply) { return write_reply(out_, reply, rendering_, env_); }
+  Exit finish(const Reply& reply) {
+    return write_reply(stream_for(reply, rendering_, out_, err_), reply, rendering_, env_);
+  }
 
   /**
    * @brief How the caller asked to see replies.
@@ -420,6 +459,7 @@ public:
 
 private:
   std::ostream& out_;
+  std::ostream& err_;
   Rendering rendering_;
   std::string env_;
 };
