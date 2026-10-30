@@ -129,6 +129,15 @@ struct OperatorConfig {
   }
 
   /**
+   * @brief The operator's approval for `order release`: `<stem>.release` beside the operator's file, fixed.
+   * @return The path.
+   */
+  std::string release_path() const {
+    const std::filesystem::path file(path_);
+    return (file.parent_path() / (file.stem().string() + ".release")).string();
+  }
+
+  /**
    * @brief The journal's scope, `<broker>:<env>:<number>`.
    * @return The scope.
    */
