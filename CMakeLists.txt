@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.20)
 project(cmdatl VERSION 0.0.0.9000 LANGUAGES CXX)
 
 option(CMDATL_BUILD_TESTS "Build the tests" ON)
-option(CMDATL_FETCH_DEPS "Fetch CLI11 and Catch2 with FetchContent when they are not installed" ON)
+option(CMDATL_FETCH_DEPS "Fetch CLI11, toml++ and Catch2 with FetchContent when they are not installed" ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,6 +21,23 @@ if(NOT CLI11_FOUND)
   FetchContent_Declare(cli11 GIT_REPOSITORY https://github.com/CLIUtils/CLI11.git GIT_TAG v2.4.2 GIT_SHALLOW TRUE)
   FetchContent_MakeAvailable(cli11)
 endif()
+# The operator's file is TOML, read by toml++, used header-only whatever its package's own target says: a package
+# built as a shared library (Homebrew's defines TOML_HEADER_ONLY=0) throws parse errors whose type does not match
+# across the library's boundary, so a refusal would escape as an unknown exception.
+find_package(tomlplusplus 3.4 CONFIG QUIET)
+if(tomlplusplus_FOUND)
+  get_target_property(CMDATL_TOML_INCLUDE tomlplusplus::tomlplusplus INTERFACE_INCLUDE_DIRECTORIES)
+else()
+  if(NOT CMDATL_FETCH_DEPS)
+    message(FATAL_ERROR "toml++ (tomlplusplus) 3.4 or later is needed: install it, or configure with -DCMDATL_FETCH_DEPS=ON")
+  endif()
+  FetchContent_Declare(tomlplusplus GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git GIT_TAG v3.4.0 GIT_SHALLOW TRUE)
+  FetchContent_MakeAvailable(tomlplusplus)
+  set(CMDATL_TOML_INCLUDE ${tomlplusplus_SOURCE_DIR}/include)
+endif()
+add_library(cmdatl_toml INTERFACE)
+target_include_directories(cmdatl_toml SYSTEM INTERFACE ${CMDATL_TOML_INCLUDE})
+target_compile_definitions(cmdatl_toml INTERFACE TOML_HEADER_ONLY=1)
 
 # The starters `strategy new` writes, embedded as raw strings so the binary needs no file beside it.
 set(CMDATL_TEMPLATE_NAMES mean-reversion crossover momentum breakout)
@@ -64,7 +81,7 @@ configure_file(${CMDATL_GENERATED}/templates.hpp.new ${CMDATL_GENERATED}/cmdatl/
 
 add_library(cmdatl_core INTERFACE)
 target_include_directories(cmdatl_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMDATL_GENERATED})
-target_link_libraries(cmdatl_core INTERFACE algotradelib::algotradelib CLI11::CLI11)
+target_link_libraries(cmdatl_core INTERFACE algotradelib::algotradelib CLI11::CLI11 cmdatl_toml)
 target_compile_definitions(cmdatl_core INTERFACE CMDATL_VERSION="${PROJECT_VERSION}")
 
 add_executable(cmdatl src/main.cpp)

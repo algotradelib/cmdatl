@@ -1,5 +1,6 @@
 #pragma once
 
+#include "./files.hpp"
 #include "./reply.hpp"
 
 #include <algotradelib/version>
@@ -106,49 +107,6 @@ inline std::optional<std::string> find_on_path(const std::string& name) {
 }
 
 #if !defined(_WIN32)
-/** @brief A file descriptor, closed when its owner goes, on every path, an exception's included. */
-class ScopedFd {
-public:
-  /**
-   * @brief Takes a descriptor.
-   * @param fd The descriptor, or -1 for none.
-   */
-  explicit ScopedFd(int fd = -1) noexcept
-  : fd_(fd) {}
-
-  ScopedFd(const ScopedFd&) = delete;
-  ScopedFd& operator=(const ScopedFd&) = delete;
-
-  /** @brief Closes the descriptor, if any. */
-  ~ScopedFd() { reset(); }
-
-  /**
-   * @brief The descriptor.
-   * @return It, or -1.
-   */
-  int get() const noexcept { return fd_; }
-
-  /** @brief Closes the descriptor now. */
-  void reset() noexcept {
-    if (fd_ >= 0) {
-      ::close(fd_);
-      fd_ = -1;
-    }
-  }
-
-  /**
-   * @brief Closes the descriptor, if any, and takes another.
-   * @param fd The descriptor, or -1 for none.
-   */
-  void reset(int fd) noexcept {
-    reset();
-    fd_ = fd;
-  }
-
-private:
-  int fd_;
-};
-
 /** @brief `posix_spawn_file_actions_t`, destroyed when its owner goes if it was initialized. */
 class ScopedSpawnActions {
 public:
