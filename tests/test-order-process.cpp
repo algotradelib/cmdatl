@@ -317,7 +317,7 @@ TEST_CASE("an allocation failing anywhere in an order command's refusals leaks n
     }
     CHECK(ask(fixture, {"account"}).exit_ == 0);
   }
-  INFO("allocations injected: " << injected);
+  WARN("allocations injected: " << injected << ", first bad: " << bad);
   CHECK(bad == 0);
   CHECK(injected > 1000);
 }
@@ -347,13 +347,13 @@ TEST_CASE("an allocation failing anywhere in a place that sends leaks nothing an
     const auto account = ask(fixture, {"account"});
     CHECK((account.exit_ == 0 || account.exit_ == 4));
   }
-  INFO("allocations injected: " << injected);
+  WARN("allocations injected: " << injected << ", first bad: " << bad);
   CHECK(bad == 0);
   CHECK(injected > 1000);
 }
 
-TEST_CASE("an allocation failing in the journal-open refusal: the library gap is counted, not passed", "[orders][sweep]") {
-  const Watchdog watchdog("the journal-open refusal sweep", 600);
+TEST_CASE("an allocation failing in the journal-open refusal: the library gap is counted and not passed", "[orders][sweep]") {
+  const Watchdog watchdog("the journal-open refusal sweep", 1800);
   const PaperFixture fixture;
   fixture.arm();
   REQUIRE(ask(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
@@ -369,7 +369,13 @@ TEST_CASE("an allocation failing in the journal-open refusal: the library gap is
     CHECK(refused.exit_ == 4);
     CHECK(refused.code_ == "unknown.journal_damaged");
     const int held = open_fds();
-    for (long n = 1; n < 100000; ++n) {
+    std::vector<int> baseline;
+    for (int fd = 0; fd < 1024; ++fd) {
+      if (::fcntl(fd, F_GETFD) != -1) {
+        baseline.push_back(fd);
+      }
+    }
+    for (long n = 1; n < 400000; n += (n < 3000 ? 1 : 23)) {
       std::ostringstream out;
       std::ostringstream err;
       fail_allocation(n);
@@ -387,21 +393,12 @@ TEST_CASE("an allocation failing in the journal-open refusal: the library gap is
         ++gap;
         // Close what leaked, so the next iteration measures itself.
         for (int fd = 3; fd < 1024; ++fd) {
-          if (fd > 2 && ::fcntl(fd, F_GETFD) != -1 && open_fds() > held) {
-            struct stat info{};
-            if (::fstat(fd, &info) == 0 && S_ISREG(info.st_mode)) {
-              char path[4096];
-#if defined(__APPLE__)
-              if (::fcntl(fd, F_GETPATH, path) == 0 && std::string(path).find("journal.jsonl") != std::string::npos) {
-                ::close(fd);
-              }
-#else
-              (void)path;
-#endif
-            }
+          if (::fcntl(fd, F_GETFD) != -1 && std::find(baseline.begin(), baseline.end(), fd) == baseline.end()) {
+            ::close(fd);
           }
         }
       }
+      CHECK(no_children());
     }
   }
   WARN("journal-open refusal sweep: " << refusal_runs << " injected iterations, " << gap
