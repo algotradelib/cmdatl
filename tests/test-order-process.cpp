@@ -233,11 +233,58 @@ TEST_CASE("two operator files naming one account: their places serialize and one
   CHECK(outcomes == std::vector<std::string>{"placed", "refused.plan_used"});
 }
 
-TEST_CASE("an allocation failing anywhere in an order command leaks nothing and never sends past what it reports", "[orders][sweep]") {
-  const Watchdog watchdog("the order allocation sweep", 1200);
-  const PaperFixture fixture;
-  fixture.arm();
-  REQUIRE(ask(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
+namespace {
+
+/** @brief What one injected run left. */
+struct Swept {
+  /** @brief Whether the allocation was reached (else the run was the uninjected last one). */
+  bool consumed_{false};
+  /** @brief Whether the run kept the promises: no descriptor or child left, and the send invariant. */
+  bool ok_{false};
+};
+
+/**
+ * @brief Runs a command line in process with the n-th allocation failing.
+ * @param fixture The account.
+ * @param args The command line, without `--json`.
+ * @param n The allocation.
+ * @param before The descriptor count before.
+ * @return What it left.
+ */
+Swept swept(const PaperFixture& fixture, const std::vector<std::string>& args, long n, int before) {
+  const auto log = slurp(fixture.log());
+  std::vector<std::string> line{"--json"};
+  line.insert(line.end(), args.begin(), args.end());
+  std::ostringstream out;
+  std::ostringstream err;
+  fail_allocation(n);
+  int exit = -1;
+  try {
+    exit = cmdatl::run(line, out, err, false);
+  } catch (const std::bad_alloc&) {
+    // Before the command started (reading the line): main's last resort, nothing sent.
+  }
+  Swept result;
+  result.consumed_ = fail_at.load() == 0;
+  fail_allocation(0);
+  Answer answer;
+  answer.exit_ = exit;
+  boost::system::error_code error;
+  const auto value = boost::json::parse(out.str(), error);
+  if (!error && value.is_object()) {
+    answer.body_ = value.as_object();
+    if (const auto* reason = answer.body_.if_contains("reason"); reason != nullptr && reason->is_string()) {
+      answer.reason_ = std::string(reason->as_string());
+    }
+  }
+  result.ok_ = open_fds() == before && no_children() && no_send_ok(answer, log, slurp(fixture.log()));
+  return result;
+}
+
+}  // namespace
+
+TEST_CASE("an allocation failing anywhere in an order command's refusals leaks nothing and sends nothing", "[orders][sweep]") {
+  const Watchdog watchdog("the order allocation sweep", 1800);
   const std::vector<std::vector<std::string>> lines{
     {"order", "plan", "005930", "--target", "10", "--limit", "75000"},
     {"order", "plan", "005930", "--target", "1000", "--limit", "75000"},
@@ -246,55 +293,70 @@ TEST_CASE("an allocation failing anywhere in an order command leaks nothing and 
     {"order", "reconcile"},
     {"order", "release", "005930", "--reason", "read"},
   };
-  const int before = open_fds();
   long injected = 0;
   long bad = 0;
   for (const auto& args : lines) {
-    for (long n = 1; n < 200000; n += (n < 2000 ? 1 : 37)) {
-      const auto log = slurp(fixture.log());
-      std::vector<std::string> line{"--json"};
-      line.insert(line.end(), args.begin(), args.end());
-      std::ostringstream out;
-      std::ostringstream err;
-      fail_allocation(n);
-      int exit = -1;
-      try {
-        exit = cmdatl::run(line, out, err, false);
-      } catch (const std::bad_alloc&) {
-      }
-      const bool consumed = fail_at.load() == 0;
-      fail_allocation(0);
-      if (!consumed) {
+    const PaperFixture fixture;
+    fixture.arm();
+    REQUIRE(ask(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
+    const int before = open_fds();
+    for (long n = 1; n < 400000; n += (n < 3000 ? 1 : 23)) {
+      const auto result = swept(fixture, args, n, before);
+      if (!result.consumed_) {
         break;
       }
       ++injected;
-      Answer answer;
-      answer.exit_ = exit;
-      if (exit >= 0) {
-        boost::system::error_code error;
-        const auto value = boost::json::parse(out.str(), error);
-        if (!error && value.is_object()) {
-          answer.body_ = value.as_object();
-          if (const auto* reason = answer.body_.if_contains("reason")) {
-            answer.reason_ = std::string(reason->as_string());
-          }
-        }
-      }
-      const bool ok = open_fds() == before && no_children() && no_send_ok(answer, log, slurp(fixture.log()));
-      if (!ok && bad == 0) {
+      if (!result.ok_ && bad == 0) {
         bad = n;
         UNSCOPED_INFO(cmdatl::join(args) << ": first bad at allocation " << n);
       }
-      // The lock is free again, and an ordinary read answers.
-      if (n % 97 == 0) {
+      if (n % 211 == 0) {
+        // The lock is free again, and an ordinary read answers.
         CHECK(ask(fixture, {"account"}).exit_ == 0);
       }
     }
+    CHECK(ask(fixture, {"account"}).exit_ == 0);
   }
   INFO("allocations injected: " << injected);
   CHECK(bad == 0);
-  CHECK(injected > 100);
-  CHECK(ask(fixture, {"account"}).exit_ == 0);
+  CHECK(injected > 1000);
+}
+
+TEST_CASE("an allocation failing anywhere in a place that sends leaks nothing and reports what reached the market", "[orders][sweep]") {
+  const Watchdog watchdog("the send allocation sweep", 1800);
+  long injected = 0;
+  long bad = 0;
+  for (long n = 1; n < 400000; n += (n < 1500 ? 1 : 17)) {
+    const PaperFixture fixture;
+    fixture.arm();
+    REQUIRE(ask(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
+    const auto planned = ask(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
+    REQUIRE(planned.reason_ == "plan");
+    const int before = open_fds();
+    const auto result = swept(fixture, {"order", "place", std::string(planned.body_.at("plan_id").as_string())}, n, before);
+    if (!result.consumed_) {
+      break;
+    }
+    ++injected;
+    if (!result.ok_ && bad == 0) {
+      bad = n;
+      UNSCOPED_INFO("first bad at allocation " << n);
+    }
+    // Whatever the reply said, the account still opens, and at most one order reached the market.
+    CHECK(ops_of(slurp(fixture.log()), "place").size() <= 1);
+    const auto account = ask(fixture, {"account"});
+    CHECK((account.exit_ == 0 || account.exit_ == 4));
+  }
+  INFO("allocations injected: " << injected);
+  CHECK(bad == 0);
+  CHECK(injected > 1000);
+}
+
+TEST_CASE("an allocation failing in the journal-open refusal: the library gap is counted, not passed", "[orders][sweep]") {
+  const Watchdog watchdog("the journal-open refusal sweep", 600);
+  const PaperFixture fixture;
+  fixture.arm();
+  REQUIRE(ask(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
   // The journal-open refusal: a second writer holds the journal, so the library's flock refuses. An allocation failing
   // inside the library's refusal message can leave its descriptor open (a library gap, fixed on its own branch); those
   // iterations are counted and reported, not passed.
