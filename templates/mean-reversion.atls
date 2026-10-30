@@ -1,0 +1,17 @@
+# Buy when the price falls well below its recent mean; sell when it comes back.
+params {
+  int<lower=2> lookback = 20;
+  real<lower=0> entry = 2;
+  real exit = 0;
+  int<lower=0> quantity = 100;
+}
+series {
+  real z = zscore(close, lookback);
+}
+on_bar {
+  if (z < -entry) {
+    target(quantity);
+  } else if (z > exit) {
+    target(0);
+  }
+}

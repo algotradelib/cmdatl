@@ -13,7 +13,7 @@
 namespace cmdatl {
 
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
-inline constexpr int SCHEMA_VERSION = 1;
+inline constexpr int SCHEMA_VERSION = 2;
 
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
@@ -52,6 +52,19 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"unavailable.not_yet", Exit::FAILED, false, "this command is planned but not built in this version"},
     {"internal.error", Exit::FAILED, false, "a defect in cmdatl: report it with the command line"},
     {"unknown.internal", Exit::UNKNOWN, false, "a defect in cmdatl after it may have sent: reconcile, then report it"},
+    {"unavailable.platform", Exit::FAILED, false, "this command does not run on this platform yet"},
+    {"interrupted", Exit::INTERRUPTED, true, "SIGINT or SIGTERM stopped the command before it sent anything: run it again"},
+    {"atlc.missing", Exit::FAILED, false, "install atlc, or name it with CMDATL_ATLC; cmdatl env shows what was found"},
+    {"atlc.unsupported", Exit::FAILED, false, "install a newer atlc"},
+    {"atlc.failed", Exit::FAILED, false, "atlc ended unexpectedly: read stderr, and check atlc with cmdatl env"},
+    {"program.invalid", Exit::PROGRAM, false, "fix the program (atlc check FILE.atls checks it alone)"},
+    {"spec.invalid", Exit::USAGE, false, "fix the run spec"},
+    {"build.failed", Exit::FAILED, false, "atlc could not build the strategy: read the build log stderr names"},
+    {"replay.failed", Exit::FAILED, false, "the replay failed: check the data and the parameters' bounds"},
+    {"strategy.name", Exit::USAGE, false, "a name is a letter, then letters, digits, - or _ (at most 64)"},
+    {"strategy.template", Exit::USAGE, false, "cmdatl strategy new --help lists the templates"},
+    {"strategy.exists", Exit::FAILED, false, "choose another NAME or --dir, or --force to replace regular files"},
+    {"file.unwritable", Exit::FAILED, false, "check the directory and its permissions"},
   };
   return catalog;
 }
@@ -155,7 +168,7 @@ inline std::string pad_to(const std::string& text, std::size_t width) {
  * @param table The commands.
  */
 inline void write_help(std::ostream& out, const Table& table) {
-  out << "cmdatl: algotradelib from the command line - strategies in atls, backtests, tuning and trading loops\n\n";
+  out << "cmdatl: algotradelib from the command line - strategies in atls, backtests and trading loops\n\n";
   out << "Usage: cmdatl [--json | --format json|jsonl|text] [--fields a,b.c] [--value PATH] COMMAND ...\n";
   out << "\nExamples\n";
   for (const auto& example : TOP_EXAMPLES) {
@@ -186,8 +199,8 @@ inline void write_help(std::ostream& out, const Table& table) {
     }
   }
   out << "\nExit: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (safe to retry), 4 unknown (reconcile),\n";
-  out << "5 strategy errors. Output: text on a terminal, compact JSON otherwise. cmdatl help COMMAND for one\n";
-  out << "command; cmdatl schema for the machine contract. Docs and issues: " << HOME_PAGE << "\n";
+  out << "5 strategy errors, 130 interrupted. Output: text on a terminal, compact JSON otherwise. cmdatl help\n";
+  out << "COMMAND for one command; cmdatl schema for the machine contract. Docs and issues: " << HOME_PAGE << "\n";
 }
 
 /**

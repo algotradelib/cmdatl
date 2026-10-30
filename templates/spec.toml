@@ -1,0 +1,19 @@
+# cmdatl strategy backtest @NAME@.toml
+strategy = "@NAME@.atls"
+
+[data]
+source = "csv"
+file = "bars.csv"                 # beside this spec, with the columns symbol,date,open,high,low,close,volume
+symbol_column = "symbol"
+time = "date"
+time_format = "iso"               # dates written 2024-01-02
+
+[instruments]
+stock = "AAA"                     # the one symbol the program trades, as bars.csv names it
+
+[replay]
+cash = 100000
+commission = 0.0005
+
+[orders]
+type = "market"                   # type = "limit" with offset = 0.002 prices a limit that fraction past the price; offset applies only to limit

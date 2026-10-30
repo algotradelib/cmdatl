@@ -2,6 +2,7 @@
 
 #include "./describe.hpp"
 #include "./environment.hpp"
+#include "./strategy.hpp"
 #include "./table.hpp"
 
 #include <sstream>
@@ -14,8 +15,8 @@ namespace cmdatl {
 inline const std::vector<Exit> READ_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE};
 /** @brief The exit codes of a command that may send, or that plans or reconciles what was sent. */
 inline const std::vector<Exit> SEND_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE, Exit::REFUSED, Exit::UNKNOWN};
-/** @brief The exit codes of a command that compiles a strategy. */
-inline const std::vector<Exit> PROGRAM_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE, Exit::PROGRAM};
+/** @brief The exit codes of a command that runs atlc on a program, and stops it on SIGINT or SIGTERM. */
+inline const std::vector<Exit> PROGRAM_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE, Exit::PROGRAM, Exit::INTERRUPTED};
 
 /** @brief `-P k=v`, shared by the commands that run a program. */
 inline const OptionSpec PARAMETER{"param", "k=v", "set a program parameter for this call", false, true, "P"};
@@ -129,36 +130,47 @@ inline std::vector<Command> command_list() {
 
   add(make_command({"strategy", "new"}, "Strategy", "a program and a run spec to start from")
     .example("cmdatl strategy new dip --template mean-reversion")
-    .arg("NAME", "the program's name")
-    .option("template", "T", "mean-reversion, crossover, momentum or breakout")
-    .option("dir", "DIR", "where to write them")
-    .returns("program", "the .atls file")
-    .returns("spec", "the run spec")
-    .returns("next", "the command to run next"));
-  add(make_command({"strategy", "check"}, "Strategy", "parse and check a program (no compiler needed)")
-    .example("cmdatl strategy check dip.atls")
-    .arg("FILE", "an .atls program")
-    .returns("diagnostics", "atlc's diagnostics")
-    .exits(PROGRAM_EXITS));
-  add(make_command({"strategy", "backtest"}, "Strategy", "replay a run spec and report")
+    .example("cmdatl strategy new dip --dir strategies --force")
+    .arg("NAME", "the program's name: a letter, then letters, digits, - or _")
+    .option("template", "T", "mean-reversion (the default), crossover, momentum or breakout")
+    .option("dir", "DIR", "where to write them (the working directory by default)")
+    .flag("force", "replace NAME.atls and NAME.toml if they are regular files")
+    .returns("program", "the .atls file, absolute")
+    .returns("spec", "the run spec, absolute")
+    .returns("next", "the backtest to run once bars.csv is beside the spec, and atlc check for the program alone")
+    .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
+    .error("strategy.name")
+    .error("strategy.template")
+    .error("strategy.exists")
+    .error("file.unwritable")
+    .error("interrupted")
+    .runs([](const Invocation& invocation, const Table&, Output&) { return new_reply(invocation); }));
+  add(make_command({"strategy", "backtest"}, "Strategy", "replay a run spec with atlc and report")
     .example("cmdatl strategy backtest dip.toml")
     .example("cmdatl strategy backtest dip.toml -P lookback=30 --fills fills.csv")
     .arg("SPEC", "a run spec")
     .option(PARAMETER)
     .option("fills", "FILE", "also write every fill")
-    .returns("report", "the replay's report")
-    .returns("params", "the parameters used")
-    .exits(PROGRAM_EXITS));
-  add(make_command({"strategy", "tune"}, "Strategy", "a parameter grid, in and out of sample")
-    .example("cmdatl strategy tune dip.toml --grid lookback=10:60:10 --split 2024-01-01")
-    .arg("SPEC", "a run spec")
-    .option({"grid", "k=a:b:s", "a parameter's values: from, to, step, or a list", true, true, ""})
-    .option(PARAMETER)
-    .option("split", "DATE", "in sample before, out of sample from")
-    .option("top", "N", "rows to show")
-    .returns("sets", "one row per parameter set")
-    .returns("distinct_sets_tried", "trials counted for this program")
-    .exits(PROGRAM_EXITS));
+    .returns("report", "atlc's report, unchanged")
+    .returns("spec", "the run spec, absolute")
+    .returns("params_given", "the -P given (the spec's and the program's own values are not listed)")
+    .returns("atlc", "atlc's version")
+    .returns("fills", "the fills file, absolute, when asked")
+    .returns("errors", "on a failure atlc spec found: atlc's diagnostics, with file and line")
+    .returns("stderr", "on a failure atlc reported: its last stderr lines")
+    .exits(PROGRAM_EXITS)
+    .error("interrupted")
+    .error("atlc.missing")
+    .error("atlc.unsupported")
+    .error("atlc.failed")
+    .error("program.invalid")
+    .error("spec.invalid")
+    .error("build.failed")
+    .error("replay.failed")
+    .error("unavailable.platform")
+    .runs([](const Invocation& invocation, const Table&, Output& output) {
+      return backtest_reply(invocation, output);
+    }));
   add(make_command({"strategy", "reference"}, "Strategy", "the atls language and its built-ins")
     .example("cmdatl strategy reference")
     .example("cmdatl strategy reference indicators")

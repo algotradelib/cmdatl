@@ -1,0 +1,18 @@
+# Hold while a fast moving average is above a slow one; flat otherwise.
+# Nothing states slow > fast: give them so (-P fast=10 -P slow=30).
+params {
+  int<lower=1> fast = 10;
+  int<lower=2> slow = 30;
+  int<lower=0> quantity = 50;
+}
+series {
+  real fast_mean = sma(close, fast);
+  real slow_mean = sma(close, slow);
+}
+on_bar {
+  if (fast_mean > slow_mean) {
+    target(quantity);
+  } else {
+    target(0);
+  }
+}

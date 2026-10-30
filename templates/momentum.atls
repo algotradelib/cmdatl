@@ -1,0 +1,16 @@
+# Time-series momentum: hold while the close has risen more than `threshold` over the last `lookback` bars; flat otherwise.
+params {
+  int<lower=1> lookback = 60;
+  real<lower=0> threshold = 0;
+  int<lower=0> quantity = 50;
+}
+series {
+  real change = close / close[lookback] - 1;
+}
+on_bar {
+  if (change > threshold) {
+    target(quantity);
+  } else {
+    target(0);
+  }
+}
