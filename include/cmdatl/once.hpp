@@ -24,6 +24,7 @@
 
 #include "./files.hpp"
 #include "./lock.hpp"
+#include "./reply.hpp"
 #include "./syscalls.hpp"
 
 #include <algotradelib/live>
@@ -370,8 +371,9 @@ struct Mapped {
  * 4. a withdrawal: only withdrawals sent, `withdrawal_sent` (0), else `withdrawal` (4);
  * 5. a placement: only placed, `placed` (0), else `mixed` (4);
  * 6. nothing at all: `met` (0);
- * 7. nothing logged and nothing sent: `guard`, `not_reached` (the binding refused before its line) or `withheld` (3);
- * 8. something logged and the market refused it: `broker_refused` (4);
+ * 7. nothing logged and nothing sent: `guard`, `not_reached` (the binding refused before its line, with its text) or
+ *    `withheld` (3);
+ * 8. something logged and the market refused it: `broker_refused` (4), with the market's text;
  * 9. anything else: `unmapped` (4).
  *
  * @tparam Report The runner's report type.
@@ -379,10 +381,19 @@ struct Mapped {
  * @param logged How many paper inputs this call logged.
  * @param failed Whether the runner's local failure became set during the settle.
  * @param withdrawals How many withdrawals the call asked for (0 when it was not a withdrawal).
+ * @param binding_refusal Why the binding refused the call's last request, or empty.
+ * @param broker_refusal Why the market refused the call's last refused request, or empty.
  * @return The outcome.
  */
 template <typename Report>
-Mapped map_report(const Report& report, std::uint64_t logged, bool failed, std::size_t withdrawals) {
+Mapped map_report(
+  const Report& report,
+  std::uint64_t logged,
+  bool failed,
+  std::size_t withdrawals,
+  const std::string& binding_refusal,
+  const std::string& broker_refusal
+) {
   if (!report.indeterminate_.empty() || !report.indeterminate_cancel_.empty()) {
     return {OnceExit::UNKNOWN, "indeterminate", "a send failed in transit; read the order list before anything else"};
   }
@@ -431,7 +442,12 @@ Mapped map_report(const Report& report, std::uint64_t logged, bool failed, std::
       return {OnceExit::REFUSED, "guard", std::string(atl::strategy::guard_reason_name(report.refused_.front().reason_))};
     }
     if (!report.rejected_.empty() && report.rejected_.front().reason_ == atl::strategy::RejectReason::BINDING_REFUSED) {
-      return {OnceExit::REFUSED, "not_reached", "the paper client refused the request before writing it"};
+      return {
+        OnceExit::REFUSED,
+        "not_reached",
+        "the paper client refused the request before writing it" +
+          (binding_refusal.empty() ? std::string() : ": " + binding_refusal)
+      };
     }
     if (!report.withheld_.empty() || !report.withheld_plans_.empty() || !report.unavailable_.empty()) {
       return {OnceExit::REFUSED, "withheld", "the runner withheld the plan (unknown or stale book, or a hold)"};
@@ -443,7 +459,8 @@ Mapped map_report(const Report& report, std::uint64_t logged, bool failed, std::
         return {
           OnceExit::UNKNOWN,
           "broker_refused",
-          "the request reached the paper market, which refused it; nothing rests"
+          "the request reached the paper market, which refused it" +
+            (broker_refusal.empty() ? std::string() : " (" + broker_refusal + ")") + "; nothing rests"
         };
       }
     }
@@ -658,7 +675,7 @@ OnceResult once(
     if (mark <= 0 || std::abs(limit - mark) > config.collar_ * mark) {
       return refuse(
         "collar",
-        "limit " + request.limit_->str() + " is outside " + std::to_string(config.collar_) + " of the last price " +
+        "limit " + request.limit_->str() + " is outside " + decimal_text(config.collar_) + " of the last price " +
           last->str()
       );
     }
@@ -776,7 +793,18 @@ OnceResult once(
     bound.clear_retained_targets();
     const auto logged = desk.inputs_logged() - logged_before;
     const bool failed = !failed_before && bound.local_failure().has_value();
-    const auto mapped = map_report(report, logged, failed, result.withdrawn_.size());
+    // Read right after the settle: the executor's error is its last request's, and the runner keeps the market's
+    // last refusal.
+    const auto& binding = bound.executor().last_error();
+    const auto& broker = bound.last_broker_refusal();
+    const auto mapped = map_report(
+      report,
+      logged,
+      failed,
+      result.withdrawn_.size(),
+      binding ? once_detail::described(*binding) : std::string(),
+      broker ? (broker->code_.empty() ? std::string() : "[" + broker->code_ + "] ") + broker->message_ : std::string()
+    );
     if (mapped.reason_ == "placed") {
       PlacedOrder order;
       const auto& first = report.would_place_.front();

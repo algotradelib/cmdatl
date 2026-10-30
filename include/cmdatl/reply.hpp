@@ -5,6 +5,8 @@
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <optional>
 #include <ostream>
@@ -18,6 +20,22 @@
 namespace cmdatl {
 
 namespace json = boost::json;
+
+/**
+ * @brief A fraction as the shortest plain decimal that reads back as it (`0.05`, `0.00015`), never in exponent form.
+ * @param value The fraction, finite and at least 0.
+ * @return The text.
+ */
+inline std::string decimal_text(double value) {
+  char text[64];
+  for (int digits = 1; digits <= 30; ++digits) {
+    std::snprintf(text, sizeof(text), "%.*f", digits, value);
+    if (std::strtod(text, nullptr) == value) {
+      break;
+    }
+  }
+  return text;
+}
 
 /** @brief The exit codes every command shares. */
 enum class Exit : int {
