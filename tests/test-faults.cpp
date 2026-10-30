@@ -750,7 +750,7 @@ TEST_CASE("an exception after a send and inside once() or after it and is unknow
   }
 }
 
-TEST_CASE("B1: the armed file removed before once() and or before the paper line and sends nothing") {
+TEST_CASE("B1: the armed file removed before once() and or before the paper line and sends nothing and names the file") {
   {
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
@@ -776,6 +776,9 @@ TEST_CASE("B1: the armed file removed before once() and or before the paper line
     INFO(forked.out_);
     CHECK(forked.exit() == 3);
     CHECK(forked.code() == "refused.not_reached");
+    // The binding's own refusal, naming the armed file.
+    const auto message = std::string(reply_of(forked.out_).at("error").as_object().at("message").as_string());
+    CHECK(message.find("armed file does not exist: " + armed.string()) != std::string::npos);
     CHECK(ops_of(slurp(fixture.log()), "place").empty());
     // The journal answered the PENDING (a local refusal is journaled as REJECTED): nothing is owed.
     CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().empty());

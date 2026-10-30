@@ -205,6 +205,50 @@ TEST_CASE("plan checks and in order and each refusing alone with nothing sent") 
   CHECK(withdraw.body_.at("would").as_string() == "withdraw");
 }
 
+TEST_CASE("the collar's exact edges at 0.05 and 0.30: the edge plans and places and the next tick outward refuses") {
+  // 005930 flat at 80000, so the last price at every instant is 80000 and each edge is a whole number of ticks.
+  const std::string bars =
+    "symbol,date,open,high,low,close,volume\n"
+    "005930,2024-03-25,80000,80000,80000,80000,1000000\n"
+    "005930,2024-03-26,80000,80000,80000,80000,1000000\n"
+    "005930,2024-03-27,80000,80000,80000,80000,1000000\n";
+  struct Edge {
+    std::string collar_;
+    std::string printed_;
+    std::string inside_;
+    std::string outside_;
+  };
+  const std::vector<Edge> edges{
+    {"0.05", "0.05", "84000", "84100"},
+    {"0.05", "0.05", "76000", "75900"},
+    {"0.30", "0.3", "104000", "104100"},
+    {"0.30", "0.3", "56000", "55900"},
+  };
+  for (const auto& edge : edges) {
+    INFO(edge.collar_ << " " << edge.inside_);
+    ConfigParts parts;
+    parts.limits_ =
+      "symbols = [\"005930\"]\nposition = { \"005930\" = 100 }\norder_value = 5000000\ndaily_orders = 3\n"
+      "collar = " + edge.collar_ + "\n";
+    const PaperFixture fixture(parts, bars);
+    open_session(fixture);
+    const auto id = plan_id(fixture, "005930", "1", edge.inside_);
+    const auto outside = ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", edge.outside_});
+    CHECK(outside.exit_ == 3);
+    CHECK(outside.code_ == "refused.collar");
+    // The collar as env prints it.
+    CHECK(
+      std::string(outside.body_.at("error").as_object().at("message").as_string()) ==
+      "limit " + edge.outside_ + " is outside " + edge.printed_ + " of the last price 80000"
+    );
+    const auto placed = ask_checked(fixture, {"order", "place", id});
+    INFO(boost::json::serialize(placed.body_));
+    CHECK(placed.exit_ == 0);
+    CHECK(placed.reason_ == "placed");
+    CHECK(placed.body_.at("order").as_object().at("limit").as_string() == edge.inside_);
+  }
+}
+
 TEST_CASE("place checks the operator's file as it is now: a lowered cap and a removed symbol and the armed file") {
   const PaperFixture fixture;
   open_session(fixture);
@@ -386,7 +430,9 @@ TEST_CASE("a plan's age: exactly plan_ttl is accepted and one clock tick more is
 TEST_CASE("map_report: every step reached and and its precedence") {
   using sending::OnceExit;
   const auto mapped = [](const Report& report, std::uint64_t logged, bool failed, std::size_t withdrawals) {
-    return sending::map_report(report, logged, failed, withdrawals);
+    return sending::map_report(
+      report, logged, failed, withdrawals, "[NOT_ARMED] binding text", "[refused] market text"
+    );
   };
   Report placed;
   placed.would_place_.emplace_back();
@@ -406,11 +452,25 @@ TEST_CASE("map_report: every step reached and and its precedence") {
   broker.rejected_.push_back({atl::strategy::RejectReason::BROKER_REFUSED, paper::kr("005930"), ""});
   CHECK(mapped(broker, 1, false, 0).reason_ == "broker_refused");
   CHECK(mapped(broker, 1, false, 0).exit_ == OnceExit::UNKNOWN);
+  // The market's own text is kept; the binding's is not its to say.
+  CHECK(mapped(broker, 1, false, 0).detail_.find("([refused] market text)") != std::string::npos);
+  CHECK(mapped(broker, 1, false, 0).detail_.find("binding text") == std::string::npos);
+  CHECK(
+    sending::map_report(broker, 1, false, 0, "", "").detail_ ==
+    "the request reached the paper market, which refused it; nothing rests"
+  );
   CHECK(mapped(broker, 1, true, 0).exit_ == OnceExit::UNKNOWN);
   Report binding;
   binding.rejected_.push_back({atl::strategy::RejectReason::BINDING_REFUSED, paper::kr("005930"), ""});
   CHECK(mapped(binding, 0, false, 0).reason_ == "not_reached");
   CHECK(mapped(binding, 0, false, 0).exit_ == OnceExit::REFUSED);
+  CHECK(
+    mapped(binding, 0, false, 0).detail_ ==
+    "the paper client refused the request before writing it: [NOT_ARMED] binding text"
+  );
+  CHECK(
+    sending::map_report(binding, 0, false, 0, "", "").detail_ == "the paper client refused the request before writing it"
+  );
   CHECK(mapped(binding, 0, true, 0).reason_ == "journal_unwritable");
   CHECK(mapped(binding, 0, true, 0).exit_ == OnceExit::REFUSED);
   Report guard;
@@ -685,7 +745,7 @@ TEST_CASE("the per-call second: an order command past the data's end is clock.pa
   CHECK(slurp(fixture.log()) == log);
 }
 
-TEST_CASE("the market refusing a logged request is unknown.broker_refused and and the journal's answer settles it") {
+TEST_CASE("the market refusing a logged request is unknown.broker_refused and says why and the journal's answer settles it") {
   ConfigParts parts;
   parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
   const PaperFixture fixture(parts);
@@ -697,6 +757,11 @@ TEST_CASE("the market refusing a logged request is unknown.broker_refused and an
   INFO(boost::json::serialize(refused.body_));
   CHECK(refused.exit_ == 4);
   CHECK(refused.code_ == "unknown.broker_refused");
+  // The market's own reason: 08:10 is before it accepts orders (08:30), though the operator permits pre_open.
+  CHECK(
+    std::string(refused.body_.at("error").as_object().at("message").as_string()).find("not an order-acceptance time") !=
+    std::string::npos
+  );
   const auto after = slurp(fixture.log());
   CHECK(ops_of(after, "place").size() == ops_of(before, "place").size() + 1);
   const auto results = ops_of(after, "result");
@@ -706,7 +771,7 @@ TEST_CASE("the market refusing a logged request is unknown.broker_refused and an
   CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().empty());
 }
 
-TEST_CASE("B2 and the table: no order option names a ceiling; every once() reason has its code") {
+TEST_CASE("B2 and the table: no order option names a ceiling; each catalogued once() reason is declared by the order commands") {
   const cmdatl::Table table(cmdatl::command_list());
   std::vector<std::string> options;
   for (const auto& command : table.commands()) {
