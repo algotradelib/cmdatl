@@ -5,7 +5,8 @@ With [algotradelib](https://github.com/algotradelib/algotradelib) alone you writ
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
 
 Status: in development, before its first release; commands and replies may change without notice.
-This version answers `cmdatl strategy new`, `cmdatl strategy backtest`, `cmdatl env`, `cmdatl schema` and `cmdatl help`; every other command is listed and answers that it is not built yet.
+This version answers `cmdatl strategy new`, `cmdatl strategy backtest`, the paper account's reads (`cmdatl status`, `cmdatl account`, `cmdatl quote`, `cmdatl order list`, `cmdatl clock`) and `cmdatl clock advance`, `cmdatl env`, `cmdatl schema` and `cmdatl help`.
+Every other command is listed and answers that it is not built yet; nothing in this version places or cancels an order.
 
 ```sh
 cmdatl strategy new dip --template mean-reversion      # dip.atls and dip.toml to start from
@@ -43,6 +44,57 @@ Backtesting also needs `atlc`, the atls compiler, on `PATH` or named by `CMDATL_
 - `cmdatl strategy backtest SPEC` checks the spec with `atlc spec` before anything is built, then runs `atlc run`; the reply carries atlc's report unchanged under `report`, with the `-P` given and atlc's version.
   atlc's build progress and warnings arrive as they happen: on stderr, or as `progress` events with `--format jsonl`.
 - `atlc check NAME.atls` checks a program alone; the language is atlc's ([its reference](https://github.com/algotradelib/atlc)).
+
+## The paper account
+
+A paper account trades stored daily bars, not a broker: nothing reaches a network or a real account.
+The operator describes it in a TOML file named by `CMDATL_CONFIG`, never by an argument; one account per file.
+
+```toml
+atlc = "/opt/atlc/bin/atlc"           # optional: atlc, between CMDATL_ATLC and PATH
+
+[account]
+broker = "paper"                      # the only broker of this version
+number = "paper-0001"                 # names the account's state directory
+
+[limits]
+symbols = ["005930", "000660"]
+position = { "005930" = 100, "000660" = 20 }
+order_value = 5000000                 # KRW, one order
+daily_orders = 3                      # placements per KST date
+collar = 0.05                         # optional, at most 0.30
+phases = ["open"]                     # optional: pre_open, open, post_close
+
+[paper]
+bars = "bars.csv"                     # symbol,date,open,high,low,close,volume, beside this file
+cash = 100000000
+start = "2024-03-25T09:30"            # KST, at or after the first date's close
+```
+
+- Every key is checked: an unknown key, a value of another type or out of range is refused with the file, the line and the column (`config.invalid`); `cmdatl env` shows what was read.
+- The armed file is `<stem>.armed` beside the operator's file (`paper.toml` gives `paper.armed`); while it is missing nothing may be placed, and `orders_accepted_now` says so.
+- The account's state lives in `$XDG_STATE_HOME/cmdatl/accounts/<broker>-<env>-<number>` (else `~/.local/state/cmdatl`): its lock, its order journal and `paper.jsonl`, the paper market's log.
+  Another `XDG_STATE_HOME` is another paper account.
+- Keep the operator's file out of the state directory.
+  The agent runs as the operator's own user, so the file is advisory until a separate daemon owns the account.
+
+```sh
+cmdatl status                                          # time, phase, readiness, positions, cash, owed and working orders, quotes
+cmdatl quote 005930 000660                             # last price, band, and whether an order would pass the first gates now
+cmdatl account --symbol 005930                         # positions, cash, buying power, owed orders, orders left today
+cmdatl order list                                      # working orders
+cmdatl clock advance --next-open                       # the paper clock moves only when told; resting orders fill or expire
+cmdatl clock advance --minutes 30
+```
+
+- `orders_accepted_now` is true exactly when these preliminary gates pass now: the armed file exists, the day's count is known and not used up, the phase is one the operator allows, and the market takes orders for the symbol (08:30-15:30 KST on a date it trades).
+  `not_accepted` names the gates that fail.
+  A placement still makes its own price, position, value, buying-power and owed-order checks, and may refuse.
+- Exit 4 from `cmdatl clock advance` means the advance may have happened: read `cmdatl clock` before advancing again.
+- The lock: two cmdatl commands never hold an account at once, provided nobody removes or replaces its `lock` file; a command waits for the account at most 10 s, saying who holds it, then answers `busy.locked`.
+- Durability: an input the paper log accepted survives a killed process on local storage; nothing more is promised (not a power loss on macOS, not a network filesystem).
+- A journal or a paper log that is missing, damaged or not this account's is exit 4, with what to do in `error.next`, and nothing is written.
+  Only a torn last line of an otherwise sound paper log is cut: an input a killed process did not finish writing.
 
 ## Output
 
