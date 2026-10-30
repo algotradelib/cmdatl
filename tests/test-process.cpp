@@ -235,9 +235,9 @@ TEST_CASE("a child that closes its pipes and exits soon after is reaped soon, no
     REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
     CHECK(result.code_ == 7);
   }
-  std::sort(took.begin(), took.end());
-  // The median, well under the 100 ms step the loop once slept before looking again.
-  CHECK(took[2] < 60.0);
+  // The old wait slept a whole 100 ms step after the pipes closed, so no run could take under 110 ms; the fastest of
+  // five is checked against 95 ms, which only a load delaying every run by over 80 ms could fail.
+  CHECK(*std::min_element(took.begin(), took.end()) < 95.0);
 }
 
 TEST_CASE("a throwing callback kills the child's whole group with its grandchild") {
