@@ -358,7 +358,8 @@ inline std::string owner_what(const Command& command, const Invocation& invocati
 
 /**
  * @brief An account command on its open account: the account opened (its lock held for the whole command), the
- *   owner record written once it is open, the handler, and the lock checked once more before the reply.
+ *   owner record written once it is open beneath an intact journal (the lock checked first), the handler, and the
+ *   lock checked once more before the reply.
  * @param command The command.
  * @param invocation Its arguments.
  * @param snapshot The operator's file, read and `OK`.
@@ -383,7 +384,10 @@ inline Reply account_command_reply(
     return std::move(*opened.refusal_);
   }
   auto& account = *opened.account_;
-  write_owner_record(account.dir(), owner_what(command, invocation));
+  // Only beneath this account's intact journal: a journal not established leaves every file as it was.
+  if (account.journal_intact() && !write_owner_record(account.lock(), owner_what(command, invocation))) {
+    return lock_lost_reply();
+  }
   Reply reply;
   try {
     reply = command.run_account_(invocation, account, output);

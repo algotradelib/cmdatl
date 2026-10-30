@@ -347,8 +347,8 @@ public:
 #if !defined(_WIN32)
   /**
    * @brief Opens the account: the directory, the lock (waiting at most 10 s, printing who holds it once), the bars,
-   *   the state files and their classification (initializing a fresh account), the journal, the desk and the
-   *   journal's view, in that order.
+   *   the state files and their classification (initializing a fresh account), the journal, the desk, the journal's
+   *   view, and the paper log's repair only when that view is this account's and intact, in that order.
    *
    * Each refusal changes nothing it has not said it changes.
    * @param snapshot The operator's file, read.
@@ -719,6 +719,17 @@ private:
       return paper_state_reply(error.what());
     }
     journal_ = journal_view(desk_->session(), replay_, config_.scope(), paper::kst_day(desk_->now()));
+    if (!journal_.intact_) {
+      // A journal not this account's or damaged: the reads are built from the log as it is, and nothing is written.
+      return std::nullopt;
+    }
+    try {
+      desk_->repair();
+    } catch (const paper::LockLost&) {
+      return lock_lost_reply();
+    } catch (const paper::PaperStateError& error) {
+      return paper_state_reply(error.what());
+    }
     return std::nullopt;
   }
 #endif

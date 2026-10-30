@@ -490,6 +490,71 @@ TEST_CASE("a journal that is not this account's, or damaged, makes every account
   ::chmod(fixture.journal().c_str(), 0600);
 }
 
+TEST_CASE("a journal not established leaves the paper log unrepaired and writes no owner record") {
+  const PaperFixture fixture;
+  fixture.arm();
+  initialize(fixture);
+  {
+    const auto opened = open_account();
+    REQUIRE(opened->account_);
+    auto& desk = opened->account_->desk();
+    REQUIRE(desk.advance_to(kst("2024-03-26T09:00")).status_ == paper::Appended::OK);
+    REQUIRE(desk.session().place(order("005930", true, "10", "60000")));
+  }
+  const auto placed = slurp(fixture.log());
+  auto lines = lines_of(placed);
+  REQUIRE(lines.size() == 4);
+  REQUIRE(lines.back().find("\"op\":\"result\"") != std::string::npos);
+  lines.pop_back();
+  std::string unanswered;
+  for (const auto& line : lines) {
+    unanswered += line + "\n";
+  }
+  const auto good = slurp(fixture.journal());
+  auto foreign_entry = place_entry("f1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:00"));
+  foreign_entry.scope_ = "paper:paper:other";
+  const std::vector<std::pair<const char*, std::string>> journals{
+    {"a foreign header", runner::journal_header_line("paper:paper:other") + "\n"},
+    {"a foreign entry", good + runner::journal_entry_to_line(foreign_entry) + "\n"},
+    {"a damaged line", good + "not a journal line\n"},
+  };
+  const std::vector<std::pair<const char*, std::string>> logs{
+    {"a torn paper tail", placed + "{\"op\":\"adv"},
+    {"an unanswered input", unanswered},
+  };
+  const auto owner = fixture.account() / "owner.json";
+  const std::string record = "{\"role\":\"operator\",\"pid\":1}\n";
+  for (const auto& j : journals) {
+    for (const auto& l : logs) {
+      INFO(j.first << " with " << l.first);
+      spit(fixture.journal(), j.second);
+      spit(fixture.log(), l.second);
+      spit(owner, record);
+      for (const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
+             {"status"}, {"account"}, {"quote", "005930"}, {"clock"}, {"clock", "advance", "--minutes", "5"}}) {
+        INFO(args.front());
+        const auto ran = fixture.json(args);
+        CHECK(ran.exit_ == 4);
+        CHECK(code_of(ran.out_) == "unknown.journal_damaged");
+        CHECK(slurp(fixture.log()) == l.second);
+        CHECK(slurp(fixture.journal()) == j.second);
+        CHECK(slurp(owner) == record);
+      }
+    }
+  }
+  // Beneath this account's journal, the same logs are repaired and the record written.
+  for (const auto& l : logs) {
+    INFO(l.first);
+    spit(fixture.journal(), good);
+    spit(fixture.log(), l.second);
+    spit(owner, record);
+    CHECK(fixture.json({"status"}).exit_ == 0);
+    CHECK(slurp(fixture.log()) == placed);
+    CHECK(slurp(fixture.journal()) == good);
+    CHECK(slurp(owner) != record);
+  }
+}
+
 TEST_CASE("the journal's bytes from the library's writer are the fixture's") {
   auto entry = place_entry("j1", runner::JournalOutcome::PENDING, kst("2024-03-26T09:00"));
   entry.scope_ = SCOPE;

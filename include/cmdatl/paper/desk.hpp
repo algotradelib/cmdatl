@@ -401,6 +401,9 @@ public:
    * @throws PaperStateError When any step fails; nothing more is appended then.
    */
   void truncate_to(std::size_t size) {
+    if (held_) {
+      throw PaperStateError("the paper log is held: the account's journal was not established");
+    }
     if (!lock_.still_at_path()) {
       poisoned_ = true;
       throw LockLost();
@@ -426,7 +429,7 @@ public:
    */
   Appended append(const std::string& line, const char* point, int& error) {
     error = 0;
-    if (poisoned_) {
+    if (poisoned_ || held_) {
       error = EIO;
       return Appended::NOT_WRITTEN;
     }
@@ -472,12 +475,19 @@ public:
     throw PaperStateError("the paper log could not be written: " + std::string(std::strerror(error)));
   }
 
+  /**
+   * @brief Holds the log, or lets it go: while held, nothing is cut or appended.
+   * @param held Whether it is held.
+   */
+  void hold(bool held) noexcept { held_ = held; }
+
 private:
   std::string path_;
   LockIdentity lock_;
   ScopedFd fd_;
   int open_error_{0};
   bool poisoned_{false};
+  bool held_{false};
 };
 
 /**
@@ -633,14 +643,15 @@ public:
   using Session = atl::BlockingSession<LoggedClient>;
 
   /**
-   * @brief Builds the market from the bars and replays the log; only an account holding this account's lock can.
+   * @brief Builds the market from the bars and replays the log, writing nothing: the log stays held until `repair`.
+   *
+   * Only an account holding this account's lock can.
    * @param key The account's key.
    * @param config The operator's file.
    * @param lock The held lock; its directory must be this config's account directory.
    * @param data The bars, read and checked.
    * @throws std::logic_error When the lock is not held or is another account's (a defect).
    * @throws PaperStateError When the log cannot be read or replayed; nothing was written then.
-   * @throws LockLost When the lock was replaced before a repair.
    */
   PaperDesk(DeskKey key, const OperatorConfig& config, const OwnerLock& lock, MarketData data)
   : config_(config) {
@@ -663,8 +674,29 @@ public:
     client_->listing_lag_ = std::chrono::seconds(config.paper_.listing_lag_);
     client_->holdings_lag_ = std::chrono::seconds(config.paper_.holdings_lag_);
     session_ = std::make_unique<Session>(client_, PaperAccount{config.number_});
+    log_->hold(true);
     replay();
     market_->drain_events();
+  }
+
+  /**
+   * @brief Repairs the log once the account's journal is established: a torn tail cut, a missing result answered;
+   *   then the log takes appends.
+   * @throws LockLost When the lock was replaced.
+   * @throws PaperStateError When the repair failed; nothing more is appended then.
+   */
+  void repair() {
+    log_->hold(false);
+    if (cut_to_) {
+      // A kill during a write: that input never reached the market.
+      log_->truncate_to(*cut_to_);
+      cut_to_.reset();
+    }
+    if (owed_result_) {
+      // A crash between an input and its answer: the answer, as the market gives it now, before anything else.
+      log_->append_or_throw(*owed_result_, "result");
+      owed_result_.reset();
+    }
   }
 
   PaperDesk(const PaperDesk&) = delete;
@@ -820,7 +852,10 @@ private:
     return value->as_int64();
   }
 
-  /** @brief Replays the log: the complete lines checked and applied, a torn tail cut, a missing result answered. */
+  /**
+   * @brief Replays the log: the complete lines checked and applied; a torn tail and a missing result kept for
+   *   `repair`.
+   */
   void replay() {
     std::string text;
     const auto read = log_->read(text);
@@ -959,13 +994,11 @@ private:
       throw PaperStateError("the paper log has no complete line");
     }
     if (complete < text.size()) {
-      // A kill during a write: that input never reached the market.
-      // It is cut only after every complete line was checked.
-      log_->truncate_to(complete);
+      // Cut by `repair` only, after every complete line was checked.
+      cut_to_ = complete;
     }
     if (pending_of) {
-      // A crash between an input and its answer: the answer, as the market gives it now, before anything else.
-      log_->append_or_throw(result_line(*pending_of, pending_id, pending_error), "result");
+      owed_result_ = result_line(*pending_of, pending_id, pending_error);
     }
   }
 
@@ -976,6 +1009,8 @@ private:
   std::shared_ptr<LoggedClient> client_;
   std::unique_ptr<Session> session_;
   std::size_t replayed_{0};
+  std::optional<std::size_t> cut_to_;
+  std::optional<std::string> owed_result_;
 };
 
 }  // namespace paper
