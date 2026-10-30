@@ -11,7 +11,32 @@
 #include "./paper/time.hpp"
 #include "./reply.hpp"
 
+#include <stdexcept>
+
+namespace cmdatl {
+
+/** @brief toml++ found one of its own invariants broken by a document: the document is refused. */
+class TomlInvariant : public std::runtime_error {
+public:
+  /**
+   * @brief Builds the error.
+   * @param what The invariant.
+   */
+  explicit TomlInvariant(const char* what)
+  : std::runtime_error(what) {}
+};
+
+}  // namespace cmdatl
+
+// toml++ checks its own invariants with TOML_ASSERT, an abort without NDEBUG and, with it, an assumption the optimizer
+// may build on (`TOML_ASSERT_ASSUME`); a table header such as `[~x]` reaches one in toml++ 3.4.0.
+// Kept as a check that throws, whatever NDEBUG says, so such a document is refused, never an abort or undefined
+// behaviour.
+#pragma push_macro("NDEBUG")
+#undef NDEBUG
+#define TOML_ASSERT(expr) ((expr) ? static_cast<void>(0) : throw ::cmdatl::TomlInvariant("toml++ invariant: " #expr))
 #include <toml++/toml.hpp>
+#pragma pop_macro("NDEBUG")
 
 #include <algorithm>
 #include <cerrno>
@@ -686,6 +711,8 @@ inline ConfigSnapshot load_operator_config() {
     // Without a source path: toml++ copies one into a shared string in a constructor marked noexcept, so an
     // allocation failing there would end the process; the messages here name the file themselves.
     root = toml::parse(std::string_view(text));
+  } catch (const TomlInvariant& error) {
+    return invalid("the operator's file " + snapshot.path_ + " is not TOML this version reads (" + error.what() + ")");
   } catch (const toml::parse_error& error) {
     return invalid(
       "the operator's file " + snapshot.path_ + " is not valid TOML: " + std::string(error.description()),

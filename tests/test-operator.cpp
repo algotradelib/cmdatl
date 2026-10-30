@@ -197,6 +197,9 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"an unquoted string", with("broker = paper\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
     {"a line without =", with(ConfigParts{}.account_ + "flag\n", "", ""), "config.invalid", 4},
     {"invalid UTF-8", with("broker = \"paper\"\nnumber = \"\xff\"\n", "", ""), "config.invalid", 3},
+    // A table header toml++ 3.4.0 meets with an internal assertion: refused, never an abort.
+    {"a header starting with ~", ConfigParts{}.text() + "[~imits]\n", "config.invalid", 0},
+    {"a header starting with ~ in place of a table", "[account]\n" + ConfigParts{}.account_ + "[~imits]\n", "config.invalid", 0},
   };
   for (const auto& c : cases) {
     INFO(c.what_ << "\n" << c.text_);
