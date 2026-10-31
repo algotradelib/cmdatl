@@ -183,6 +183,13 @@ void set_script(std::map<std::size_t, runtest::Decision> decisions, int days = 1
   runtest::data() = runtest::Data{};
   runtest::data().days_ = days;
   cmdatl::driver::client_hook() = nullptr;
+  cmdatl::driver::closed_hook() = nullptr;
+}
+
+/** @brief The mock client of the run in progress, for actions inside a run. */
+algotradelib::mock::MockClient*& current_client() {
+  static algotradelib::mock::MockClient* client = nullptr;
+  return client;
 }
 
 /**
@@ -470,26 +477,8 @@ TEST_CASE("the operator's stop file: this run's withdraw cancels, another run's 
   }
 }
 
-TEST_CASE("the end, each failure told apart: an incomplete closing pass, an abandoned loop, an order left owed") {
+TEST_CASE("an order list that never answers abandons the loop, an unknown outcome") {
   using Call = algotradelib::mock::Call;
-  {
-    const PaperFixture fixture(run_parts());
-    fixture.arm();
-    set_script({{10, {10, "0.96"}}});
-    // The order list fails through the closing wait: the pass cannot verify, and says so.
-    cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) {
-      (void)client;
-    };
-    const auto ran = run_child<runtest::Program>(fixture, spec_args(), [](const std::string&, const std::filesystem::path&) {
-      cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) {
-        client.fail_next(Call::ORDER_HISTORY, broker_error(algotradelib::ErrorCategory::TRANSPORT), 1000);
-      };
-    });
-    INFO(json::serialize(ran.reply_));
-    INFO(ran.stderr_);
-    CHECK(ran.exit_ == 4);
-    CHECK(code_of(ran).rfind("unknown.", 0) == 0);
-  }
   {
     const PaperFixture fixture(run_parts());
     fixture.arm();
@@ -504,18 +493,89 @@ TEST_CASE("the end, each failure told apart: an incomplete closing pass, an aban
   }
 }
 
-TEST_CASE("a lost acknowledgement is resolved from the broker's lists, and the run still ends clean") {
+TEST_CASE("a lost acknowledgement, of a buy or a sale, changes nothing in the summary once resolved") {
   using Call = algotradelib::mock::Call;
   const PaperFixture fixture(run_parts());
   fixture.arm();
-  set_script({{2, {10, "1"}}, {6, {0, "1"}}});
+  const std::map<std::size_t, runtest::Decision> decisions{{2, {10, "1"}}, {6, {0, "1"}}};
+  set_script(decisions);
+  const auto normal = run_child<runtest::Program>(fixture, spec_args());
+  REQUIRE(normal.exit_ == 0);
+  REQUIRE(normal.reply_.at("executions").as_int64() == 2);
+  const auto same_summary = [&normal](const RunResult& ran) {
+    INFO(json::serialize(ran.reply_));
+    INFO(ran.stderr_);
+    CHECK(ran.exit_ == 0);
+    for (const char* field : {"executions", "commission_paid", "tax_paid", "closing_equity", "holdings_at_end", "owed_at_end"}) {
+      CAPTURE(field);
+      CHECK(ran.reply_.at(field) == normal.reply_.at(field));
+    }
+    CHECK(count_of(ran, "filled") == 2);
+    CHECK(count_of(ran, "placed") == 2);
+  };
+  // The buy's acknowledgement lost.
+  set_script(decisions);
   cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) { client.lose_next_reply(Call::PLACE); };
+  const auto buy_lost = run_child<runtest::Program>(fixture, spec_args());
+  same_summary(buy_lost);
+  CHECK(events_of(buy_lost, "placed").front().at("acknowledged") == json::value(false));
+  // The sale's acknowledgement lost.
+  set_script(decisions);
+  cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) { current_client() = &client; };
+  runtest::script().actions_[6] = [] { current_client()->lose_next_reply(Call::PLACE); };
+  same_summary(run_child<runtest::Program>(fixture, spec_args()));
+  // An order whose acknowledgement was lost and which then expires: placed, expired, nothing owed.
+  set_script({{3, {10, "0.97"}}});
+  cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) { client.lose_next_reply(Call::PLACE); };
+  const auto expired = run_child<runtest::Program>(fixture, spec_args());
+  INFO(json::serialize(expired.reply_));
+  INFO(expired.stderr_);
+  CHECK(expired.exit_ == 0);
+  CHECK(count_of(expired, "expired") >= 1);
+  CHECK(expired.reply_.at("executions").as_int64() == 0);
+  CHECK(expired.reply_.at("closing_equity").as_string() == "100000000");
+}
+
+TEST_CASE("the finalization stage gives up after its rounds when the history stays unreadable") {
+  using Call = algotradelib::mock::Call;
+  const PaperFixture fixture(run_parts());
+  fixture.arm();
+  // An unfillable buy on the last bar, withdrawn at the end; then the history fails, so the cancellation is never
+  // confirmed.
+  set_script({{10, {10, "0.96"}}});
+  cmdatl::driver::closed_hook() = [](algotradelib::mock::MockClient& client) {
+    client.fail_next(Call::ORDER_HISTORY, broker_error(algotradelib::ErrorCategory::TRANSPORT), 1000);
+  };
   const auto ran = run_child<runtest::Program>(fixture, spec_args());
   INFO(json::serialize(ran.reply_));
   INFO(ran.stderr_);
-  CHECK(ran.exit_ == 0);
-  CHECK(ran.reply_.at("executions").as_int64() >= 1);
-  CHECK(ran.reply_.at("owed_at_end").as_array().empty());
+  CHECK(ran.exit_ == 4);
+  CHECK(code_of(ran) == "unknown.owed_at_end");
+  CHECK(ran.stderr_.find("finalization: 10 round(s), 1 owed") != std::string::npos);
+  CHECK(ran.reply_.at("owed_at_end").as_array().size() == 1);
+  CHECK(ran.events_.back().at("event").as_string() == "end");
+  CHECK(ran.events_.back().at("result") == ran.reply_.at("result"));
+  CHECK(ran.events_.back().at("exit").as_int64() == 4);
+}
+
+TEST_CASE("the run's clock never moves past its bound, and a wait at the bound throws") {
+  namespace atl = algotradelib;
+  auto series = runtest::bars_of("005930", 3, atl::BarInterval::ONE_DAY);
+  atl::mock::MarketSettings settings;
+  settings.cash_ = atl::Money{atl::Decimal64::parse("1000000"), atl::Currency::krw()};
+  settings.start_ = series.bars_.front().timestamp_;
+  atl::mock::Market market({series}, settings);
+  int steps = 0;
+  const auto bound = settings.start_ + std::chrono::hours(1);
+  cmdatl::driver::RunClock clock(market, bound, [&steps] { ++steps; });
+  clock.wait_for(std::chrono::minutes(30));
+  CHECK(clock.now() == settings.start_ + std::chrono::minutes(30));
+  clock.wait_for(std::chrono::hours(2));
+  CHECK(clock.now() == bound);
+  CHECK(steps == 2);
+  CHECK_THROWS_AS(clock.wait_for(std::chrono::minutes(1)), cmdatl::driver::RunBound);
+  CHECK(clock.now() == bound);
+  CHECK(steps == 2);
 }
 
 TEST_CASE("buying power is read and enforced: a buy above the cash is the guard's refusal, never an unread account") {
@@ -634,5 +694,12 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
   CHECK(!placed);  // nothing held: a sell with no holding is the broker's refusal, reached
   REQUIRE(seen.size() == 2);
   CHECK(seen[1].reason_ == "insufficient_holdings");
+  // Closed: nothing reaches the broker any more.
+  session.close();
+  const auto closed = session.place(sell);
+  REQUIRE(!closed);
+  CHECK(!closed.error().reached_broker_);
+  CHECK(closed.error().broker_code_ == "closed");
+  CHECK(market.order_history({}).orders_.empty());
 }
 #endif
