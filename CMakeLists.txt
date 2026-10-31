@@ -139,6 +139,18 @@ if(CMDATL_BUILD_TESTS)
     target_compile_definitions(test-faults PRIVATE CMDATL_WRAP_FSYNC)
   endif()
   add_test(NAME test-faults COMMAND test-faults)
+  # The run driver in process, with a hand-written program and loader: no atlc header.
+  add_executable(test-runs tests/test-runs.cpp)
+  target_link_libraries(test-runs PRIVATE cmdatl_core Catch2::Catch2WithMain)
+  add_dependencies(test-runs cmdatl fake-atlc hold-lock)
+  target_compile_definitions(test-runs PRIVATE
+    CMDATL_RUN_TEST_HOOKS
+    CMDATL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    CMDATL_BINARY="$<TARGET_FILE:cmdatl>"
+    CMDATL_FAKE_ATLC="$<TARGET_FILE:fake-atlc>"
+    CMDATL_HOLD_LOCK="$<TARGET_FILE:hold-lock>"
+  )
+  add_test(NAME test-runs COMMAND test-runs)
   # Against a real atlc and algotradelib, named by CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX; skipped, and reported
   # as skipped, without them.
   add_test(NAME test-acceptance COMMAND test-cli "[acceptance]")
