@@ -706,7 +706,7 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
 
 #if !defined(_WIN32)
 TEST_CASE("the stop file holds one line per run, and each run reads the strongest line naming it") {
-  using cmdatl::driver::stop_intent_of;
+  using cmdatl::stop_intent_of;
   using algotradelib::runner::StopIntent;
   const std::string a = "r00000000000a";
   const std::string b = "r00000000000b";

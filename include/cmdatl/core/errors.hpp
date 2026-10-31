@@ -114,6 +114,11 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"unknown.local_failure", Exit::UNKNOWN, false, "a journal write failed during the run; its market ended with it and no account was affected: start a new run"},
     {"unknown.owed_order", Exit::UNKNOWN, false, "the run stopped placing on an order nobody could account for; its market ended with it: start a new run"},
     {"unknown.market_halted", Exit::UNKNOWN, false, "the mock market could not cost or record a fill; its market ended with it and no account was affected: start a new run"},
+    {"unknown.run_stopping", Exit::UNKNOWN, false, "the run stops placing: cmdatl run status RUN shows when it ended"},
+    {"unknown.run_stop", Exit::UNKNOWN, false, "it may still be trading: cmdatl run status RUN; removing the armed file stops every run"},
+    {"refused.stop_file_full", Exit::REFUSED, false, "the stop file is full of other runs' lines: wait for them to end, or remove the armed file, which stops every run"},
+    {"run.log_replaced", Exit::FAILED, false, "the run's event log was replaced or cut while it was read: cmdatl run status RUN"},
+    {"run.log_unreadable", Exit::FAILED, false, "the run started and its event log is missing or not a file that can be read: cmdatl run status RUN"},
   };
   return catalog;
 }

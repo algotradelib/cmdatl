@@ -51,6 +51,8 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <cstdlib>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -66,10 +68,35 @@ inline constexpr std::size_t MAX_WARMUP_BARS = 10000;
 
 #if defined(CMDATL_RUN_TEST_HOOKS)
 /**
- * @brief Test-only: called with the mock client before trading, so a test scripts the broker's faults. Only the run
- *   tests' executable defines `CMDATL_RUN_TEST_HOOKS`; never define it elsewhere.
+ * @brief Test-only: called with the mock client before trading, so a test scripts the broker's faults.
+ *   `CMDATL_RUN_TEST_HOOKS` is defined only by the tests: the `test-runs` and `test-cli` executables, and the drivers a
+ *   process test builds with it in `CXXFLAGS` (their own cache shape); never by cmdatl's build or a shipped driver.
  * @return The hook.
  */
+inline std::function<void(atl::mock::MockClient&)>& client_hook();
+
+/**
+ * @brief Test-only: holds the run at a step while the file `CMDATL_TEST_BARRIER` names exists, so a process test acts
+ *   on a run at a known point instead of sleeping; with `CMDATL_TEST_BARRIER_ON_ORDER` set, only while an order rests.
+ *   It gives up after 120 s. Compiled only where `CMDATL_RUN_TEST_HOOKS` is defined (a test passes it in `CXXFLAGS`
+ *   when it builds a driver); a shipped driver has none of it.
+ * @param market The market.
+ */
+inline void test_barrier(const atl::mock::Market& market) {
+  const char* barrier = std::getenv("CMDATL_TEST_BARRIER");
+  if (barrier == nullptr || *barrier == '\0') {
+    return;
+  }
+  if (std::getenv("CMDATL_TEST_BARRIER_ON_ORDER") != nullptr && market.working_orders().orders_.empty()) {
+    return;
+  }
+  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+  std::error_code ec;
+  while (std::filesystem::exists(barrier, ec) && std::chrono::steady_clock::now() < until) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+}
+
 inline std::function<void(atl::mock::MockClient&)>& client_hook() {
   static std::function<void(atl::mock::MockClient&)> hook;
   return hook;
@@ -515,6 +542,9 @@ int run_main(int argc, char** argv, Load load, Make make) {
     );
     std::optional<std::chrono::steady_clock::time_point> heartbeat;
     const auto after_step = [&]() {
+#if defined(CMDATL_RUN_TEST_HOOKS)
+      test_barrier(market);
+#endif
       scan_orders(market, ledger, [&session](const std::string& id) { return session.cancelled(id); }, guard);
       const auto wall = std::chrono::steady_clock::now();
       if (!heartbeat || wall - *heartbeat >= std::chrono::seconds(1)) {

@@ -491,9 +491,11 @@ inline std::string event_kind(const std::string& line) {
  * @brief Reads the run's directory.
  * @param dir The directory.
  * @param run The run's id, which every record must name.
+ * @param count Whether to count the events by kind (reading up to `COUNT_LIMIT` of the log); a poll that only needs
+ *   the run's state passes false.
  * @return The records.
  */
-inline Records read_records(const std::filesystem::path& dir, const std::string& run) {
+inline Records read_records(const std::filesystem::path& dir, const std::string& run, bool count = true) {
   Records records;
   const auto described = read_bounded(dir / "run.json", RUN_RECORD_MAX);
   if (described.present_) {
@@ -584,7 +586,7 @@ inline Records read_records(const std::filesystem::path& dir, const std::string&
         start = end + 1;
       }
     }
-    if (size <= COUNT_LIMIT) {
+    if (count && size <= COUNT_LIMIT) {
       std::string all;
       if (read_whole(events.get(), static_cast<std::size_t>(COUNT_LIMIT) + 1, all).status_ == FileRead::Status::OK || !all.empty()) {
         std::size_t start = 0;
@@ -829,15 +831,16 @@ inline Alive alive(std::optional<long> pid) {
  *   finds it free is followed by a second read, since the driver writes its reply before it releases the lock.
  * @param dir The run's directory.
  * @param run The run's id.
+ * @param count Whether to count the events by kind.
  * @return The records and the state.
  */
-inline std::pair<Records, State> evaluate(const std::filesystem::path& dir, const std::string& run) {
-  auto records = read_records(dir, run);
+inline std::pair<Records, State> evaluate(const std::filesystem::path& dir, const std::string& run, bool count = true) {
+  auto records = read_records(dir, run, count);
   auto probe = Probe::UNKNOWN;
   if (records.start_ && !records.exit_present_ && !records.reply_) {
     probe = probe_lock(dir, *records.start_);
     if (probe == Probe::FREE) {
-      records = read_records(dir, run);
+      records = read_records(dir, run, count);
     }
   }
   const auto state = run_state(records, alive(records.supervisor_), alive(records.pid_), probe);

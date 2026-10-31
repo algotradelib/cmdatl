@@ -454,7 +454,8 @@ TEST_CASE("the table's run commands: options, codes, kinds of code and the schem
   CHECK(start->may_send_);
   CHECK(static_cast<bool>(start->run_config_));
   CHECK(static_cast<bool>(status->run_config_));
-  CHECK(!stop->available_);
+  CHECK(stop->available_);
+  CHECK(stop->may_send_);
   for (const auto& option : stop->options_) {
     CHECK(option.name_ != "flatten");
   }
@@ -468,7 +469,7 @@ TEST_CASE("the table's run commands: options, codes, kinds of code and the schem
     CHECK(std::find(start->errors_.begin(), start->errors_.end(), code) != start->errors_.end());
   }
   CHECK(cmdatl::check_table(table).empty());
-  CHECK(cmdatl::SCHEMA_VERSION == 5);
+  CHECK(cmdatl::SCHEMA_VERSION == 6);
   // Two kinds of code on one command is a problem the table check reports.
   auto list = cmdatl::command_list();
   for (auto& command : list) {
