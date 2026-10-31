@@ -73,6 +73,16 @@ inline std::function<void(atl::mock::MockClient&)>& client_hook() {
   static std::function<void(atl::mock::MockClient&)> hook;
   return hook;
 }
+
+/**
+ * @brief Test-only: called with the mock client when the loop has returned and the boundary is closed, before the
+ *   finalization stage reads the broker.
+ * @return The hook.
+ */
+inline std::function<void(atl::mock::MockClient&)>& closed_hook() {
+  static std::function<void(atl::mock::MockClient&)> hook;
+  return hook;
+}
 #endif
 
 /** @brief What `load` gives: the market's inputs, read by atlc's own code. */
@@ -235,10 +245,17 @@ inline atl::Decimal64 multiply_exact(const atl::Decimal64& a, const atl::Decimal
   return *product;
 }
 
-/** @brief What the run's orders did, from the market's history: the order events and the totals. */
+/**
+ * @brief What the run's orders did, from the market's whole history (the market is the run's own, so every order in it
+ *   is the run's, acknowledged or not): the order events and the totals.
+ */
 struct Ledger {
-  /** @brief Orders placed and not yet seen finished, by id. */
-  std::set<std::string> open_;
+  /** @brief Orders the placement boundary saw acknowledged, by id. */
+  std::set<std::string> acknowledged_;
+  /** @brief Orders the scan has seen, by id. */
+  std::set<std::string> seen_;
+  /** @brief Orders the scan has seen finished, by id: each is accounted once. */
+  std::set<std::string> finished_;
   /** @brief Fills. */
   std::int64_t executions_{0};
   /** @brief Commission paid. */
@@ -282,8 +299,8 @@ inline json::object order_event(const char* kind, const atl::OrderSnapshot& orde
 
 #if !defined(_WIN32)
 /**
- * @brief Reads the market's history for the run's open orders: each newly finished one is an event, and fills move the
- *   totals.
+ * @brief Reads the market's whole history: an order no acknowledgement reported (its reply was lost) is written as
+ *   placed when first seen, each newly finished order is an event, and fills move the totals, each order once.
  * @tparam Cancelled A callable telling whether the boundary cancelled an order id.
  * @param market The market.
  * @param ledger The totals.
@@ -292,13 +309,15 @@ inline json::object order_event(const char* kind, const atl::OrderSnapshot& orde
  */
 template <typename Cancelled>
 void scan_orders(const atl::mock::Market& market, Ledger& ledger, Cancelled&& cancelled, Guard& guard) {
-  if (ledger.open_.empty()) {
-    return;
-  }
   const auto page = market.order_history({});
   for (const auto& order : page.orders_) {
-    if (ledger.open_.count(order.order_id_) == 0) {
+    if (ledger.finished_.count(order.order_id_) != 0) {
       continue;
+    }
+    if (ledger.seen_.insert(order.order_id_).second && ledger.acknowledged_.count(order.order_id_) == 0) {
+      auto event = order_event("placed", order, market.now());
+      event["acknowledged"] = false;
+      guard.emit(std::move(event));
     }
     if (order.status_ == atl::OrderStatus::FILLED) {
       const auto& execution = order.execution_;
@@ -316,10 +335,10 @@ void scan_orders(const atl::mock::Market& market, Ledger& ledger, Cancelled&& ca
         add_exact(ledger.cash_, amount);
       ledger.cash_ = subtract_exact(subtract_exact(ledger.cash_, commission), tax);
       guard.emit(order_event("filled", order, market.now()));
-      ledger.open_.erase(order.order_id_);
+      ledger.finished_.insert(order.order_id_);
     } else if (order.status_ == atl::OrderStatus::CANCELED) {
       guard.emit(order_event(cancelled(order.order_id_) ? "canceled" : "expired", order, market.now()));
-      ledger.open_.erase(order.order_id_);
+      ledger.finished_.insert(order.order_id_);
     }
   }
 }
@@ -537,7 +556,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
         }
         if (placed.kind_ == "placed") {
           event["order_id"] = placed.order_id_;
-          ledger.open_.insert(placed.order_id_);
+          ledger.acknowledged_.insert(placed.order_id_);
+          ledger.seen_.insert(placed.order_id_);
         } else {
           event["reason"] = placed.reason_;
         }
@@ -604,7 +624,17 @@ int run_main(int argc, char** argv, Load load, Make make) {
     try {
       traded = trade_on_rails(
         session, journal, std::move(*strategy), wiring, stop, clock, on_ready,
-        [&market]() { return market.working_orders().orders_.empty(); }, std::cerr
+        [&market]() { return market.working_orders().orders_.empty(); },
+        [&client]() {
+#if defined(CMDATL_RUN_TEST_HOOKS)
+          if (closed_hook()) {
+            closed_hook()(*client);
+          }
+#else
+          (void)client;
+#endif
+        },
+        std::cerr
       );
     } catch (const RunBound& error) {
       thrown = error.what();
@@ -726,6 +756,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
       };
     }
     // The reply first, then the end event, then the lock released (when this scope ends).
+    body["result"] = exit == Exit::OK ? "ended" : "unknown";
     const int exit_code = write_run_reply(body, exit);
     (void)events.write(json::object{{"event", "end"}, {"at", at_text(market.now())}, {"exit", exit_code}, {"result", body["result"]}});
     return exit_code;

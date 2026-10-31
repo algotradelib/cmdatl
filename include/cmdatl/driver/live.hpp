@@ -135,6 +135,7 @@ struct Traded {
  * @tparam Clock The clock: `now()`, `monotonic_now()` and `wait_for(duration)`.
  * @tparam Ready A callable returning `bool`: whether to start the loop (false ends with `NOT_STARTED`, nothing sent).
  * @tparam Rests A callable returning `bool`: whether the broker's own list shows no working order.
+ * @tparam Closed A callable, called when the session has been closed to placements.
  * @param session The session.
  * @param journal The run's journal, already opened as the process's one writer.
  * @param strategy The strategy, configured.
@@ -143,10 +144,11 @@ struct Traded {
  * @param clock The clock, shared by the runner and the loop.
  * @param on_ready Called once, after recovery and reference data, just before the loop.
  * @param nothing_rests Whether the broker's own list shows no working order, read in the finalization stage.
+ * @param on_closed Called once, right after the session is closed to placements.
  * @param err Where the recovery and the loop's report are printed for the operator.
  * @return How it ended.
  */
-template <typename Strategy, typename Session, typename Clock, typename Ready, typename Rests>
+template <typename Strategy, typename Session, typename Clock, typename Ready, typename Rests, typename Closed>
 Traded trade_on_rails(
   Session& session,
   atl::runner::FileJournal& journal,
@@ -156,6 +158,7 @@ Traded trade_on_rails(
   Clock clock,
   Ready&& on_ready,
   Rests&& nothing_rests,
+  Closed&& on_closed,
   std::ostream& err
 ) {
   Traded traded;
@@ -242,6 +245,7 @@ Traded trade_on_rails(
   // Finalization: a closing pass sends its cancellations and confirms nothing, so the journal still owes a withdrawn
   // order until the history is read. Nothing is placed from here on.
   session.close();
+  on_closed();
   const auto settled = [&]() {
     return bound.obligations().empty() && nothing_rests() && !bound.local_failure();
   };
