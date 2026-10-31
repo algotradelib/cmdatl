@@ -1250,15 +1250,16 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
     if (command.mutates_) {
       mutating.push_back(cmdatl::join(command.path_));
     }
-    // Only order place and order cancel send.
+    // Only order place, order cancel and run start send (a run places on its own mock market).
     const auto name = cmdatl::join(command.path_);
-    CHECK((!command.available_ || !command.may_send_ || name == "order place" || name == "order cancel"));
+    CHECK((!command.available_ || !command.may_send_ || name == "order place" || name == "order cancel" || name == "run start"));
   }
   std::sort(available.begin(), available.end());
   std::sort(mutating.begin(), mutating.end());
   const std::vector<std::string> expected{
     "account", "clock", "clock advance", "env", "help", "order cancel", "order list", "order place", "order plan",
-    "order reconcile", "order release", "quote", "schema", "status", "strategy backtest", "strategy new",
+    "order reconcile", "order release", "quote", "run start", "run status", "schema", "status", "strategy backtest",
+    "strategy new",
   };
   CHECK(available == expected);
   CHECK(mutating == std::vector<std::string>{"clock advance", "order release"});

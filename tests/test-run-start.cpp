@@ -642,15 +642,17 @@ TEST_CASE("run start --wait trades as strategy backtest does on the same spec, f
   // The cache: a second start of the same program builds nothing.
   const auto driver = shared().dir_.path() / "cache" / "cmdatl" / "drivers";
   std::optional<std::filesystem::file_time_type> before;
+  std::filesystem::path shape;
   for (const auto& entry : std::filesystem::directory_iterator(driver)) {
-    before = std::filesystem::last_write_time(entry.path() / "build" / "driver");
+    if (entry.path().filename().string().rfind("Dip-", 0) == 0) {
+      shape = entry.path();
+      before = std::filesystem::last_write_time(shape / "build" / "driver");
+    }
   }
   REQUIRE(before);
   const auto again = fixture.json({"run", "start", shared().spec("dip"), "--wait", "-P", "lookback=21"});
   CHECK(again.exit_ == 0);
-  for (const auto& entry : std::filesystem::directory_iterator(driver)) {
-    CHECK((std::filesystem::last_write_time(entry.path() / "build" / "driver") == *before));
-  }
+  CHECK((std::filesystem::last_write_time(shape / "build" / "driver") == *before));
 }
 
 TEST_CASE("run start returns while the run trades, its output closed, and run status follows the run to its end", "[acceptance][runs]") {
