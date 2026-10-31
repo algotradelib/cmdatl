@@ -1,0 +1,113 @@
+# Line and branch coverage of cmdatl's headers and sources on Linux (GCC, gcovr), the real-atlc acceptance cases included.
+# The summary goes to the job's page and the XML is kept; Codecov gets it only when CODECOV_TOKEN is set, which a private repository needs.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, 'hotfix/*', 'release/*', develop]
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'templates/**'
+      - 'tools/**'
+      - 'driver/**'
+      - 'README.md'
+      - 'docs/**'
+      - 'skills/**'
+      - '.github/scripts/**'
+      - '.github/workflows/test-coverage.yaml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'templates/**'
+      - 'tools/**'
+      - 'driver/**'
+      - 'README.md'
+      - 'docs/**'
+      - 'skills/**'
+      - '.github/scripts/**'
+      - '.github/workflows/test-coverage.yaml'
+
+name: test-coverage
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '4'
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: atl
+        uses: algotradelib/.github/actions/setup-atl@main
+
+      - id: atlc
+        uses: algotradelib/.github/actions/setup-atlc@main
+
+      - uses: actions/checkout@v7
+        with:
+          repository: algotradelib/atlc
+          path: atlc-src
+
+      - name: gcovr
+        run: pipx install gcovr
+
+      # -g0: no debug information, which coverage does not need and which made GCC's coverage builds slower.
+      - name: Configure
+        run: >
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMDATL_FETCH_DEPS=ON
+          -DCMAKE_PREFIX_PATH="${{ steps.atl.outputs.path }}"
+          -DCMAKE_CXX_FLAGS="--coverage -O0 -g0" -DCMAKE_EXE_LINKER_FLAGS="--coverage"
+
+      - name: Build
+        run: cmake --build build
+
+      # The acceptance cases run apart from ctest, as in cmake-check.yaml.
+      - name: Test
+        shell: bash
+        env:
+          CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
+          CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
+          CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
+          XDG_CACHE_HOME: ${{ runner.temp }}/cache
+        run: |
+          ctest --test-dir build --output-on-failure --no-tests=error -E '^test-acceptance$'
+          .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
+
+      - name: Coverage
+        shell: bash
+        run: |
+          gcovr --root . --filter 'include/cmdatl/' --filter 'src/' --merge-lines \
+            --xml coverage.xml --txt coverage.txt build
+          { echo '```'; cat coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+          retention-days: 7
+
+      - name: Codecov
+        if: env.CODECOV_TOKEN != ''
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          token: ${{ env.CODECOV_TOKEN }}
+          fail_ci_if_error: true
+
+      - name: Codecov skipped
+        if: env.CODECOV_TOKEN == ''
+        run: echo "CODECOV_TOKEN is not set; coverage was not uploaded (see the summary)." >> "$GITHUB_STEP_SUMMARY"
