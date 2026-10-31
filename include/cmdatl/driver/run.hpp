@@ -18,6 +18,7 @@
 #include "../account/operator.hpp"
 #include "../core/errors.hpp"
 #include "../core/reply.hpp"
+#include "../core/runs.hpp"
 #include "../orders/rails.hpp"
 #include "../system/files.hpp"
 #include "../system/lock.hpp"
@@ -99,16 +100,6 @@ struct Loaded {
   atl::Decimal64 cash_;
 };
 
-/**
- * @brief Whether a text is a run id: `r` and 12 lowercase hex digits.
- * @param text The text.
- * @return Whether it is.
- */
-inline bool valid_run_id(const std::string& text) {
-  return text.size() == 13 && text[0] == 'r' &&
-    std::all_of(text.begin() + 1, text.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
-}
-
 /** @brief The driver's own argument, and atlc's, as given. */
 struct RunArgs {
   /** @brief The run's id. */
@@ -152,48 +143,6 @@ inline std::optional<std::string> read_args(int argc, char** argv, RunArgs& args
   }
   if (!id_seen) {
     return "run.id is missing";
-  }
-  return std::nullopt;
-}
-
-/**
- * @brief The last value of an atlc argument.
- * @param args atlc's arguments.
- * @param key The key.
- * @return Its value, if given.
- */
-inline std::optional<std::string> atlc_value(const std::vector<std::string>& args, const std::string& key) {
-  std::optional<std::string> found;
-  for (const auto& arg : args) {
-    if (arg.size() > key.size() && arg.compare(0, key.size(), key) == 0 && arg[key.size()] == '=') {
-      found = arg.substr(key.size() + 1);
-    }
-  }
-  return found;
-}
-
-/**
- * @brief Why a run spec's market settings are refused before anything is loaded, or nothing: the market `kr`, no store,
- *   no short sales, no session legs.
- * @param args atlc's arguments.
- * @return The key at fault and why, or nothing.
- */
-inline std::optional<std::pair<std::string, std::string>> spec_refusal(const std::vector<std::string>& args) {
-  const auto market = atlc_value(args, "replay.market");
-  if (!market || *market != "kr") {
-    return std::make_pair(
-      std::string("replay.market"),
-      std::string("a run trades KRX shares in won, under the operator's limits: set [replay] market = \"kr\"")
-    );
-  }
-  if (atlc_value(args, "data.store")) {
-    return std::make_pair(std::string("data.store"), std::string("a run reads files, not a store: give [data] a file"));
-  }
-  if (atlc_value(args, "replay.shorts").value_or("false") == "true") {
-    return std::make_pair(std::string("replay.shorts"), std::string("a run keeps the sellable check on: remove [replay] shorts"));
-  }
-  if (atlc_value(args, "replay.fill").value_or("next-open") == "legs") {
-    return std::make_pair(std::string("replay.fill"), std::string("a run has no session legs: remove [replay] fill = \"legs\""));
   }
   return std::nullopt;
 }
