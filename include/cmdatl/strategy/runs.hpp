@@ -30,6 +30,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <filesystem>
@@ -51,6 +52,13 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <libproc.h>
+#endif
+#if defined(__linux__)
+#include <dirent.h>
+#include <sys/syscall.h>
+#endif
 #endif
 
 namespace cmdatl {
@@ -342,6 +350,8 @@ struct Records {
   std::optional<json::object> reply_;
   /** @brief `reply.json`'s `exit`. */
   std::optional<int> reply_exit_;
+  /** @brief Whether `reply.json` holds a whole line that failed its checks: damaged evidence, never success. */
+  bool reply_damaged_{false};
   /** @brief The driver's pid. */
   std::optional<long> pid_;
   /** @brief The supervisor's pid. */
@@ -357,6 +367,108 @@ struct Records {
   /** @brief Whether they were counted (the log within `COUNT_LIMIT`). */
   bool counted_{false};
 };
+
+/** @brief `exit.json`, checked. */
+struct ExitRecord {
+  /** @brief Whether the driver was spawned. */
+  bool spawned_{false};
+  /** @brief Its exit code, when it exited. */
+  std::optional<int> exit_;
+  /** @brief The signal that ended it, when one did. */
+  std::optional<int> signal_;
+};
+
+/**
+ * @brief An integer field that must be present: an integer within bounds, or `null` when allowed.
+ * @param object The record.
+ * @param key The field.
+ * @param low The least value.
+ * @param high The greatest value.
+ * @param out Set to the value, or reset for `null`.
+ * @return Whether the field is valid.
+ */
+inline bool bounded_field(const json::object& object, const char* key, std::int64_t low, std::int64_t high, std::optional<int>& out) {
+  const auto* value = object.if_contains(key);
+  if (value == nullptr) {
+    return false;
+  }
+  if (value->is_null()) {
+    out.reset();
+    return true;
+  }
+  if (!value->is_int64() || value->as_int64() < low || value->as_int64() > high) {
+    return false;
+  }
+  out = static_cast<int>(value->as_int64());
+  return true;
+}
+
+/**
+ * @brief `exit.json` as the supervisor writes it, every field present with its type: `format` 1, `pid`, `exit` and
+ *   `signal` (each a number or `null`), `spawned`, `ended`; a record not spawned names no pid, exit or signal, and one
+ *   spawned names a pid and not both an exit and a signal.
+ * @param object The record.
+ * @return It, or nothing when it is not one.
+ */
+inline std::optional<ExitRecord> exit_record_of(const json::object& object) {
+  ExitRecord record;
+  const auto* format = object.if_contains("format");
+  const auto* pid = object.if_contains("pid");
+  const auto* spawned = object.if_contains("spawned");
+  const auto* ended = object.if_contains("ended");
+  if (format == nullptr || !format->is_int64() || format->as_int64() != 1 || pid == nullptr || !pid->is_int64() ||
+      pid->as_int64() < 0 || pid->as_int64() > 2147483647LL || spawned == nullptr || !spawned->is_bool() || ended == nullptr ||
+      !ended->is_string()) {
+    return std::nullopt;
+  }
+  if (!bounded_field(object, "exit", 0, 255, record.exit_) || !bounded_field(object, "signal", 1, 64, record.signal_)) {
+    return std::nullopt;
+  }
+  record.spawned_ = spawned->as_bool();
+  if (!record.spawned_ && (pid->as_int64() != 0 || record.exit_ || record.signal_)) {
+    return std::nullopt;
+  }
+  if (record.spawned_ && (pid->as_int64() == 0 || (record.exit_ && record.signal_))) {
+    return std::nullopt;
+  }
+  return record;
+}
+
+/**
+ * @brief Whether `reply.json` is the driver's reply for this run: `run` naming it, `exit` from 0 to 5 and `result`
+ *   as the driver words it for that exit; a success (`exit` 0) carries a run's summary (`outcome`, `executions`,
+ *   `owed_at_end`) and no error, any other exit an error with a code.
+ * @param object The record.
+ * @param run The run's id.
+ * @return Whether it is.
+ */
+inline bool valid_reply(const json::object& object, const std::string& run) {
+  const auto* id = object.if_contains("run");
+  const auto* code = object.if_contains("exit");
+  const auto* result = object.if_contains("result");
+  if (id == nullptr || !id->is_string() || id->as_string() != run || code == nullptr || !code->is_int64() ||
+      code->as_int64() < 0 || code->as_int64() > 5 || result == nullptr || !result->is_string()) {
+    return false;
+  }
+  const auto exit = code->as_int64();
+  const auto* expected = exit == 0 ? "ended" : exit == 3 ? "refused" : exit == 4 ? "unknown" : "failed";
+  if (result->as_string() != expected) {
+    return false;
+  }
+  const auto* error = object.if_contains("error");
+  if (exit == 0) {
+    const auto* outcome = object.if_contains("outcome");
+    const auto* executions = object.if_contains("executions");
+    const auto* owed = object.if_contains("owed_at_end");
+    return error == nullptr && outcome != nullptr && outcome->is_string() && executions != nullptr && executions->is_int64() &&
+      owed != nullptr && owed->is_array() && owed->as_array().empty();
+  }
+  if (error == nullptr || !error->is_object()) {
+    return false;
+  }
+  const auto* name = error->as_object().if_contains("code");
+  return name != nullptr && name->is_string() && !name->as_string().empty();
+}
 
 /**
  * @brief The event kind of a complete event line, as the driver writes it (`{"event":"KIND",...`).
@@ -396,36 +508,28 @@ inline Records read_records(const std::filesystem::path& dir, const std::string&
   records.exit_present_ = ended.present_;
   if (ended.ok_) {
     if (const auto object = record_of(ended.text_, false)) {
-      const auto* format = object->if_contains("format");
-      const auto* spawned = object->if_contains("spawned");
-      const auto* code = object->if_contains("exit");
-      const auto* signal = object->if_contains("signal");
-      bool valid = format != nullptr && format->is_int64() && format->as_int64() == 1 && spawned != nullptr && spawned->is_bool();
-      if (valid && code != nullptr && code->is_int64()) {
-        valid = code->as_int64() >= 0 && code->as_int64() <= 255;
-        records.exit_code_ = static_cast<int>(code->as_int64());
-      }
-      if (valid && signal != nullptr && signal->is_int64()) {
-        valid = signal->as_int64() >= 1 && signal->as_int64() <= 64;
-        records.signal_ = static_cast<int>(signal->as_int64());
-      }
-      if (valid) {
-        records.spawned_ = spawned->as_bool();
+      if (const auto record = exit_record_of(*object)) {
+        records.spawned_ = record->spawned_;
+        records.exit_code_ = record->exit_;
+        records.signal_ = record->signal_;
         records.exit_valid_ = true;
       }
     }
   }
   const auto replied = read_bounded(dir / "reply.json", SMALL_RECORD);
   if (replied.ok_) {
-    if (const auto object = record_of(replied.text_, true)) {
-      const auto* id = object->if_contains("run");
-      const auto* code = object->if_contains("exit");
-      const bool named = id == nullptr || (id->is_string() && id->as_string() == run);
-      if (named && code != nullptr && code->is_int64() && code->as_int64() >= 0 && code->as_int64() <= 255) {
+    // An unterminated reply is a writer mid-line, not evidence; a whole line that fails its checks is damaged.
+    if (!replied.text_.empty() && replied.text_.back() == '\n') {
+      const auto object = record_of(replied.text_, true);
+      if (object && valid_reply(*object, run)) {
         records.reply_ = object;
-        records.reply_exit_ = static_cast<int>(code->as_int64());
+        records.reply_exit_ = static_cast<int>(object->at("exit").as_int64());
+      } else {
+        records.reply_damaged_ = true;
       }
     }
+  } else if (replied.present_) {
+    records.reply_damaged_ = true;
   }
   for (const auto& [name, field] : {std::make_pair("pid", &records.pid_), std::make_pair("supervisor", &records.supervisor_)}) {
     const auto text = read_bounded(dir / name, PID_RECORD);
@@ -579,12 +683,13 @@ inline State run_state(const Records& records, Alive supervisor, Alive driver, P
     state.run_error_ = code;
     return state;
   };
-  if (records.exit_present_ && !records.exit_valid_) {
+  if ((records.exit_present_ && !records.exit_valid_) || records.reply_damaged_) {
     return unknown("unknown.run_ended");
   }
   if (records.reply_) {
     const int code = *records.reply_exit_;
-    if (records.exit_valid_ && records.spawned_ && records.exit_code_ && *records.exit_code_ != code) {
+    // A reply beside a record saying no driver was spawned, or one whose exit differs from the record's: contradictory.
+    if (records.exit_valid_ && (!records.spawned_ || (records.exit_code_ && *records.exit_code_ != code))) {
       return unknown("unknown.run_ended");
     }
     state.run_exit_ = code;
@@ -641,6 +746,37 @@ inline State run_state(const Records& records, Alive supervisor, Alive driver, P
   }
   state.state_ = "unknown";
   return state;
+}
+
+/** @brief What `run start`'s wait learns from a run's ending records, before any start line. */
+enum class EarlyEnd {
+  /** @brief No ending yet: keep waiting. */
+  NONE,
+  /** @brief A valid `exit.json` says no driver was spawned, and no reply contradicts it: nothing was launched. */
+  NOT_LAUNCHED,
+  /** @brief A valid reply: relay it under the state `run_state` gives. */
+  RELAY,
+  /** @brief Anything else that ended (a spawned driver without a reply, a damaged record): unknown. */
+  UNKNOWN,
+};
+
+/**
+ * @brief The wait's decision on a run's ending records; only a validated `spawned: false` record says nothing was
+ *   launched.
+ * @param records The records.
+ * @return The decision.
+ */
+inline EarlyEnd early_end(const Records& records) {
+  if (!records.exit_present_ && !records.reply_ && !records.reply_damaged_) {
+    return EarlyEnd::NONE;
+  }
+  if (records.exit_present_ && records.exit_valid_ && !records.spawned_ && !records.reply_ && !records.reply_damaged_) {
+    return EarlyEnd::NOT_LAUNCHED;
+  }
+  if (records.reply_ && !records.reply_damaged_) {
+    return EarlyEnd::RELAY;
+  }
+  return EarlyEnd::UNKNOWN;
 }
 
 /**
@@ -823,6 +959,67 @@ inline bool write_exit_record(const Supervise& s, long pid, int status, bool spa
 }
 
 /**
+ * @brief Closes every descriptor from 3 up, whatever `RLIMIT_NOFILE` says: one inherited above a lowered soft limit
+ *   would otherwise survive into the supervisor and the driver. macOS lists the process's open descriptors; Linux
+ *   closes the range at once, or lists `/proc/self/fd`; a loop to the hard limit is the last resort.
+ */
+inline void close_inherited_descriptors() noexcept {
+#if defined(__APPLE__)
+  const int bytes = proc_pidinfo(::getpid(), PROC_PIDLISTFDS, 0, nullptr, 0);
+  if (bytes > 0) {
+    // Room for descriptors opened since the size was asked; the child of a fork may allocate.
+    const std::size_t room = static_cast<std::size_t>(bytes) + 64 * sizeof(proc_fdinfo);
+    auto* listed = static_cast<proc_fdinfo*>(std::malloc(room));
+    if (listed != nullptr) {
+      const int got = proc_pidinfo(::getpid(), PROC_PIDLISTFDS, 0, listed, static_cast<int>(room));
+      if (got > 0) {
+        const auto count = static_cast<std::size_t>(got) / sizeof(proc_fdinfo);
+        for (std::size_t k = 0; k < count; ++k) {
+          if (listed[k].proc_fd >= 3) {
+            ::close(listed[k].proc_fd);
+          }
+        }
+        std::free(listed);
+        return;
+      }
+      std::free(listed);
+    }
+  }
+#elif defined(__linux__)
+#if defined(SYS_close_range)
+  if (::syscall(SYS_close_range, 3U, ~0U, 0U) == 0) {
+    return;
+  }
+#endif
+  if (DIR* dir = ::opendir("/proc/self/fd")) {
+    std::vector<int> open;
+    const int own = ::dirfd(dir);
+    while (const auto* entry = ::readdir(dir)) {
+      char* end = nullptr;
+      const long fd = std::strtol(entry->d_name, &end, 10);
+      if (end != entry->d_name && *end == '\0' && fd >= 3 && fd != own) {
+        open.push_back(static_cast<int>(fd));
+      }
+    }
+    ::closedir(dir);
+    for (const int fd : open) {
+      ::close(fd);
+    }
+    return;
+  }
+#endif
+  struct rlimit limit{};
+  long top = 1 << 16;
+  if (::getrlimit(RLIMIT_NOFILE, &limit) == 0) {
+    const rlim_t hard = limit.rlim_max == RLIM_INFINITY ? (1 << 20) : limit.rlim_max;
+    top = static_cast<long>(std::min<rlim_t>(std::max(hard, limit.rlim_cur == RLIM_INFINITY ? hard : limit.rlim_cur), 1 << 20));
+  }
+  for (long fd = 3; fd < top; ++fd) {
+    ::close(static_cast<int>(fd));
+  }
+}
+
+/**
  * @brief The supervisor, the forked child's whole life: detached from the caller's session, signals and descriptors,
  *   it spawns the run's driver, records its pid, waits for it, records how it ended, and exits. A failure before the
  *   spawn exits `SUPERVISOR_NOT_SPAWNED`; nothing returns into cmdatl.
@@ -843,16 +1040,7 @@ inline bool write_exit_record(const Supervise& s, long pid, int status, bool spa
   if (null < 0 || ::dup2(null, STDIN_FILENO) < 0 || ::dup2(null, STDOUT_FILENO) < 0 || ::dup2(null, STDERR_FILENO) < 0) {
     ::_exit(SUPERVISOR_NOT_SPAWNED);
   }
-  struct rlimit limit{};
-  long top = 4096;
-  if (::getrlimit(RLIMIT_NOFILE, &limit) == 0 && limit.rlim_cur != RLIM_INFINITY) {
-    top = static_cast<long>(std::min<rlim_t>(limit.rlim_cur, 1 << 20));
-  } else {
-    top = 1 << 16;
-  }
-  for (long fd = 3; fd < top; ++fd) {
-    ::close(static_cast<int>(fd));
-  }
+  close_inherited_descriptors();
   posix_spawn_file_actions_t actions;
   posix_spawnattr_t attr;
   if (posix_spawn_file_actions_init(&actions) != 0 || posix_spawnattr_init(&attr) != 0) {
@@ -866,7 +1054,11 @@ inline bool write_exit_record(const Supervise& s, long pid, int status, bool spa
   sigaddset(&defaults, SIGHUP);
   sigaddset(&defaults, SIGPIPE);
   sigemptyset(&empty);
-  int error = posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, s.reply_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+  // Opened by the spawn itself, so each survives POSIX_SPAWN_CLOEXEC_DEFAULT.
+  int error = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+  if (error == 0) {
+    error = posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, s.reply_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+  }
   if (error == 0) {
     error = posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, s.stderr_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
   }
@@ -877,7 +1069,12 @@ inline bool write_exit_record(const Supervise& s, long pid, int status, bool spa
     error = posix_spawnattr_setsigmask(&attr, &empty);
   }
   if (error == 0) {
-    error = posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK);
+    short flags = POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK;
+#if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
+    // The driver inherits its three standard descriptors and nothing else, whatever the supervisor still holds.
+    flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+#endif
+    error = posix_spawnattr_setflags(&attr, flags);
   }
   if (error != 0) {
     ::_exit(SUPERVISOR_NOT_SPAWNED);
@@ -1175,7 +1372,12 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
         }
       }
       auto records = read_records(dir, run);
-      if (records.start_ && !records.exit_present_ && !records.reply_) {
+      if (records.start_ && early_end(records) == EarlyEnd::NONE) {
+        // The start line says the run began, not that it still runs: the same evidence as run status decides.
+        const auto [read, state] = evaluate(dir, run);
+        if (state.state_ != "running") {
+          return relayed(run, read, state, dir);
+        }
         if (!wait) {
           Reply reply;
           reply.body_["run"] = run;
@@ -1193,21 +1395,26 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
         }
         break;
       }
-      if (records.exit_present_ || records.reply_) {
-        if (records.reply_ || !records.spawned_) {
+      switch (early_end(records)) {
+        case EarlyEnd::NONE:
+          break;
+        case EarlyEnd::NOT_LAUNCHED: {
+          auto reply = error_reply(Exit::FAILED, "run.failed", "the driver could not be spawned; nothing was sent", next_for("run.failed"), true);
+          reply.body_["run"] = run;
+          reply.body_["state"] = "failed";
+          return reply;
+        }
+        case EarlyEnd::RELAY: {
           const auto [read, state] = evaluate(dir, run);
-          if (records.exit_present_ && !records.spawned_) {
-            auto reply = error_reply(Exit::FAILED, "run.failed", "the driver could not be spawned; nothing was sent", next_for("run.failed"), true);
-            reply.body_["run"] = run;
-            reply.body_["state"] = "failed";
-            return reply;
-          }
           return relayed(run, read, state, dir);
         }
-        auto reply = error_reply(Exit::UNKNOWN, "unknown.run_ended", "the run ended without a reply; it may have sent orders", next_for("unknown.run_ended"));
-        reply.body_["run"] = run;
-        reply.body_["state"] = "unknown";
-        return reply;
+        case EarlyEnd::UNKNOWN: {
+          auto reply = error_reply(Exit::UNKNOWN, "unknown.run_ended", "the run ended without a reply it could be read from; it may have sent orders",
+                                   next_for("unknown.run_ended"));
+          reply.body_["run"] = run;
+          reply.body_["state"] = "unknown";
+          return reply;
+        }
       }
       if (supervisor_status && !records.pid_) {
         // A second read: a fast driver and a failed `pid` write can leave exit.json there already.
