@@ -6,10 +6,10 @@
 // bare word as a value, text that is not UTF-8); the validator below then refuses any key it does not list, any
 // value of another TOML type, and any value outside its range, with the file, the line and the column.
 
-#include "./files.hpp"
-#include "./paper/bars.hpp"
-#include "./paper/time.hpp"
-#include "./reply.hpp"
+#include "../core/reply.hpp"
+#include "../paper/bars.hpp"
+#include "../paper/time.hpp"
+#include "../system/files.hpp"
 
 #include <stdexcept>
 

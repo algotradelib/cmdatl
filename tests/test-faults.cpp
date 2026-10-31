@@ -4,8 +4,8 @@
 
 #include "./order-support.hpp"
 
-#include <cmdatl/cli.hpp>
-#include <cmdatl/syscalls.hpp>
+#include <cmdatl/cli/cli.hpp>
+#include <cmdatl/system/syscalls.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 

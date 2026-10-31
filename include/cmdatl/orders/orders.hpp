@@ -9,14 +9,14 @@
 // one writer; once() or release(); the view read again for the reply's `owed`.
 // Nothing places or cancels except through once().
 
-#include "./account.hpp"
-#include "./describe.hpp"
-#include "./environment.hpp"
+#include "../account/account.hpp"
+#include "../account/reads.hpp"
+#include "../cli/describe.hpp"
+#include "../cli/environment.hpp"
+#include "../core/table.hpp"
+#include "../system/syscalls.hpp"
 #include "./once.hpp"
 #include "./plans.hpp"
-#include "./reads.hpp"
-#include "./syscalls.hpp"
-#include "./table.hpp"
 
 #include <algotradelib/runner>
 #include <algotradelib/strategy>

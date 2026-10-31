@@ -16,11 +16,11 @@
 // `format` versions the line grammar, `market` the matching, costs, acceptance hours and rounding; either changes, the
 // version rises.
 
-#include "../files.hpp"
-#include "../lock.hpp"
-#include "../operator.hpp"
-#include "./broker.hpp"
-#include "./market.hpp"
+#include "../paper/broker.hpp"
+#include "../paper/market.hpp"
+#include "../system/files.hpp"
+#include "../system/lock.hpp"
+#include "./operator.hpp"
 
 #include <algotradelib/broker>
 

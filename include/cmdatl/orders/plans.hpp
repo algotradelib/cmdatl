@@ -6,11 +6,11 @@
 // The book is a second wall behind the journal's size in the snapshot: a file that fails any check is read as an
 // empty book as a whole, so a damaged entry never becomes an authorization.
 
-#include "./files.hpp"
-#include "./lock.hpp"
-#include "./paper/bars.hpp"
-#include "./paper/time.hpp"
-#include "./syscalls.hpp"
+#include "../paper/bars.hpp"
+#include "../paper/time.hpp"
+#include "../system/files.hpp"
+#include "../system/lock.hpp"
+#include "../system/syscalls.hpp"
 
 #include <algotradelib/core>
 

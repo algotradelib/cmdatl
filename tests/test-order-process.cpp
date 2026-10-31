@@ -3,7 +3,7 @@
 
 #include "./order-support.hpp"
 
-#include <cmdatl/cli.hpp>
+#include <cmdatl/cli/cli.hpp>
 
 #include <algotradelib/runner>
 

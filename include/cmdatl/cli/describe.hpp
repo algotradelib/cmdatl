@@ -1,6 +1,6 @@
 #pragma once
 
-#include "./table.hpp"
+#include "../core/table.hpp"
 
 #include <algorithm>
 #include <cstddef>

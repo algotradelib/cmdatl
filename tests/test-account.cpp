@@ -1,8 +1,8 @@
 #include "./paper-support.hpp"
 
-#include <cmdatl/account.hpp>
-#include <cmdatl/cli.hpp>
-#include <cmdatl/reads.hpp>
+#include <cmdatl/account/account.hpp>
+#include <cmdatl/cli/cli.hpp>
+#include <cmdatl/account/reads.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 

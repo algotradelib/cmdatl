@@ -5,9 +5,9 @@
 // Common reads go through the library's session; what only the paper market knows goes through the desk.
 // Money and quantities are strings; every instant is KST with its offset.
 
+#include "../core/table.hpp"
 #include "./account.hpp"
 #include "./capabilities.hpp"
-#include "./table.hpp"
 
 #include <algorithm>
 #include <chrono>

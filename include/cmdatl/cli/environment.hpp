@@ -1,12 +1,12 @@
 #pragma once
 
-#include "./capabilities.hpp"
+#include "../account/capabilities.hpp"
+#include "../account/operator.hpp"
+#include "../core/reply.hpp"
+#include "../paper/broker.hpp"
+#include "../system/files.hpp"
+#include "../system/lock.hpp"
 #include "./describe.hpp"
-#include "./files.hpp"
-#include "./lock.hpp"
-#include "./operator.hpp"
-#include "./paper/broker.hpp"
-#include "./reply.hpp"
 
 #include <algotradelib/version>
 

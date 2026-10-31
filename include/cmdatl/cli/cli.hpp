@@ -1,9 +1,9 @@
 #pragma once
 
-#include "./account.hpp"
+#include "../account/account.hpp"
+#include "../account/operator.hpp"
 #include "./command_list.hpp"
 #include "./describe.hpp"
-#include "./operator.hpp"
 
 #include <CLI/CLI.hpp>
 

@@ -1,7 +1,7 @@
 #include "./paper-support.hpp"
 
 #include <cmdatl/paper/bars.hpp>
-#include <cmdatl/paper/desk.hpp>
+#include <cmdatl/account/desk.hpp>
 #include <cmdatl/paper/time.hpp>
 
 #include <catch2/catch_test_macros.hpp>

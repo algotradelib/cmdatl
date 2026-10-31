@@ -3,11 +3,11 @@
 // The account model: the state directory, the owner lock, the state files and their classification, the journal's
 // read side, and the paper desk, opened in that order by `Account::open`, the one place an account is opened.
 
-#include "./files.hpp"
-#include "./lock.hpp"
+#include "../core/reply.hpp"
+#include "../system/files.hpp"
+#include "../system/lock.hpp"
+#include "./desk.hpp"
 #include "./operator.hpp"
-#include "./paper/desk.hpp"
-#include "./reply.hpp"
 
 #include <algotradelib/live>
 #include <algotradelib/runner>

@@ -22,10 +22,10 @@
 // The options a caller turns on: `dry_run_` (a plan, and how reconcile runs), `withdraw_only_` (a cancel),
 // `refuse_unjournaled_orders_` (an order no journal line names refuses the call).
 
-#include "./files.hpp"
-#include "./lock.hpp"
-#include "./reply.hpp"
-#include "./syscalls.hpp"
+#include "../core/reply.hpp"
+#include "../system/files.hpp"
+#include "../system/lock.hpp"
+#include "../system/syscalls.hpp"
 
 #include <algotradelib/live>
 #include <algotradelib/runner>

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "./environment.hpp"
-#include "./table.hpp"
+#include "../cli/environment.hpp"
+#include "../core/table.hpp"
 
 #include <cmdatl/templates.hpp>
 

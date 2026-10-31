@@ -3,11 +3,11 @@
 
 #include "./order-support.hpp"
 
-#include <cmdatl/cli.hpp>
-#include <cmdatl/command_list.hpp>
-#include <cmdatl/once.hpp>
-#include <cmdatl/orders.hpp>
-#include <cmdatl/plans.hpp>
+#include <cmdatl/cli/cli.hpp>
+#include <cmdatl/cli/command_list.hpp>
+#include <cmdatl/orders/once.hpp>
+#include <cmdatl/orders/orders.hpp>
+#include <cmdatl/orders/plans.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 

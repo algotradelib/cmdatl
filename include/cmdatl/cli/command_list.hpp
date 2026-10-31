@@ -1,11 +1,11 @@
 #pragma once
 
+#include "../account/reads.hpp"
+#include "../core/table.hpp"
+#include "../orders/orders.hpp"
+#include "../strategy/strategy.hpp"
 #include "./describe.hpp"
 #include "./environment.hpp"
-#include "./orders.hpp"
-#include "./reads.hpp"
-#include "./strategy.hpp"
-#include "./table.hpp"
 
 #include <sstream>
 #include <string>

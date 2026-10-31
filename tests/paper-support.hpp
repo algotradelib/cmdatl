@@ -5,8 +5,8 @@
 
 #include "./support.hpp"
 
-#include <cmdatl/account.hpp>
-#include <cmdatl/cli.hpp>
+#include <cmdatl/account/account.hpp>
+#include <cmdatl/cli/cli.hpp>
 
 #include <cstdlib>
 #include <filesystem>
