@@ -23,6 +23,7 @@
 
 #include <boost/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cerrno>
 #include <cstdint>
@@ -30,6 +31,7 @@
 #include <deque>
 #include <filesystem>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <set>
 #include <string>

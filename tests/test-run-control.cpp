@@ -35,6 +35,21 @@ using StopIntent = algotradelib::runner::StopIntent;
 
 namespace {
 
+/**
+ * @brief The pid of a child this test forked and reaped: certainly gone, where a fixed number such as 999999 can be a
+ *   live process (Linux's pid_max can be 4,194,304), which would turn a test of a gone driver into a hang.
+ * @return The pid.
+ */
+pid_t gone_pid() {
+  const pid_t child = ::fork();
+  if (child == 0) {
+    ::_exit(0);
+  }
+  int status = 0;
+  ::waitpid(child, &status, 0);
+  return child;
+}
+
 const std::string RUN_A = "r00000000000a";
 const std::string RUN_B = "r00000000000b";
 
@@ -399,7 +414,7 @@ TEST_CASE("run stop answers success only on evidence that trading ended") {
     // Lost: a start line, the lock free, no reply.
     const auto dir = make_run(fixture, RUN_B);
     spit(dir / "lock", "");
-    spit(dir / "pid", "999999\n");
+    spit(dir / "pid", std::to_string(gone_pid()) + "\n");
     spit(dir / "events.jsonl", start_line(RUN_B, dir / "lock"));
     const auto ran = fixture.json({"run", "stop", RUN_B});
     CHECK(ran.exit_ == 0);
@@ -571,7 +586,7 @@ TEST_CASE("run log --follow finishes a killed or crashed driver's run as unknown
     cmdatl::OwnerLock lock(dir.string());
     REQUIRE(lock.acquire(std::chrono::milliseconds(0), [] { return false; }, [](const std::string&) {}) == cmdatl::OwnerLock::Outcome::HELD);
     spit(dir / "events.jsonl", start_line(RUN_B, dir / "lock"));
-    spit(dir / "pid", "999999\n");
+    spit(dir / "pid", std::to_string(gone_pid()) + "\n");
     spit(dir / "exit.json", "{\"format\":1}");
     const auto ran = fixture.json({"run", "log", RUN_B, "--follow"});
     CHECK(ran.exit_ == 4);
