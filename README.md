@@ -145,15 +145,17 @@ cmdatl run status r3f9c0e12ab45
   The agent commands do not see a run's orders, and a run's holdings at its end are a result, not an account anything can trade.
 - The run spec describes the market, exactly as `cmdatl strategy backtest` replays it: the bars, `[replay] cash`, the costs, the instruments.
   The operator's file describes what may be placed: `limits.symbols`, the position caps (a run with several symbols gets the smallest of their caps), `order_value`, `daily_orders` (per run, per 24 hours of market time), `order_type`, `collar` and `phases`; nothing in a spec loosens them.
-- A run needs `[replay] market = "kr"`, daily bars from a file (not a store), `[orders] type = "limit"` with an `offset` within `limits.collar`, a program without `on_fill` or session legs, and the armed file; each missing one is a refusal before anything is built, with what to do in `error.next`.
+- A run needs `[replay] market = "kr"`, daily bars from a file (not a store), `[orders] type = "limit"` with an `offset` within `limits.collar`, symbols in `limits.symbols`, and the armed file: each missing one is refused before anything is built.
+  It also needs a program without `on_fill` or session legs, a warm-up of at most 10,000 bars, and daily bars: those are refused by the run itself, after the program is built and before anything is placed.
+  Every refusal says what to do in `error.next`.
 - Every placement is checked once more as the last step before the market: the armed file, a limit inside the collar of the last price, and a permitted phase, closing orders included.
   Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.
 - The run starts at the first bar and steps through the data 15 market minutes at a time, as fast as the machine allows; at the end it withdraws whatever rests and confirms it before it reports.
-  With bars aligned to that step, as date-only rows are, a run's fills are those of `cmdatl strategy backtest` on the same spec.
+  A run's fills are those of `cmdatl strategy backtest` on the same spec when the program decides from bars alone, the bars end on that step (date-only rows do), and none of the operator's limits, the cash or the order budget refuses an order the backtest makes, since the backtest applies none of them.
 - `run start` answers once the run trades (exit 0, `state: running`), or with the run's own refusal; `run status` answers 0 whenever it could read the run, and the run's outcome is in `run_exit` and `run_error`.
   A run whose outcome is unknown (killed, a journal write failed, an order it could not confirm) is `run_exit` 4; its market ended with its process and no account was affected.
 - To stop a run, remove the armed file (it stops placing at its next step), or write `withdraw RUN` or `quiesce RUN` into `<stem>.stop` beside the operator's file (`paper.toml` gives `paper.stop`); `cmdatl run stop` is not built yet.
-- A run needs CMake and a C++17 compiler: `run start` builds a program once per shape under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`), and later runs of it build nothing.
+- A run needs CMake and a C++17 compiler: `run start` builds a program once per shape under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`); a later run of an unchanged program builds nothing, and a change to the program, atlc or algotradelib builds again.
 
 ## Output
 
