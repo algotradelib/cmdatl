@@ -160,6 +160,7 @@ cmdatl run stop --withdraw                             # stop placing and cancel
   A follow also finishes when the run is over, or its outcome unknown, and its driver has finished writing (its lock free, its exit recorded, or its process gone); without the `end` line (a killed or crashed driver) it says `incomplete: true` and exits 4, and an unknown run without that evidence is followed until Ctrl-C, which stops the watching, never the run.
   `--symbol` keeps only that symbol's order events.
 - `run stop` stops a run: `quiesce` (the default) stops new placements and leaves resting orders, `--withdraw` also cancels them; neither sells holdings.
+  A quiesce that leaves an order resting ends the run with `run_exit` 4 (`unknown.owed_at_end`), since its market ends with it and the order's fate is then unknown; `--withdraw` ends it clean.
   It writes the run's line into `<stem>.stop` beside the operator's file the run was started with (`paper.toml` gives `paper.stop`), one line per run, every other run's line kept, and waits up to 30 s for the run to acknowledge the stop and end.
   Write the stop file only through `run stop`: it replaces the file by a rename under a lock, `<stem>.stop.lock`, which it creates beside it and keeps, so a hand edit made meanwhile is lost.
   It exits 0 only on evidence that trading ended (the run's reply, or a run already over); acknowledged but not ended is exit 4 `unknown.run_stopping`, not acknowledged is exit 4 `unknown.run_stop`.

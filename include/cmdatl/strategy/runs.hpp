@@ -1379,12 +1379,18 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
         }
       }
       auto records = read_records(dir, run);
+      bool running = false;
       if (records.start_ && early_end(records) == EarlyEnd::NONE) {
         // The start line says the run began, not that it still runs: the same evidence as run status decides.
         const auto [read, state] = evaluate(dir, run);
-        if (state.state_ != "running") {
+        // `starting` with a start line means the supervisor has not written the pid yet: keep waiting, within the
+        // deadline, rather than answer a healthy run as unknown.
+        if (state.state_ != "running" && state.state_ != "starting") {
           return relayed(run, read, state, dir);
         }
+        running = state.state_ == "running";
+      }
+      if (running) {
         if (!wait) {
           Reply reply;
           reply.body_["run"] = run;
