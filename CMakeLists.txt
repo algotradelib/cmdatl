@@ -151,12 +151,13 @@ if(CMDATL_BUILD_TESTS)
   add_executable(test-cli
     tests/test-cli.cpp tests/test-process.cpp tests/test-strategy.cpp tests/test-acceptance.cpp tests/test-operator.cpp
     tests/test-account.cpp tests/test-paper.cpp tests/test-orders.cpp tests/test-order-process.cpp
-    tests/test-run-start.cpp
+    tests/test-run-start.cpp tests/test-run-control.cpp
   )
   target_link_libraries(test-cli PRIVATE cmdatl_core Catch2::Catch2WithMain)
   add_dependencies(test-cli cmdatl fake-atlc hold-lock)
   # The documentation check reads README.md and docs/ from the source tree; the process tests run cmdatl itself.
   target_compile_definitions(test-cli PRIVATE
+    CMDATL_RUN_TEST_HOOKS
     CMDATL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     CMDATL_BINARY="$<TARGET_FILE:cmdatl>"
     CMDATL_FAKE_ATLC="$<TARGET_FILE:fake-atlc>"
