@@ -22,6 +22,7 @@
 // The options a caller turns on: `dry_run_` (a plan, and how reconcile runs), `withdraw_only_` (a cancel),
 // `refuse_unjournaled_orders_` (an order no journal line names refuses the call).
 
+#include "../account/operator.hpp"
 #include "../core/reply.hpp"
 #include "../system/files.hpp"
 #include "../system/lock.hpp"
@@ -672,7 +673,7 @@ OnceResult once(
     }
     const double mark = once_detail::number(*last);
     const double limit = once_detail::number(*request.limit_);
-    if (mark <= 0 || std::abs(limit - mark) > config.collar_ * mark) {
+    if (outside_collar(limit, mark, config.collar_)) {
       return refuse(
         "collar",
         "limit " + request.limit_->str() + " is outside " + decimal_text(config.collar_) + " of the last price " +

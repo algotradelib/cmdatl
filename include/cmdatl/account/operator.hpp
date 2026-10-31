@@ -62,6 +62,18 @@ namespace cmdatl {
 /** @brief The largest operator's file, in bytes. */
 inline constexpr std::size_t MAX_CONFIG_BYTES = 64u << 10;
 
+/**
+ * @brief Whether a limit sits outside the collar around the last price: the one rule once() and a run's placements
+ *   apply, in the same arithmetic, so they agree at the edge.
+ * @param limit The limit price.
+ * @param mark The last price.
+ * @param collar The operator's collar, as a fraction.
+ * @return Whether it is outside (a last price of zero or below is outside every collar).
+ */
+inline bool outside_collar(double limit, double mark, double collar) {
+  return mark <= 0 || std::abs(limit - mark) > collar * mark;
+}
+
 /** @brief The operator's limits. */
 struct Limits {
   /** @brief The symbols that may be traded at all. */
@@ -118,6 +130,16 @@ struct OperatorConfig {
   Limits limits_;
   /** @brief The paper market. */
   PaperSettings paper_;
+
+  /**
+   * @brief The operator's stop file for runs: `<stem>.stop` beside the operator's file, fixed; a run reads it and never
+   *   writes it.
+   * @return The path.
+   */
+  std::string stop_path() const {
+    const std::filesystem::path file(path_);
+    return (file.parent_path() / (file.stem().string() + ".stop")).string();
+  }
 
   /**
    * @brief The armed file: `<stem>.armed` beside the operator's file, fixed.
@@ -925,6 +947,21 @@ inline std::optional<std::string> account_dir(const OperatorConfig& config) {
     return std::nullopt;
   }
   return (std::filesystem::path(*root) / "accounts" / config.account_name()).string();
+}
+
+/**
+ * @brief A run's directory: `<root>/runs/<broker>-<env>-<number>/<run id>`, beside `accounts/`, never inside an
+ *   account's directory, so a run's files never change how an account's state is classified.
+ * @param config The operator's file.
+ * @param run The run's id.
+ * @return The directory, or nothing when there is no state root.
+ */
+inline std::optional<std::string> run_dir(const OperatorConfig& config, const std::string& run) {
+  const auto root = state_root();
+  if (!root) {
+    return std::nullopt;
+  }
+  return (std::filesystem::path(*root) / "runs" / config.account_name() / run).string();
 }
 
 }  // namespace cmdatl
