@@ -105,11 +105,12 @@ jobs:
         run: echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
       # Warnings are errors on Linux: cmdatl builds clean, and GCC is the compiler no one runs locally.
+      # One GCC warning stays a warning: -Wterminate, from the toml++ assertion that throws inside toml++'s noexcept functions (plan/todo/cmdatl-toml-assert-noexcept.md).
       - name: Configure
         shell: bash
         run: |
           flags=""
-          if [ "$RUNNER_OS" = Linux ]; then flags="-Wall -Wextra -Werror"; fi
+          if [ "$RUNNER_OS" = Linux ]; then flags="-Wall -Wextra -Werror -Wno-error=terminate"; fi
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMDATL_FETCH_DEPS=ON \
             -DCMAKE_PREFIX_PATH="${{ steps.atl.outputs.path }}" -DCMAKE_CXX_FLAGS="$flags"
 

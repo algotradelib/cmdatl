@@ -36,11 +36,21 @@ if grep -q '<skipped' "$report"; then
   grep -B1 '<skipped' "$report" | grep -o 'name="[^"]*"' || true
   exit 1
 fi
-while IFS= read -r case_name; do
-  escaped="$(printf '%s' "$case_name" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g')"
-  if ! grep -qF "name=\"$escaped\"" "$report"; then
-    echo "::error::the acceptance case did not run: $case_name"
-    exit 1
-  fi
-done < "$report.cases"
+# Every listed case must appear as a testcase of the report, compared by its decoded name.
+python3 - "$report" "$report.cases" <<'PY'
+import sys
+import xml.etree.ElementTree as ET
+
+report, listed = sys.argv[1], sys.argv[2]
+ran = {case.get("name") for case in ET.parse(report).iter("testcase")}
+skipped = [case.get("name") for case in ET.parse(report).iter("testcase") if case.find("skipped") is not None]
+if skipped:
+    print("::error::an acceptance case skipped: " + skipped[0])
+    sys.exit(1)
+with open(listed, encoding="utf-8") as cases:
+    for name in (line.rstrip("\n") for line in cases):
+        if name not in ran:
+            print("::error::the acceptance case did not run: " + name)
+            sys.exit(1)
+PY
 echo "acceptance: $(wc -l < "$report.cases" | tr -d ' ') cases ran"
