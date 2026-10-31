@@ -24,6 +24,14 @@
 #include <cerrno>
 #include <new>
 
+// GCC inlines the replacement deletes into the library's allocations and then reports a mismatch between the new it
+// attributes the pointer to and the `free` it sees (-Wmismatched-new-delete); kept out of line, the pair matches.
+#if defined(__GNUC__) && !defined(__clang__)
+#define CMDATL_OUT_OF_LINE __attribute__((noinline))
+#else
+#define CMDATL_OUT_OF_LINE
+#endif
+
 /**
  * @brief The test binary's operator new: the usual one, except for the allocation `support::fail_allocation` arms.
  * @param size The size.
@@ -46,7 +54,7 @@ void* operator new(std::size_t size) {
  * @brief The matching operator delete.
  * @param memory The memory.
  */
-void operator delete(void* memory) noexcept {
+CMDATL_OUT_OF_LINE void operator delete(void* memory) noexcept {
   std::free(memory);
 }
 
@@ -54,7 +62,7 @@ void operator delete(void* memory) noexcept {
  * @brief The matching sized operator delete.
  * @param memory The memory.
  */
-void operator delete(void* memory, std::size_t) noexcept {
+CMDATL_OUT_OF_LINE void operator delete(void* memory, std::size_t) noexcept {
   std::free(memory);
 }
 

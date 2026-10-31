@@ -388,14 +388,14 @@ inline ChildResult run_child(
   args.push_back(nullptr);
   std::string line;
   line.reserve(256);
-  int out_fds[2];
+  int out_fds[2] = {-1, -1};
   if (const int error = lifted_pipe(out_fds)) {
     result.error_ = std::strerror(error);
     return result;
   }
   ScopedFd out_read(out_fds[0]);
   ScopedFd out_write(out_fds[1]);
-  int err_fds[2];
+  int err_fds[2] = {-1, -1};
   if (const int error = lifted_pipe(err_fds)) {
     result.error_ = std::strerror(error);
     return result;
