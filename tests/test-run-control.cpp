@@ -151,9 +151,14 @@ TEST_CASE("the stop file's rewrite keeps every other run's line, terminated, and
   // This run's own unterminated line, strengthened.
   out = runs::rewrite_stop("quiesce " + RUN_B, RUN_B, StopIntent::WITHDRAW, none_finished);
   CHECK(*out.text_ == "withdraw " + RUN_B + "\n");
-  // A line the driver ignores (trailing whitespace) is another line: kept, and this run's written.
-  out = runs::rewrite_stop("quiesce " + RUN_B + " \n", RUN_B, StopIntent::QUIESCE, none_finished);
-  CHECK(*out.text_ == "quiesce " + RUN_B + " \nquiesce " + RUN_B + "\n");
+  // A line with stray whitespace is this run's line, as the driver reads it: it counts, and is rewritten once.
+  out = runs::rewrite_stop("quiesce\t" + RUN_B + " \r\n", RUN_B, StopIntent::QUIESCE, none_finished);
+  CHECK(!out.text_);
+  out = runs::rewrite_stop("quiesce\t" + RUN_B + " \r\n", RUN_B, StopIntent::WITHDRAW, none_finished);
+  CHECK(*out.text_ == "withdraw " + RUN_B + "\n");
+  // A line the driver ignores (three words) is another line: kept byte for byte, and this run's written.
+  out = runs::rewrite_stop("quiesce " + RUN_B + " x\n", RUN_B, StopIntent::QUIESCE, none_finished);
+  CHECK(*out.text_ == "quiesce " + RUN_B + " x\nquiesce " + RUN_B + "\n");
   // A malformed line naming a path is kept byte for byte and never looked up.
   std::vector<std::string> asked;
   out = runs::rewrite_stop("quiesce ../../etc\nwithdraw " + RUN_A + "\n", RUN_B, StopIntent::QUIESCE, [&asked](const std::string& run) {

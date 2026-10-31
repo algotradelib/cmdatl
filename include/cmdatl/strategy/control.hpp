@@ -621,30 +621,6 @@ private:
 };
 
 /**
- * @brief Reads the stop file for a rewrite: missing is empty; anything but a regular file within `MAX_STOP_BYTES`
- *   that reads whole is refused, never replaced.
- * @param path The stop file.
- * @param text Set to its bytes.
- * @return Whether it may be rewritten.
- */
-inline bool read_stop_for_rewrite(const std::filesystem::path& path, std::string& text) {
-  text.clear();
-  struct stat at{};
-  if (::lstat(path.c_str(), &at) != 0) {
-    return errno == ENOENT;
-  }
-  if (!S_ISREG(at.st_mode) || static_cast<std::uint64_t>(at.st_size) > MAX_STOP_BYTES) {
-    return false;
-  }
-  ScopedFd fd(open_lifted(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
-  struct stat info{};
-  if (fd.get() < 0 || ::fstat(fd.get(), &info) != 0 || !S_ISREG(info.st_mode)) {
-    return false;
-  }
-  return read_whole(fd.get(), MAX_STOP_BYTES, text).status_ == FileRead::Status::OK;
-}
-
-/**
  * @brief Writes the stop file through a temporary with a unique name beside it, synced, then renamed.
  * @param path The stop file.
  * @param text The bytes.
@@ -777,11 +753,12 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
     case StopLock::Outcome::FAILED:
       return error_reply(Exit::FAILED, "file.unwritable", "the stop file's lock " + lock_path.string() + " cannot be taken");
   }
-  std::string text;
-  if (!read_stop_for_rewrite(stop_path, text)) {
-    return error_reply(Exit::FAILED, "file.unwritable",
-                       "the stop file " + stop_path.string() + " is not a regular file of at most 4096 bytes that can be read; it was not replaced");
+  // The driver's own reader: an existing file it could not read is refused, never replaced.
+  const auto current = read_stop_file_checked(stop_path.string());
+  if (!current.problem_.empty()) {
+    return error_reply(Exit::FAILED, "file.unwritable", current.problem_ + " (" + stop_path.string() + "); it was not replaced");
   }
+  const auto text = current.text_.value_or(std::string());
   const auto rewrite = rewrite_stop(text, run, intent, [&config](const std::string& other) {
     const auto where = run_dir(config, other);
     if (!where) {
