@@ -1,0 +1,546 @@
+#pragma once
+
+// Building a run's driver: one executable per program shape, in a cache directory, from the sources cmdatl carries
+// (`cmdatl/driver_files.hpp`) and the program's `atlc build` output, as CmdStan compiles stanc's header.
+//
+// The shape's directory is named by what CMake fixes at configure time and does not track afterwards (the program's
+// path, its indicators setting, the environment CMake reads, and the algotradelib package cmdatl was built against);
+// everything else is CMake's own dependency tracking. Its lock is held from `atlc build` until the executable has been
+// copied into the run's directory, so a run always executes the build it asked for.
+
+#include "../account/account.hpp"
+#include "../core/reply.hpp"
+#include "../system/files.hpp"
+#include "../system/process.hpp"
+#include "./strategy.hpp"
+
+#include <cmdatl/driver_files.hpp>
+
+#include <chrono>
+#include <cerrno>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <filesystem>
+#include <functional>
+#include <map>
+#include <optional>
+#include <set>
+#include <string>
+#include <system_error>
+#include <thread>
+#include <utility>
+#include <vector>
+
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+
+#if !defined(CMDATL_ALGOTRADELIB_DIR)
+#define CMDATL_ALGOTRADELIB_DIR ""
+#endif
+
+extern char** environ;
+
+namespace cmdatl {
+namespace build {
+
+/** @brief The environment CMake reads at configure time, part of a shape's key and passed to the build unchanged. */
+inline const std::vector<std::string> KEY_VARIABLES{
+  "CXX", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "CMAKE_GENERATOR", "CMAKE_TOOLCHAIN_FILE", "OPENSSL_ROOT_DIR", "BOOST_ROOT",
+  "Boost_ROOT", "Eigen3_ROOT",
+};
+
+/** @brief How often a build waiting on another build of the same shape looks again. */
+inline constexpr std::chrono::milliseconds SHAPE_LOCK_STEP{20};
+
+/**
+ * @brief The cache's root: `$XDG_CACHE_HOME/cmdatl/drivers` when that is set and absolute, else
+ *   `$HOME/.cache/cmdatl/drivers` when `HOME` is.
+ * @return The root, or nothing.
+ */
+inline std::optional<std::string> cache_root() {
+  const char* xdg = std::getenv("XDG_CACHE_HOME");
+  if (xdg != nullptr && *xdg == '/') {
+    return (std::filesystem::path(xdg) / "cmdatl" / "drivers").lexically_normal().string();
+  }
+  const char* home = std::getenv("HOME");
+  if (home != nullptr && *home == '/') {
+    return (std::filesystem::path(home) / ".cache" / "cmdatl" / "drivers").lexically_normal().string();
+  }
+  return std::nullopt;
+}
+
+/**
+ * @brief FNV-1a, 64 bits.
+ * @param text The bytes.
+ * @return The hash.
+ */
+inline std::uint64_t fnv1a(const std::string& text) {
+  std::uint64_t hash = 14695981039346656037ull;
+  for (const char c : text) {
+    hash ^= static_cast<unsigned char>(c);
+    hash *= 1099511628211ull;
+  }
+  return hash;
+}
+
+/**
+ * @brief A shape's directory name: the program's struct and 16 hex digits of the key, a length-prefixed encoding of the
+ *   program's path, its indicators setting, each key variable (set or not) and the algotradelib package directory.
+ * @param program The program's absolute path.
+ * @param structure The program's struct.
+ * @param indicators The indicators setting.
+ * @param lookup Reads an environment variable.
+ * @param package The algotradelib package directory the driver is built against.
+ * @return The name.
+ */
+inline std::string shape_name(
+  const std::string& program,
+  const std::string& structure,
+  const std::string& indicators,
+  const std::function<std::optional<std::string>(const std::string&)>& lookup,
+  const std::string& package
+) {
+  std::string encoded;
+  const auto put = [&encoded](const std::string& field) {
+    encoded += std::to_string(field.size()) + ":" + field + ";";
+  };
+  put(program);
+  put(indicators);
+  for (const auto& name : KEY_VARIABLES) {
+    const auto value = lookup(name);
+    put(name);
+    put(value ? "=" + *value : "-");
+  }
+  put(package);
+  char hex[17];
+  std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(fnv1a(encoded)));
+  return structure + "-" + hex;
+}
+
+/**
+ * @brief The environment a build's children run with: cmdatl's own, without the locators the key does not hold
+ *   (`CMAKE_PREFIX_PATH` and every other `*_ROOT` or `*_DIR` variable), so a package's dependencies are never found
+ *   through a variable that does not name the shape.
+ * @param entries The environment, `NAME=VALUE`.
+ * @return The child's environment.
+ */
+inline std::vector<std::string> child_environment(const std::vector<std::string>& entries) {
+  std::vector<std::string> out;
+  for (const auto& entry : entries) {
+    const auto name = entry.substr(0, entry.find('='));
+    const bool keyed = std::find(KEY_VARIABLES.begin(), KEY_VARIABLES.end(), name) != KEY_VARIABLES.end();
+    const auto ends = [&name](const std::string& suffix) {
+      return name.size() >= suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
+    };
+    if (!keyed && (name == "CMAKE_PREFIX_PATH" || ends("_ROOT") || ends("_DIR"))) {
+      continue;
+    }
+    out.push_back(entry);
+  }
+  return out;
+}
+
+/**
+ * @brief cmdatl's own environment, `NAME=VALUE`.
+ * @return The entries.
+ */
+inline std::vector<std::string> own_environment() {
+  std::vector<std::string> out;
+#if !defined(_WIN32)
+  for (char** at = environ; at != nullptr && *at != nullptr; ++at) {
+    out.emplace_back(*at);
+  }
+#endif
+  return out;
+}
+
+#if !defined(_WIN32)
+/**
+ * @brief Reads a whole regular file, not followed through a link.
+ * @param path The file.
+ * @param text Set to its bytes.
+ * @return Whether it was read.
+ */
+inline bool read_file(const std::filesystem::path& path, std::string& text) {
+  ScopedFd fd(open_lifted(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+  if (fd.get() < 0) {
+    return false;
+  }
+  struct stat info{};
+  if (::fstat(fd.get(), &info) != 0 || !S_ISREG(info.st_mode)) {
+    return false;
+  }
+  return read_whole(fd.get(), static_cast<std::size_t>(info.st_size) + 1, text).status_ == FileRead::Status::OK;
+}
+
+/**
+ * @brief A temporary's name beside a file: `.<name>.<pid>.<16 hex>.tmp`, so no fixed name can block a later write.
+ * @param target The file.
+ * @return The temporary's path.
+ */
+inline std::filesystem::path temporary_for(const std::filesystem::path& target) {
+  std::uint64_t random = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+  ScopedFd urandom(open_lifted("/dev/urandom", O_RDONLY | O_CLOEXEC));
+  if (urandom.get() >= 0) {
+    std::uint64_t bytes = 0;
+    if (::read(urandom.get(), &bytes, sizeof bytes) == static_cast<ssize_t>(sizeof bytes)) {
+      random ^= bytes;
+    }
+  }
+  char tail[64];
+  std::snprintf(tail, sizeof tail, ".%ld.%016llx.tmp", static_cast<long>(::getpid()), static_cast<unsigned long long>(random));
+  return target.parent_path() / ("." + target.filename().string() + tail);
+}
+
+/**
+ * @brief Writes a file through a temporary created exclusively, then renamed over it.
+ * @param target The file.
+ * @param text The bytes.
+ * @param mode The new file's mode.
+ * @return 0, or the error number.
+ */
+inline int replace_file(const std::filesystem::path& target, const std::string& text, mode_t mode = 0600) {
+  const auto temporary = temporary_for(target);
+  ScopedFd fd(open_lifted(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, mode));
+  if (fd.get() < 0) {
+    return errno;
+  }
+  std::size_t written = 0;
+  if (const int error = write_whole(fd.get(), text.data(), text.size(), written)) {
+    ::unlink(temporary.c_str());
+    return error;
+  }
+  fd.reset();
+  if (::rename(temporary.c_str(), target.c_str()) != 0) {
+    const int error = errno;
+    ::unlink(temporary.c_str());
+    return error;
+  }
+  return 0;
+}
+
+/** @brief What `write_if_changed` did. */
+enum class Written {
+  /** @brief The file already held these bytes: untouched, so its modification time stays. */
+  UNCHANGED,
+  /** @brief The file was written. */
+  REPLACED,
+  /** @brief It could not be written. */
+  FAILED,
+};
+
+/**
+ * @brief Writes a file only when its bytes differ, so CMake rebuilds nothing for an unchanged one.
+ * @param target The file; its missing parents are made `0700`.
+ * @param text The bytes.
+ * @return What happened.
+ */
+inline Written write_if_changed(const std::filesystem::path& target, const std::string& text) {
+  std::string old;
+  if (read_file(target, old) && old == text) {
+    return Written::UNCHANGED;
+  }
+  if (make_private_dirs(target.parent_path()) != 0) {
+    return Written::FAILED;
+  }
+  return replace_file(target, text) == 0 ? Written::REPLACED : Written::FAILED;
+}
+
+/**
+ * @brief Removes the temporaries a killed build left in a directory tree: files named `.*.tmp`.
+ * @param dir The directory.
+ */
+inline void remove_stale_temporaries(const std::filesystem::path& dir) {
+  std::error_code ec;
+  std::vector<std::filesystem::path> stale;
+  for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+    const auto name = it->path().filename().string();
+    if (name.size() > 5 && name.front() == '.' && name.compare(name.size() - 4, 4, ".tmp") == 0) {
+      stale.push_back(it->path());
+    }
+  }
+  for (const auto& path : stale) {
+    std::filesystem::remove(path, ec);
+  }
+}
+
+/**
+ * @brief The files of a directory tree, by path relative to it.
+ * @param dir The directory.
+ * @return The relative paths of its regular files.
+ */
+inline std::set<std::string> files_under(const std::filesystem::path& dir) {
+  std::set<std::string> out;
+  std::error_code ec;
+  for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+    if (it->is_regular_file(ec)) {
+      out.insert(std::filesystem::relative(it->path(), dir, ec).generic_string());
+    }
+  }
+  return out;
+}
+
+/** @brief A shape directory's lock: `flock` on its `lock` file, held while this lives. */
+class ShapeLock {
+public:
+  /**
+   * @brief Takes the lock, looking again every 20 ms; one progress line after the first refused try.
+   * @param path The lock file.
+   * @param progress Where the waiting line goes.
+   * @return Whether it was taken (false when interrupted or the file cannot be opened).
+   */
+  bool take(const std::filesystem::path& path, const std::function<void(const std::string&)>& progress) {
+    fd_.reset(open_lifted(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600));
+    if (fd_.get() < 0) {
+      return false;
+    }
+    bool told = false;
+    while (::flock(fd_.get(), LOCK_EX | LOCK_NB) != 0) {
+      if (errno != EWOULDBLOCK && errno != EINTR) {
+        fd_.reset();
+        return false;
+      }
+      if (interrupted()) {
+        fd_.reset();
+        return false;
+      }
+      if (!told) {
+        told = true;
+        progress("cmdatl: waiting for another build of this program");
+      }
+      std::this_thread::sleep_for(SHAPE_LOCK_STEP);
+    }
+    return true;
+  }
+
+private:
+  ScopedFd fd_;
+};
+
+/**
+ * @brief Copies the built driver into the run's directory: `driver.tmp` created exclusively (mode 0700), every byte
+ *   written, the count compared with the source's size, synced, then renamed to `driver`.
+ * @param source The built executable.
+ * @param run_dir The run's directory.
+ * @return 0, or the error number (`EIO` for a short copy); a failed copy leaves no `driver.tmp`.
+ */
+inline int copy_driver(const std::filesystem::path& source, const std::filesystem::path& run_dir) {
+  ScopedFd in(open_lifted(source.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC));
+  if (in.get() < 0) {
+    return errno;
+  }
+  struct stat info{};
+  if (::fstat(in.get(), &info) != 0 || !S_ISREG(info.st_mode)) {
+    return errno != 0 ? errno : EINVAL;
+  }
+  const auto temporary = run_dir / "driver.tmp";
+  ScopedFd out(open_lifted(temporary.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0700));
+  if (out.get() < 0) {
+    return errno;
+  }
+  const auto fail = [&temporary](int error) {
+    ::unlink(temporary.c_str());
+    return error;
+  };
+  std::vector<char> buffer(1 << 16);
+  std::uint64_t total = 0;
+  while (true) {
+    const auto got = ::read(in.get(), buffer.data(), buffer.size());
+    if (got < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return fail(errno);
+    }
+    if (got == 0) {
+      break;
+    }
+    std::size_t written = 0;
+    if (const int error = write_whole(out.get(), buffer.data(), static_cast<std::size_t>(got), written)) {
+      return fail(error);
+    }
+    total += static_cast<std::uint64_t>(got);
+  }
+  if (total != static_cast<std::uint64_t>(info.st_size)) {
+    return fail(EIO);
+  }
+  if (::fsync(out.get()) != 0) {
+    return fail(errno);
+  }
+  out.reset();
+  if (::rename(temporary.c_str(), (run_dir / "driver").c_str()) != 0) {
+    return fail(errno);
+  }
+  return 0;
+}
+#endif
+
+/** @brief What a driver build needs. */
+struct Request {
+  /** @brief atlc's path. */
+  std::string atlc_;
+  /** @brief atlc's version, for messages. */
+  std::string atlc_version_;
+  /** @brief The program's absolute path. */
+  std::string program_;
+  /** @brief The program's C++ struct, inside `atls::`. */
+  std::string struct_;
+  /** @brief The indicators setting. */
+  std::string indicators_;
+};
+
+/**
+ * @brief The last lines of a child's stderr, for a failure's message.
+ * @param result The child's end.
+ * @return The text.
+ */
+inline std::string tail_of(const ChildResult& result) {
+  std::string out;
+  for (const auto& line : result.stderr_tail_) {
+    out += (out.empty() ? "" : "\n") + line;
+  }
+  return out.empty() ? ending_of(result) : out;
+}
+
+/**
+ * @brief Builds the run's driver and copies it into the run's directory, under the shape's lock.
+ * @param request The program and atlc.
+ * @param run_dir The run's directory, which exists.
+ * @param progress Where progress lines go (and the children's stderr lines).
+ * @return A failure reply, or nothing when `run_dir/driver` exists.
+ */
+inline std::optional<Reply> build_driver(
+  const Request& request,
+  const std::filesystem::path& run_dir,
+  const std::function<void(const std::string&)>& progress
+) {
+#if defined(_WIN32)
+  (void)request;
+  (void)run_dir;
+  (void)progress;
+  return error_reply(Exit::FAILED, "unavailable.platform", "runs are built on macOS and Linux only in this version");
+#else
+  const auto root = cache_root();
+  if (!root) {
+    return error_reply(Exit::FAILED, "cache.unavailable", "neither XDG_CACHE_HOME nor HOME names an absolute directory");
+  }
+  const std::string package = CMDATL_ALGOTRADELIB_DIR;
+  const auto name = shape_name(
+    request.program_, request.struct_, request.indicators_,
+    [](const std::string& key) { return variable(key.c_str()); }, package
+  );
+  const std::filesystem::path shape = std::filesystem::path(*root) / name;
+  if (make_private_dirs(shape) != 0) {
+    return error_reply(Exit::FAILED, "cache.unavailable", "the build cache " + shape.string() + " cannot be made");
+  }
+  ShapeLock lock;
+  if (!lock.take(shape / "lock", progress)) {
+    if (interrupted()) {
+      return interrupted_reply();
+    }
+    return error_reply(Exit::FAILED, "cache.unavailable", "the build cache's lock " + (shape / "lock").string() + " cannot be taken");
+  }
+  const auto environment = child_environment(own_environment());
+  const auto src = shape / "src";
+  const auto next = shape / "next";
+  std::error_code ec;
+  remove_stale_temporaries(src);
+  std::filesystem::remove_all(next, ec);
+  if (make_private_dirs(next) != 0) {
+    return error_reply(Exit::FAILED, "cache.unavailable", "the build cache " + next.string() + " cannot be made");
+  }
+  progress("cmdatl: building the run's driver for " + request.struct_ + " in " + shape.string());
+  const auto generated = run_child(
+    {request.atlc_, "build", request.program_, "-o", (next / "strategy.hpp").string(), "--indicators", request.indicators_,
+     "--emit-runtime", next.string()},
+    progress, &environment
+  );
+  if (generated.kind_ == ChildResult::Kind::INTERRUPTED) {
+    return interrupted_reply();
+  }
+  if (generated.kind_ != ChildResult::Kind::FINISHED || generated.signaled_ || generated.code_ != 0) {
+    if (generated.kind_ == ChildResult::Kind::FINISHED && !generated.signaled_ && generated.code_ == 1) {
+      return atlc_failure(Exit::PROGRAM, "program.invalid", stderr_text(generated, "the program has errors"), generated, "fix the program");
+    }
+    return atlc_failure(Exit::FAILED, "atlc.failed", "atlc build: " + ending_of(generated), generated, "check atlc with cmdatl env");
+  }
+  for (const auto* runtime : {"atls/args.hpp", "atls/run.hpp"}) {
+    if (!std::filesystem::is_regular_file(next / runtime, ec)) {
+      return error_reply(
+        Exit::FAILED,
+        "atlc.failed",
+        "atlc " + request.atlc_version_ + " wrote no " + runtime + "; a run's driver needs atlc afb2490 or later",
+        "install a newer atlc"
+      );
+    }
+  }
+  // The inputs, each written only when its bytes changed.
+  std::map<std::string, std::string> inputs;
+  for (const auto& relative : files_under(next)) {
+    std::string text;
+    if (!read_file(next / relative, text)) {
+      return error_reply(Exit::FAILED, "build.failed", "atlc's output " + (next / relative).string() + " cannot be read");
+    }
+    inputs[relative] = std::move(text);
+  }
+  for (const auto& file : DRIVER_FILES) {
+    std::string text;
+    for (std::size_t k = 0; k < file.count_; ++k) {
+      text.append(file.chunks_[k], file.sizes_[k]);
+    }
+    inputs[file.path_] = std::move(text);
+  }
+  inputs["program.hpp"] = "#pragma once\n\n// Written by cmdatl run start.\n\n#include \"strategy.hpp\"\n\nusing Program = atls::" +
+    request.struct_ + ";\n";
+  for (const auto& [relative, text] : inputs) {
+    if (write_if_changed(src / relative, text) == Written::FAILED) {
+      return error_reply(Exit::FAILED, "build.failed", "the driver's source " + (src / relative).string() + " cannot be written");
+    }
+  }
+  for (const auto& relative : files_under(src)) {
+    if (inputs.count(relative) == 0) {
+      std::filesystem::remove(src / relative, ec);
+    }
+  }
+  const auto cmake = find_on_path("cmake");
+  if (!cmake) {
+    return error_reply(Exit::FAILED, "build.failed", "cmake was not found on PATH; a run needs CMake and a C++17 compiler");
+  }
+  const auto build_dir = shape / "build";
+  if (!std::filesystem::exists(build_dir / "CMakeCache.txt", ec)) {
+    std::vector<std::string> configure{*cmake, "-S", src.string(), "-B", build_dir.string(), "-DCMAKE_BUILD_TYPE=Release"};
+    if (!package.empty()) {
+      configure.push_back("-Dalgotradelib_DIR=" + package);
+    }
+    const auto configured = run_child(configure, progress, &environment);
+    if (configured.kind_ == ChildResult::Kind::INTERRUPTED) {
+      return interrupted_reply();
+    }
+    if (configured.kind_ != ChildResult::Kind::FINISHED || configured.signaled_ || configured.code_ != 0) {
+      std::filesystem::remove(build_dir / "CMakeCache.txt", ec);
+      return atlc_failure(Exit::FAILED, "build.failed", "configuring the driver failed: " + tail_of(configured), configured,
+                          "check CMake, the compiler and the algotradelib package " + package);
+    }
+  }
+  const auto built = run_child({*cmake, "--build", build_dir.string()}, progress, &environment);
+  if (built.kind_ == ChildResult::Kind::INTERRUPTED) {
+    return interrupted_reply();
+  }
+  if (built.kind_ != ChildResult::Kind::FINISHED || built.signaled_ || built.code_ != 0) {
+    return atlc_failure(Exit::FAILED, "build.failed", "building the driver failed: " + tail_of(built), built,
+                        "check the compiler and the algotradelib package " + package);
+  }
+  if (const int error = copy_driver(build_dir / "driver", run_dir)) {
+    return error_reply(Exit::FAILED, "build.failed", "the driver could not be copied into the run's directory: " + std::string(std::strerror(error)));
+  }
+  return std::nullopt;
+#endif
+}
+
+}  // namespace build
+}  // namespace cmdatl
