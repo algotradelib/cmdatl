@@ -5,8 +5,8 @@ With [algotradelib](https://github.com/algotradelib/algotradelib) alone you writ
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
 
 Status: in development, before its first release; commands and replies may change without notice.
-This version answers `cmdatl strategy new`, `cmdatl strategy backtest`, the paper account's reads (`cmdatl status`, `cmdatl account`, `cmdatl quote`, `cmdatl order list`, `cmdatl clock`), `cmdatl clock advance`, the order commands (`cmdatl order plan`, `cmdatl order place`, `cmdatl order cancel`, `cmdatl order reconcile`, `cmdatl order release`), `cmdatl run start`, `cmdatl run status`, `cmdatl env`, `cmdatl schema` and `cmdatl help`: every command an agent uses answers.
-`cmdatl run log`, `cmdatl run stop`, `cmdatl strategy reference` and `cmdatl guide` are listed and answer that they are not built yet; orders reach only the paper market and a run's own mock market.
+This version answers `cmdatl strategy new`, `cmdatl strategy backtest`, the paper account's reads (`cmdatl status`, `cmdatl account`, `cmdatl quote`, `cmdatl order list`, `cmdatl clock`), `cmdatl clock advance`, the order commands (`cmdatl order plan`, `cmdatl order place`, `cmdatl order cancel`, `cmdatl order reconcile`, `cmdatl order release`), the run commands (`cmdatl run start`, `cmdatl run status`, `cmdatl run log`, `cmdatl run stop`), `cmdatl env`, `cmdatl schema` and `cmdatl help`: every command an agent uses answers.
+`cmdatl strategy reference` and `cmdatl guide` are listed and answer that they are not built yet; orders reach only the paper market and a run's own mock market.
 
 ```sh
 cmdatl strategy new dip --template mean-reversion      # dip.atls and dip.toml to start from
@@ -139,6 +139,8 @@ cmdatl run start dip.toml                              # builds the program once
 cmdatl run start dip.toml -P lookback=30 --wait        # waits for the end and answers with the summary
 cmdatl run status                                      # the latest run's state, and its summary once it ended
 cmdatl run status r3f9c0e12ab45
+cmdatl run log --follow                                # each event as the run writes it, until its end
+cmdatl run stop --withdraw                             # stop placing and cancel what rests, then wait for the run's end
 ```
 
 - A run's market is the library's mock broker, inside the run's own process: each run is a fresh market with its own journal, and nothing is shared with the paper account above or with another run.
@@ -154,7 +156,15 @@ cmdatl run status r3f9c0e12ab45
   A run's fills are those of `cmdatl strategy backtest` on the same spec when the program decides from bars alone, the bars end on that step (date-only rows do), and none of the operator's limits, the cash or the order budget refuses an order the backtest makes, since the backtest applies none of them.
 - `run start` answers once the run trades (exit 0, `state: running`), or with the run's own refusal; `run status` answers 0 whenever it could read the run, and the run's outcome is in `run_exit` and `run_error`.
   A run whose outcome is unknown (killed, a journal write failed, an order it could not confirm) is `run_exit` 4; its market ended with its process and no account was affected.
-- To stop a run, remove the armed file (it stops placing at its next step), or add the line `withdraw RUN` or `quiesce RUN` to `<stem>.stop` beside the operator's file (`paper.toml` gives `paper.stop`), one line per run, keeping the lines of other runs and removing those of runs that have ended (a run reads at most 4 KiB of it, and notes a file it cannot read in its events); `cmdatl run stop` is not built yet.
+- `run log` reads the run's events while it trades: without `--follow` the events so far (all but the heartbeats, and the last heartbeat, at most 4,096); with it, each event once as it is written, until the run's `end` line.
+  A follow that finishes without the `end` line (the run was killed) says `incomplete: true` and exits 4; Ctrl-C stops the watching, never the run.
+  `--symbol` keeps only that symbol's order events.
+- `run stop` stops a run: `quiesce` (the default) stops new placements and leaves resting orders, `--withdraw` also cancels them; neither sells holdings.
+  It writes the run's line into `<stem>.stop` beside the operator's file the run was started with (`paper.toml` gives `paper.stop`), one line per run, every other run's line kept, and waits up to 30 s for the run to acknowledge the stop and end.
+  It exits 0 only on evidence that trading ended (the run's reply, or a run already over); acknowledged but not ended is exit 4 `unknown.run_stopping`, not acknowledged is exit 4 `unknown.run_stop`.
+  The run's own outcome stays in `run_exit`, so a stop can exit 0 for a run whose `run_exit` is 4.
+  The stop file holds at most 4 KiB, and a run notes in its events a stop file it cannot read.
+  Removing the armed file also stops every run at its next step.
 - A run needs CMake and a C++17 compiler: `run start` builds a program once per shape under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`); a later run of an unchanged program builds nothing, and a change to the program, atlc or algotradelib builds again.
 
 ## Output
