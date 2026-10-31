@@ -1,7 +1,9 @@
 #pragma once
 
-#include "../cli/environment.hpp"
+#include "../account/operator.hpp"
 #include "../core/table.hpp"
+#include "../system/process.hpp"
+#include "./atlc.hpp"
 
 #include <cmdatl/templates.hpp>
 
