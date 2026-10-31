@@ -553,6 +553,12 @@ public:
   void close_stdout() { out_.reset(); }
 
   /**
+   * @brief Whether stdout reached its end: every writer, the spawned process and anything it left behind, closed it.
+   * @return Whether it did.
+   */
+  bool stdout_ended() const noexcept { return out_.get() < 0; }
+
+  /**
    * @brief Waits for cmdatl to end, reading both pipes meanwhile.
    * @param seconds How long at most; past it, the test fails and cmdatl is killed.
    * @return Its wait status.
