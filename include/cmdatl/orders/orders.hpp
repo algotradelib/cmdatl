@@ -17,6 +17,7 @@
 #include "../system/syscalls.hpp"
 #include "./once.hpp"
 #include "./plans.hpp"
+#include "./rails.hpp"
 
 #include <algotradelib/runner>
 #include <algotradelib/strategy>
@@ -90,20 +91,6 @@ inline std::string once_code(sending::OnceExit exit, const std::string& reason) 
       return "unknown." + reason;
   }
   return "unknown.unmapped";
-}
-
-/**
- * @brief The `next` the catalog gives a code.
- * @param code The code.
- * @return The text, or empty.
- */
-inline std::string catalog_next(const std::string& code) {
-  for (const auto& entry : error_catalog()) {
-    if (entry.code_ == code) {
-      return entry.next_;
-    }
-  }
-  return {};
 }
 
 /**
@@ -182,68 +169,6 @@ inline std::optional<Reply> check_order_args(const Invocation& invocation) {
     return bad("--reason is 1 to 200 bytes of printable text, not only spaces");
   }
   return std::nullopt;
-}
-
-namespace orders_detail {
-
-namespace atl = algotradelib;
-
-/**
- * @brief The phase named in the operator's file, as the library's.
- * @param name The name.
- * @return The phase, or nothing.
- */
-inline std::optional<atl::strategy::MarketPhase> phase_named(const std::string& name) {
-  for (const auto phase : atl::strategy::all_market_phases) {
-    if (atl::strategy::market_phase_name(phase) == name) {
-      return phase;
-    }
-  }
-  return std::nullopt;
-}
-
-}  // namespace orders_detail
-
-/**
- * @brief The risk limits a call enforces, from the operator's file: the allowed universe, the symbol's cap (0 for no
- *   symbol), the order value, the placements left today over 24 hours, buying power and sellable enforced, and the
- *   permitted phases.
- * @param config The operator's file.
- * @param symbol The symbol whose cap applies, or nothing for a call that never places.
- * @param orders_left Placements left today.
- * @return The limits.
- */
-inline algotradelib::strategy::RiskLimits risk_limits(
-  const OperatorConfig& config,
-  const std::optional<std::string>& symbol,
-  std::int64_t orders_left
-) {
-  namespace atl = algotradelib;
-  atl::strategy::RiskLimits limits;
-  std::vector<atl::InstrumentId> universe;
-  for (const auto& allowed : config.limits_.symbols_) {
-    universe.push_back(paper::kr(allowed));
-  }
-  limits.permitted_universe_ = std::move(universe);
-  std::int64_t cap = 0;
-  if (symbol) {
-    const auto found = config.limits_.position_.find(*symbol);
-    cap = found == config.limits_.position_.end() ? 0 : found->second;
-  }
-  limits.max_position_quantity_ = atl::Decimal64(cap, 0);
-  limits.max_order_notional_ = atl::Decimal64::parse(config.limits_.order_value_);
-  limits.max_orders_per_window_ = static_cast<std::size_t>(std::max<std::int64_t>(orders_left, 0));
-  limits.rate_window_ = std::chrono::hours(24);
-  limits.enforce_buying_power_ = true;
-  limits.enforce_sellable_quantity_ = true;
-  std::vector<atl::strategy::MarketPhase> phases;
-  for (const auto& name : config.limits_.phases_) {
-    if (const auto phase = orders_detail::phase_named(name)) {
-      phases.push_back(*phase);
-    }
-  }
-  limits.permitted_phases_ = std::move(phases);
-  return limits;
 }
 
 /**
@@ -489,46 +414,6 @@ inline Reply interrupted_before_send(json::object body) {
   );
 }
 
-/** @brief The journal opened for one command, or the refusal. */
-struct OpenedJournal {
-  /** @brief The journal. */
-  std::unique_ptr<algotradelib::runner::FileJournal> journal_;
-  /** @brief The refusal. */
-  std::optional<Reply> refusal_;
-};
-
-/**
- * @brief Opens the journal as the command's one writer: the lock still the account's, the journal still the file the
- *   account opened (else nothing is constructed, since constructing it on a vanished path would start a fresh one),
- *   then the library's journal.
- * @param account The account.
- * @return The journal, or the refusal (exit 4).
- */
-inline OpenedJournal open_journal(Account& account) {
-  OpenedJournal opened;
-  if (!account.lock().still_at_path()) {
-    opened.refusal_ = lock_lost_reply();
-    return opened;
-  }
-#if !defined(_WIN32)
-  if (!account.journal_unchanged()) {
-    opened.refusal_ = journal_missing_reply("missing, empty or replaced");
-    return opened;
-  }
-#endif
-  opened.journal_ = std::make_unique<algotradelib::runner::FileJournal>(account.journal_path(), account.config().scope());
-  if (!opened.journal_->open()) {
-    opened.refusal_ = error_reply(
-      Exit::UNKNOWN,
-      "unknown.journal_damaged",
-      "the account's journal refused to open: " + opened.journal_->rejection(),
-      catalog_next("unknown.journal_damaged")
-    );
-    opened.journal_.reset();
-  }
-  return opened;
-}
-
 /**
  * @brief The reply's last fields: the view read again (`owed`), and the lock checked.
  * @param account The account.
@@ -658,7 +543,7 @@ inline Reply plan_reply(const Invocation& invocation, Account& account, Output& 
       return with_body(std::move(*opened.refusal_), std::move(body));
     }
     const auto left = orders_left(account.config(), account.journal()).value_or(0);
-    auto config = once_config(account.config(), risk_limits(account.config(), symbol, left));
+    auto config = once_config(account.config(), risk_limits(account.config(), {symbol}, left));
     config.dry_run_ = true;
     sending::OnceRequest request;
     request.instrument_ = paper::kr(symbol);
@@ -781,7 +666,7 @@ inline Reply place_reply(const Invocation& invocation, Account& account, Output&
       return with_body(std::move(*opened.refusal_), std::move(body));
     }
     const auto left = orders_left(account.config(), account.journal()).value_or(0);
-    const auto config = once_config(account.config(), risk_limits(account.config(), plan->symbol_, left));
+    const auto config = once_config(account.config(), risk_limits(account.config(), {plan->symbol_}, left));
     sending::OnceRequest request;
     request.instrument_ = paper::kr(plan->symbol_);
     request.target_quantity_ = algotradelib::Decimal64::parse(plan->target_);
@@ -841,7 +726,7 @@ inline Reply cancel_reply(const Invocation& invocation, Account& account, Output
     if (opened.refusal_) {
       return with_body(std::move(*opened.refusal_), std::move(body));
     }
-    auto config = once_config(account.config(), risk_limits(account.config(), std::nullopt, 0));
+    auto config = once_config(account.config(), risk_limits(account.config(), {}, 0));
     config.withdraw_only_ = true;
     config.limits_.max_orders_per_window_ = 0;
     sending::OnceRequest request;
@@ -906,7 +791,7 @@ inline Reply reconcile_reply(const Invocation& invocation, Account& account, Out
         state = {"holdings_unread", Exit::REFUSED, "refused.holdings_unread"};
         row["detail"] = "the holdings could not be read";
       } else {
-        auto config = once_config(account.config(), risk_limits(account.config(), std::nullopt, 0));
+        auto config = once_config(account.config(), risk_limits(account.config(), {}, 0));
         config.dry_run_ = true;
         // Reconcile never sends: no phase stands between it and the confirmations holdings support.
         config.limits_.permitted_phases_.reset();
