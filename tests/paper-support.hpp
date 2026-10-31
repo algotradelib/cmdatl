@@ -6,7 +6,7 @@
 #include "./support.hpp"
 
 #include <cmdatl/account/account.hpp>
-#include <cmdatl/cli/cli.hpp>
+#include <cmdatl/cmdatl>
 
 #include <cstdlib>
 #include <filesystem>

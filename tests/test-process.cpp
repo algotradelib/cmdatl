@@ -1,6 +1,6 @@
 #include "./support.hpp"
 
-#include <cmdatl/cli/cli.hpp>
+#include <cmdatl/cmdatl>
 
 #include <catch2/catch_test_macros.hpp>
 

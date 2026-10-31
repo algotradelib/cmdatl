@@ -3,7 +3,7 @@
 
 #include "./order-support.hpp"
 
-#include <cmdatl/cli/cli.hpp>
+#include <cmdatl/cmdatl>
 #include <cmdatl/cli/command_list.hpp>
 #include <cmdatl/orders/once.hpp>
 #include <cmdatl/orders/orders.hpp>

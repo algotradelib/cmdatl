@@ -1,6 +1,6 @@
 #include "./paper-support.hpp"
 
-#include <cmdatl/cli/cli.hpp>
+#include <cmdatl/cmdatl>
 #include <cmdatl/account/operator.hpp>
 
 #include <catch2/catch_test_macros.hpp>

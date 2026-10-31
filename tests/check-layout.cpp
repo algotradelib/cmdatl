@@ -1,4 +1,5 @@
-// Checks that every header under include/cmdatl/ sits in a module and includes only the modules the table allows.
+// Checks that every header under include/cmdatl/ sits in a module and includes only the modules the table allows;
+// the umbrella include/cmdatl/cmdatl is the one file at the root.
 // Usage: check-layout SOURCE_ROOT, or check-layout --self-test for the lexer's own cases.
 // Exit 0 when the tree keeps the table, 1 with one line per problem, 2 on bad usage.
 //
@@ -198,19 +199,28 @@ int main(int argc, char** argv) {
   }
   std::vector<std::string> problems;
   std::size_t headers = 0;
+  // The umbrella header, include/cmdatl/cmdatl, the one file at the root: it may include every module, and no module
+  // may include it.
+  std::set<std::string> every;
+  for (const auto& [module, allowed] : ALLOWED) {
+    every.insert(module);
+  }
   for (const auto& entry : fs::recursive_directory_iterator(tree)) {
-    if (!entry.is_regular_file() || entry.path().extension() != ".hpp") {
+    const auto path = entry.path().lexically_normal();
+    const auto name = path.lexically_relative(tree);
+    const bool umbrella = name == fs::path("cmdatl");
+    const bool at_root = std::next(name.begin()) == name.end();
+    if (!entry.is_regular_file() || (!umbrella && !at_root && path.extension() != ".hpp")) {
       continue;
     }
     ++headers;
-    const auto path = entry.path().lexically_normal();
-    const auto name = path.lexically_relative(tree);
     const auto module = module_of(name);
     const auto rules = ALLOWED.find(module);
-    if (rules == ALLOWED.end()) {
+    if (!umbrella && rules == ALLOWED.end()) {
       problems.push_back(name.string() + ": not in a module directory (" + (module.empty() ? "the root" : module) + ")");
       continue;
     }
+    const auto& allowed = umbrella ? every : rules->second;
     std::ifstream in(path, std::ios::binary);
     std::stringstream text;
     text << in.rdbuf();
@@ -241,7 +251,7 @@ int main(int argc, char** argv) {
         continue;
       }
       const auto to = module_of(target.lexically_relative(tree));
-      if (to != module && rules->second.count(to) == 0) {
+      if (to != module && allowed.count(to) == 0) {
         problems.push_back(where + module + " may not include " + (to.empty() ? "the root" : to) + ": " + operand);
       }
     }

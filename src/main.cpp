@@ -1,4 +1,4 @@
-#include <cmdatl/cli/cli.hpp>
+#include <cmdatl/cmdatl>
 
 #include <cstdio>
 #include <exception>
