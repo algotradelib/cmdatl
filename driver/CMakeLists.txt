@@ -9,6 +9,11 @@ if(NOT CMDATL_ALGOTRADELIB_DIR)
   message(FATAL_ERROR "CMDATL_ALGOTRADELIB_DIR must name the algotradelib package cmdatl was built against")
 endif()
 set(algotradelib_DIR "${CMDATL_ALGOTRADELIB_DIR}" CACHE PATH "The algotradelib package cmdatl was built against" FORCE)
+# The package's dependencies (Boost, Eigen) are found first in the package's own prefix (<prefix>/lib/cmake/algotradelib),
+# where an installed package carries them; cmdatl's build strips CMAKE_PREFIX_PATH from this build's environment, so
+# without this a prefix holding them all would not be searched at all.
+get_filename_component(cmdatl_package_prefix "${CMDATL_ALGOTRADELIB_DIR}/../../.." ABSOLUTE)
+list(PREPEND CMAKE_PREFIX_PATH "${cmdatl_package_prefix}")
 find_package(algotradelib CONFIG REQUIRED NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
 get_filename_component(cmdatl_found_package "${algotradelib_DIR}" REALPATH)
 get_filename_component(cmdatl_expected_package "${CMDATL_ALGOTRADELIB_DIR}" REALPATH)
