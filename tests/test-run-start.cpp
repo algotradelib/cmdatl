@@ -653,6 +653,53 @@ TEST_CASE("run start --wait trades as strategy backtest does on the same spec, f
   const auto again = fixture.json({"run", "start", shared().spec("dip"), "--wait", "-P", "lookback=21"});
   CHECK(again.exit_ == 0);
   CHECK((std::filesystem::last_write_time(shape / "build" / "driver") == *before));
+  // The driver's include closure, from the compiler's own dependency files: no CLI11, nothing of cmdatl's cli/ or
+  // strategy/ (the layout check's driver row, seen in the real build).
+  std::size_t read = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(shape / "build")) {
+    if (entry.is_regular_file() && entry.path().extension() == ".d") {
+      const auto deps = slurp(entry.path());
+      ++read;
+      CHECK(deps.find("/CLI/") == std::string::npos);
+      CHECK(deps.find("cmdatl/cli/") == std::string::npos);
+      CHECK(deps.find("cmdatl/strategy/") == std::string::npos);
+      CHECK(deps.find("cmdatl/driver/run.hpp") != std::string::npos);
+    }
+  }
+  CHECK(read >= 1);
+}
+
+TEST_CASE("two runs started at once on one account build the program once and trade apart", "[acceptance][runs]") {
+  const auto equipment = run_equipment();
+  if (!equipment) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const PaperFixture fixture(run_operator());
+  const RunEquipped equipped(equipment->first, equipment->second);
+  // A cache of this case's own, so both starts meet an unbuilt shape and one waits on the other's lock.
+  const ScratchDir cache;
+  const ScopedVariable own_cache("XDG_CACHE_HOME", cache.path().string());
+  fixture.arm();
+  Spawned first({"run", "start", shared().spec("dip"), "--wait", "--json"});
+  Spawned second({"run", "start", shared().spec("dip"), "--wait", "--json"});
+  const int a = first.wait(600);
+  const int b = second.wait(600);
+  INFO(first.out() << first.err());
+  INFO(second.out() << second.err());
+  REQUIRE(WIFEXITED(a));
+  REQUIRE(WIFEXITED(b));
+  CHECK(WEXITSTATUS(a) == 0);
+  CHECK(WEXITSTATUS(b) == 0);
+  const auto one = reply_of(first.out());
+  const auto two = reply_of(second.out());
+  CHECK(one.at("run") != two.at("run"));
+  CHECK(one.at("summary").as_object().at("executions") == two.at("summary").as_object().at("executions"));
+  CHECK(one.at("summary").as_object().at("closing_equity") == two.at("summary").as_object().at("closing_equity"));
+  std::size_t shapes = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(cache.path() / "cmdatl" / "drivers")) {
+    shapes += entry.is_directory() ? 1 : 0;
+  }
+  CHECK(shapes == 1);
 }
 
 TEST_CASE("run start returns while the run trades, its output closed, and run status follows the run to its end", "[acceptance][runs]") {
