@@ -154,7 +154,7 @@ cmdatl run status r3f9c0e12ab45
   A run's fills are those of `cmdatl strategy backtest` on the same spec when the program decides from bars alone, the bars end on that step (date-only rows do), and none of the operator's limits, the cash or the order budget refuses an order the backtest makes, since the backtest applies none of them.
 - `run start` answers once the run trades (exit 0, `state: running`), or with the run's own refusal; `run status` answers 0 whenever it could read the run, and the run's outcome is in `run_exit` and `run_error`.
   A run whose outcome is unknown (killed, a journal write failed, an order it could not confirm) is `run_exit` 4; its market ended with its process and no account was affected.
-- To stop a run, remove the armed file (it stops placing at its next step), or add the line `withdraw RUN` or `quiesce RUN` to `<stem>.stop` beside the operator's file (`paper.toml` gives `paper.stop`), one line per run, keeping the lines of other runs; `cmdatl run stop` is not built yet.
+- To stop a run, remove the armed file (it stops placing at its next step), or add the line `withdraw RUN` or `quiesce RUN` to `<stem>.stop` beside the operator's file (`paper.toml` gives `paper.stop`), one line per run, keeping the lines of other runs and removing those of runs that have ended (a run reads at most 4 KiB of it, and notes a file it cannot read in its events); `cmdatl run stop` is not built yet.
 - A run needs CMake and a C++17 compiler: `run start` builds a program once per shape under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`); a later run of an unchanged program builds nothing, and a change to the program, atlc or algotradelib builds again.
 
 ## Output

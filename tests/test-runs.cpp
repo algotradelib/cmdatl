@@ -717,9 +717,36 @@ TEST_CASE("the stop file holds one line per run, and each run reads the stronges
   // The strongest of a run's own lines, whatever their order; the last line may lack its newline.
   CHECK(stop_intent_of("withdraw " + a + "\nquiesce " + a, a) == StopIntent::WITHDRAW);
   CHECK(stop_intent_of("quiesce " + a + "\nwithdraw " + a, a) == StopIntent::WITHDRAW);
-  // Malformed lines name nothing, and do not hide a valid one.
-  CHECK(stop_intent_of("withdraw  " + a + "\nflatten " + a + "\nquiesce " + a + " x\n", a) == std::nullopt);
+  // Spaces, tabs and a carriage return around the words count; a third word, another verb or another id does not.
+  CHECK(stop_intent_of("quiesce " + a + "\r\n", a) == StopIntent::QUIESCE);
+  CHECK(stop_intent_of("  withdraw\t " + a + "  \n", a) == StopIntent::WITHDRAW);
+  CHECK(stop_intent_of("flatten " + a + "\nquiesce " + a + " x\nwithdraw " + a + "1\n", a) == std::nullopt);
   CHECK(stop_intent_of("junk\nquiesce " + a + "\n", a) == StopIntent::QUIESCE);
-  CHECK(stop_intent_of("quiesce " + a + "\r\n", a) == std::nullopt);
+}
+
+TEST_CASE("a stop file the run cannot read is noted, never ignored without a trace") {
+  {
+    const PaperFixture fixture(run_parts());
+    fixture.arm();
+    set_script({{2, {10, "1"}}});
+    // Above the 4 KiB the driver reads.
+    spit(fixture.dir() / "paper.stop", std::string(4097, '#'));
+    const auto ran = run_child<runtest::Program>(fixture, spec_args());
+    const auto notes = events_of(ran, "note");
+    REQUIRE(notes.size() == 1);
+    CHECK(std::string(notes.front().at("message").as_string()).find("above 4096 bytes") != std::string::npos);
+    CHECK(ran.reply_.at("stopped").as_string() == "end");
+  }
+  {
+    const PaperFixture fixture(run_parts());
+    fixture.arm();
+    set_script({{2, {10, "1"}}});
+    spit(fixture.dir() / "elsewhere.stop", "withdraw r999999999999\n");
+    std::filesystem::create_symlink(fixture.dir() / "elsewhere.stop", fixture.dir() / "paper.stop");
+    const auto ran = run_child<runtest::Program>(fixture, spec_args());
+    const auto notes = events_of(ran, "note");
+    REQUIRE(notes.size() == 1);
+    CHECK(std::string(notes.front().at("message").as_string()).find("symbolic link") != std::string::npos);
+  }
 }
 #endif
