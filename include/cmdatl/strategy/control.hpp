@@ -470,15 +470,16 @@ inline Reply log_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       if (read == CursorRead::REPLACED) {
         return replaced(Exit::UNKNOWN);
       }
-      const auto [records, state] = evaluate(dir, run);
+      const auto [records, state] = evaluate(dir, run, false);
       Reply reply;
       finish_body(reply, state);
       reply.body_["incomplete"] = false;
       return reply;
     }
-    const auto [records, state] = evaluate(dir, run);
-    const bool final = state.state_ == "ended" || state.state_ == "refused" || state.state_ == "failed" || state.state_ == "lost";
-    if (final && writer_finished(dir, records)) {
+    // Each poll reads the run's state without counting its events. A final state finishes the follow only with evidence
+    // the driver finished writing; `unknown` then means a driver killed or crashed, and finishes incomplete.
+    const auto [records, state] = evaluate(dir, run, false);
+    if (terminal(state) && writer_finished(dir, records)) {
       // The final drain from the cursor to the end of the file.
       read = cursor.read(on_line);
       if (read == CursorRead::REPLACED) {
@@ -486,8 +487,8 @@ inline Reply log_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       }
       Reply reply;
       finish_body(reply, state);
-      // A log that began (its start line) and has no end may lack its last events.
-      const bool incomplete = !saw_end && (saw_start || cursor.tail());
+      // A log that began (its start line) and has no end may lack its last events; an unknown run's always may.
+      const bool incomplete = !saw_end && (saw_start || cursor.tail() || state.state_ == "unknown");
       reply.body_["incomplete"] = incomplete;
       if (incomplete) {
         reply.exit_ = Exit::UNKNOWN;
@@ -542,8 +543,9 @@ inline StopRewrite rewrite_stop(
     if (line.empty() || stop_line_intent(line, run)) {
       continue;
     }
-    const auto space = line.find(' ');
-    const auto other = space == std::string::npos ? std::string() : line.substr(space + 1);
+    // The line's words as the driver splits them: a hand-written tab or carriage return still names the run.
+    const auto words = stop_line_words(line);
+    const auto other = words.size() == 2 ? words[1] : std::string();
     if (valid_run_id(other) && finished(other)) {
       continue;
     }
@@ -584,7 +586,7 @@ public:
    * @return How it ended.
    */
   Outcome take(const std::filesystem::path& path, std::chrono::milliseconds wait) {
-    fd_.reset(open_lifted(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600));
+    fd_.reset(open_lifted(path.c_str(), O_RDWR | O_CREAT | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0600));
     int error = 0;
     if (fd_.get() < 0 || !single_regular(fd_.get(), error)) {
       fd_.reset();
@@ -689,6 +691,59 @@ inline bool acknowledges(const json::object& event, atl::runner::StopIntent inte
   return false;
 }
 
+#if !defined(_WIN32)
+/**
+ * @brief Whether another run is finished, from its `reply.json` and `exit.json` alone (not its event log): a validated
+ *   reply, or a valid `exit.json`.
+ * @param dir The run's directory.
+ * @param run The run's id.
+ * @return Whether it is.
+ */
+inline bool run_finished(const std::filesystem::path& dir, const std::string& run) {
+  const auto replied = read_bounded(dir / "reply.json", SMALL_RECORD);
+  if (replied.ok_ && !replied.text_.empty() && replied.text_.back() == '\n') {
+    if (const auto object = record_of(replied.text_, true); object && valid_reply(*object, run)) {
+      return true;
+    }
+  }
+  const auto ended = read_bounded(dir / "exit.json", SMALL_RECORD);
+  if (ended.ok_) {
+    if (const auto object = record_of(ended.text_, false)) {
+      return exit_record_of(*object).has_value();
+    }
+  }
+  return false;
+}
+#endif
+
+/**
+ * @brief Whether a run's driver is gone without a reply: `lost` (its lock free, no reply), or a valid `exit.json`
+ *   without a reply (the supervisor reaped it, or nothing was spawned).
+ * @param records The records.
+ * @param state The state.
+ * @return Whether it is.
+ */
+inline bool driver_gone(const Records& records, const State& state) {
+  return state.state_ == "lost" || (records.exit_valid_ && !records.reply_ && !records.reply_damaged_);
+}
+
+#if !defined(_WIN32)
+/**
+ * @brief The answer for a run whose driver is gone without a reply: exit 0 with its state, `run_exit` 1 when nothing
+ *   was spawned, else 4 (its market ended with it; a demo-account run will need another rule).
+ * @param dir The run's directory.
+ * @param run The run's id.
+ * @param records The records.
+ * @param state The state.
+ * @return The reply.
+ */
+inline Reply gone_reply(const std::filesystem::path& dir, const std::string& run, const Records& records, const State& state) {
+  auto reply = status_body(dir, run, records, state);
+  reply.body_["run_exit"] = records.exit_valid_ && !records.spawned_ ? 1 : 4;
+  return reply;
+}
+#endif
+
 /**
  * @brief `run stop [RUN] [--withdraw]`; see the file comment and the outcomes below.
  * @param invocation The arguments.
@@ -719,9 +774,8 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
     reply.body_["note"] = "the run had ended; nothing was written";
     return reply;
   }
-  if (state.state_ == "lost" || (before.exit_valid_ && !before.reply_ && !before.reply_damaged_)) {
-    auto reply = status_body(dir, run, before, state);
-    reply.body_["run_exit"] = before.exit_valid_ && !before.spawned_ ? 1 : 4;
+  if (driver_gone(before, state)) {
+    auto reply = gone_reply(dir, run, before, state);
     reply.body_["acknowledged"] = nullptr;
     reply.body_["note"] = "the run's driver is gone, and its market with it; nothing was written";
     return reply;
@@ -738,9 +792,6 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
   const std::filesystem::path file(control);
   const auto stop_path = file.parent_path() / (file.stem().string() + ".stop");
   const auto lock_path = file.parent_path() / (file.stem().string() + ".stop.lock");
-  if (interrupted()) {
-    return interrupted_reply();
-  }
   output.progress("cmdatl: stopping run " + run + " (" + std::string(atl::runner::stop_intent_name(intent)) + ")");
   StopLock lock;
   switch (lock.take(lock_path, std::chrono::duration_cast<std::chrono::milliseconds>(STOP_LOCK_WAIT))) {
@@ -764,8 +815,7 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
     if (!where) {
       return false;
     }
-    const auto records = read_records(*where, other);
-    return records.reply_.has_value() || records.exit_valid_;
+    return run_finished(*where, other);
   });
   if (rewrite.full_) {
     std::string names;
@@ -776,10 +826,12 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
                        "the stop file would be above 4096 bytes; it keeps the lines of " + (names.empty() ? std::string("no run") : names),
                        next_for("refused.stop_file_full"));
   }
-  if (interrupted()) {
-    return interrupted_reply();
-  }
   if (rewrite.text_) {
+    // Before the rename nothing is published; when this run's line already holds the intent, the request stood from
+    // the read, and an interruption below answers exit 4.
+    if (interrupted()) {
+      return interrupted_reply();
+    }
     if (const int error = publish_stop(stop_path, *rewrite.text_)) {
       return error_reply(Exit::FAILED, "file.unwritable", "the stop file " + stop_path.string() + " could not be written: " + std::strerror(error));
     }
@@ -795,12 +847,18 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
         acknowledged = acknowledged || acknowledges(*event, intent);
       }
     });
-    const auto records = read_records(dir, run);
-    if (records.reply_) {
-      if (const auto* stopped = records.reply_->if_contains("stopped"); stopped != nullptr && stopped->is_string() && stopped->as_string() == "operator") {
+    const auto [read, final] = evaluate(dir, run, false);
+    if (!read.reply_ && driver_gone(read, final)) {
+      // The driver is gone without a reply, and its market with it: answered as before any write.
+      auto reply = gone_reply(dir, run, read, final);
+      reply.body_["acknowledged"] = acknowledged;
+      reply.body_["control"] = stop_path.string();
+      return reply;
+    }
+    if (read.reply_) {
+      if (const auto* stopped = read.reply_->if_contains("stopped"); stopped != nullptr && stopped->is_string() && stopped->as_string() == "operator") {
         acknowledged = true;
       }
-      const auto [read, final] = evaluate(dir, run);
       if (final.state_ != "ended" && final.state_ != "refused" && final.state_ != "failed") {
         // A reply the records contradict proves nothing: keep waiting for evidence, until the deadline.
         if (std::chrono::steady_clock::now() >= deadline) {

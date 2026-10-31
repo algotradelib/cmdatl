@@ -330,7 +330,8 @@ inline std::vector<Command> command_list() {
     .describe(
       "Reads the run's event log without a lock, while the run trades. Without --follow, the events so far (all but "
       "the heartbeats, and the last heartbeat); with it, each event once as it is written, until the run's end line, "
-      "or until the run is over and its driver gone (incomplete, exit 4, when the end line never came)."
+      "or until the run is over or unknown and its driver has finished writing (incomplete, exit 4, when the end line "
+      "never came, as for a killed driver)."
     )
     .example("cmdatl run log")
     .example("cmdatl run log --follow")
@@ -370,7 +371,7 @@ inline std::vector<Command> command_list() {
     .returns("run_exit", "the run's own exit, once known")
     .returns("run_error", "the run's error code, when it has one")
     .returns("acknowledged", "whether the run's log or reply acknowledged the stop")
-    .returns("control", "the stop file written")
+    .returns("control", "the stop file this run reads")
     .returns("next", "what to run next")
     .error("run.unknown")
     .error("usage.bad_value")

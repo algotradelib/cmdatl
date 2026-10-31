@@ -98,13 +98,12 @@ inline StopFileRead read_stop_file_checked(const std::string& path) {
 #endif
 
 /**
- * @brief One stop line: `WORD RUN_ID`, `WORD` one of `quiesce` and `withdraw`; spaces, tabs and a carriage return
- *   around or between the two words are allowed (a tolerance that can only add stops), the run id must match exactly.
+ * @brief A stop line's words, split at spaces, tabs and carriage returns, as the driver reads a line: `run stop` splits
+ *   the lines it keeps or retires the same way.
  * @param line The line, without its newline.
- * @param run This run's id.
- * @return The intent it names for this run, or nothing (another run's line, or not a stop line).
+ * @return The words.
  */
-inline std::optional<atl::runner::StopIntent> stop_line_intent(const std::string& line, const std::string& run) {
+inline std::vector<std::string> stop_line_words(const std::string& line) {
   std::vector<std::string> words;
   std::size_t at = 0;
   while (at < line.size()) {
@@ -116,6 +115,18 @@ inline std::optional<atl::runner::StopIntent> stop_line_intent(const std::string
     words.push_back(line.substr(start, end == std::string::npos ? std::string::npos : end - start));
     at = end == std::string::npos ? line.size() : end;
   }
+  return words;
+}
+
+/**
+ * @brief One stop line: `WORD RUN_ID`, `WORD` one of `quiesce` and `withdraw`; spaces, tabs and a carriage return
+ *   around or between the two words are allowed (a tolerance that can only add stops), the run id must match exactly.
+ * @param line The line, without its newline.
+ * @param run This run's id.
+ * @return The intent it names for this run, or nothing (another run's line, or not a stop line).
+ */
+inline std::optional<atl::runner::StopIntent> stop_line_intent(const std::string& line, const std::string& run) {
+  const auto words = stop_line_words(line);
   if (words.size() != 2 || words[1] != run) {
     return std::nullopt;
   }
