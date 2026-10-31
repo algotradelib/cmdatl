@@ -67,16 +67,12 @@ inline std::optional<std::string> read_stop_file(const std::string& path) {
 #endif
 
 /**
- * @brief A stop line: `WORD RUN_ID`, `WORD` one of `quiesce` and `withdraw`, an optional trailing newline.
- * @param text The stop file's text.
+ * @brief One stop line: `WORD RUN_ID`, `WORD` one of `quiesce` and `withdraw`, one space, no other whitespace.
+ * @param line The line, without its newline.
  * @param run This run's id.
  * @return The intent it names for this run, or nothing (another run's line, or not a stop line).
  */
-inline std::optional<atl::runner::StopIntent> stop_intent_of(const std::string& text, const std::string& run) {
-  auto line = text;
-  if (!line.empty() && line.back() == '\n') {
-    line.pop_back();
-  }
+inline std::optional<atl::runner::StopIntent> stop_line_intent(const std::string& line, const std::string& run) {
   const auto space = line.find(' ');
   if (space == std::string::npos || line.find_first_of(" \n\r\t", space + 1) != std::string::npos) {
     return std::nullopt;
@@ -92,6 +88,33 @@ inline std::optional<atl::runner::StopIntent> stop_intent_of(const std::string& 
     return atl::runner::StopIntent::WITHDRAW;
   }
   return std::nullopt;
+}
+
+/**
+ * @brief The stop file's intent for this run: the strongest of the lines naming it. The file holds one line per run
+ *   (`WORD RUN_ID`, each ending in a newline, the last one optionally not), so runs started from one operator file
+ *   never erase each other's requests.
+ * @param text The stop file's text.
+ * @param run This run's id.
+ * @return The strongest intent its lines name, or nothing.
+ */
+inline std::optional<atl::runner::StopIntent> stop_intent_of(const std::string& text, const std::string& run) {
+  std::optional<atl::runner::StopIntent> strongest;
+  std::size_t start = 0;
+  while (start < text.size()) {
+    const auto end = text.find('\n', start);
+    const auto line = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+    if (const auto intent = stop_line_intent(line, run)) {
+      if (!strongest || atl::runner::stop_intent_strength(*intent) > atl::runner::stop_intent_strength(*strongest)) {
+        strongest = intent;
+      }
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return strongest;
 }
 
 #if !defined(_WIN32)

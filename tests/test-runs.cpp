@@ -703,3 +703,23 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
   CHECK(market.order_history({}).orders_.empty());
 }
 #endif
+
+#if !defined(_WIN32)
+TEST_CASE("the stop file holds one line per run, and each run reads the strongest line naming it") {
+  using cmdatl::driver::stop_intent_of;
+  using algotradelib::runner::StopIntent;
+  const std::string a = "r00000000000a";
+  const std::string b = "r00000000000b";
+  const std::string text = "withdraw " + a + "\nquiesce " + b + "\n";
+  CHECK(stop_intent_of(text, a) == StopIntent::WITHDRAW);
+  CHECK(stop_intent_of(text, b) == StopIntent::QUIESCE);
+  CHECK(!stop_intent_of(text, "r00000000000c"));
+  // The strongest of a run's own lines, whatever their order; the last line may lack its newline.
+  CHECK(stop_intent_of("withdraw " + a + "\nquiesce " + a, a) == StopIntent::WITHDRAW);
+  CHECK(stop_intent_of("quiesce " + a + "\nwithdraw " + a, a) == StopIntent::WITHDRAW);
+  // Malformed lines name nothing, and do not hide a valid one.
+  CHECK(stop_intent_of("withdraw  " + a + "\nflatten " + a + "\nquiesce " + a + " x\n", a) == std::nullopt);
+  CHECK(stop_intent_of("junk\nquiesce " + a + "\n", a) == StopIntent::QUIESCE);
+  CHECK(stop_intent_of("quiesce " + a + "\r\n", a) == std::nullopt);
+}
+#endif
