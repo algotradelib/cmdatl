@@ -45,6 +45,8 @@ permissions:
 jobs:
   coverage:
     runs-on: ubuntu-latest
+    # A hung build or run stops here, not at GitHub's six-hour default, which a private repository pays for.
+    timeout-minutes: 60
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: '4'
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
