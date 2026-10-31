@@ -146,4 +146,5 @@ if(CMDATL_BUILD_TESTS)
   # Every header in a module, including only the modules tests/check-layout.cpp's table allows.
   add_executable(check-layout tests/check-layout.cpp)
   add_test(NAME layout COMMAND check-layout ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME layout-lexer COMMAND check-layout --self-test)
 endif()

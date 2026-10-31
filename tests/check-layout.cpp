@@ -1,5 +1,6 @@
 // Checks that every header under include/cmdatl/ sits in a module and includes only the modules the table allows.
-// Usage: check-layout SOURCE_ROOT. Exit 0 when the tree keeps the table, 1 with one line per problem, 2 on bad usage.
+// Usage: check-layout SOURCE_ROOT, or check-layout --self-test for the lexer's own cases.
+// Exit 0 when the tree keeps the table, 1 with one line per problem, 2 on bad usage.
 //
 // Every #include is read, in every #if branch: the table is a policy, not the host's dependency list. Comments,
 // string and character literals and raw strings are skipped, so a commented-out include is not read.
@@ -31,13 +32,25 @@ const std::map<std::string, std::set<std::string>> ALLOWED{
 
 struct Directive {
   std::size_t line_;
+  // The operand as written (`"x.hpp"`, `<x>`, or a macro), or empty with `problem_` set.
   std::string operand_;
+  // A spelling the check does not read, refused rather than skipped.
+  std::string problem_;
 };
 
-// The #include directives of a source text, with their operands as written (`"x.hpp"`, `<x>`, or a macro).
+// The #include directives of a source text. Spellings the lexer does not model are refused, so nothing is skipped:
+// a line splice (backslash-newline) anywhere, and a comment between `#`, `include` and the operand.
 std::vector<Directive> includes_of(const std::string& text) {
   std::vector<Directive> found;
   std::size_t line = 1;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] == '\n') {
+      ++line;
+    } else if (text[i] == '\\' && (text.compare(i + 1, 1, "\n") == 0 || text.compare(i + 1, 2, "\r\n") == 0)) {
+      found.push_back({line, "", "a line splice (backslash-newline), which the layout check does not read"});
+    }
+  }
+  line = 1;
   bool line_start = true;
   for (std::size_t i = 0; i < text.size();) {
     const char c = text[i];
@@ -64,22 +77,35 @@ std::vector<Directive> includes_of(const std::string& text) {
         line += text[i] == '\n' ? 1 : 0;
       }
       line_start = false;
-    } else if (c == '"' || c == '\'') {
-      for (++i; i < text.size() && text[i] != c && text[i] != '\n'; ++i) {
-        i += text[i] == '\\' ? 1 : 0;
-      }
+    } else if (c == '\'' && i > 0 && text[i - 1] >= '0' && text[i - 1] <= '9') {
+      // A digit separator (1'000), not a character literal.
+      line_start = false;
       ++i;
+    } else if (c == '"' || c == '\'') {
+      // A literal ends at its closing quote or before the end of its line, which the next pass counts: an
+      // unpaired quote can hide the rest of its own line, never the next one.
+      for (++i; i < text.size() && text[i] != c && text[i] != '\n'; ++i) {
+        i += text[i] == '\\' && i + 1 < text.size() && text[i + 1] != '\n' ? 1 : 0;
+      }
+      i += i < text.size() && text[i] == c ? 1 : 0;
       line_start = false;
     } else if (c == '#' && line_start) {
       auto j = text.find_first_not_of(" \t", i + 1);
-      if (j != std::string::npos && text.compare(j, 7, "include") == 0) {
+      if (j != std::string::npos && text.compare(j, 1, "/") == 0) {
+        found.push_back({line, "", "a comment inside a directive, which the layout check does not read"});
+      } else if (j != std::string::npos && text.compare(j, 7, "include") == 0) {
         j = text.find_first_not_of(" \t", j + 7);
-        const auto end = text.find('\n', j);
-        auto operand = text.substr(j, end == std::string::npos ? std::string::npos : end - j);
+        const auto end = j == std::string::npos ? std::string::npos : text.find('\n', j);
+        auto operand = j == std::string::npos ? std::string() :
+          text.substr(j, end == std::string::npos ? std::string::npos : end - j);
         const char close = operand.empty() ? 0 : operand[0] == '"' ? '"' : operand[0] == '<' ? '>' : 0;
         const auto last = close == 0 ? std::string::npos : operand.find(close, 1);
         operand = last == std::string::npos ? operand : operand.substr(0, last + 1);
-        found.push_back({line, operand});
+        if (operand.compare(0, 1, "/") == 0) {
+          found.push_back({line, "", "a comment inside a directive, which the layout check does not read"});
+        } else {
+          found.push_back({line, operand, ""});
+        }
       }
       line_start = false;
       ++i;
@@ -89,6 +115,44 @@ std::vector<Directive> includes_of(const std::string& text) {
     }
   }
   return found;
+}
+
+// Cases the lexer must read, run by `check-layout --self-test` (ctest `layout-lexer`): each source and the
+// directives it gives, an operand or `!` for a refusal.
+int self_test() {
+  const std::vector<std::pair<std::string, std::vector<std::string>>> cases{
+    {"#include \"a.hpp\"\n#include <b>\n", {"\"a.hpp\"", "<b>"}},
+    {"  #  include \"a.hpp\"\n", {"\"a.hpp\""}},
+    {"#if 0\n#include \"a.hpp\"\n#endif\n", {"\"a.hpp\""}},
+    {"/* see https://x.y\n#include \"a.hpp\"\n*/\n", {}},
+    {"// #include \"a.hpp\"\n", {}},
+    {"const char* t = R\"x(\n#include \"a.hpp\"\n)x\";\n", {}},
+    {"const char* t = u8R\"(\n#include \"a.hpp\"\n)\";\n", {}},
+    {"const char* t = \"/*\";\n#include \"a.hpp\"\n", {"\"a.hpp\""}},
+    {"inline constexpr int n = 1'000;\n#include \"a.hpp\"\n", {"\"a.hpp\""}},
+    {"char c = '\"';\n#include \"a.hpp\"\n", {"\"a.hpp\""}},
+    {"const char* s = \"unclosed\n#include \"a.hpp\"\n", {"\"a.hpp\""}},
+    {"/* a */ #include \"a.hpp\"\n", {"\"a.hpp\""}},
+    {"#define H \"a.hpp\"\n#include H\n", {"H"}},
+    {"#inc\\\nlude \"a.hpp\"\n", {"!"}},
+    {"// comment \\\n#include \"a.hpp\"\n", {"!", "\"a.hpp\""}},
+    {"#/**/include \"a.hpp\"\n", {"!"}},
+    {"#include /**/ <string>\n", {"!"}},
+    {"#include", {""}},
+  };
+  int failures = 0;
+  for (const auto& [source, expected] : cases) {
+    std::vector<std::string> got;
+    for (const auto& directive : includes_of(source)) {
+      got.push_back(directive.problem_.empty() ? directive.operand_ : "!");
+    }
+    if (got != expected) {
+      ++failures;
+      std::cout << "self-test failed on: " << source << '\n';
+    }
+  }
+  std::cout << cases.size() - static_cast<std::size_t>(failures) << " of " << cases.size() << " lexer cases passed\n";
+  return failures == 0 ? 0 : 1;
 }
 
 // The module of a path relative to include/cmdatl/, or empty for a header at its root.
@@ -106,8 +170,11 @@ bool inside(const fs::path& path, const fs::path& dir) {
 } // namespace
 
 int main(int argc, char** argv) {
+  if (argc == 2 && std::string(argv[1]) == "--self-test") {
+    return self_test();
+  }
   if (argc != 2) {
-    std::cerr << "usage: check-layout SOURCE_ROOT\n";
+    std::cerr << "usage: check-layout SOURCE_ROOT | --self-test\n";
     return 2;
   }
   const auto include = fs::absolute(fs::path(argv[1]) / "include").lexically_normal();
@@ -136,6 +203,10 @@ int main(int argc, char** argv) {
     text << in.rdbuf();
     for (const auto& directive : includes_of(text.str())) {
       const auto where = name.string() + ":" + std::to_string(directive.line_) + ": ";
+      if (!directive.problem_.empty()) {
+        problems.push_back(where + directive.problem_);
+        continue;
+      }
       const auto& operand = directive.operand_;
       if (operand.size() < 2 || (operand.front() != '"' && operand.front() != '<') ||
           operand.back() != (operand.front() == '"' ? '"' : '>')) {
