@@ -25,6 +25,10 @@ cmdatl order place p9cc4b94da4
 cmdatl account --value cash                            # one value, nothing else
 ```
 
+How cmdatl's parts use algotradelib's modules and atlc:
+
+![cmdatl and algotradelib](docs/architecture.png)
+
 ## Install
 
 cmdatl is built with CMake and a C++17 compiler against an installed algotradelib; see [the library's install guide](https://github.com/algotradelib/algotradelib#install).
