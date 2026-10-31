@@ -68,8 +68,9 @@ inline constexpr std::size_t MAX_WARMUP_BARS = 10000;
 
 #if defined(CMDATL_RUN_TEST_HOOKS)
 /**
- * @brief Test-only: called with the mock client before trading, so a test scripts the broker's faults. Only the run
- *   tests' executable defines `CMDATL_RUN_TEST_HOOKS`; never define it elsewhere.
+ * @brief Test-only: called with the mock client before trading, so a test scripts the broker's faults.
+ *   `CMDATL_RUN_TEST_HOOKS` is defined only by the tests: the `test-runs` and `test-cli` executables, and the drivers a
+ *   process test builds with it in `CXXFLAGS` (their own cache shape); never by cmdatl's build or a shipped driver.
  * @return The hook.
  */
 inline std::function<void(atl::mock::MockClient&)>& client_hook();

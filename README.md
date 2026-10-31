@@ -157,10 +157,11 @@ cmdatl run stop --withdraw                             # stop placing and cancel
 - `run start` answers once the run trades (exit 0, `state: running`), or with the run's own refusal; `run status` answers 0 whenever it could read the run, and the run's outcome is in `run_exit` and `run_error`.
   A run whose outcome is unknown (killed, a journal write failed, an order it could not confirm) is `run_exit` 4; its market ended with its process and no account was affected.
 - `run log` reads the run's events while it trades: without `--follow` the events so far (all but the heartbeats, and the last heartbeat, at most 4,096); with it, each event once as it is written, until the run's `end` line.
-  A follow that finishes without the `end` line (the run was killed) says `incomplete: true` and exits 4; Ctrl-C stops the watching, never the run.
+  A follow also finishes when the run is over, or its outcome unknown, and its driver has finished writing (its lock free, its exit recorded, or its process gone); without the `end` line (a killed or crashed driver) it says `incomplete: true` and exits 4, and an unknown run without that evidence is followed until Ctrl-C, which stops the watching, never the run.
   `--symbol` keeps only that symbol's order events.
 - `run stop` stops a run: `quiesce` (the default) stops new placements and leaves resting orders, `--withdraw` also cancels them; neither sells holdings.
   It writes the run's line into `<stem>.stop` beside the operator's file the run was started with (`paper.toml` gives `paper.stop`), one line per run, every other run's line kept, and waits up to 30 s for the run to acknowledge the stop and end.
+  Write the stop file only through `run stop`: it replaces the file by a rename under a lock, `<stem>.stop.lock`, which it creates beside it and keeps, so a hand edit made meanwhile is lost.
   It exits 0 only on evidence that trading ended (the run's reply, or a run already over); acknowledged but not ended is exit 4 `unknown.run_stopping`, not acknowledged is exit 4 `unknown.run_stop`.
   The run's own outcome stays in `run_exit`, so a stop can exit 0 for a run whose `run_exit` is 4.
   The stop file holds at most 4 KiB, and a run notes in its events a stop file it cannot read.
