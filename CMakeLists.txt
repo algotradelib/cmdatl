@@ -79,8 +79,49 @@ file(WRITE ${CMDATL_GENERATED}/templates.hpp.new
 )
 configure_file(${CMDATL_GENERATED}/templates.hpp.new ${CMDATL_GENERATED}/cmdatl/templates.hpp COPYONLY)
 
+# The run driver's sources, carried inside cmdatl so `run start` builds a driver from the same sources as the running
+# cmdatl: every header of the modules the driver may include, its main.cpp and CMakeLists.txt, and toml++ with its licence.
+add_executable(cmdatl_embed tools/embed.cpp)
+target_compile_features(cmdatl_embed PRIVATE cxx_std_17)
+set(CMDATL_DRIVER_MODULES driver orders account paper system core)
+set(cmdatl_driver_pairs "")
+set(cmdatl_driver_sources "")
+foreach(module IN LISTS CMDATL_DRIVER_MODULES)
+  file(GLOB_RECURSE headers CONFIGURE_DEPENDS RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/cmdatl/${module}/*.hpp)
+  foreach(header IN LISTS headers)
+    list(APPEND cmdatl_driver_pairs "${header}=${CMAKE_CURRENT_SOURCE_DIR}/include/${header}")
+    list(APPEND cmdatl_driver_sources ${CMAKE_CURRENT_SOURCE_DIR}/include/${header})
+  endforeach()
+endforeach()
+foreach(file main.cpp CMakeLists.txt)
+  list(APPEND cmdatl_driver_pairs "${file}=${CMAKE_CURRENT_SOURCE_DIR}/driver/${file}")
+  list(APPEND cmdatl_driver_sources ${CMAKE_CURRENT_SOURCE_DIR}/driver/${file})
+endforeach()
+file(GLOB_RECURSE toml_headers CONFIGURE_DEPENDS RELATIVE ${CMDATL_TOML_INCLUDE} ${CMDATL_TOML_INCLUDE}/toml++/*)
+foreach(header IN LISTS toml_headers)
+  list(APPEND cmdatl_driver_pairs "third_party/${header}=${CMDATL_TOML_INCLUDE}/${header}")
+  list(APPEND cmdatl_driver_sources ${CMDATL_TOML_INCLUDE}/${header})
+endforeach()
+if(EXISTS ${CMDATL_TOML_INCLUDE}/../LICENSE)
+  get_filename_component(toml_license ${CMDATL_TOML_INCLUDE}/../LICENSE ABSOLUTE)
+  list(APPEND cmdatl_driver_pairs "third_party/toml++/LICENSE=${toml_license}")
+  list(APPEND cmdatl_driver_sources ${toml_license})
+endif()
+add_custom_command(
+  OUTPUT ${CMDATL_GENERATED}/cmdatl/driver_files.hpp
+  COMMAND cmdatl_embed ${CMDATL_GENERATED}/cmdatl/driver_files.hpp ${cmdatl_driver_pairs}
+  DEPENDS cmdatl_embed ${cmdatl_driver_sources}
+  COMMENT "Embedding the run driver's sources"
+  VERBATIM
+)
+add_custom_target(cmdatl_driver_files DEPENDS ${CMDATL_GENERATED}/cmdatl/driver_files.hpp)
+
 add_library(cmdatl_core INTERFACE)
 target_include_directories(cmdatl_core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMDATL_GENERATED})
+add_dependencies(cmdatl_core cmdatl_driver_files)
+# The package the run driver is built against: the one cmdatl itself was built against, never another.
+target_compile_definitions(cmdatl_core INTERFACE CMDATL_ALGOTRADELIB_DIR="${algotradelib_DIR}")
 target_link_libraries(cmdatl_core INTERFACE algotradelib::algotradelib CLI11::CLI11 cmdatl_toml)
 target_compile_definitions(cmdatl_core INTERFACE CMDATL_VERSION="${PROJECT_VERSION}")
 
