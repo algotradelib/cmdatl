@@ -1,0 +1,143 @@
+# Builds cmdatl against the installed algotradelib and atlc that the organization's actions pull, and runs the whole suite, the real-atlc acceptance cases included (a skipped one fails the job).
+# The repository is private, so its minutes are billed: Linux on every push and pull request, macOS (about ten times a Linux minute) only on main and by hand.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, 'hotfix/*', 'release/*', develop]
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'templates/**'
+      - 'tools/**'
+      - 'driver/**'
+      - 'README.md'
+      - 'docs/**'
+      - 'skills/**'
+      - '.github/scripts/**'
+      - '.github/workflows/cmake-check.yaml'
+  pull_request:
+    branches: [main, master, develop]
+    paths:
+      - 'CMakeLists.txt'
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'templates/**'
+      - 'tools/**'
+      - 'driver/**'
+      - 'README.md'
+      - 'docs/**'
+      - 'skills/**'
+      - '.github/scripts/**'
+      - '.github/workflows/cmake-check.yaml'
+
+name: cmake-check
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # The matrix is computed so macOS runs only on a push to main or a manual run.
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      os: ${{ steps.pick.outputs.os }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || { [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; }; then
+            echo 'os=["ubuntu-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+          fi
+
+  cmake:
+    needs: matrix
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.matrix.outputs.os) }}
+    runs-on: ${{ matrix.os }}
+    # A hung build or run stops here, not at GitHub's six-hour default, which a private repository pays for.
+    timeout-minutes: 60
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: '4'
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: atl
+        uses: algotradelib/.github/actions/setup-atl@main
+
+      - id: atlc
+        uses: algotradelib/.github/actions/setup-atlc@main
+
+      # Both main channels move, so the job prints the revisions it got; atlc's examples come from the same revision, or from main when the package names none.
+      - id: revisions
+        name: Package revisions
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in Linux) p=linux-x64 ;; macOS) p=macos-arm64 ;; esac
+          revision() {
+            oras manifest fetch "ghcr.io/algotradelib/$1:main-$p" |
+              python3 -c "import json, sys; print(json.load(sys.stdin).get('annotations', {}).get('org.opencontainers.image.revision') or '')"
+          }
+          atl="$(revision algotradelib)"
+          atlc="$(revision atlc)"
+          echo "algotradelib revision: ${atl:-unknown}"
+          echo "atlc revision: ${atlc:-unknown, examples from main}"
+          "${{ steps.atlc.outputs.atlc }}" --version
+          echo "atlc=${atlc:-main}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          repository: algotradelib/atlc
+          ref: ${{ steps.revisions.outputs.atlc }}
+          path: atlc-src
+
+      # OpenSSL is not in the library's package; the Linux runner has it, Homebrew's is keg-only.
+      - name: OpenSSL (macOS)
+        if: runner.os == 'macOS'
+        run: echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+
+      # Warnings are errors on Linux: cmdatl builds clean, and GCC is the compiler no one runs locally.
+      # One GCC warning stays a warning: -Wterminate, from the toml++ assertion that throws inside toml++'s noexcept functions (plan/todo/cmdatl-toml-assert-noexcept.md).
+      - name: Configure
+        shell: bash
+        run: |
+          flags=""
+          if [ "$RUNNER_OS" = Linux ]; then flags="-Wall -Wextra -Werror -Wno-error=terminate"; fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMDATL_FETCH_DEPS=ON \
+            -DCMAKE_PREFIX_PATH="${{ steps.atl.outputs.path }}" -DCMAKE_CXX_FLAGS="$flags"
+
+      - name: Build
+        run: cmake --build build
+
+      # The acceptance cases run apart from ctest: its entry is one process, which passes when only some cases skip.
+      # The script reads each case from a JUnit report and fails on any skipped or missing one.
+      - name: Test
+        shell: bash
+        env:
+          CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
+          CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
+          CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
+          XDG_CACHE_HOME: ${{ runner.temp }}/cache
+        run: |
+          ctest --test-dir build --output-on-failure --no-tests=error -E '^test-acceptance$'
+          .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
+
+      # The installed cmdatl, run from outside the checkout.
+      - name: Install
+        shell: bash
+        run: |
+          cmake --install build --prefix "$RUNNER_TEMP/cmdatl"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/cmdatl/bin/cmdatl" --version
+          "$RUNNER_TEMP/cmdatl/bin/cmdatl" schema --json > schema.json
+          python3 -c "import json; d = json.load(open('schema.json')); assert d.get('commands'), d"
