@@ -362,16 +362,19 @@ inline int lifted_pipe(int (&fds)[2]) noexcept {
  * @param argv The program (a path) and its arguments.
  * @param on_stderr_line Called with each stderr line, without its newline, and with an unterminated last one; what
  *   it throws ends the run.
+ * @param environment The child's environment as `NAME=VALUE` entries, or nothing for cmdatl's own.
  * @return How it ended; partial output after a failure is never `FINISHED`.
  */
 inline ChildResult run_child(
   const std::vector<std::string>& argv,
-  const std::function<void(const std::string&)>& on_stderr_line
+  const std::function<void(const std::string&)>& on_stderr_line,
+  const std::vector<std::string>* environment = nullptr
 ) {
   ChildResult result;
 #if defined(_WIN32)
   (void)argv;
   (void)on_stderr_line;
+  (void)environment;
   result.error_ = "running a program is not supported on this platform";
   return result;
 #else
@@ -386,6 +389,14 @@ inline ChildResult run_child(
     args.push_back(const_cast<char*>(arg.c_str()));
   }
   args.push_back(nullptr);
+  std::vector<char*> envp;
+  if (environment != nullptr) {
+    envp.reserve(environment->size() + 1);
+    for (const auto& entry : *environment) {
+      envp.push_back(const_cast<char*>(entry.c_str()));
+    }
+    envp.push_back(nullptr);
+  }
   std::string line;
   line.reserve(256);
   int out_fds[2];
@@ -438,7 +449,7 @@ inline ChildResult run_child(
       error = posix_spawnattr_setsigmask(attr.get(), &unblocked);
     }
     if (error == 0) {
-      error = posix_spawn(&pid, args[0], actions.get(), attr.get(), args.data(), environ);
+      error = posix_spawn(&pid, args[0], actions.get(), attr.get(), args.data(), environment != nullptr ? envp.data() : environ);
     }
     if (error != 0) {
       result.error_ = std::strerror(error);
