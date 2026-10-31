@@ -5,16 +5,15 @@ With [algotradelib](https://github.com/algotradelib/algotradelib) alone you writ
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
 
 Status: in development, before its first release; commands and replies may change without notice.
-This version answers `cmdatl strategy new`, `cmdatl strategy backtest`, the paper account's reads (`cmdatl status`, `cmdatl account`, `cmdatl quote`, `cmdatl order list`, `cmdatl clock`), `cmdatl clock advance`, the order commands (`cmdatl order plan`, `cmdatl order place`, `cmdatl order cancel`, `cmdatl order reconcile`, `cmdatl order release`), `cmdatl env`, `cmdatl schema` and `cmdatl help`: every command an agent uses answers.
-The run commands, `cmdatl strategy reference` and `cmdatl guide` are listed and answer that they are not built yet; orders reach only the paper market.
+This version answers `cmdatl strategy new`, `cmdatl strategy backtest`, the paper account's reads (`cmdatl status`, `cmdatl account`, `cmdatl quote`, `cmdatl order list`, `cmdatl clock`), `cmdatl clock advance`, the order commands (`cmdatl order plan`, `cmdatl order place`, `cmdatl order cancel`, `cmdatl order reconcile`, `cmdatl order release`), `cmdatl run start`, `cmdatl run status`, `cmdatl env`, `cmdatl schema` and `cmdatl help`: every command an agent uses answers.
+`cmdatl run log`, `cmdatl run stop`, `cmdatl strategy reference` and `cmdatl guide` are listed and answer that they are not built yet; orders reach only the paper market and a run's own mock market.
 
 ```sh
 cmdatl strategy new dip --template mean-reversion      # dip.atls and dip.toml to start from
 cmdatl strategy backtest dip.toml -P lookback=30       # atlc builds and replays it; the report as JSON
 cmdatl status                                          # the account in one read
-cmdatl run start mean-reversion.toml --mode paper      # a trading loop in the background
-cmdatl run log --follow                                # watch it
-cmdatl run stop                                        # and stop it
+cmdatl run start dip.toml                              # a run on its own mock market, in the background
+cmdatl run status                                      # its state, and its summary once it ended
 ```
 
 An agent plans an order, then places that plan:

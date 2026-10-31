@@ -3,6 +3,7 @@
 #include "../account/reads.hpp"
 #include "../core/table.hpp"
 #include "../orders/orders.hpp"
+#include "../strategy/runs.hpp"
 #include "../strategy/strategy.hpp"
 #include "./describe.hpp"
 #include "./environment.hpp"
@@ -272,37 +273,69 @@ inline std::vector<Command> command_list() {
     .arg("TOPIC", "a chapter", false)
     .returns("text", "the reference"));
 
-  add(make_command({"run", "start"}, "Run", "start a strategy trading an account, in the background")
-    .example("cmdatl run start dip.toml --mode paper")
-    .example("cmdatl run start dip.toml --mode paper -P lookback=30 --follow")
-    .arg("SPEC", "a run spec")
-    .option("mode", "M", "paper (demo and live are not available yet)", true)
+  add(make_command({"run", "start"}, "Run", "start a strategy on its own mock market, in the background")
+    .describe(
+      "Builds the program's driver (CMake and a C++17 compiler are needed; builds are cached), starts it detached on a "
+      "mock market made from the run spec's data, and answers once its start line is written. The operator's file "
+      "limits every order the run places. The agent commands do not see a run's market."
+    )
+    .example("cmdatl run start dip.toml")
+    .example("cmdatl run start dip.toml --wait")
+    .arg("SPEC", "a run spec, with replay.market = \"kr\" and limit orders")
     .option(PARAMETER)
-    .flag("follow", "keep printing the run's events until it ends")
+    .flag("wait", "wait for the run's end and answer with its summary and exit")
     .returns("run", "the run id")
-    .returns("state", "running, refused or unknown")
-    .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::REFUSED, Exit::UNKNOWN, Exit::PROGRAM})
+    .returns("state", "running; with --wait or an early end: ended, refused, failed, lost or unknown")
+    .returns("from", "the run's first instant, market time")
+    .returns("to", "the date of the data's last bar")
+    .returns("symbols", "the symbols the run trades")
+    .returns("cap", "the smallest position cap of the run's symbols")
+    .returns("summary", "the run's reply once it ended: executions, costs, equity, holdings_at_end, owed_at_end")
+    .returns("run_exit", "the run's own exit, once known")
+    .returns("run_error", "the run's error code, when it has one")
+    .returns("progress", "events counted by kind, and the last heartbeat")
+    .returns("dir", "the run's directory")
+    .returns("next", "what to run next")
+    .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::REFUSED, Exit::UNKNOWN, Exit::PROGRAM, Exit::INTERRUPTED})
     .sends()
-    .account());
+    .on_config(runs::start_reply));
+  {
+    auto& start = list.back();
+    for (const auto& code : RUN_CODES) {
+      start.error(code);
+    }
+  }
   add(make_command({"run", "status"}, "Run", "a run's state and summary")
     .example("cmdatl run status")
-    .arg("RUN", "a run id", false)
+    .example("cmdatl run status r3f9c0e12ab45")
+    .arg("RUN", "a run id; the account's newest run when omitted", false)
     .returns("run", "the run id")
-    .returns("state", "running, stopped or unknown")
-    .returns("summary", "trades and position")
-    .account());
+    .returns("state", "starting, running, ended, refused, failed, lost or unknown")
+    .returns("run_exit", "the run's own exit, once known; this command's exit only says it read the run")
+    .returns("run_error", "the run's error code, when it has one")
+    .returns("progress", "events counted by kind, and the last heartbeat")
+    .returns("from", "the run's first instant, market time")
+    .returns("to", "the date of the data's last bar")
+    .returns("summary", "the run's reply once it ended")
+    .returns("dir", "the run's directory")
+    .error("run.unknown")
+    .error("usage.bad_value")
+    .error("config.missing")
+    .error("config.invalid")
+    .error("unsupported.broker")
+    .exits({Exit::OK, Exit::FAILED, Exit::USAGE})
+    .on_config(runs::status_reply));
   add(make_command({"run", "log"}, "Run", "a run's events")
     .example("cmdatl run log --follow")
     .arg("RUN", "a run id", false)
     .flag("follow", "keep printing until the run ends")
     .returns("events", "placed, filled, refused, heartbeat")
     .account());
-  add(make_command({"run", "stop"}, "Run", "stop a run: quiesce, or also withdraw or flatten")
+  add(make_command({"run", "stop"}, "Run", "stop a run: quiesce, or also withdraw")
     .example("cmdatl run stop")
-    .example("cmdatl run stop --flatten")
+    .example("cmdatl run stop --withdraw")
     .arg("RUN", "a run id", false)
-    .flag("withdraw", "also cancel the account's working orders")
-    .flag("flatten", "withdraw, then close the positions")
+    .flag("withdraw", "also cancel the run's working orders")
     .returns("state", "stopped or unknown")
     .returns("summary", "the final summary")
     .exits(SEND_EXITS)

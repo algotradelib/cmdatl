@@ -97,8 +97,39 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"unknown.unmapped", Exit::UNKNOWN, false, "cmdatl order reconcile SYMBOL first, then report the defect"},
     {"unknown.journal_write", Exit::UNKNOWN, false, "cmdatl order reconcile SYMBOL first; cmdatl account shows what the journal holds"},
     {"unknown.broker_refused", Exit::UNKNOWN, false, "the market refused it and nothing rests: cmdatl order reconcile SYMBOL shows nothing owed before planning again"},
+    {"program.live_unsupported", Exit::PROGRAM, false, "a run takes programs without on_fill or session legs, warming up on at most 10,000 bars; cmdatl strategy backtest replays the rest"},
+    {"spec.no_instruments", Exit::USAGE, false, "name the symbols in the run spec's [instruments], as the data names them"},
+    {"refused.order_type", Exit::REFUSED, false, "set [orders] type = \"limit\" and an offset within the operator's collar"},
+    {"unsupported.interval", Exit::FAILED, false, "a run trades daily bars: give the run spec daily data"},
+    {"run.unknown", Exit::FAILED, false, "cmdatl run start starts a run; its reply names the run's id"},
+    {"run.failed", Exit::FAILED, true, "nothing was started or sent: run cmdatl run start again"},
+    {"run.reference_unreadable", Exit::FAILED, true, "nothing was sent: run cmdatl run start again"},
+    {"cache.unavailable", Exit::FAILED, false, "set XDG_CACHE_HOME or HOME to a writable absolute directory"},
+    {"unknown.run_start", Exit::UNKNOWN, false, "the run may be trading: cmdatl run status RUN; do not start it again"},
+    {"unknown.run_ended", Exit::UNKNOWN, false, "the run ended without a reply: its market ended with it and no account was affected; start a new run"},
+    {"unknown.owed_at_end", Exit::UNKNOWN, false, "the run's market ended with its process and no account was affected; its result is unknown: start a new run"},
+    {"unknown.recovery_halted", Exit::UNKNOWN, false, "the run's journal halted recovery; nothing was started: start a new run"},
+    {"unknown.closing_incomplete", Exit::UNKNOWN, false, "the run could not confirm its withdrawal; its market ended with it and no account was affected: start a new run"},
+    {"unknown.loop_abandoned", Exit::UNKNOWN, false, "the run gave up after repeated failed reads; its market ended with it and no account was affected: start a new run"},
+    {"unknown.local_failure", Exit::UNKNOWN, false, "a journal write failed during the run; its market ended with it and no account was affected: start a new run"},
+    {"unknown.owed_order", Exit::UNKNOWN, false, "the run stopped placing on an order nobody could account for; its market ended with it: start a new run"},
+    {"unknown.market_halted", Exit::UNKNOWN, false, "the mock market could not cost or record a fill; its market ended with it and no account was affected: start a new run"},
   };
   return catalog;
 }
+
+/**
+ * @brief Every code `run start` may answer, its own and the run's driver's, which it relays: the table declares each
+ *   on `run start`, and `run status` reports the driver's as `run_error`.
+ */
+inline const std::vector<std::string> RUN_CODES{
+  "usage.bad_value", "spec.invalid", "spec.no_instruments", "program.invalid", "program.live_unsupported",
+  "unsupported.interval", "config.missing", "config.invalid", "unsupported.broker", "refused.symbol_not_allowed",
+  "refused.order_type", "refused.collar", "refused.not_armed", "busy.locked", "file.unwritable", "atlc.missing",
+  "atlc.unsupported", "atlc.failed", "build.failed", "cache.unavailable", "run.failed", "run.reference_unreadable",
+  "interrupted", "unknown.lock_lost", "unknown.journal_damaged", "unknown.recovery_halted", "unknown.closing_incomplete",
+  "unknown.loop_abandoned", "unknown.local_failure", "unknown.owed_order", "unknown.owed_at_end", "unknown.market_halted",
+  "unknown.run_start", "unknown.run_ended", "unknown.internal", "internal.error",
+};
 
 } // namespace cmdatl

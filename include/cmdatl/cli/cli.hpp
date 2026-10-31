@@ -480,6 +480,64 @@ inline int run_on_account(const Command& command, const Prepared& prepared, std:
 }
 
 /**
+ * @brief Runs a command that names the account but opens none: the operator's file read once, the reply's environment
+ *   taken from the broker, then the handler with the file read; the handler reports its own outcomes, and an exception
+ *   is unknown (exit 4) for a command that may send.
+ * @param command The command.
+ * @param prepared The command line, read and checked.
+ * @param out stdout.
+ * @param err stderr.
+ * @return The exit code.
+ */
+inline int run_on_config(const Command& command, const Prepared& prepared, std::ostream& out, std::ostream& err) {
+  const auto& rendering = prepared.globals_.rendering_;
+  const auto offline = [&](const Reply& reply) {
+    try {
+      Output output(out, err, rendering, "offline");
+      return static_cast<int>(output.finish(reply));
+    } catch (...) {
+      return report_lost_outcome(err, false);
+    }
+  };
+#if defined(_WIN32)
+  return offline(error_reply(Exit::FAILED, "unavailable.platform", "runs run on macOS and Linux only in this version"));
+#else
+  std::optional<ConfigSnapshot> snapshot;
+  std::string env;
+  try {
+    snapshot = load_operator_config();
+    if (snapshot->state_ != ConfigSnapshot::State::OK) {
+      return offline(config_reply(*snapshot));
+    }
+    env = account_env(*snapshot->config_);
+  } catch (const std::exception& e) {
+    return offline(error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line"));
+  }
+  try {
+    Output output(out, err, rendering, env);
+    Reply reply;
+    try {
+      reply = command.run_config_(prepared.invocation_, *snapshot, output);
+    } catch (const std::exception& e) {
+      reply = command.may_send_ ?
+        error_reply(Exit::UNKNOWN, "unknown.internal", e.what(), "cmdatl run status") :
+        error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line");
+    } catch (...) {
+      reply = command.may_send_ ?
+        error_reply(Exit::UNKNOWN, "unknown.internal", "an unknown exception", "cmdatl run status") :
+        error_reply(Exit::FAILED, "internal.error", "an unknown exception", "report the defect with the command line");
+    }
+    if (prepared.found_.alias_) {
+      reply.body_["note"] = "cmdatl " + join(*prepared.found_.alias_) + " is now cmdatl " + join(command.path_);
+    }
+    return static_cast<int>(output.finish(reply));
+  } catch (...) {
+    return report_lost_outcome(err, command.may_send_, command.may_send_ ? "cmdatl run status" : std::string());
+  }
+#endif
+}
+
+/**
  * @brief Runs one command line against a table of commands and writes its reply.
  * @param args The command line, without the program's name.
  * @param out stdout: replies, help, and failures in JSON.
@@ -532,6 +590,9 @@ inline int run(
   }
   if (command.run_account_) {
     return run_on_account(command, prepared, out, err);
+  }
+  if (command.run_config_) {
+    return run_on_config(command, prepared, out, err);
   }
   // A command not built that touches an account has no account to take an environment from: offline.
   const auto env = command.env_ == "account" ? std::string("offline") : command.env_;

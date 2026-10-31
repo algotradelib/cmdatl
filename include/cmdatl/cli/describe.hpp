@@ -14,7 +14,7 @@
 namespace cmdatl {
 
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
-inline constexpr int SCHEMA_VERSION = 4;
+inline constexpr int SCHEMA_VERSION = 5;
 
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
@@ -23,7 +23,7 @@ inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl
 inline const std::vector<std::string> TOP_EXAMPLES{
   "cmdatl status",
   "cmdatl strategy backtest mean-reversion.toml -P lookback=30",
-  "cmdatl run start mean-reversion.toml --mode paper",
+  "cmdatl run start mean-reversion.toml --wait",
   "cmdatl order plan 005930 --target 10 --limit 78200",
 };
 
@@ -442,10 +442,12 @@ inline std::vector<std::string> check_table(const Table& table) {
     }
     const bool runs = static_cast<bool>(command.run_);
     const bool runs_on_account = static_cast<bool>(command.run_account_);
-    if (command.available_ != (runs || runs_on_account) || (runs && runs_on_account)) {
+    const bool runs_on_config = static_cast<bool>(command.run_config_);
+    const int kinds = (runs ? 1 : 0) + (runs_on_account ? 1 : 0) + (runs_on_config ? 1 : 0);
+    if (command.available_ != (kinds > 0) || kinds > 1) {
       problems.push_back(name + ": available without code, code without available, or two kinds of code");
     }
-    if (runs_on_account && command.env_ != "account") {
+    if ((runs_on_account || runs_on_config) && command.env_ != "account") {
       problems.push_back(name + ": runs on the account but its replies do not carry the account's environment");
     }
     if (command.mutates_ && std::find(command.exits_.begin(), command.exits_.end(), Exit::UNKNOWN) == command.exits_.end()) {

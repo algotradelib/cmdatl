@@ -238,7 +238,7 @@ TEST_CASE("tune and check are gone; new and backtest are the strategy commands t
   const auto reference = table.resolve({"strategy", "reference"});
   REQUIRE(reference.command_ != nullptr);
   CHECK(!reference.command_->available_);
-  CHECK(cmdatl::SCHEMA_VERSION == 4);
+  CHECK(cmdatl::SCHEMA_VERSION == 5);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
   CHECK(backtest.at("returns").as_object().contains("params_given"));
   CHECK(!backtest.at("returns").as_object().contains("params"));
@@ -272,7 +272,7 @@ TEST_CASE("global options never take another option as their value and stop at -
 }
 
 TEST_CASE("a planned command answers that it is not built yet") {
-  const auto ran = run({"run", "status"});
+  const auto ran = run({"run", "log"});
   CHECK(ran.exit_ == 1);
   CHECK(code_of(ran.out_) == "unavailable.not_yet");
   CHECK(reply_of(ran.out_).at("env").as_string() == "offline");

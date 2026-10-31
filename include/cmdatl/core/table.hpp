@@ -67,6 +67,7 @@ struct Invocation {
 
 class Table;
 class Account;
+struct ConfigSnapshot;
 
 /** @brief The exit codes of an account command: 4 when the account's state is unknown, 130 from the lock's wait. */
 inline const std::vector<Exit> ACCOUNT_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE, Exit::UNKNOWN, Exit::INTERRUPTED};
@@ -122,6 +123,12 @@ struct Command {
   std::function<Reply(const Invocation&, Account&, Output&)> run_account_;
   /** @brief An account command's checks of its arguments, before the account is opened; empty for none. */
   std::function<std::optional<Reply>(const Invocation&)> check_account_;
+  /**
+   * @brief What it does with the operator's file read, for a command that names the account but opens no account:
+   *   `run_on_config` (cli.hpp) reads the file once and takes the reply's environment from the broker. Set instead of
+   *   `run_` and `run_account_`, never with them.
+   */
+  std::function<Reply(const Invocation&, const ConfigSnapshot&, Output&)> run_config_;
 
   /**
    * @brief Adds an earlier or alternative path that still calls the command.
@@ -276,6 +283,19 @@ struct Command {
     env_ = "account";
     available_ = true;
     exits_ = ACCOUNT_EXITS;
+    return *this;
+  }
+
+  /**
+   * @brief Gives a command that names the account, but opens none, its code, which makes it available: it runs with
+   *   the operator's file read and its replies carry the account's environment. Its exit codes are its own.
+   * @param run What it does.
+   * @return The command.
+   */
+  Command& on_config(std::function<Reply(const Invocation&, const ConfigSnapshot&, Output&)> run) {
+    run_config_ = std::move(run);
+    env_ = "account";
+    available_ = true;
     return *this;
   }
 
