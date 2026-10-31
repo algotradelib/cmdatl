@@ -460,8 +460,10 @@ inline bool valid_reply(const json::object& object, const std::string& run) {
     const auto* outcome = object.if_contains("outcome");
     const auto* executions = object.if_contains("executions");
     const auto* owed = object.if_contains("owed_at_end");
-    return error == nullptr && outcome != nullptr && outcome->is_string() && executions != nullptr && executions->is_int64() &&
-      owed != nullptr && owed->is_array() && owed->as_array().empty();
+    // The driver exits 0 only for a clean run.
+    return error == nullptr && outcome != nullptr && outcome->is_string() && outcome->as_string() == "clean" &&
+      executions != nullptr && executions->is_int64() && executions->as_int64() >= 0 && owed != nullptr && owed->is_array() &&
+      owed->as_array().empty();
   }
   if (error == nullptr || !error->is_object()) {
     return false;
@@ -1163,9 +1165,9 @@ inline Reply relayed(const std::string& run, const Records& records, const State
   }
   if (reply.exit_ != Exit::OK && !reply.body_.contains("error")) {
     reply.body_["error"] = json::object{
-      {"code", state.run_error_.empty() ? "unknown.run_ended" : state.run_error_},
+      {"code", !state.run_error_.empty() ? state.run_error_ : state.state_ == "starting" ? "unknown.run_start" : "unknown.run_ended"},
       {"message", "the run is " + state.state_},
-      {"next", "cmdatl run status " + run},
+      {"next", state.state_ == "starting" ? "it may be trading: do not start it again; cmdatl run status " + run : "cmdatl run status " + run},
     };
   }
   reply.body_["result"] = state.state_ == "refused" ? "refused" : reply.exit_ == Exit::OK ? "ok" : reply.exit_ == Exit::UNKNOWN ? "unknown" : "failed";
