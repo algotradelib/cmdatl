@@ -3,7 +3,18 @@
 cmake_minimum_required(VERSION 3.20)
 project(cmdatl_driver LANGUAGES CXX)
 
-find_package(algotradelib CONFIG REQUIRED)
+# Only the algotradelib package cmdatl itself was built against, never another one CMake could find: the run's journal
+# and recovery must be the library cmdatl reads.
+if(NOT CMDATL_ALGOTRADELIB_DIR)
+  message(FATAL_ERROR "CMDATL_ALGOTRADELIB_DIR must name the algotradelib package cmdatl was built against")
+endif()
+set(algotradelib_DIR "${CMDATL_ALGOTRADELIB_DIR}" CACHE PATH "The algotradelib package cmdatl was built against" FORCE)
+find_package(algotradelib CONFIG REQUIRED NO_DEFAULT_PATH NO_CMAKE_FIND_ROOT_PATH)
+get_filename_component(cmdatl_found_package "${algotradelib_DIR}" REALPATH)
+get_filename_component(cmdatl_expected_package "${CMDATL_ALGOTRADELIB_DIR}" REALPATH)
+if(NOT cmdatl_found_package STREQUAL cmdatl_expected_package)
+  message(FATAL_ERROR "algotradelib was found in ${algotradelib_DIR}, not in ${CMDATL_ALGOTRADELIB_DIR}")
+endif()
 
 add_executable(driver main.cpp)
 target_compile_features(driver PRIVATE cxx_std_17)

@@ -392,7 +392,45 @@ struct Request {
   std::string struct_;
   /** @brief The indicators setting. */
   std::string indicators_;
+  /** @brief The algotradelib package directory the driver is built against: the one cmdatl was built against. */
+  std::string package_{CMDATL_ALGOTRADELIB_DIR};
 };
+
+/**
+ * @brief A path with its links resolved, or as given when it does not exist.
+ * @param path The path.
+ * @return The path.
+ */
+inline std::string real_path(const std::string& path) {
+  std::error_code ec;
+  const auto resolved = std::filesystem::canonical(path, ec);
+  return ec ? path : resolved.string();
+}
+
+/**
+ * @brief A variable's value in a CMake cache.
+ * @param cache The cache's text.
+ * @param name The variable.
+ * @return Its value, or nothing.
+ */
+inline std::optional<std::string> cache_value(const std::string& cache, const std::string& name) {
+  std::size_t start = 0;
+  while (start < cache.size()) {
+    auto end = cache.find('\n', start);
+    if (end == std::string::npos) {
+      end = cache.size();
+    }
+    const auto line = cache.substr(start, end - start);
+    if (line.compare(0, name.size() + 1, name + ":") == 0) {
+      const auto eq = line.find('=');
+      if (eq != std::string::npos) {
+        return line.substr(eq + 1);
+      }
+    }
+    start = end + 1;
+  }
+  return std::nullopt;
+}
 
 /**
  * @brief The last lines of a child's stderr, for a failure's message.
@@ -429,7 +467,17 @@ inline std::optional<Reply> build_driver(
   if (!root) {
     return error_reply(Exit::FAILED, "cache.unavailable", "neither XDG_CACHE_HOME nor HOME names an absolute directory");
   }
-  const std::string package = CMDATL_ALGOTRADELIB_DIR;
+  const std::string package = request.package_;
+  // The package the driver must be built against, checked before anything is built, copied or run.
+  std::error_code ec;
+  if (package.empty() || !std::filesystem::is_regular_file(std::filesystem::path(package) / "algotradelibConfig.cmake", ec)) {
+    return error_reply(
+      Exit::FAILED,
+      "build.failed",
+      "the algotradelib package cmdatl was built against is not there: " + (package.empty() ? std::string("(none)") : package),
+      "reinstall that algotradelib, or rebuild cmdatl against the one installed"
+    );
+  }
   const auto name = shape_name(
     request.program_, request.struct_, request.indicators_,
     [](const std::string& key) { return variable(key.c_str()); }, package
@@ -448,7 +496,6 @@ inline std::optional<Reply> build_driver(
   const auto environment = child_environment(own_environment());
   const auto src = shape / "src";
   const auto next = shape / "next";
-  std::error_code ec;
   remove_stale_temporaries(src);
   std::filesystem::remove_all(next, ec);
   if (make_private_dirs(next) != 0) {
@@ -512,11 +559,15 @@ inline std::optional<Reply> build_driver(
     return error_reply(Exit::FAILED, "build.failed", "cmake was not found on PATH; a run needs CMake and a C++17 compiler");
   }
   const auto build_dir = shape / "build";
+  // A cache configured for another package, or before the package was named this way, is configured again.
+  std::string cache;
+  if (read_file(build_dir / "CMakeCache.txt", cache) && cache_value(cache, "CMDATL_ALGOTRADELIB_DIR") != package) {
+    std::filesystem::remove_all(build_dir, ec);
+  }
   if (!std::filesystem::exists(build_dir / "CMakeCache.txt", ec)) {
-    std::vector<std::string> configure{*cmake, "-S", src.string(), "-B", build_dir.string(), "-DCMAKE_BUILD_TYPE=Release"};
-    if (!package.empty()) {
-      configure.push_back("-Dalgotradelib_DIR=" + package);
-    }
+    std::vector<std::string> configure{
+      *cmake, "-S", src.string(), "-B", build_dir.string(), "-DCMAKE_BUILD_TYPE=Release", "-DCMDATL_ALGOTRADELIB_DIR=" + package,
+    };
     const auto configured = run_child(configure, progress, &environment);
     if (configured.kind_ == ChildResult::Kind::INTERRUPTED) {
       return interrupted_reply();
@@ -534,6 +585,18 @@ inline std::optional<Reply> build_driver(
   if (built.kind_ != ChildResult::Kind::FINISHED || built.signaled_ || built.code_ != 0) {
     return atlc_failure(Exit::FAILED, "build.failed", "building the driver failed: " + tail_of(built), built,
                         "check the compiler and the algotradelib package " + package);
+  }
+  // The package the build used, as CMake recorded it (also after CMake configured again by itself).
+  cache.clear();
+  const auto used = read_file(build_dir / "CMakeCache.txt", cache) ? cache_value(cache, "algotradelib_DIR") : std::nullopt;
+  if (!used || real_path(*used) != real_path(package)) {
+    std::filesystem::remove_all(build_dir, ec);
+    return error_reply(
+      Exit::FAILED,
+      "build.failed",
+      "the driver was configured against " + used.value_or(std::string("no algotradelib")) + ", not " + package,
+      "run cmdatl run start again; the driver's build cache was cleared"
+    );
   }
   if (const int error = copy_driver(build_dir / "driver", run_dir)) {
     return error_reply(Exit::FAILED, "build.failed", "the driver could not be copied into the run's directory: " + std::string(std::strerror(error)));
