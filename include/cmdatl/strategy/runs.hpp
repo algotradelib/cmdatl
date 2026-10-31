@@ -531,12 +531,14 @@ inline Records read_records(const std::filesystem::path& dir, const std::string&
   } else if (replied.present_) {
     records.reply_damaged_ = true;
   }
-  for (const auto& [name, field] : {std::make_pair("pid", &records.pid_), std::make_pair("supervisor", &records.supervisor_)}) {
+  const auto read_pid = [&dir](const char* name, decltype(records.pid_)& field) {
     const auto text = read_bounded(dir / name, PID_RECORD);
     if (text.ok_) {
-      *field = pid_of(text.text_);
+      field = pid_of(text.text_);
     }
-  }
+  };
+  read_pid("pid", records.pid_);
+  read_pid("supervisor", records.supervisor_);
   ScopedFd events(open_lifted((dir / "events.jsonl").c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
   struct stat info{};
   if (events.get() >= 0 && ::fstat(events.get(), &info) == 0 && S_ISREG(info.st_mode)) {

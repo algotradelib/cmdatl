@@ -548,7 +548,7 @@ std::string dip_bars(int days, int extra_symbols = 0) {
       m = mp < 10 ? mp + 3 : mp - 9;
       y = yoe + era * 400 + (m <= 2 ? 1 : 0);
     }
-    char date[16];
+    char date[64];
     std::snprintf(date, sizeof date, "%04ld-%02ld-%02ld", y, m, d);
     char row[160];
     std::snprintf(row, sizeof row, ",%s,%ld,%ld,%ld,%ld,100000\n", date, open, std::max(open, close) + 300, std::min(open, close) - 300, close);
