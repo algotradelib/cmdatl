@@ -533,4 +533,359 @@ TEST_CASE("the stop file's writer lock: busy past its deadline, and replaced whi
   waiter.join();
   CHECK(outcome == static_cast<int>(runs::StopLock::Outcome::FAILED));
 }
+
+// --- Processes, against the real atlc and algotradelib ---
+
+namespace {
+
+/**
+ * @brief Daily bars of 005930 from 2024-01-02, date-only rows, a walk with a sharp dip every 23 days, so the
+ *   mean-reversion starter trades.
+ * @param days How many weekdays.
+ * @return The CSV.
+ */
+std::string dip_csv(int days) {
+  std::string out = "symbol,date,open,high,low,close,volume\n";
+  long close = 78000;
+  long day = 19724;  // 2024-01-02
+  for (int k = 0, made = 0; made < days; ++day) {
+    if ((day + 3) % 7 >= 5) {
+      continue;
+    }
+    const long open = close;
+    long step = ((k * 37) % 7 - 3) * 100;
+    if (k % 23 == 20) {
+      step = -5000;
+    }
+    if (k % 23 == 21 || k % 23 == 22) {
+      step = 2500;
+    }
+    close = std::max(1000L, open + step);
+    const long z = day + 719468;
+    const long era = z / 146097;
+    const long doe = z - era * 146097;
+    const long yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    const long doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    const long mp = (5 * doy + 2) / 153;
+    const long d = doy - (153 * mp + 2) / 5 + 1;
+    const long m = mp < 10 ? mp + 3 : mp - 9;
+    const long y = yoe + era * 400 + (m <= 2 ? 1 : 0);
+    char row[160];
+    std::snprintf(row, sizeof row, "005930,%04ld-%02ld-%02ld,%ld,%ld,%ld,%ld,100000\n", y, m, d, open, std::max(open, close) + 300,
+                  std::min(open, close) - 300, close);
+    out += row;
+    ++k;
+    ++made;
+  }
+  return out;
+}
+
+/** @brief The program, its specs and the build cache the process cases share. */
+struct Shared {
+  /** @brief Where they live. */
+  ScratchDir dir_;
+
+  Shared() {
+    spit(dir_.path() / "dip.atls", slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "templates" / "mean-reversion.atls"));
+    spit(dir_.path() / "short.csv", dip_csv(120));
+    spit(dir_.path() / "mid.csv", dip_csv(250));
+    for (const auto* name : {"short", "mid"}) {
+      spit(dir_.path() / (std::string(name) + ".toml"),
+           "strategy = \"dip.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"" + std::string(name) +
+             ".csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n"
+             "[replay]\ncash = 100000000\ncommission = 0.0005\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n");
+    }
+    std::filesystem::create_directories(dir_.path() / "cache");
+  }
+
+  /**
+   * @brief A spec's path.
+   * @param name `short` or `mid`.
+   * @return The path.
+   */
+  std::string spec(const std::string& name) const { return (dir_.path() / (name + ".toml")).string(); }
+
+  /**
+   * @brief The barrier file's path.
+   * @return The path.
+   */
+  std::filesystem::path barrier() const { return dir_.path() / "barrier"; }
+};
+
+/**
+ * @brief The shared fixture, made once per test process.
+ * @return It.
+ */
+Shared& shared() {
+  static Shared s;
+  return s;
+}
+
+/** @brief The operator's file: 005930 allowed with room for every order. */
+ConfigParts operator_parts() {
+  ConfigParts parts;
+  parts.limits_ = "symbols = [\"005930\"]\nposition = { \"005930\" = 100000 }\norder_value = 100000000000\ndaily_orders = 1000\n";
+  return parts;
+}
+
+/** @brief The real atlc, the library, the shared cache, a test-built driver and its barrier, for a case's length. */
+class Equipped {
+public:
+  /**
+   * @brief Sets the variables.
+   * @param atlc atlc's path.
+   * @param prefix The library prefix.
+   * @param on_order Whether the barrier holds only while an order rests.
+   */
+  Equipped(const std::string& atlc, const std::string& prefix, bool on_order = false)
+  : atlc_("CMDATL_ATLC", atlc),
+    prefix_("CMAKE_PREFIX_PATH", prefix),
+    cache_("XDG_CACHE_HOME", (shared().dir_.path() / "cache").string()),
+    flags_("CXXFLAGS", std::string("-DCMDATL_RUN_TEST_HOOKS")),
+    barrier_("CMDATL_TEST_BARRIER", shared().barrier().string()),
+    on_order_("CMDATL_TEST_BARRIER_ON_ORDER", on_order ? std::optional<std::string>("1") : std::nullopt) {}
+
+private:
+  ScopedVariable atlc_;
+  ScopedVariable prefix_;
+  ScopedVariable cache_;
+  ScopedVariable flags_;
+  ScopedVariable barrier_;
+  ScopedVariable on_order_;
+};
+
+/** @brief The real atlc and the library prefix, or nothing. */
+std::optional<std::pair<std::string, std::string>> equipment() {
+  const auto atlc = cmdatl::variable("CMDATL_TEST_ATLC");
+  const auto prefix = cmdatl::variable("CMDATL_TEST_PREFIX");
+  if (!atlc || !prefix) {
+    return std::nullopt;
+  }
+  return std::make_pair(*atlc, *prefix);
+}
+
+/**
+ * @brief Waits until a condition holds, at most `seconds`.
+ * @param condition The condition.
+ * @param seconds The bound.
+ * @return Whether it held.
+ */
+bool eventually(const std::function<bool()>& condition, int seconds = 60) {
+  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+  while (!condition()) {
+    if (std::chrono::steady_clock::now() > until) {
+      return false;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return true;
+}
+
+/**
+ * @brief Starts a run held at its first step by the barrier, and answers its id.
+ * @param fixture The fixture.
+ * @param spec The spec.
+ * @return The run's id.
+ */
+std::string start_held(const PaperFixture& fixture, const std::string& spec) {
+  spit(shared().barrier(), "");
+  const auto ran = fixture.json({"run", "start", spec});
+  INFO(ran.out_);
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  return std::string(reply_of(ran.out_).at("run").as_string());
+}
+
+/**
+ * @brief `run status` until the run's state is final.
+ * @param fixture The fixture.
+ * @param run The run's id.
+ * @return The last reply.
+ */
+json::object final_status(const PaperFixture& fixture, const std::string& run) {
+  json::object reply;
+  REQUIRE(eventually([&] {
+    reply = reply_of(fixture.json({"run", "status", run}).out_);
+    const std::string state(reply.at("state").as_string());
+    return state != "starting" && state != "running";
+  }, 120));
+  return reply;
+}
+
+/**
+ * @brief A run's directory.
+ * @param fixture The fixture.
+ * @param run The run's id.
+ * @return The directory.
+ */
+std::filesystem::path dir_of(const PaperFixture& fixture, const std::string& run) {
+  return fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001" / run;
+}
+
+}  // namespace
+
+TEST_CASE("run stop is acknowledged and the run ends; --withdraw cancels a resting limit", "[acceptance][runs]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const auto stop_file = [](const PaperFixture& fixture) { return fixture.dir() / "paper.stop"; };
+  {
+    const PaperFixture fixture(operator_parts());
+    const Equipped equipped(equip->first, equip->second);
+    fixture.arm();
+    const auto run = start_held(fixture, shared().spec("mid"));
+    Spawned stopper({"run", "stop", run, "--json"});
+    REQUIRE(eventually([&] { return slurp(stop_file(fixture)).find("quiesce " + run) != std::string::npos; }));
+    std::filesystem::remove(shared().barrier());
+    const int status = stopper.wait(60);
+    INFO(stopper.out());
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
+    const auto reply = reply_of(stopper.out());
+    CHECK(reply.at("state").as_string() == "stopped");
+    CHECK(reply.at("acknowledged").as_bool());
+    CHECK(reply.at("summary").as_object().at("stopped").as_string() == "operator");
+  }
+  {
+    const PaperFixture fixture(operator_parts());
+    const Equipped equipped(equip->first, equip->second, true);
+    fixture.arm();
+    const auto run = start_held(fixture, shared().spec("mid"));
+    // Held at the step after the first placement, while the limit rests.
+    REQUIRE(eventually([&] { return slurp(dir_of(fixture, run) / "events.jsonl").find("\"event\":\"placed\"") != std::string::npos; }));
+    Spawned stopper({"run", "stop", run, "--withdraw", "--json"});
+    REQUIRE(eventually([&] { return slurp(stop_file(fixture)).find("withdraw " + run) != std::string::npos; }));
+    std::filesystem::remove(shared().barrier());
+    const int status = stopper.wait(60);
+    INFO(stopper.out());
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
+    const auto reply = reply_of(stopper.out());
+    CHECK(reply.at("state").as_string() == "stopped");
+    CHECK(reply.at("summary").as_object().at("owed_at_end").as_array().empty());
+    CHECK(slurp(dir_of(fixture, run) / "events.jsonl").find("\"event\":\"canceled\"") != std::string::npos);
+  }
+}
+
+TEST_CASE("two runs of one operator file are each stopped, neither erasing the other's line", "[acceptance][runs]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const PaperFixture fixture(operator_parts());
+  const Equipped equipped(equip->first, equip->second);
+  fixture.arm();
+  const auto a = start_held(fixture, shared().spec("mid"));
+  const auto b = start_held(fixture, shared().spec("mid"));
+  const auto stop_file = fixture.dir() / "paper.stop";
+  Spawned stop_a({"run", "stop", a, "--withdraw", "--json"});
+  REQUIRE(eventually([&] { return slurp(stop_file).find("withdraw " + a) != std::string::npos; }));
+  Spawned stop_b({"run", "stop", b, "--json"});
+  REQUIRE(eventually([&] { return slurp(stop_file).find("quiesce " + b) != std::string::npos; }));
+  const auto both = slurp(stop_file);
+  CHECK(both.find("withdraw " + a + "\n") != std::string::npos);
+  CHECK(both.find("quiesce " + b + "\n") != std::string::npos);
+  std::filesystem::remove(shared().barrier());
+  for (auto* stopper : {&stop_a, &stop_b}) {
+    const int status = stopper->wait(60);
+    INFO(stopper->out());
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
+    CHECK(reply_of(stopper->out()).at("summary").as_object().at("stopped").as_string() == "operator");
+  }
+}
+
+TEST_CASE("run stop of a stopped driver ends unknown, of an ended run writes nothing, and from another operator file is refused", "[acceptance][runs]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const PaperFixture fixture(operator_parts());
+  const Equipped equipped(equip->first, equip->second);
+  fixture.arm();
+  {
+    const auto run = start_held(fixture, shared().spec("mid"));
+    const auto driver = std::stol(slurp(dir_of(fixture, run) / "pid"));
+    ::kill(static_cast<pid_t>(driver), SIGSTOP);
+    std::filesystem::remove(shared().barrier());
+    {
+      const ShortWait wait(std::chrono::milliseconds(2000));
+      const auto ran = fixture.json({"run", "stop", run});
+      CHECK(ran.exit_ == 4);
+      CHECK(code_of(ran.out_) == "unknown.run_stop");
+    }
+    ::kill(static_cast<pid_t>(driver), SIGCONT);
+    const auto final = final_status(fixture, run);
+    CHECK(final.at("state").as_string() == "ended");
+    CHECK(final.at("summary").as_object().at("stopped").as_string() == "operator");
+  }
+  std::filesystem::remove(fixture.dir() / "paper.stop");
+  const auto ended = fixture.json({"run", "start", shared().spec("short"), "--wait"});
+  REQUIRE(ended.exit_ == 0);
+  const auto run = std::string(reply_of(ended.out_).at("run").as_string());
+  const auto stopped = fixture.json({"run", "stop", run});
+  CHECK(stopped.exit_ == 0);
+  CHECK(reply_of(stopped.out_).at("state").as_string() == "ended");
+  CHECK(!std::filesystem::exists(fixture.dir() / "paper.stop"));
+  // A live run started from this operator file, stopped from another: refused, nothing written anywhere.
+  const auto live = start_held(fixture, shared().spec("mid"));
+  spit(fixture.dir() / "other.toml", slurp(fixture.config()));
+  {
+    const ScopedVariable other("CMDATL_CONFIG", (fixture.dir() / "other.toml").string());
+    const auto refused = fixture.json({"run", "stop", live});
+    CHECK(refused.exit_ == 2);
+    CHECK(code_of(refused.out_) == "usage.bad_value");
+  }
+  CHECK(!std::filesystem::exists(fixture.dir() / "paper.stop"));
+  CHECK(!std::filesystem::exists(fixture.dir() / "other.stop"));
+  std::filesystem::remove(shared().barrier());
+  CHECK(final_status(fixture, live).at("state").as_string() == "ended");
+}
+
+TEST_CASE("run log --follow prints each event once across a run's end, and Ctrl-C stops the watching, never the run", "[acceptance][runs]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const PaperFixture fixture(operator_parts());
+  const Equipped equipped(equip->first, equip->second);
+  fixture.arm();
+  {
+    const auto run = start_held(fixture, shared().spec("mid"));
+    Spawned follower({"run", "log", run, "--follow", "--json"});
+    const auto first = follower.line(false, 30);
+    REQUIRE(first);
+    CHECK(reply_of(*first).at("event").as_string() == "start");
+    std::filesystem::remove(shared().barrier());
+    const int status = follower.wait(120);
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
+    std::vector<std::string> emitted{"start"};
+    const auto rest = lines_of(follower.out());
+    REQUIRE(!rest.empty());
+    for (std::size_t k = 0; k + 1 < rest.size(); ++k) {
+      emitted.push_back(std::string(reply_of(rest[k]).at("event").as_string()));
+    }
+    CHECK(!reply_of(rest.back()).at("incomplete").as_bool());
+    std::vector<std::string> written;
+    for (const auto& line : lines_of(slurp(dir_of(fixture, run) / "events.jsonl"))) {
+      written.push_back(std::string(reply_of(line).at("event").as_string()));
+    }
+    CHECK(emitted == written);
+    CHECK(written.back() == "end");
+  }
+  {
+    const auto run = start_held(fixture, shared().spec("mid"));
+    Spawned follower({"run", "log", run, "--follow", "--json"});
+    REQUIRE(follower.line(false, 30));
+    follower.signal(SIGINT);
+    const int status = follower.wait(30);
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 130);
+    CHECK(reply_of(fixture.json({"run", "status", run}).out_).at("state").as_string() == "running");
+    std::filesystem::remove(shared().barrier());
+    CHECK(final_status(fixture, run).at("state").as_string() == "ended");
+  }
+}
 #endif
