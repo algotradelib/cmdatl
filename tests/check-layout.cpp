@@ -39,7 +39,8 @@ struct Directive {
 };
 
 // The #include directives of a source text. Spellings the lexer does not model are refused, so nothing is skipped:
-// a line splice (backslash-newline) anywhere, and a comment between `#`, `include` and the operand.
+// a line splice (backslash-newline), a carriage return, form feed or vertical tab, the digraph `%:` and a byte-order mark
+// anywhere, and a comment between `#`, `include` and the operand.
 std::vector<Directive> includes_of(const std::string& text) {
   std::vector<Directive> found;
   std::size_t line = 1;
@@ -48,7 +49,14 @@ std::vector<Directive> includes_of(const std::string& text) {
       ++line;
     } else if (text[i] == '\\' && (text.compare(i + 1, 1, "\n") == 0 || text.compare(i + 1, 2, "\r\n") == 0)) {
       found.push_back({line, "", "a line splice (backslash-newline), which the layout check does not read"});
+    } else if (text[i] == '\r' || text[i] == '\f' || text[i] == '\v') {
+      found.push_back({line, "", "a carriage return, form feed or vertical tab, which the layout check does not read"});
+    } else if (text.compare(i, 2, "%:") == 0) {
+      found.push_back({line, "", "the digraph %:, which the layout check does not read"});
     }
+  }
+  if (text.compare(0, 3, "\xEF\xBB\xBF") == 0) {
+    found.push_back({1, "", "a byte-order mark, which the layout check does not read"});
   }
   line = 1;
   bool line_start = true;
@@ -139,6 +147,11 @@ int self_test() {
     {"#/**/include \"a.hpp\"\n", {"!"}},
     {"#include /**/ <string>\n", {"!"}},
     {"#include", {""}},
+    {"%:include \"a.hpp\"\n", {"!"}},
+    {"\f#include \"a.hpp\"\n", {"!"}},
+    {"#\vinclude \"a.hpp\"\n", {"!"}},
+    {"int n = 0;\r#include \"a.hpp\"\n", {"!"}},
+    {"\xEF\xBB\xBF#include \"a.hpp\"\n", {"!"}},
   };
   int failures = 0;
   for (const auto& [source, expected] : cases) {
