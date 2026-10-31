@@ -143,4 +143,7 @@ if(CMDATL_BUILD_TESTS)
   # as skipped, without them.
   add_test(NAME test-acceptance COMMAND test-cli "[acceptance]")
   set_tests_properties(test-acceptance PROPERTIES SKIP_RETURN_CODE 4 TIMEOUT 3600)
+  # Every header in a module, including only the modules tests/check-layout.cpp's table allows.
+  add_executable(check-layout tests/check-layout.cpp)
+  add_test(NAME layout COMMAND check-layout ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
