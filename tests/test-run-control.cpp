@@ -38,6 +38,16 @@ namespace {
 const std::string RUN_A = "r00000000000a";
 const std::string RUN_B = "r00000000000b";
 
+/**
+ * @brief A file's bytes, or empty when it is not there yet.
+ * @param path The file.
+ * @return The bytes.
+ */
+std::string slurp_if(const std::filesystem::path& path) {
+  std::error_code ec;
+  return std::filesystem::exists(path, ec) ? slurp(path) : std::string();
+}
+
 /** @brief Nothing is finished. */
 bool none_finished(const std::string&) {
   return false;
@@ -539,6 +549,103 @@ TEST_CASE("the stop file's writer lock: busy past its deadline, and replaced whi
   CHECK(outcome == static_cast<int>(runs::StopLock::Outcome::FAILED));
 }
 
+TEST_CASE("run log --follow finishes a killed or crashed driver's run as unknown and incomplete, on evidence the driver is gone") {
+  const PaperFixture fixture;
+  {
+    // Killed: a start line and events, no end, a valid exit.json recording the signal, no reply.
+    const auto dir = make_run(fixture, RUN_A);
+    spit(dir / "lock", "");
+    spit(dir / "events.jsonl", start_line(RUN_A, dir / "lock") + "{\"event\":\"placed\",\"symbol\":\"005930\"}\n");
+    spit(dir / "exit.json", "{\"format\":1,\"pid\":7,\"exit\":null,\"signal\":9,\"spawned\":true,\"ended\":\"t\"}");
+    const auto ran = fixture.json({"run", "log", RUN_A, "--follow"});
+    CHECK(ran.exit_ == 4);
+    const auto lines = lines_of(ran.out_);
+    REQUIRE(lines.size() == 3);
+    const auto reply = reply_of(lines.back());
+    CHECK(reply.at("state").as_string() == "unknown");
+    CHECK(reply.at("incomplete").as_bool());
+  }
+  {
+    // A damaged exit.json, the lock still held by another process, and the driver's pid gone.
+    const auto dir = make_run(fixture, RUN_B);
+    cmdatl::OwnerLock lock(dir.string());
+    REQUIRE(lock.acquire(std::chrono::milliseconds(0), [] { return false; }, [](const std::string&) {}) == cmdatl::OwnerLock::Outcome::HELD);
+    spit(dir / "events.jsonl", start_line(RUN_B, dir / "lock"));
+    spit(dir / "pid", "999999\n");
+    spit(dir / "exit.json", "{\"format\":1}");
+    const auto ran = fixture.json({"run", "log", RUN_B, "--follow"});
+    CHECK(ran.exit_ == 4);
+    const auto reply = reply_of(lines_of(ran.out_).back());
+    CHECK(reply.at("state").as_string() == "unknown");
+    CHECK(reply.at("incomplete").as_bool());
+  }
+}
+
+TEST_CASE("run stop and Ctrl-C: before publication 130 with nothing written, after it exit 4 with the line kept") {
+  const ShortWait wait(std::chrono::milliseconds(5000));
+  const PaperFixture fixture;
+  const auto stop_file = fixture.dir() / "paper.stop";
+  {
+    const LiveRun live(fixture, RUN_A);
+    cmdatl::interruption = 1;
+    const auto ran = fixture.json({"run", "stop", RUN_A});
+    cmdatl::interruption = 0;
+    CHECK(ran.exit_ == 130);
+    CHECK(!std::filesystem::exists(stop_file));
+  }
+  {
+    const LiveRun live(fixture, RUN_B);
+    std::thread interrupter([&stop_file] {
+      const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      while (slurp_if(stop_file).find("quiesce " + RUN_B) == std::string::npos && std::chrono::steady_clock::now() < until) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+      cmdatl::interruption = 1;
+    });
+    const auto ran = fixture.json({"run", "stop", RUN_B});
+    interrupter.join();
+    cmdatl::interruption = 0;
+    CHECK(ran.exit_ == 4);
+    CHECK(code_of(ran.out_) == "unknown.run_stop");
+    CHECK(slurp(stop_file).find("quiesce " + RUN_B + "\n") != std::string::npos);
+  }
+  {
+    // The line already holds a stronger intent: the request stood from the read, so an interruption is exit 4.
+    const std::string run = "r00000000000c";
+    const LiveRun live(fixture, run);
+    spit(stop_file, "withdraw " + run + "\n");
+    cmdatl::interruption = 1;
+    const auto ran = fixture.json({"run", "stop", run});
+    cmdatl::interruption = 0;
+    CHECK(ran.exit_ == 4);
+    CHECK(slurp(stop_file) == "withdraw " + run + "\n");
+  }
+}
+
+TEST_CASE("run stop answers at once when the driver goes during its wait without a reply") {
+  const ShortWait wait(std::chrono::milliseconds(10000));
+  const PaperFixture fixture;
+  const LiveRun live(fixture, RUN_A);
+  auto writer = write_later(live.dir_ / "exit.json", "{\"format\":1,\"pid\":7,\"exit\":null,\"signal\":9,\"spawned\":true,\"ended\":\"t\"}",
+                            std::chrono::milliseconds(300));
+  const auto started = std::chrono::steady_clock::now();
+  const auto ran = fixture.json({"run", "stop", RUN_A});
+  writer.join();
+  CHECK(std::chrono::steady_clock::now() - started < std::chrono::seconds(5));
+  CHECK(ran.exit_ == 0);
+  CHECK(reply_of(ran.out_).at("run_exit").as_int64() == 4);
+}
+
+TEST_CASE("a finished run's hand-written line is retired whatever whitespace splits its words") {
+  const auto finished = [](const std::string& run) { return run == RUN_A; };
+  auto out = runs::rewrite_stop("withdraw " + RUN_A + "\r\n", RUN_B, StopIntent::QUIESCE, finished);
+  CHECK(*out.text_ == "quiesce " + RUN_B + "\n");
+  out = runs::rewrite_stop("withdraw\t" + RUN_A + "\n", RUN_B, StopIntent::QUIESCE, finished);
+  CHECK(*out.text_ == "quiesce " + RUN_B + "\n");
+  out = runs::rewrite_stop("withdraw " + RUN_A + " extra\n", RUN_B, StopIntent::QUIESCE, finished);
+  CHECK(*out.text_ == "withdraw " + RUN_A + " extra\nquiesce " + RUN_B + "\n");
+}
+
 // --- Processes, against the real atlc and algotradelib ---
 
 namespace {
@@ -892,5 +999,27 @@ TEST_CASE("run log --follow prints each event once across a run's end, and Ctrl-
     std::filesystem::remove(shared().barrier());
     CHECK(final_status(fixture, run).at("state").as_string() == "ended");
   }
+}
+TEST_CASE("run log --follow finishes incomplete when the driver is killed while it follows", "[acceptance][runs]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const PaperFixture fixture(operator_parts());
+  const Equipped equipped(equip->first, equip->second);
+  fixture.arm();
+  const auto run = start_held(fixture, shared().spec("mid"));
+  Spawned follower({"run", "log", run, "--follow", "--json"});
+  REQUIRE(follower.line(false, 30));
+  const auto driver = std::stol(slurp(dir_of(fixture, run) / "pid"));
+  ::kill(static_cast<pid_t>(driver), SIGKILL);
+  const int status = follower.wait(60);
+  INFO(follower.out());
+  REQUIRE(WIFEXITED(status));
+  CHECK(WEXITSTATUS(status) == 4);
+  const auto reply = reply_of(lines_of(follower.out()).back());
+  CHECK(reply.at("incomplete").as_bool());
+  CHECK(reply.at("state").as_string() == "unknown");
+  std::filesystem::remove(shared().barrier());
 }
 #endif
