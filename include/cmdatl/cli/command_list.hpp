@@ -78,7 +78,10 @@ inline std::vector<Command> command_list() {
     .returns("positions", "holdings: symbol, quantity, sellable, average_price, last_price, market_value")
     .returns("cash", "the paper market's cash after every fill's value, commission and tax")
     .returns("buying_power", "the broker's buying power")
-    .returns("owed", "orders the journal still waits on: symbol, side, quantity, journal_id, state, order_id, broker_status, next")
+    .returns(
+      "owed",
+      "orders the journal still waits on: symbol, side, quantity, journal_id, state, order_id, broker_status, next"
+    )
     .returns("orders_left_today", "placements the operator still allows today; null when the journal is damaged")
     .error("usage.bad_value")
     .on_account(
@@ -120,7 +123,9 @@ inline std::vector<Command> command_list() {
     .returns("paper", "the paper market: bars, start, cash, costs (commission and sell tax as decimal strings)")
     .returns("schema_version", "the version of cmdatl schema's format")
     .returns("modes", "the trading modes this build offers")
-    .runs([](const Invocation&, const Table&, Output&) { return env_reply(); }));
+    .runs([](const Invocation&, const Table&, Output&) {
+      return env_reply();
+    }));
 
   add(make_command({"order", "plan"}, "Trade", "what would be sent; gives a plan id")
     .example("cmdatl order plan 005930 --target 10 --limit 78200")
@@ -240,7 +245,9 @@ inline std::vector<Command> command_list() {
     .error("strategy.exists")
     .error("file.unwritable")
     .error("interrupted")
-    .runs([](const Invocation& invocation, const Table&, Output&) { return new_reply(invocation); }));
+    .runs([](const Invocation& invocation, const Table&, Output&) {
+      return new_reply(invocation);
+    }));
   add(make_command({"strategy", "backtest"}, "Strategy", "replay a run spec with atlc and report")
     .example("cmdatl strategy backtest dip.toml")
     .example("cmdatl strategy backtest dip.toml -P lookback=30 --fills fills.csv")
