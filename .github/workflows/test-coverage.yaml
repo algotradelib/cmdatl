@@ -85,26 +85,36 @@ jobs:
 
       # -g0: no debug information, which coverage does not need and which made GCC's coverage builds slower.
       # It goes in the Debug flags, since CMake puts those after the general ones.
-      - name: Configure
-        run: >
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMDATL_FETCH_DEPS=ON
-          -DCMAKE_PREFIX_PATH="${{ steps.atl.outputs.path }}"
-          -DCMAKE_CXX_FLAGS="--coverage" -DCMAKE_CXX_FLAGS_DEBUG="-O0 -g0" -DCMAKE_EXE_LINKER_FLAGS="--coverage"
-
-      - name: Build
-        run: cmake --build build
+      - uses: threeal/cmake-action@v2.1.0
+        with:
+          run-build: true
+          cxx-flags: --coverage
+          options: |
+            CMAKE_BUILD_TYPE=Debug
+            CMDATL_FETCH_DEPS=ON
+            "CMAKE_PREFIX_PATH=${{ steps.atl.outputs.path }}"
+            "CMAKE_CXX_FLAGS_DEBUG=-O0 -g0"
+            CMAKE_EXE_LINKER_FLAGS=--coverage
 
       # The acceptance cases run apart from ctest, as in cmake-check.yaml.
-      - name: Test
+      - uses: threeal/ctest-action@v1.1.0
+        env:
+          CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
+          CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
+          CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
+          XDG_CACHE_HOME: ${{ runner.temp }}/cache
+        with:
+          test-dir: build
+          args: --output-on-failure --no-tests=error -E ^test-acceptance$
+
+      - name: Acceptance
         shell: bash
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
           CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
           XDG_CACHE_HOME: ${{ runner.temp }}/cache
-        run: |
-          ctest --test-dir build --output-on-failure --no-tests=error -E '^test-acceptance$'
-          .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
+        run: .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
 
       - name: Coverage
         shell: bash

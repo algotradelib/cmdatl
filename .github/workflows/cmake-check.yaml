@@ -108,29 +108,35 @@ jobs:
 
       # Warnings are errors on Linux: cmdatl builds clean, and GCC is the compiler no one runs locally.
       # One GCC warning stays a warning: -Wterminate, from the toml++ assertion that throws inside toml++'s noexcept functions (plan/todo/cmdatl-toml-assert-noexcept.md).
-      - name: Configure
-        shell: bash
-        run: |
-          flags=""
-          if [ "$RUNNER_OS" = Linux ]; then flags="-Wall -Wextra -Werror -Wno-error=terminate"; fi
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMDATL_FETCH_DEPS=ON \
-            -DCMAKE_PREFIX_PATH="${{ steps.atl.outputs.path }}" -DCMAKE_CXX_FLAGS="$flags"
-
-      - name: Build
-        run: cmake --build build
+      - uses: threeal/cmake-action@v2.1.0
+        with:
+          run-build: true
+          cxx-flags: ${{ runner.os == 'Linux' && '-Wall -Wextra -Werror -Wno-error=terminate' || '' }}
+          options: |
+            CMAKE_BUILD_TYPE=Release
+            CMDATL_FETCH_DEPS=ON
+            "CMAKE_PREFIX_PATH=${{ steps.atl.outputs.path }}"
 
       # The acceptance cases run apart from ctest: its entry is one process, which passes when only some cases skip.
       # The script reads each case from a JUnit report and fails on any skipped or missing one.
-      - name: Test
+      - uses: threeal/ctest-action@v1.1.0
+        env:
+          CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
+          CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
+          CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
+          XDG_CACHE_HOME: ${{ runner.temp }}/cache
+        with:
+          test-dir: build
+          args: --output-on-failure --no-tests=error -E ^test-acceptance$
+
+      - name: Acceptance
         shell: bash
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
           CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
           XDG_CACHE_HOME: ${{ runner.temp }}/cache
-        run: |
-          ctest --test-dir build --output-on-failure --no-tests=error -E '^test-acceptance$'
-          .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
+        run: .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
 
       # The installed cmdatl, run from outside the checkout.
       - name: Install
