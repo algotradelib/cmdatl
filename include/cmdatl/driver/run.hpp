@@ -283,7 +283,8 @@ inline json::object order_event(const char* kind, const atl::OrderSnapshot& orde
  * @param cancelled Whether the boundary cancelled an order (`canceled`), or not (`expired`).
  * @param guard Where the events go.
  * @param whole Read the whole history even when nothing is open: the run's last scan does, so an order whose reply was
- *   lost and which finished before any scan saw it is still accounted (its events only come later).
+ *   lost and which finished before any scan saw it is still accounted (its events only come later, and are missing if
+ *   the run ends in an internal error before that scan).
  */
 template <typename Cancelled>
 void scan_orders(const atl::mock::Market& market, Ledger& ledger, Cancelled&& cancelled, Guard& guard, bool whole = false) {
@@ -565,6 +566,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
     wiring.universe_ = ids;
     wiring.limits_ = risk_limits(config, loaded.symbols_, config.limits_.daily_orders_);
     wiring.schedule_.tick_ = STEP;
+    // Stated, not inherited: the mock's calendar never changes during a run, so a read every six hours of market time.
+    wiring.schedule_.calendar_ = std::chrono::hours(6);
     wiring.schedule_.bars_ = STEP;
     wiring.schedule_.holdings_ = STEP;
     wiring.schedule_.working_orders_ = STEP;
