@@ -293,14 +293,15 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
  *   exit code that does not overstate what is known.
  * @param err stderr.
  * @param may_send Whether the command may have sent.
- * @param hint For a command that changes the account without sending, what to do; empty otherwise.
+ * @param hint What to read first: for a sending command, its own read (`cmdatl run status` for a run) or empty for
+ *   `cmdatl order reconcile`; for a command that changes the account without sending, its hint; empty otherwise.
  * @return 4 (unknown) for a command that may have sent or changed the account, 1 otherwise.
  */
 inline int report_lost_outcome(std::ostream& err, bool may_send, const std::string& hint = "") noexcept {
   try {
     if (may_send) {
       err << "cmdatl: the command ran but its reply could not be written; its outcome is unknown: ";
-      err << "run cmdatl order reconcile before anything else\n";
+      err << "run " << (hint.empty() ? std::string("cmdatl order reconcile") : hint) << " before anything else\n";
     } else if (!hint.empty()) {
       err << "cmdatl: the command changed the account but its reply could not be written; its outcome is unknown: ";
       err << hint << "\n";

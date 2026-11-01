@@ -800,7 +800,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
         {"code", code},
         {"message", message},
         {"next",
-          "the run's market ended with its process and no account was affected; its result is unknown: start a new run"},
+          std::string("the run's result is unknown; its market ended with its process and no account was affected: ") +
+            RUN_END},
       };
     }
     // The reply first, then the end event, then the lock released (when this scope ends).
@@ -814,7 +815,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
     if (trading) {
       return run_error(
         base, Exit::UNKNOWN, "unknown.internal", error.what(),
-        "the run's market ended with its process and no account was affected; its result is unknown: start a new run"
+        std::string("the run's result is unknown; its market ended with its process and no account was affected: ") +
+          RUN_END
       );
     }
     return run_error(base, Exit::FAILED, "internal.error", error.what());

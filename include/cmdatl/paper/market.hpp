@@ -46,7 +46,8 @@ class OutOfRange : public std::runtime_error {
 public:
   /** @brief Builds the error. */
   OutOfRange()
-  : std::runtime_error("the paper account's amounts left the supported range; move the account's directory aside") {}
+  : std::runtime_error("the paper account's amounts left the supported range; the operator moves its directory aside") {
+  }
 };
 
 /**

@@ -257,8 +257,8 @@ inline int make_private_dirs(const std::filesystem::path& dir) {
 inline Reply paper_state_reply(const std::string& what) {
   return error_reply(
     Exit::UNKNOWN, "unknown.paper_state", what + "; the paper account's state cannot be rebuilt",
-    "restore paper.jsonl from where it was, or move the account's whole directory aside to abandon this paper "
-    "account and start a fresh one"
+    "stop and report to the operator, who restores paper.jsonl from where it was, or moves the account's whole "
+    "directory aside to abandon this paper account"
   );
 }
 
@@ -271,8 +271,8 @@ inline Reply journal_missing_reply(const std::string& what) {
   return error_reply(
     Exit::UNKNOWN, "unknown.journal_missing",
     "the account's journal is " + what + " while other state exists; what was sent and today's count are unknown",
-    "the operator reads the broker's order list and holdings, then restores the journal (moving the whole "
-    "directory aside starts the account afresh and forgets any order the broker still holds)"
+    "stop and report to the operator, who reads the broker's order list and holdings, then restores the journal "
+    "(moving the whole directory aside starts the account afresh and forgets any order the broker still holds)"
   );
 }
 
@@ -284,7 +284,7 @@ inline Reply lock_lost_reply() {
   return error_reply(
     Exit::UNKNOWN, "unknown.lock_lost",
     "the account's lock file was replaced while this command held it; it wrote nothing more",
-    "find what replaced the lock file and stop it, then run cmdatl status"
+    "stop and report to the operator, who finds what replaced the lock file and stops it"
   );
 }
 

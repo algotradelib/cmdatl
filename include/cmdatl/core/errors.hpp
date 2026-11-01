@@ -19,6 +19,10 @@ struct ErrorSpec {
   std::string next_;
 };
 
+/** @brief What a run whose outcome is unknown tells its caller to do: the operator decides whether another starts. */
+inline constexpr const char* RUN_END =
+  "report run_exit and run_error to the operator, and start another run only when asked";
+
 /**
  * @brief Every error code cmdatl answers with.
  * @return The catalog.
@@ -55,15 +59,15 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"state.unavailable", Exit::FAILED, false, "set XDG_STATE_HOME or HOME, and check the account's directory"},
     {"busy.locked", Exit::FAILED, true, "another command holds the account: run it again when it is free"},
     {"unknown.lock_lost", Exit::UNKNOWN, false,
-      "the account's lock file was replaced: find what replaced it, then cmdatl status"},
+      "the account's lock file was replaced: stop and report to the operator, who finds what replaced it"},
     {"unknown.journal_missing", Exit::UNKNOWN, false,
-      "restore the journal from where it was; on paper, keep the account's directory for inspection and move it aside, which abandons that paper market with it"},
+      "stop and report to the operator, who restores the journal, or on paper keeps the account's directory for inspection and moves it aside, abandoning that paper market"},
     {"unknown.journal_damaged", Exit::UNKNOWN, false,
-      "restore the journal from where it was; on paper, keep the account's directory for inspection and move it aside, which abandons that paper market with it"},
+      "stop and report to the operator, who restores the journal, or on paper keeps the account's directory for inspection and moves it aside, abandoning that paper market"},
     {"journal.unopened", Exit::FAILED, false, "check the account's directory and its permissions"},
     {"paper.data", Exit::FAILED, false, "fix the paper bars file the operator's file names"},
     {"unknown.paper_state", Exit::UNKNOWN, false,
-      "restore paper.jsonl, or move the account's directory aside to start a fresh paper account"},
+      "stop and report to the operator, who restores paper.jsonl or moves the account's directory aside, abandoning that paper account"},
     {"quote.no_data", Exit::FAILED, false, "quote a symbol the paper bars have; cmdatl env shows the bars file"},
     {"clock.backwards", Exit::FAILED, false, "the clock only moves forward: cmdatl clock shows where it stands"},
     {"clock.past_data", Exit::FAILED, false, "the paper data ends there: cmdatl clock shows where"},
@@ -71,10 +75,12 @@ inline const std::vector<ErrorSpec>& error_catalog() {
       "cmdatl clock shows where the clock stands; do not repeat the advance before reading it"},
     {"refused.symbol_not_allowed", Exit::REFUSED, false, "cmdatl env shows the operator's limits.symbols"},
     {"refused.position_limit", Exit::REFUSED, false, "cmdatl env shows the operator's limits.position"},
-    {"refused.not_armed", Exit::REFUSED, true, "the operator creates the armed file cmdatl env names"},
-    {"refused.daily_order_limit", Exit::REFUSED, true,
-      "cmdatl env shows limits.daily_orders; the count starts again on the next KST date"},
-    {"refused.order_value", Exit::REFUSED, false, "cmdatl env shows limits.order_value; plan a smaller change"},
+    {"refused.not_armed", Exit::REFUSED, false,
+      "the armed file cmdatl env names is missing: only the operator creates it; ask the operator"},
+    {"refused.daily_order_limit", Exit::REFUSED, false,
+      "cmdatl env shows limits.daily_orders: more orders today are the operator's to allow; ask the operator"},
+    {"refused.order_value", Exit::REFUSED, false,
+      "cmdatl env shows limits.order_value: a larger order is the operator's to allow; ask the operator"},
     {"refused.no_plan", Exit::REFUSED, false, "cmdatl order plan gives a plan id"},
     {"refused.plan_used", Exit::REFUSED, false, "a plan sends once: cmdatl order plan again"},
     {"refused.stale_plan", Exit::REFUSED, false, "the account moved or the plan lapsed: cmdatl order plan again"},
@@ -133,26 +139,36 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"cache.unavailable", Exit::FAILED, false, "set XDG_CACHE_HOME or HOME to a writable absolute directory"},
     {"unknown.run_start", Exit::UNKNOWN, false, "the run may be trading: cmdatl run status RUN; do not start it again"},
     {"unknown.run_ended", Exit::UNKNOWN, false,
-      "the run ended without a reply: its market ended with it and no account was affected; start a new run"},
+      std::string("the run ended without a reply; its market ended with it and no account was affected: ") + RUN_END},
     {"unknown.owed_at_end", Exit::UNKNOWN, false,
-      "the run's market ended with its process and no account was affected; its result is unknown: start a new run"},
+      std::string("the run's result is unknown; its market ended with its process and no account was affected: ") +
+        RUN_END},
     {"unknown.recovery_halted", Exit::UNKNOWN, false,
-      "the run's journal halted recovery; nothing was started: start a new run"},
+      std::string("the run's journal halted recovery and nothing was started: ") + RUN_END},
     {"unknown.closing_incomplete", Exit::UNKNOWN, false,
-      "the run could not confirm its withdrawal; its market ended with it and no account was affected: start a new run"},
+      std::string("the run could not confirm its withdrawal; its market ended with it and no account was affected: ") +
+        RUN_END},
     {"unknown.loop_abandoned", Exit::UNKNOWN, false,
-      "the run gave up after repeated failed reads; its market ended with it and no account was affected: start a new run"},
+      std::string(
+        "the run gave up after repeated failed reads; its market ended with it and no account was affected: "
+      ) +
+        RUN_END},
     {"unknown.local_failure", Exit::UNKNOWN, false,
-      "a journal write failed during the run; its market ended with it and no account was affected: start a new run"},
+      std::string("a journal write failed during the run; its market ended with it and no account was affected: ") +
+        RUN_END},
     {"unknown.owed_order", Exit::UNKNOWN, false,
-      "the run stopped placing on an order nobody could account for; its market ended with it: start a new run"},
+      std::string("the run stopped placing on an order nobody could account for; its market ended with it: ") +
+        RUN_END},
     {"unknown.market_halted", Exit::UNKNOWN, false,
-      "the mock market could not cost or record a fill; its market ended with it and no account was affected: start a new run"},
+      std::string(
+        "the mock market could not cost or record a fill; its market ended with it and no account was affected: "
+      ) +
+        RUN_END},
     {"unknown.run_stopping", Exit::UNKNOWN, false, "the run stops placing: cmdatl run status RUN shows when it ended"},
     {"unknown.run_stop", Exit::UNKNOWN, false,
-      "it may still be trading: cmdatl run status RUN; removing the armed file stops every run"},
+      "it may still be trading: cmdatl run status RUN; the operator can remove the armed file, which stops every run"},
     {"refused.stop_file_full", Exit::REFUSED, false,
-      "the stop file is full of other runs' lines: wait for them to end, or remove the armed file, which stops every run"},
+      "the stop was not written and the run still trades: the stop file is full of other runs' lines; wait for them to end, or ask the operator, who can remove the armed file, which stops every run"},
     {"run.log_replaced", Exit::FAILED, false,
       "the run's event log was replaced or cut while it was read: cmdatl run status RUN"},
     {"run.log_unreadable", Exit::FAILED, false,
