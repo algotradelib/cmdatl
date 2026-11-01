@@ -914,9 +914,11 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
   {
     // A program with session legs: atlc asks for replay.fill = "legs", and with it run start gives the driver's own
     // refusal before anything is built, instead of a spec refusal that sends the agent back. The account is not armed,
-    // so the refusal is shown to come before the operator's checks.
+    // so the refusal is shown to come before the operator's checks; the case's own cache shows that nothing was built.
     const PaperFixture fixture(run_operator());
     const RunEquipped equipped(equipment->first, equipment->second);
+    const ScratchDir cache;
+    const ScopedVariable own_cache("XDG_CACHE_HOME", cache.path().string());
     spit(fixture.dir() / "legs.atls", "universe {}\non_open {\n  target(10);\n}\non_close {\n  target(0);\n}\n");
     spit(fixture.dir() / "bars.csv", dip_bars(60));
     const std::string spec =
@@ -928,6 +930,8 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
     INFO(asked.out_);
     CHECK(asked.exit_ == 2);
     CHECK(code_of(asked.out_) == "spec.invalid");
+    const auto asked_message = std::string(reply_of(asked.out_).at("error").as_object().at("message").as_string());
+    CHECK(asked_message.find("replay.fill") != std::string::npos);
     spit(fixture.dir() / "legs.toml", spec + "fill = \"legs\"\n" + orders);
     const auto legs = fixture.json({"run", "start", (fixture.dir() / "legs.toml").string()});
     INFO(legs.out_);
@@ -939,12 +943,7 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
     CHECK(reply.at("error").as_object().at("next").as_string() == cmdatl::LEGS_UNSUPPORTED_NEXT);
     const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
     CHECK((!std::filesystem::exists(runs_dir) || std::filesystem::is_empty(runs_dir)));
-    const auto drivers = shared().dir_.path() / "cache" / "cmdatl" / "drivers";
-    if (std::filesystem::exists(drivers)) {
-      for (const auto& entry : std::filesystem::directory_iterator(drivers)) {
-        CHECK(entry.path().filename().string().rfind("Legs", 0) != 0);
-      }
-    }
+    CHECK(!std::filesystem::exists(cache.path() / "cmdatl" / "drivers"));
     // atlc's rule the refusal rests on: it takes replay.fill = "legs" only for a program with session legs.
     spit(fixture.dir() / "plain.atls", "on_bar {\n  target(10);\n}\n");
     spit(
@@ -955,6 +954,8 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
     INFO(plain.out_);
     CHECK(plain.exit_ == 2);
     CHECK(code_of(plain.out_) == "spec.invalid");
+    const auto plain_message = std::string(reply_of(plain.out_).at("error").as_object().at("message").as_string());
+    CHECK(plain_message.find("replay.fill") != std::string::npos);
   }
   if (const auto examples = cmdatl::variable("CMDATL_TEST_ATLC_EXAMPLES")) {
     // A program with on_fill: the build succeeds and the driver refuses it, exit 5, relayed.

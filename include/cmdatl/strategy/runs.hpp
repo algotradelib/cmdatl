@@ -1326,12 +1326,12 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
     }
     // atlc takes replay.fill = "legs" only for a program with on_open or on_close, which no run trades: the driver's
     // own refusal, given before anything is built, instead of a spec refusal that sends the agent back to atlc's.
-    if (atlc_value(fields.args_, "replay.fill") == std::optional<std::string>("legs")) {
+    if (atlc_value(fields.args_, "replay.fill").value_or("") == "legs") {
       auto reply = error_reply(Exit::PROGRAM, "program.live_unsupported", LEGS_UNSUPPORTED, LEGS_UNSUPPORTED_NEXT);
       reply.body_["unsupported"] = "legs";
       return reply;
     }
-    // The other early refusals, with nothing built; the driver checks each again, and its checks are the ones that count.
+    // The other early refusals, with nothing built; the driver checks each again, and its checks are what count.
     if (const auto refusal = spec_refusal(fields.args_)) {
       auto reply = error_reply(Exit::USAGE, "spec.invalid", refusal->second, "fix the run spec");
       reply.body_["key"] = refusal->first;
