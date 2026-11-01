@@ -12,9 +12,6 @@ on:
       - 'templates/**'
       - 'tools/**'
       - 'driver/**'
-      - 'README.md'
-      - 'docs/**'
-      - 'skills/**'
       - '.github/scripts/**'
       - '.github/workflows/test-coverage.yaml'
   pull_request:
@@ -27,9 +24,6 @@ on:
       - 'templates/**'
       - 'tools/**'
       - 'driver/**'
-      - 'README.md'
-      - 'docs/**'
-      - 'skills/**'
       - '.github/scripts/**'
       - '.github/workflows/test-coverage.yaml'
 

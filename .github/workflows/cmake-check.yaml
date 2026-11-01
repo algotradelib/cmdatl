@@ -11,9 +11,6 @@ on:
       - 'templates/**'
       - 'tools/**'
       - 'driver/**'
-      - 'README.md'
-      - 'docs/**'
-      - 'skills/**'
       - '.github/scripts/**'
       - '.github/workflows/cmake-check.yaml'
   pull_request:
@@ -26,9 +23,6 @@ on:
       - 'templates/**'
       - 'tools/**'
       - 'driver/**'
-      - 'README.md'
-      - 'docs/**'
-      - 'skills/**'
       - '.github/scripts/**'
       - '.github/workflows/cmake-check.yaml'
 
