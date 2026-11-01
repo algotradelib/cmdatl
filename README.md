@@ -10,19 +10,19 @@ With [algotradelib](https://github.com/algotradelib/algotradelib) alone you writ
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
 
 ```sh
-cmdatl strategy new dip --template mean-reversion      # dip.atls and dip.toml to start from
-cmdatl strategy backtest dip.toml -P lookback=30       # atlc builds and replays it; the report as JSON
-cmdatl status                                          # the account in one read
-cmdatl run start dip.toml                              # a run on its own mock market, in the background
-cmdatl run status                                      # its state, and its summary once it ended
+cmdatl strategy new dip --template mean-reversion # dip.atls and dip.toml to start from
+cmdatl strategy backtest dip.toml -P lookback=30 # atlc builds and replays it; the report as JSON
+cmdatl status # the account in one read
+cmdatl run start dip.toml # a run on its own mock market, in the background
+cmdatl run status # its state, and its summary once it ended
 ```
 
 An agent plans an order, then places that plan:
 
 ```sh
-cmdatl order plan 005930 --target 10 --limit 78200     # sends nothing; replies with a plan id
+cmdatl order plan 005930 --target 10 --limit 78200 # sends nothing; replies with a plan id
 cmdatl order place p9cc4b94da4
-cmdatl account --value cash                            # one value, nothing else
+cmdatl account --value cash # one value, nothing else
 ```
 
 How cmdatl's parts use algotradelib's modules and atlc:
@@ -55,24 +55,24 @@ A paper account trades stored daily bars, not a broker: nothing reaches a networ
 The operator describes it in a TOML file named by `CMDATL_CONFIG`, never by an argument; one account per file.
 
 ```toml
-atlc = "/opt/atlc/bin/atlc"           # optional: atlc, between CMDATL_ATLC and PATH
+atlc = "/opt/atlc/bin/atlc" # optional: atlc, between CMDATL_ATLC and PATH
 
 [account]
-broker = "paper"                      # the only broker of this version
-number = "paper-0001"                 # names the account's state directory
+broker = "paper" # the only broker of this version
+number = "paper-0001" # names the account's state directory
 
 [limits]
 symbols = ["005930", "000660"]
 position = { "005930" = 100, "000660" = 20 }
-order_value = 5000000                 # KRW, one order
-daily_orders = 3                      # placements per KST date
-collar = 0.05                         # optional, at most 0.30
-phases = ["open"]                     # optional: pre_open, open, post_close
+order_value = 5000000 # KRW, one order
+daily_orders = 3 # placements per KST date
+collar = 0.05 # optional, at most 0.30
+phases = ["open"] # optional: pre_open, open, post_close
 
 [paper]
-bars = "bars.csv"                     # symbol,date,open,high,low,close,volume, beside this file
+bars = "bars.csv" # symbol,date,open,high,low,close,volume, beside this file
 cash = 100000000
-start = "2024-03-25T09:30"            # KST, at or after the first date's close
+start = "2024-03-25T09:30" # KST, at or after the first date's close
 ```
 
 - Every key is checked: an unknown key, a value of another type or out of range is refused with the file, the line and the column (`config.invalid`); `cmdatl env` shows what was read.
@@ -83,11 +83,11 @@ start = "2024-03-25T09:30"            # KST, at or after the first date's close
   The agent runs as the operator's own user, so the file is advisory until a separate daemon owns the account.
 
 ```sh
-cmdatl status                                          # time, phase, readiness, positions, cash, owed and working orders, quotes
-cmdatl quote 005930 000660                             # last price, band, and whether an order would pass the first gates now
-cmdatl account --symbol 005930                         # positions, cash, buying power, owed orders, orders left today
-cmdatl order list                                      # working orders
-cmdatl clock advance --next-open                       # the paper clock moves only when told; resting orders fill or expire
+cmdatl status # time, phase, readiness, positions, cash, owed and working orders, quotes
+cmdatl quote 005930 000660 # last price, band, and whether an order would pass the first gates now
+cmdatl account --symbol 005930 # positions, cash, buying power, owed orders, orders left today
+cmdatl order list # working orders
+cmdatl clock advance --next-open # the paper clock moves only when told; resting orders fill or expire
 cmdatl clock advance --minutes 30
 ```
 
@@ -105,10 +105,10 @@ cmdatl clock advance --minutes 30
 An agent moves a position to a target in two steps, a plan and its placement, and nothing places or cancels except through them.
 
 ```sh
-cmdatl order plan 005930 --target 10 --limit 78200     # what would be sent; a plan id
-cmdatl order place p9cc4b94da4                         # sends that plan, if nothing moved since
-cmdatl order cancel 005930                             # withdraws every working order on 005930; never places
-cmdatl order reconcile                                 # records fills from holdings for every owed order; sends nothing
+cmdatl order plan 005930 --target 10 --limit 78200 # what would be sent; a plan id
+cmdatl order place p9cc4b94da4 # sends that plan, if nothing moved since
+cmdatl order cancel 005930 # withdraws every working order on 005930; never places
+cmdatl order reconcile # records fills from holdings for every owed order; sends nothing
 cmdatl order reconcile 005930
 cmdatl order release 005930 --reason "read the order list and holdings"
 ```
@@ -136,12 +136,12 @@ cmdatl order release 005930 --reason "read the order list and holdings"
 A run trades a strategy through algotradelib's live runner, the code that would trade a broker's account, on a mock market built from the run spec's data.
 
 ```sh
-cmdatl run start dip.toml                              # builds the program once, starts the run, answers when it trades
-cmdatl run start dip.toml -P lookback=30 --wait        # waits for the end and answers with the summary
-cmdatl run status                                      # the latest run's state, and its summary once it ended
+cmdatl run start dip.toml # builds the program once, starts the run, answers when it trades
+cmdatl run start dip.toml -P lookback=30 --wait # waits for the end and answers with the summary
+cmdatl run status # the latest run's state, and its summary once it ended
 cmdatl run status r3f9c0e12ab45
-cmdatl run log --follow                                # each event as the run writes it, until its end
-cmdatl run stop --withdraw                             # stop placing and cancel what rests, then wait for the run's end
+cmdatl run log --follow # each event as the run writes it, until its end
+cmdatl run stop --withdraw # stop placing and cancel what rests, then wait for the run's end
 ```
 
 - A run's market is the library's mock broker, inside the run's own process: each run is a fresh market with its own journal, and nothing is shared with the paper account above or with another run.
@@ -185,8 +185,8 @@ cmdatl run stop --withdraw                             # stop placing and cancel
 Two guides teach cmdatl to an AI agent: the agent guide (reading the account, the order rails, exit codes, runs) and the strategy guide (atls, run specs, backtests, runs).
 
 ```sh
-cmdatl guide agent                                     # the guide of this binary
-cmdatl guide strategy --format text                    # bare text, also through a pipe
+cmdatl guide agent # the guide of this binary
+cmdatl guide strategy --format text # bare text, also through a pipe
 ```
 
 - They are the same text as the Agent Skills in `skills/` (`cmdatl-agent` and `cmdatl-strategy`), built into the binary from those files.
