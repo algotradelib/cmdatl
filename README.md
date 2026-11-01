@@ -149,7 +149,8 @@ cmdatl run stop --withdraw # stop placing and cancel what rests, then wait for t
 - The run spec describes the market, exactly as `cmdatl strategy backtest` replays it: the bars, `[replay] cash`, the costs, the instruments.
   The operator's file describes what may be placed: `limits.symbols`, the position caps (a run with several symbols gets the smallest of their caps), `order_value`, `daily_orders` (per run, per 24 hours of market time), `order_type`, `collar` and `phases`; nothing in a spec loosens them.
 - A run needs `[replay] market = "kr"`, daily bars from a file (not a store), `[orders] type = "limit"` with an `offset` within `limits.collar`, symbols in `limits.symbols`, and the armed file: each missing one is refused before anything is built.
-  It also needs a program without `on_fill` or session legs, a warm-up of at most 10,000 bars, and daily bars: those are refused by the run itself, after the program is built and before anything is placed.
+  It also needs a program without `on_fill`, a warm-up of at most 10,000 bars, and daily bars: those are refused by the run itself, after the program is built and before anything is placed.
+  A program with session legs (`on_open`, `on_close`) cannot run either: atlc asks for `replay.fill = "legs"`, and with it `run start` answers `program.live_unsupported` before anything is built.
   Every refusal says what to do in `error.next`.
 - Every placement is checked once more as the last step before the market: the armed file, a limit inside the collar of the last price, and a permitted phase, closing orders included.
   Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.

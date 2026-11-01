@@ -42,6 +42,14 @@ inline std::optional<std::string> atlc_value(const std::vector<std::string>& arg
   return found;
 }
 
+/** @brief Why a run refuses a program with session legs: one wording for `run start` and the driver. */
+inline constexpr const char* LEGS_UNSUPPORTED =
+  "the program has on_open/on_close (session legs), which no live source delivers";
+
+/** @brief What to do with a program with session legs. */
+inline constexpr const char* LEGS_UNSUPPORTED_NEXT =
+  "run it with cmdatl strategy backtest; a run takes programs without session legs";
+
 /**
  * @brief Why a run spec's market settings are refused before anything is loaded, or nothing: the market `kr`, no store,
  *   no short sales, no session legs.

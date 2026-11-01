@@ -365,9 +365,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
   // Row 2: session legs have no live source.
   if (Program::atls_legs) {
     return run_error(
-      base, Exit::PROGRAM, "program.live_unsupported",
-      "the program has on_open/on_close (session legs), which no live source delivers",
-      "run it with cmdatl strategy backtest; a run takes programs without session legs", {{"unsupported", "legs"}}
+      base, Exit::PROGRAM, "program.live_unsupported", LEGS_UNSUPPORTED, LEGS_UNSUPPORTED_NEXT,
+      {{"unsupported", "legs"}}
     );
   }
   // Row 3: the market's settings.

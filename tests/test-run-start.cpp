@@ -911,6 +911,51 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
     CHECK(other.exit_ == 3);
     CHECK(code_of(other.out_) == "refused.symbol_not_allowed");
   }
+  {
+    // A program with session legs: atlc asks for replay.fill = "legs", and with it run start gives the driver's own
+    // refusal before anything is built, instead of a spec refusal that sends the agent back. The account is not armed,
+    // so the refusal is shown to come before the operator's checks.
+    const PaperFixture fixture(run_operator());
+    const RunEquipped equipped(equipment->first, equipment->second);
+    spit(fixture.dir() / "legs.atls", "universe {}\non_open {\n  target(10);\n}\non_close {\n  target(0);\n}\n");
+    spit(fixture.dir() / "bars.csv", dip_bars(60));
+    const std::string spec =
+      "strategy = \"legs.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\n"
+      "time = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n[replay]\nmarket = \"kr\"\n";
+    const std::string orders = "\n[orders]\ntype = \"limit\"\noffset = 0.01\n";
+    spit(fixture.dir() / "legs.toml", spec + orders);
+    const auto asked = fixture.json({"run", "start", (fixture.dir() / "legs.toml").string()});
+    INFO(asked.out_);
+    CHECK(asked.exit_ == 2);
+    CHECK(code_of(asked.out_) == "spec.invalid");
+    spit(fixture.dir() / "legs.toml", spec + "fill = \"legs\"\n" + orders);
+    const auto legs = fixture.json({"run", "start", (fixture.dir() / "legs.toml").string()});
+    INFO(legs.out_);
+    CHECK(legs.exit_ == 5);
+    CHECK(code_of(legs.out_) == "program.live_unsupported");
+    const auto reply = reply_of(legs.out_);
+    CHECK(reply.at("unsupported").as_string() == "legs");
+    CHECK(reply.at("error").as_object().at("message").as_string() == cmdatl::LEGS_UNSUPPORTED);
+    CHECK(reply.at("error").as_object().at("next").as_string() == cmdatl::LEGS_UNSUPPORTED_NEXT);
+    const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
+    CHECK((!std::filesystem::exists(runs_dir) || std::filesystem::is_empty(runs_dir)));
+    const auto drivers = shared().dir_.path() / "cache" / "cmdatl" / "drivers";
+    if (std::filesystem::exists(drivers)) {
+      for (const auto& entry : std::filesystem::directory_iterator(drivers)) {
+        CHECK(entry.path().filename().string().rfind("Legs", 0) != 0);
+      }
+    }
+    // atlc's rule the refusal rests on: it takes replay.fill = "legs" only for a program with session legs.
+    spit(fixture.dir() / "plain.atls", "on_bar {\n  target(10);\n}\n");
+    spit(
+      fixture.dir() / "plain.toml",
+      "strategy = \"plain.atls\"\n" + spec.substr(spec.find('\n')) + "fill = \"legs\"\n" + orders
+    );
+    const auto plain = fixture.json({"run", "start", (fixture.dir() / "plain.toml").string()});
+    INFO(plain.out_);
+    CHECK(plain.exit_ == 2);
+    CHECK(code_of(plain.out_) == "spec.invalid");
+  }
   if (const auto examples = cmdatl::variable("CMDATL_TEST_ATLC_EXAMPLES")) {
     // A program with on_fill: the build succeeds and the driver refuses it, exit 5, relayed.
     const PaperFixture fixture(run_operator());

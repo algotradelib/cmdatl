@@ -65,7 +65,8 @@ offset = 0.01 # a buy's limit 1 % above the price, a sell's 1 % below, inside th
 
 - A run also needs bars from a file and the operator's armed file; each missing condition is refused before anything is built, with what to do in `error.next`.
   The armed file is the operator's: never create, remove or edit it or the operator's file; on `refused.not_armed`, ask.
-- After the build, a run refuses a program with `on_fill` or session legs (`on_open`, `on_close`) or a warm-up above 10,000 bars (exit 5, `program.live_unsupported`), and bars that are not daily (`unsupported.interval`).
+- A run refuses a program with session legs (`on_open`, `on_close`) before the build, once the spec sets `replay.fill = "legs"` as atlc asks (exit 5, `program.live_unsupported`): backtest such a program instead.
+- After the build, a run refuses a program with `on_fill` or a warm-up above 10,000 bars (exit 5, `program.live_unsupported`), and bars that are not daily (`unsupported.interval`).
 - Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.
 - `cmdatl run start NAME.toml --wait` answers with the summary (`executions`, `commission_paid`, `closing_equity`, `holdings_at_end`); without `--wait`, `cmdatl run status` and `cmdatl run log` show it.
   Starting, watching and stopping runs, and every exit code: the agent guide (`cmdatl guide agent`).
