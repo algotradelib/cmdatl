@@ -277,11 +277,23 @@ inline std::vector<Command> command_list() {
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return backtest_reply(invocation, output);
     }));
-  add(make_command({"strategy", "reference"}, "Strategy", "the atls language and its built-ins")
+  add(make_command({"strategy", "reference"}, "Strategy", "the atls language reference, from the atlc cmdatl runs")
     .example("cmdatl strategy reference")
-    .example("cmdatl strategy reference indicators")
-    .arg("TOPIC", "a chapter", false)
-    .returns("text", "the reference"));
+    .example("cmdatl strategy reference builtins")
+    .arg("TOPIC", "a chapter (builtins, run-spec, syntax, ...); the index when omitted", false)
+    .returns("text", "the reference's index or chapter, as atlc reference prints it")
+    .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
+    .error("interrupted")
+    .error("atlc.missing")
+    .error("atlc.unsupported")
+    .error("atlc.failed")
+    .error("usage.bad_value")
+    .error("unavailable.platform")
+    .error("config.missing")
+    .error("config.invalid")
+    .runs([](const Invocation& invocation, const Table&, Output&) {
+      return reference_reply(invocation);
+    }));
 
   add(make_command({"run", "start"}, "Run", "start a strategy on its own mock market, in the background")
     .describe(
