@@ -373,7 +373,8 @@ public:
     if (!dir) {
       opened.refusal_ = error_reply(
         Exit::FAILED, "state.unavailable",
-        "no state directory: neither XDG_STATE_HOME nor HOME is set as an absolute path", "set XDG_STATE_HOME or HOME"
+        "no state directory: neither XDG_STATE_HOME nor HOME is set as an absolute path",
+        "the operator sets XDG_STATE_HOME or HOME (another state directory is another paper account)"
       );
       return opened;
     }

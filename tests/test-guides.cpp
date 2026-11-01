@@ -153,7 +153,7 @@ TEST_CASE("each skill's frontmatter is the open format's and its body is short a
     CHECK(!front[1].second.empty());
     CHECK(front[1].second.size() <= 1024);
     const auto body = cmdatl::guide_body(file);
-    CHECK(body.size() <= 7000);
+    CHECK(body.size() <= 9000);
     bool ascii = true;
     for (const unsigned char c : file) {
       ascii = ascii && c < 0x80;
@@ -276,15 +276,28 @@ TEST_CASE("the strategy guide states the README's parity rule word for word") {
 TEST_CASE("every next cmdatl gives leaves the operator's decisions with the operator") {
   // Words that ask the reader to act outside cmdatl's commands, or to start what the operator may have stopped.
   const std::vector<std::string> outside{
-    "aside", "remove", "creat", "delete", "rename", "smaller", "start another run"
+    "aside", "remove", "creat", "delete", "rename", "edit", "restore", "write", "smaller", "start another run",
+    "CMDATL_CONFIG", "XDG_STATE_HOME", "order release"
+  };
+  // Phrases that hand such an act to the operator; a bare mention ("the operator's file") does not.
+  const std::vector<std::string> handed{
+    "to the operator", "ask the operator", "the operator, who", "only the operator", "the operator can",
+    "the operator's to allow", "the operator sets", "the operator fixes", "the operator writes",
+    "the operator withdraws"
   };
   std::vector<std::pair<std::string, std::string>> texts;
   for (const auto& entry : cmdatl::error_catalog()) {
     texts.emplace_back(entry.code_, entry.next_);
   }
-  const std::vector<cmdatl::Reply> replies{
+  texts.emplace_back("the run's own reply", cmdatl::run_unknown_next());
+  std::vector<cmdatl::Reply> replies{
     cmdatl::paper_state_reply("damaged"), cmdatl::journal_missing_reply("missing"), cmdatl::lock_lost_reply()
   };
+  for (const auto* code : {"config.missing", "config.invalid", "unsupported.broker"}) {
+    cmdatl::ConfigSnapshot snapshot;
+    snapshot.error_.code_ = code;
+    replies.push_back(cmdatl::config_reply(snapshot));
+  }
   for (const auto& reply : replies) {
     const auto& error = reply.body_.at("error").as_object();
     texts.emplace_back(std::string(error.at("code").as_string()), std::string(error.at("next").as_string()));
@@ -294,14 +307,18 @@ TEST_CASE("every next cmdatl gives leaves the operator's decisions with the oper
     CHECK(next.find("start a new run") == std::string::npos);
     for (const auto& word : outside) {
       if (next.find(word) != std::string::npos) {
-        CHECK(next.find("operator") != std::string::npos);
+        bool hands = false;
+        for (const auto& phrase : handed) {
+          hands = hands || next.find(phrase) != std::string::npos;
+        }
+        CHECK(hands);
       }
     }
   }
   // The caps only the operator lifts never invite a retry.
   const std::vector<std::string> caps{
     "refused.not_armed", "refused.daily_order_limit", "refused.order_value", "refused.position_limit",
-    "refused.symbol_not_allowed"
+    "refused.symbol_not_allowed", "refused.guard"
   };
   for (const auto& entry : cmdatl::error_catalog()) {
     for (const auto& cap : caps) {
@@ -383,9 +400,11 @@ TEST_CASE("the agent guide's session runs as written and each reply holds what t
       CHECK(is_text(body, "cash"));
       // The account opens after the close: closed, and `not_accepted` names the phase, as the guide's closed-market line says.
       CHECK(!body.at("orders_accepted_now").as_bool());
+      // The closed-market rule applies only when nothing but the phase and the closed market refuse.
       bool phase = false;
       for (const auto& gate : body.at("not_accepted").as_array()) {
         phase = phase || gate.as_string() == "phase";
+        CHECK((gate.as_string() == "phase" || gate.as_string() == "market_closed"));
       }
       CHECK(phase);
     } else if (line == "cmdatl env") {

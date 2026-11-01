@@ -1,0 +1,2 @@
+# The skills are embedded into cmdatl and their frontmatter split on LF lines: the same bytes on every OS.
+skills/** text eol=lf

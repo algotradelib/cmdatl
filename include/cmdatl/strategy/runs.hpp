@@ -1361,8 +1361,7 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
     std::error_code ec;
     if (!std::filesystem::exists(config.armed_path(), ec)) {
       return error_reply(
-        Exit::REFUSED, "refused.not_armed", "the operator's armed file does not exist", next_for("refused.not_armed"),
-        true
+        Exit::REFUSED, "refused.not_armed", "the operator's armed file does not exist", next_for("refused.not_armed")
       );
     }
     const auto id = new_run_id();

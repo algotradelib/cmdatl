@@ -908,9 +908,9 @@ inline ConfigSnapshot load_operator_config() {
  */
 inline Reply config_reply(const ConfigSnapshot& snapshot) {
   const auto& error = snapshot.error_;
-  std::string next = "fix the operator's file; cmdatl env shows what was read";
+  std::string next = "the operator fixes their file; cmdatl env shows what was read";
   if (error.code_ == "config.missing") {
-    next = "set CMDATL_CONFIG to the operator's file";
+    next = "the operator sets CMDATL_CONFIG to their file";
   } else if (error.code_ == "unsupported.broker") {
     next = "this version trades the paper broker only";
   }

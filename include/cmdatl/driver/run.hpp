@@ -799,9 +799,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
       body["error"] = json::object{
         {"code", code},
         {"message", message},
-        {"next",
-          std::string("the run's result is unknown; its market ended with its process and no account was affected: ") +
-            RUN_END},
+        {"next", run_unknown_next()},
       };
     }
     // The reply first, then the end event, then the lock released (when this scope ends).
@@ -813,11 +811,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
     return exit_code;
   } catch (const std::exception& error) {
     if (trading) {
-      return run_error(
-        base, Exit::UNKNOWN, "unknown.internal", error.what(),
-        std::string("the run's result is unknown; its market ended with its process and no account was affected: ") +
-          RUN_END
-      );
+      return run_error(base, Exit::UNKNOWN, "unknown.internal", error.what(), run_unknown_next());
     }
     return run_error(base, Exit::FAILED, "internal.error", error.what());
   }

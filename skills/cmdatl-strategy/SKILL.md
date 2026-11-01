@@ -39,31 +39,32 @@ The spec is atlc's TOML: `[data]` (the file and its columns), `[instruments]` (t
 `-P name=value` sets a parameter for this call without editing the file.
 The reply's `report` is atlc's, unchanged: `total_return`, `sharpe_annualized`, `max_drawdown`, `executions`, `commission_paid`, `tax_paid` and more; `--fields report.total_return,report.max_drawdown` keeps those.
 Build progress goes to stderr.
-Exit 5 is a program error (`program.invalid`, with atlc's diagnostics in `errors`), 2 a spec or a parameter out of its bounds (`spec.invalid`, `usage.bad_value`), 1 a failed build or replay.
+Exit 5 is a program error (`program.invalid`, with atlc's diagnostics in `errors`), 2 a spec error (`spec.invalid`), 1 a failed build or replay (`build.failed`; `replay.failed`, a `-P` outside its bounds included).
 
 ## Runs
 
 A run trades the program through algotradelib's live runner on a mock market built from the spec's data; the operator's file limits every order it places.
+To test a program, backtest it; start a run only when the task asks for a run.
 The starter spec cannot run as written: its `[orders]` places market orders and it names no market.
 Replace its `[instruments]`, `[replay]` and `[orders]` tables with:
 
 ```toml
 [instruments]
-stock = "005930"                  # a symbol in the operator's limits.symbols
+stock = "005930" # a symbol in the operator's limits.symbols
 
 [replay]
 cash = 100000000
 commission = 0.0005
-market = "kr"                     # the market a run trades
+market = "kr" # the market a run trades
 
 [orders]
-type = "limit"                    # a run places limit orders only
-offset = 0.01                     # the limit 1 % past the price, inside the operator's limits.collar
+type = "limit" # a run places limit orders only
+offset = 0.01 # a buy's limit 1 % above the price, a sell's 1 % below, inside the operator's limits.collar
 ```
 
-- A run also needs daily bars from a file and the operator's armed file; each missing condition is refused before anything is built, with what to do in `error.next`.
-  The armed file is the operator's: never create it; on `refused.not_armed`, ask.
-- After the build, a run refuses a program with `on_fill` or session legs (`on_open`, `on_close`) and a warm-up above 10,000 bars (exit 5, `program.live_unsupported`).
+- A run also needs bars from a file and the operator's armed file; each missing condition is refused before anything is built, with what to do in `error.next`.
+  The armed file is the operator's: never create, remove or edit it or the operator's file; on `refused.not_armed`, ask.
+- After the build, a run refuses a program with `on_fill` or session legs (`on_open`, `on_close`) or a warm-up above 10,000 bars (exit 5, `program.live_unsupported`), and bars that are not daily (`unsupported.interval`).
 - Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.
 - `cmdatl run start NAME.toml --wait` answers with the summary (`executions`, `commission_paid`, `closing_equity`, `holdings_at_end`); without `--wait`, `cmdatl run status` and `cmdatl run log` show it.
   Starting, watching and stopping runs, and every exit code: the agent guide (`cmdatl guide agent`).
@@ -83,4 +84,4 @@ cmdatl run status
 cmdatl run log
 ```
 
-Between `strategy new` and the backtest, put `bars.csv` beside the spec and replace its three tables with the block above.
+Between `strategy new` and the backtest, put `bars.csv` beside the spec and replace its three tables with the block above; the run commands only when the task asks for a run.

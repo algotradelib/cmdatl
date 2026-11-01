@@ -85,8 +85,8 @@ inline StopFileRead read_stop_file_checked(const std::string& path) {
   std::string text;
   const auto status = read_whole(fd.get(), MAX_STOP_BYTES, text).status_;
   if (status == FileRead::Status::TOO_LARGE) {
-    read.problem_ =
-      "the stop file is above " + std::to_string(MAX_STOP_BYTES) + " bytes: remove the lines of runs that have ended";
+    read.problem_ = "the stop file is above " + std::to_string(MAX_STOP_BYTES) +
+      " bytes: the operator removes the lines of runs that have ended";
     return read;
   }
   if (status != FileRead::Status::OK) {

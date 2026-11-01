@@ -897,6 +897,7 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
     const auto unarmed = fixture.json({"run", "start", shared().spec("dip")});
     CHECK(unarmed.exit_ == 3);
     CHECK(code_of(unarmed.out_) == "refused.not_armed");
+    CHECK(!reply_of(unarmed.out_).at("error").as_object().at("retry").as_bool());
     const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
     CHECK((!std::filesystem::exists(runs_dir) || std::filesystem::is_empty(runs_dir)));
   }
@@ -1280,7 +1281,7 @@ TEST_CASE(
   ScratchDir work;
   const InDir here(work.path());
 
-  auto made = fixture.json({"strategy", "new", "dip", "--template", "mean-reversion"});
+  const auto made = fixture.json({"strategy", "new", "dip", "--template", "mean-reversion"});
   REQUIRE(made.exit_ == 0);
   CHECK(std::filesystem::exists("dip.atls"));
   auto spec = slurp("dip.toml");
@@ -1288,12 +1289,15 @@ TEST_CASE(
   // last three tables.
   CHECK(spec.find("type = \"market\"") != std::string::npos);
   CHECK(spec.find("market = ") == std::string::npos);
-  const auto refused = fixture.json({"run", "start", "dip.toml"});
-  CHECK(refused.exit_ != 0);
   const auto checked = cmdatl::run_child({equipment->first, "check", "dip.atls"}, [](const std::string&) {});
   CHECK(checked.kind_ == cmdatl::ChildResult::Kind::FINISHED);
   CHECK(checked.code_ == 0);
   spit("bars.csv", dip_bars(160));
+  const auto refused = fixture.json({"run", "start", "dip.toml"});
+  INFO(refused.out_);
+  CHECK(refused.exit_ == 2);
+  CHECK(code_of(refused.out_) == "spec.invalid");
+  CHECK(reply_of(refused.out_).at("key").as_string() == "replay.market");
   const auto tables = spec.find("[instruments]");
   REQUIRE(tables != std::string::npos);
   REQUIRE(spec.find("[replay]") > tables);
