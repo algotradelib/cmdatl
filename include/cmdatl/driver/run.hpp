@@ -282,9 +282,16 @@ inline json::object order_event(const char* kind, const atl::OrderSnapshot& orde
  * @param ledger The totals.
  * @param cancelled Whether the boundary cancelled an order (`canceled`), or not (`expired`).
  * @param guard Where the events go.
+ * @param whole Read the whole history even when nothing is open: the run's last scan does, so an order whose reply was
+ *   lost and which finished before any scan saw it is still accounted (its events only come later).
  */
 template <typename Cancelled>
-void scan_orders(const atl::mock::Market& market, Ledger& ledger, Cancelled&& cancelled, Guard& guard) {
+void scan_orders(const atl::mock::Market& market, Ledger& ledger, Cancelled&& cancelled, Guard& guard, bool whole = false) {
+  // Every order the run knows of has finished and the market lists none working: nothing can have changed, and the
+  // history (every order the run ever placed) is not copied at every step.
+  if (!whole && ledger.seen_.size() == ledger.finished_.size() && market.working_orders().orders_.empty()) {
+    return;
+  }
   const auto page = market.order_history({});
   for (const auto& order : page.orders_) {
     if (ledger.finished_.count(order.order_id_) != 0) {
@@ -558,7 +565,6 @@ int run_main(int argc, char** argv, Load load, Make make) {
     wiring.universe_ = ids;
     wiring.limits_ = risk_limits(config, loaded.symbols_, config.limits_.daily_orders_);
     wiring.schedule_.tick_ = STEP;
-    wiring.schedule_.calendar_ = STEP;
     wiring.schedule_.bars_ = STEP;
     wiring.schedule_.holdings_ = STEP;
     wiring.schedule_.working_orders_ = STEP;
@@ -692,8 +698,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
       code = "unknown.lock_lost";
       message = "the run's lock file was replaced";
     }
-    // The last scan: the closing pass's cancellations happen after the last step.
-    scan_orders(market, ledger, [&session](const std::string& id) { return session.cancelled(id); }, guard);
+    // The last scan, whole: the closing pass's cancellations happen after the last step.
+    scan_orders(market, ledger, [&session](const std::string& id) { return session.cancelled(id); }, guard, true);
     body["stopped"] = guard.stopped_.empty() ? json::value(nullptr) : json::value(guard.stopped_);
     body["from"] = at_text(from);
     body["to"] = at_text(*last_end).substr(0, 10);
