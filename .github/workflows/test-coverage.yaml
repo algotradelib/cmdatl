@@ -1,5 +1,5 @@
 # Line and branch coverage of cmdatl's headers and sources on Linux (GCC, gcovr), the real-atlc acceptance cases included.
-# The summary goes to the job's page and the XML is kept; Codecov gets it only when CODECOV_TOKEN is set, which a private repository needs.
+# The summary goes to the job's page, the XML is kept, and Codecov gets it.
 on:
   workflow_dispatch:
   push:
@@ -49,7 +49,6 @@ jobs:
     timeout-minutes: 60
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: '4'
-      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@v7
 
@@ -129,14 +128,10 @@ jobs:
           path: coverage.xml
           retention-days: 7
 
-      - name: Codecov
-        if: env.CODECOV_TOKEN != ''
+      - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
+          # A fork has no Codecov token, so a failed upload fails only this repository's runs.
+          fail_ci_if_error: ${{ !github.event.repository.fork }}
+          token: ${{ secrets.CODECOV_TOKEN }}
           files: coverage.xml
-          token: ${{ env.CODECOV_TOKEN }}
-          fail_ci_if_error: true
-
-      - name: Codecov skipped
-        if: env.CODECOV_TOKEN == ''
-        run: echo "CODECOV_TOKEN is not set; coverage was not uploaded (see the summary)." >> "$GITHUB_STEP_SUMMARY"
