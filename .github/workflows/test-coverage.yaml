@@ -1,5 +1,5 @@
 # Line and branch coverage of cmdatl's headers and sources on Linux (GCC, gcovr), the real-atlc acceptance cases included.
-# The summary goes to the job's page, the XML is kept, and Codecov gets it.
+# Codecov gets the report.
 on:
   workflow_dispatch:
   push:
@@ -116,15 +116,7 @@ jobs:
       - name: Coverage
         shell: bash
         run: |
-          gcovr --root . --filter 'include/cmdatl/' --filter 'src/' --merge-lines \
-            --xml coverage.xml --txt coverage.txt build
-          { echo '```'; cat coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coverage
-          path: coverage.xml
-          retention-days: 7
+          gcovr --root . --filter 'include/cmdatl/' --filter 'src/' --merge-lines --xml coverage.xml build
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
