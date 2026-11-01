@@ -245,7 +245,8 @@ inline void write_command_help(std::ostream& out, const Command& command) {
   for (const auto exit : command.exits_) {
     out << " " << static_cast<int>(exit);
   }
-  out << (command.may_send_ ? "  (may send to a broker)" : "") << (command.mutates_ ? "  (changes the account)" : "") << "\n";
+  out << (command.may_send_ ? "  (may send to a broker)" : "") << (command.mutates_ ? "  (changes the account)" : "");
+  out << "\n";
   for (const auto& alias : command.aliases_) {
     out << "Also called as: cmdatl " << join(alias) << "\n";
   }
@@ -411,8 +412,9 @@ inline std::vector<std::string> check_table(const Table& table) {
     const auto name = join(command.path_);
     std::vector<std::vector<std::string>> all{command.path_};
     all.insert(all.end(), command.aliases_.begin(), command.aliases_.end());
+    const auto empty_word = [](const std::string& w) { return w.empty(); };
     for (const auto& path : all) {
-      if (path.empty() || std::any_of(path.begin(), path.end(), [](const std::string& w) { return w.empty(); })) {
+      if (path.empty() || std::any_of(path.begin(), path.end(), empty_word)) {
         problems.push_back(name + ": an empty path or word");
       }
       if (!paths.insert(join(path)).second) {

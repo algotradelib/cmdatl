@@ -107,12 +107,12 @@ int main(int argc, char** argv) {
     out << "inline const std::size_t DRIVER_SIZES_" << index << "[] = {\n" << sizes.str() << "};\n\n";
     names.push_back(literal(pair.substr(0, eq)) + ", DRIVER_FILE_" + index + ", DRIVER_SIZES_" + index + ", " + std::to_string(count));
   }
-  out << "/** @brief Every file of the run driver's sources. */\n"
-      << "inline const DriverFile DRIVER_FILES[] = {\n";
+  out << "/** @brief Every file of the run driver's sources. */\n";
+  out << "inline const DriverFile DRIVER_FILES[] = {\n";
   for (const auto& name : names) {
     out << "  {" << name << "},\n";
   }
-  out << "};\n\n}  // namespace cmdatl\n";
+  out << "};\n\n} // namespace cmdatl\n";
   std::ofstream file(argv[1], std::ios::binary | std::ios::trunc);
   file << out.str();
   return file ? 0 : 1;

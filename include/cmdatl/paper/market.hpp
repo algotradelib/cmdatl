@@ -481,8 +481,9 @@ public:
    * @param target The new instant, not before now.
    */
   void advance_to(Clock::time_point target) {
+    const auto open_order = [](const PaperOrder& order) { return is_open(order); };
     while (now_ < target) {
-      if (std::none_of(orders_.begin(), orders_.end(), [](const PaperOrder& order) { return is_open(order); })) {
+      if (std::none_of(orders_.begin(), orders_.end(), open_order)) {
         now_ = target;
         return;
       }

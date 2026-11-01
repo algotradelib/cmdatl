@@ -211,7 +211,8 @@ public:
   : what_(std::move(what)) {
     thread_ = std::thread([this, seconds] {
       std::unique_lock<std::mutex> lock(mutex_);
-      if (!done_.wait_for(lock, std::chrono::seconds(seconds), [this] { return finished_; })) {
+      const auto finished = [this] { return finished_; };
+      if (!done_.wait_for(lock, std::chrono::seconds(seconds), finished)) {
         std::fprintf(stderr, "watchdog: %s did not finish in %d s\n", what_.c_str(), seconds);
         std::fflush(stderr);
         std::_Exit(124);

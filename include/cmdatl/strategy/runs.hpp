@@ -320,7 +320,8 @@ inline std::optional<long> pid_of(const std::string& text) {
   if (!digits.empty() && digits.back() == '\n') {
     digits.pop_back();
   }
-  if (digits.empty() || digits.size() > 10 || !std::all_of(digits.begin(), digits.end(), [](char c) { return c >= '0' && c <= '9'; })) {
+  const auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+  if (digits.empty() || digits.size() > 10 || !std::all_of(digits.begin(), digits.end(), is_digit)) {
     return std::nullopt;
   }
   const long value = std::stol(digits);

@@ -1032,8 +1032,8 @@ TEST_CASE("an allocation failing anywhere in an account command leaks nothing an
   fixture.arm();
   const auto lock_free = [&fixture] {
     cmdatl::OwnerLock second(fixture.account().string());
-    return second.acquire(std::chrono::milliseconds(0), [] { return false; }, [](const std::string&) {}) ==
-      cmdatl::OwnerLock::Outcome::HELD;
+    const auto outcome = second.acquire(std::chrono::milliseconds(0), [] { return false; }, [](const std::string&) {});
+    return outcome == cmdatl::OwnerLock::Outcome::HELD;
   };
   const std::vector<std::vector<std::string>> commands{
     {"status"}, {"account"}, {"quote", "005930"}, {"order", "list"}, {"clock"}, {"clock", "advance", "--minutes", "1"},
@@ -1276,7 +1276,8 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
   CHECK(entry.at("mutates").as_bool());
   CHECK(!entry.at("returns").as_object().contains("fills"));
   CHECK(entry.at("returns").as_object().contains("events"));
-  CHECK(!reply_of(run({"schema", "status"}).out_).at("commands").as_array()[0].as_object().at("returns").as_object().contains("run"));
+  const auto status_schema = reply_of(run({"schema", "status"}).out_);
+  CHECK(!status_schema.at("commands").as_array()[0].as_object().at("returns").as_object().contains("run"));
   for (const auto* path : {"status", "account", "quote", "order list", "clock", "clock advance"}) {
     const auto* command = table.resolve(cmdatl::split(path, ' ')).command_;
     REQUIRE(command != nullptr);

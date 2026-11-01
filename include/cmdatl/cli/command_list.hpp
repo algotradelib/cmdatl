@@ -47,6 +47,7 @@ inline std::vector<Command> command_list() {
     list.push_back(command);
   };
 
+  // clang-format off: clang-format would hang each chain under `make_command` (column 6); kept on 2-space steps.
   add(make_command({"status"}, "Read", "clock, phase, readiness, positions, cash, owed and working orders, quotes")
     .example("cmdatl status")
     .example("cmdatl status --fields now,orders_accepted_now,not_accepted")
@@ -471,6 +472,7 @@ inline std::vector<Command> command_list() {
     .example("cmdatl guide agent")
     .arg("TOPIC", "agent or strategy")
     .returns("text", "the guide"));
+  // clang-format on
   return list;
 }
 
