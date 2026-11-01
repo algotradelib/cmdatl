@@ -609,11 +609,7 @@ TEST_CASE("an operator-only line at an instant outside the interval makes the co
   };
   // The library reads an instant only if system_clock holds it (Linux counts nanoseconds, macOS microseconds); one it
   // cannot hold makes the line unreadable, damage either way.
-  const auto held = [](std::int64_t value) {
-    const auto limit =
-      std::chrono::duration_cast<std::chrono::microseconds>(paper::Clock::duration::max()).count();
-    return value >= -limit && value <= limit;
-  };
+  const auto held = runner::journal_detail::representable_instant;
   for (const auto& c : extreme) {
     INFO(c.first);
     const auto line = operator_only_line(c.second);
@@ -625,9 +621,9 @@ TEST_CASE("an operator-only line at an instant outside the interval makes the co
       INFO(ran.out_);
       CHECK(ran.exit_ == 4);
       CHECK(code_of(ran.out_) == "unknown.journal_damaged");
+      CHECK(reply_of(ran.out_).at("orders_left_today").is_null());
       if (held(c.second)) {
         CHECK(ran.out_.find("outside 1990 to 2100") != std::string::npos);
-        CHECK(reply_of(ran.out_).at("orders_left_today").is_null());
       }
     }
     CHECK(slurp(fixture.journal()) == text);

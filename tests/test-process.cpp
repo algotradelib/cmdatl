@@ -466,6 +466,8 @@ TEST_CASE("descriptors running out at either pipe or at the spawn leak nothing")
   }
   const int before = open_fds();
   std::vector<cmdatl::ChildResult> results;
+  // Every step's outcome, printed with the checks after the loop, which a scoped INFO inside it would not reach.
+  std::ostringstream steps;
   for (int spare = 0; spare <= 10; ++spare) {
     rlimit low = saved;
     low.rlim_cur = static_cast<rlim_t>(highest + 1 + spare);
@@ -473,8 +475,9 @@ TEST_CASE("descriptors running out at either pipe or at the spawn leak nothing")
     auto result = run_fake();
     ::setrlimit(RLIMIT_NOFILE, &saved);
     results.push_back(std::move(result));
-    INFO("spare descriptors: " << spare << ", result " << static_cast<int>(results.back().kind_) << ": "
-                                << results.back().error_);
+    steps << "spare " << spare << ": kind " << static_cast<int>(results.back().kind_) << ", " << results.back().error_
+          << "\n";
+    INFO("spare descriptors: " << spare);
     CHECK(open_fds() == before);
     CHECK(no_children());
   }
@@ -485,6 +488,7 @@ TEST_CASE("descriptors running out at either pipe or at the spawn leak nothing")
     return result.kind_ == cmdatl::ChildResult::Kind::NOT_STARTED &&
       result.error_.find("Too many open files") != std::string::npos;
   });
+  INFO("highest descriptor " << highest << ", " << fillers.size() << " gaps filled\n" << steps.str());
   // Spares 0 to 4 cannot hold the second pipe (each pipe needs two descriptors and two more while it is lifted).
   CHECK(refused >= 5);
   CHECK(results.back().kind_ == cmdatl::ChildResult::Kind::FINISHED);
