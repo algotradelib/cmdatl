@@ -451,8 +451,8 @@ TEST_CASE("descriptors running out at either pipe or at the spawn leak nothing")
   const FakeAtlc fake("run out ok\n");
   rlimit saved{};
   REQUIRE(::getrlimit(RLIMIT_NOFILE, &saved) == 0);
-  // The limit below leaves exactly `spare` descriptors free only when none is free under the highest open one; a
-  // runner can start the process with gaps there, so they are filled first.
+  // The limit below leaves exactly `spare` descriptors free only when none is free under the highest open one.
+  // A runner can start the process with gaps there, so they are filled first.
   const int highest = highest_fd();
   std::vector<int> fillers;
   for (;;) {
@@ -475,8 +475,8 @@ TEST_CASE("descriptors running out at either pipe or at the spawn leak nothing")
     auto result = run_fake();
     ::setrlimit(RLIMIT_NOFILE, &saved);
     results.push_back(std::move(result));
-    steps << "spare " << spare << ": kind " << static_cast<int>(results.back().kind_) << ", " << results.back().error_
-          << "\n";
+    steps << "spare " << spare << ": kind " << static_cast<int>(results.back().kind_) << ", ";
+    steps << results.back().error_ << "\n";
     INFO("spare descriptors: " << spare);
     CHECK(open_fds() == before);
     CHECK(no_children());

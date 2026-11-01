@@ -106,8 +106,7 @@ RunResult run_child(
   }
   const auto reply_path = fixture.dir() / (ran.run_ + ".reply");
   const auto stderr_path = fixture.dir() / (ran.run_ + ".stderr");
-  // The child flushes stdio when the run ends, so whatever the parent still buffers (Catch2's first lines, when stdout is
-  // a pipe) would land in the reply.
+  // The child flushes stdio when the run ends, so whatever the parent still buffers (Catch2's first lines, when stdout is a pipe) would land in the reply.
   std::fflush(nullptr);
   const pid_t pid = ::fork();
   REQUIRE(pid >= 0);
