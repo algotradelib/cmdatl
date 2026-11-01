@@ -504,7 +504,7 @@ TEST_CASE("the table's run commands: options, codes, kinds of code and the schem
     CHECK(std::find(start->errors_.begin(), start->errors_.end(), code) != start->errors_.end());
   }
   CHECK(cmdatl::check_table(table).empty());
-  CHECK(cmdatl::SCHEMA_VERSION == 6);
+  CHECK(cmdatl::SCHEMA_VERSION == 7);
   // Two kinds of code on one command is a problem the table check reports.
   auto list = cmdatl::command_list();
   for (auto& command : list) {
@@ -1253,3 +1253,88 @@ TEST_CASE(
   CHECK(status_until_final(fixture, dir->filename().string()).at("state").as_string() == "ended");
 }
 #endif
+
+TEST_CASE(
+  "the strategy guide's session runs as written from a starter and its TOML block to a run", "[acceptance][runs]"
+) {
+  const auto equipment = run_equipment();
+  if (!equipment) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const auto guide = slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "skills" / "cmdatl-strategy" / "SKILL.md");
+  // The walkthrough this case checks, line for line: a changed walkthrough changes this case in the same commit.
+  const std::vector<std::string> expected{
+    "cmdatl strategy new dip --template mean-reversion",
+    "atlc check dip.atls",
+    "cmdatl strategy backtest dip.toml -P lookback=30",
+    "cmdatl run start dip.toml --wait",
+    "cmdatl run status",
+    "cmdatl run log",
+  };
+  REQUIRE(block_after(guide, "## A session", "```sh") == expected);
+  const auto block = block_after(guide, "## Runs", "```toml");
+  REQUIRE(!block.empty());
+  const PaperFixture fixture(run_operator());
+  const RunEquipped equipped(equipment->first, equipment->second);
+  fixture.arm();
+  ScratchDir work;
+  const InDir here(work.path());
+
+  auto made = fixture.json({"strategy", "new", "dip", "--template", "mean-reversion"});
+  REQUIRE(made.exit_ == 0);
+  CHECK(std::filesystem::exists("dip.atls"));
+  auto spec = slurp("dip.toml");
+  // The starter places market orders and names no market: a run refuses it until the guide's block replaces its
+  // last three tables.
+  CHECK(spec.find("type = \"market\"") != std::string::npos);
+  CHECK(spec.find("market = ") == std::string::npos);
+  const auto refused = fixture.json({"run", "start", "dip.toml"});
+  CHECK(refused.exit_ != 0);
+  const auto checked = cmdatl::run_child({equipment->first, "check", "dip.atls"}, [](const std::string&) {});
+  CHECK(checked.kind_ == cmdatl::ChildResult::Kind::FINISHED);
+  CHECK(checked.code_ == 0);
+  spit("bars.csv", dip_bars(160));
+  const auto tables = spec.find("[instruments]");
+  REQUIRE(tables != std::string::npos);
+  REQUIRE(spec.find("[replay]") > tables);
+  REQUIRE(spec.find("[orders]") > spec.find("[replay]"));
+  spec.erase(tables);
+  for (const auto& line : block) {
+    spec += line + "\n";
+  }
+  spit("dip.toml", spec);
+
+  const auto backtest = fixture.json({"strategy", "backtest", "dip.toml", "-P", "lookback=30"});
+  INFO(backtest.err_);
+  REQUIRE(backtest.exit_ == 0);
+  const auto backtested = reply_of(backtest.out_);
+  const auto& report = backtested.at("report").as_object();
+  const std::vector<std::string> keys{
+    "total_return", "sharpe_annualized", "max_drawdown", "executions", "commission_paid", "tax_paid"
+  };
+  for (const auto& key : keys) {
+    CHECK(report.contains(key));
+  }
+
+  const auto account_before = fixture.json({"account"}).out_;
+  const auto orders_before = fixture.json({"order", "list"}).out_;
+  const auto ran = fixture.json({"run", "start", "dip.toml", "--wait"});
+  INFO(ran.out_);
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  const auto reply = reply_of(ran.out_);
+  CHECK(reply.at("state").as_string() == "ended");
+  for (const auto* key : {"executions", "commission_paid", "closing_equity", "holdings_at_end"}) {
+    CHECK(reply.at("summary").as_object().contains(key));
+  }
+  CHECK(reply.at("summary").as_object().at("executions").as_int64() > 0);
+  const auto status = fixture.json({"run", "status"});
+  CHECK(status.exit_ == 0);
+  CHECK(reply_of(status.out_).at("run_exit").as_int64() == 0);
+  const auto log = fixture.json({"run", "log"});
+  CHECK(log.exit_ == 0);
+  CHECK(!reply_of(log.out_).at("events").as_array().empty());
+  // The paper account's commands never see the run's market.
+  CHECK(fixture.json({"account"}).out_ == account_before);
+  CHECK(fixture.json({"order", "list"}).out_ == orders_before);
+}

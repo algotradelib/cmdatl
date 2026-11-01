@@ -297,6 +297,57 @@ inline bool all_gone(const std::vector<pid_t>& pids) {
   }
 }
 
+/**
+ * @brief The lines of the first fenced block opened with `fence` after a heading.
+ * @param text The Markdown.
+ * @param heading The heading's line, such as `## A session`.
+ * @param fence The opening fence, such as "```sh".
+ * @return The lines inside the block.
+ */
+inline std::vector<std::string> block_after(
+  const std::string& text, const std::string& heading, const std::string& fence
+) {
+  std::vector<std::string> out;
+  bool after = false;
+  bool inside = false;
+  for (const auto& line : lines_of(text)) {
+    if (inside) {
+      if (line == "```") {
+        break;
+      }
+      out.push_back(line);
+    } else if (line == heading) {
+      after = true;
+    } else if (after && line == fence) {
+      inside = true;
+    }
+  }
+  return out;
+}
+
+/** @brief Moves into a directory for a test's length. */
+class InDir {
+public:
+  /**
+   * @brief Moves.
+   * @param dir The directory.
+   */
+  explicit InDir(const std::filesystem::path& dir) : back_(std::filesystem::current_path()) {
+    std::filesystem::current_path(dir);
+  }
+
+  InDir(const InDir&) = delete;
+  InDir& operator=(const InDir&) = delete;
+
+  /** @brief Moves back. */
+  ~InDir() {
+    std::filesystem::current_path(back_);
+  }
+
+private:
+  std::filesystem::path back_;
+};
+
 /** @brief A unique scratch directory, removed with everything in it when its owner goes. */
 class ScratchDir {
 public:

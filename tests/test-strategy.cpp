@@ -159,29 +159,6 @@ void check_form(const Ran& ran, const std::string& format, const Case& expected)
   }
 }
 
-/** @brief Moves into a directory for a test's length. */
-class InDir {
-public:
-  /**
-   * @brief Moves.
-   * @param dir The directory.
-   */
-  explicit InDir(const std::filesystem::path& dir) : back_(std::filesystem::current_path()) {
-    std::filesystem::current_path(dir);
-  }
-
-  InDir(const InDir&) = delete;
-  InDir& operator=(const InDir&) = delete;
-
-  /** @brief Moves back. */
-  ~InDir() {
-    std::filesystem::current_path(back_);
-  }
-
-private:
-  std::filesystem::path back_;
-};
-
 /** @brief A stream buffer that notes, at each flush, whether the fake had already made a mark. */
 class MarkWatcher : public std::stringbuf {
 public:

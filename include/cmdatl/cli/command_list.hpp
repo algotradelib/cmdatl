@@ -8,6 +8,7 @@
 #include "../strategy/strategy.hpp"
 #include "./describe.hpp"
 #include "./environment.hpp"
+#include "./guide.hpp"
 
 #include <sstream>
 #include <string>
@@ -475,10 +476,20 @@ inline std::vector<Command> command_list() {
       const auto words = found == invocation.values_.end() ? std::vector<std::string>{} : found->second;
       return schema_reply(table, words);
     }));
-  add(make_command({"guide"}, "Help", "how to use cmdatl: agent or strategy")
+  add(make_command({"guide", "agent"}, "Help", "how an agent reads the account, places orders and runs strategies")
     .example("cmdatl guide agent")
-    .arg("TOPIC", "agent or strategy")
-    .returns("text", "the guide"));
+    .example("cmdatl guide agent --format text")
+    .returns("text", "the guide, the same text as the cmdatl-agent skill")
+    .runs([](const Invocation&, const Table&, Output&) {
+      return guide_reply("agent");
+    }));
+  add(make_command({"guide", "strategy"}, "Help", "how to write a strategy in atls, backtest it and run it")
+    .example("cmdatl guide strategy")
+    .example("cmdatl guide strategy --format text")
+    .returns("text", "the guide, the same text as the cmdatl-strategy skill")
+    .runs([](const Invocation&, const Table&, Output&) {
+      return guide_reply("strategy");
+    }));
   // clang-format on
   return list;
 }

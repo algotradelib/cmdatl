@@ -151,6 +151,27 @@ bool names_command(const std::string& span, const cmdatl::Table& table) {
     return cmdatl::prepare(words, table, false).action_ != cmdatl::Prepared::Action::REFUSE;
   }
   const auto found = table.resolve(path);
+  // Every option word names a global option or one of the command's own.
+  for (const auto& word : words) {
+    if (word.size() < 2 || word.front() != '-') {
+      continue;
+    }
+    const auto name = word.substr(0, word.find('='));
+    bool known = false;
+    for (const auto& global : cmdatl::global_options()) {
+      known = known || global.name_ == name || global.name_.find(", " + name) != std::string::npos ||
+        global.name_.rfind(name + ",", 0) == 0;
+    }
+    if (found.command_ != nullptr) {
+      for (const auto& option : found.command_->options_) {
+        known =
+          known || name == "--" + option.name_ || (!option.short_name_.empty() && name == "-" + option.short_name_);
+      }
+    }
+    if (!known) {
+      return false;
+    }
+  }
   if (found.command_ == nullptr) {
     return table.is_group(path);
   }
@@ -245,7 +266,7 @@ TEST_CASE("tune and check are gone; new and backtest are the strategy commands t
   const auto reference = table.resolve({"strategy", "reference"});
   REQUIRE(reference.command_ != nullptr);
   CHECK(!reference.command_->available_);
-  CHECK(cmdatl::SCHEMA_VERSION == 6);
+  CHECK(cmdatl::SCHEMA_VERSION == 7);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
   CHECK(backtest.at("returns").as_object().contains("params_given"));
   CHECK(!backtest.at("returns").as_object().contains("params"));
@@ -280,7 +301,7 @@ TEST_CASE("global options never take another option as their value and stop at -
 }
 
 TEST_CASE("a planned command answers that it is not built yet") {
-  const auto ran = run({"guide", "agent"});
+  const auto ran = run({"strategy", "reference"});
   CHECK(ran.exit_ == 1);
   CHECK(code_of(ran.out_) == "unavailable.not_yet");
   CHECK(reply_of(ran.out_).at("env").as_string() == "offline");
@@ -381,7 +402,8 @@ TEST_CASE("every cmdatl invocation in the docs and skills parses, and every inli
     std::string line;
     bool fenced = false;
     while (std::getline(in, line)) {
-      if (line.rfind("```", 0) == 0) {
+      const auto indent = line.find_first_not_of(' ');
+      if (indent != std::string::npos && line.compare(indent, 3, "```") == 0) {
         fenced = !fenced;
         continue;
       }
@@ -545,6 +567,11 @@ TEST_CASE("the documentation scanner reads what a shell would, and names only wh
   CHECK(!names_command("cmdatl clock2", table));
   CHECK(!names_command("cmdatl clock.nonexistent-subcommand", table));
   CHECK(!names_command("cmdatl clock nonexistent-subcommand", table));
+  CHECK(names_command("cmdatl run start --wait", table));
+  CHECK(names_command("cmdatl account --fields cash,positions", table));
+  CHECK(names_command("cmdatl strategy backtest -P k=v", table));
+  CHECK(!names_command("cmdatl run start dip.toml --until", table));
+  CHECK(!names_command("cmdatl order --target", table));
   // Through extraction, as the documentation test reads a Markdown line.
   for (const auto* line : {"Use `cmdatl clock2`.", "Use `cmdatl clock.nonexistent-subcommand`."}) {
     const auto references = inline_references(line);

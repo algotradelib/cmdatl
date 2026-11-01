@@ -14,10 +14,15 @@
 namespace cmdatl {
 
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
-inline constexpr int SCHEMA_VERSION = 6;
+inline constexpr int SCHEMA_VERSION = 7;
 
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
+
+/** @brief Exit 3's words, the same in the help, the README and the agent guide (a test checks them). */
+inline constexpr const char* EXIT_REFUSED_TEXT = "3 refused (nothing was sent)";
+/** @brief Exit 4's words, the same in the help, the README and the agent guide (a test checks them). */
+inline constexpr const char* EXIT_UNKNOWN_TEXT = "4 unknown (follow error.next before anything else)";
 
 /** @brief The examples `cmdatl --help` opens with: the most common uses (each parsed by the tests). */
 inline const std::vector<std::string> TOP_EXAMPLES{
@@ -182,9 +187,10 @@ inline void write_help(std::ostream& out, const Table& table) {
       out << "  " << command.summary_ << availability(command) << "\n";
     }
   }
-  out << "\nExit: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (safe to retry), 4 unknown (reconcile),\n";
-  out << "5 strategy errors, 130 interrupted. Output: text on a terminal, compact JSON otherwise. cmdatl help\n";
-  out << "COMMAND for one command; cmdatl schema for the machine contract. Docs and issues: " << HOME_PAGE << "\n";
+  out << "\nExit: 0 ok, 1 failed and nothing sent, 2 usage, " << EXIT_REFUSED_TEXT << ",\n";
+  out << EXIT_UNKNOWN_TEXT << ", 5 strategy errors, 130 interrupted.\n";
+  out << "Output: text on a terminal, compact JSON otherwise. cmdatl help COMMAND for one command; cmdatl schema for\n";
+  out << "the machine contract; cmdatl guide agent or strategy to learn it. Docs and issues: " << HOME_PAGE << "\n";
 }
 
 /**

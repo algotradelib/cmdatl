@@ -73,29 +73,6 @@ private:
 const char* const UNEQUIPPED =
   "CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the acceptance cases did not run";
 
-/** @brief Moves into a directory for a test's length. */
-class InDir {
-public:
-  /**
-   * @brief Moves.
-   * @param dir The directory.
-   */
-  explicit InDir(const std::filesystem::path& dir) : back_(std::filesystem::current_path()) {
-    std::filesystem::current_path(dir);
-  }
-
-  InDir(const InDir&) = delete;
-  InDir& operator=(const InDir&) = delete;
-
-  /** @brief Moves back. */
-  ~InDir() {
-    std::filesystem::current_path(back_);
-  }
-
-private:
-  std::filesystem::path back_;
-};
-
 /**
  * @brief The date `days` after 1970-01-01, as `YYYY-MM-DD` (the civil calendar).
  * @param days The days.

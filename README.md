@@ -119,7 +119,7 @@ cmdatl order release 005930 --reason "read the order list and holdings"
 - A plan id is bound to what the plan saw: the account, the request, the holding and working orders of the symbol, the cash and the journal's size.
   It is used once, it lapses after `limits.plan_ttl` simulated seconds (60 by default), and anything moving makes it stale (`refused.stale_plan`): plan again.
 - Each order command takes one simulated second, as a broker call takes time; `events` is what the market did in that second, which can fill or expire an order already resting, even on a plan or a refusal.
-- Exit 3 means nothing reached the market in this call: safe to plan again.
+- Exit 3 means nothing reached the market in this call: plan again only once its reason has passed (a lapsed plan, a closed market); a limit the operator set is not retried around.
   Exit 4 means an order may have gone out, or the journal cannot say: run `cmdatl order reconcile SYMBOL` before anything else, and read `error.next`.
   A request the market itself refused is exit 4 `unknown.broker_refused`, since it reached the market; `cmdatl order reconcile SYMBOL` then shows nothing owed.
 - No reply at all (a killed process): treat it as exit 4.
@@ -129,7 +129,7 @@ cmdatl order release 005930 --reason "read the order list and holdings"
 - An order the broker never named stays owed until the listing settles it or the operator releases it.
   `cmdatl order release SYMBOL --reason TEXT` needs the armed file and the operator's approval `<stem>.release` beside the operator's file (`paper.toml` gives `paper.release`): one line per owed order, `SYMBOL JOURNAL_ID` with one space, naming exactly the journal ids `cmdatl account` shows as owed on that symbol.
   The approval is renamed after one use.
-- A damaged journal has no cmdatl remedy: on paper, keep the account's directory for inspection and move it aside, which abandons that paper market with it.
+- A damaged journal has no cmdatl remedy: on paper, the operator keeps the account's directory for inspection and moves it aside, which abandons that paper market with it.
 
 ## Runs
 
@@ -176,9 +176,22 @@ cmdatl run stop --withdraw                             # stop placing and cancel
 - `--fields a,b.c` keeps only those fields; `--value PATH` prints one value bare, the one reply without `env`.
 - Every other reply carries `env`; a failure carries one `error` object with a stable code, such as `refused.position_limit`.
 - A field name no reply of the command has is refused before the command runs; one missing from a reply the command already produced comes back with the whole reply and a `warning`.
-- Exit codes: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (safe to retry), 4 unknown (reconcile before anything else), 5 strategy errors, 130 interrupted (Ctrl-C or SIGTERM stopped a command before anything could be sent; it still replies, and once an order command has begun to send it answers with its own outcome instead).
+- Exit codes: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (nothing was sent), 4 unknown (follow error.next before anything else), 5 strategy errors, 130 interrupted (Ctrl-C or SIGTERM stopped a command before anything could be sent; it still replies, and once an order command has begun to send it answers with its own outcome instead).
 - On a terminal a failure is written to stderr; in JSON it is the reply, on stdout.
 - `cmdatl help COMMAND` (or `--help`) shows a command's usage and examples; `cmdatl schema` describes every command, its fields and its error codes for a program.
+
+## Guides and skills
+
+Two guides teach cmdatl to an AI agent: the agent guide (reading the account, the order rails, exit codes, runs) and the strategy guide (atls, run specs, backtests, runs).
+
+```sh
+cmdatl guide agent                                     # the guide of this binary
+cmdatl guide strategy --format text                    # bare text, also through a pipe
+```
+
+- They are the same text as the Agent Skills in `skills/` (`cmdatl-agent` and `cmdatl-strategy`), built into the binary from those files.
+- The repository is a Claude Code plugin: `claude --plugin-dir /path/to/cmdatl` loads both skills from a clone.
+- For tools that read a project's `.agents/skills/`, copy the two folders from `skills/`, or from `share/cmdatl/skills` where cmdatl is installed.
 
 ## Acknowledgements
 
