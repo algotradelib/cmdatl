@@ -468,10 +468,16 @@ inline Reply reference_reply(const Invocation& invocation) {
     case 1:
       return atlc_failure(Exit::USAGE, "usage.bad_value", last_line(ran), ran, chapters);
     case 2:
-      return atlc_failure(
-        Exit::FAILED, "atlc.unsupported", "this atlc has no atlc reference: it is older than the atlc cmdatl reads",
-        ran, "install a newer atlc"
-      );
+      // An atlc without the command answers it as any unknown command: exit 2 and its usage.
+      if (std::any_of(ran.stderr_tail_.begin(), ran.stderr_tail_.end(), [](const std::string& line) {
+            return line.rfind("usage: atlc", 0) == 0;
+          })) {
+        return atlc_failure(
+          Exit::FAILED, "atlc.unsupported", "this atlc has no atlc reference: it is older than the atlc cmdatl reads",
+          ran, "install a newer atlc"
+        );
+      }
+      return atlc_failure(Exit::FAILED, "atlc.failed", "atlc reference: " + ending_of(ran), ran, check);
     default:
       return atlc_failure(Exit::FAILED, "atlc.failed", "atlc reference: " + ending_of(ran), ran, check);
   }

@@ -282,6 +282,7 @@ inline std::vector<Command> command_list() {
     .example("cmdatl strategy reference builtins")
     .arg("TOPIC", "a chapter (builtins, run-spec, syntax, ...); the index when omitted", false)
     .returns("text", "the reference's index or chapter, as atlc reference prints it")
+    .returns("stderr", "on a failure atlc reported: its last stderr lines")
     .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
     .error("interrupted")
     .error("atlc.missing")

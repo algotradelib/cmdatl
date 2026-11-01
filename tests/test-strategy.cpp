@@ -608,7 +608,6 @@ TEST_CASE("strategy new stops before writing anything once interrupted") {
   CHECK(code_of(ran.out_) == "interrupted");
   CHECK(!std::filesystem::exists(dir.path() / "dip.atls"));
 }
-#endif
 
 TEST_CASE("strategy reference returns atlc reference's text unchanged") {
   {
@@ -645,6 +644,13 @@ TEST_CASE("strategy reference maps atlc's refusals: a wrong chapter and an old a
     const auto ran = run({"--json", "strategy", "reference"});
     CHECK(ran.exit_ == 1);
     CHECK(code_of(ran.out_) == "atlc.unsupported");
+  }
+  {
+    // Exit 2 without atlc's usage is not taken for an old atlc.
+    const FakeAtlc fake("reference err something else\nreference exit 2\n");
+    const auto ran = run({"--json", "strategy", "reference"});
+    CHECK(ran.exit_ == 1);
+    CHECK(code_of(ran.out_) == "atlc.failed");
   }
   for (const auto* script : {"reference exit 7\n", "reference raise 11\n"}) {
     INFO(script);
@@ -698,3 +704,4 @@ TEST_CASE("SIGINT or SIGTERM while atlc reference runs stops it and answers 130 
     CHECK(all_gone(fake.pids()));
   }
 }
+#endif

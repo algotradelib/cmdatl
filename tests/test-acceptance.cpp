@@ -332,14 +332,17 @@ TEST_CASE("every strategy reference the docs and skills name answers from the re
   }
   // Each `cmdatl strategy reference` with or without a topic, as written; a topic is atlc's file stem, known only to
   // the atlc that runs, so only the real one can say each exists.
-  const std::regex named("cmdatl strategy reference( ([a-z][a-z0-9-]*))?");
+  // In a code span, or a fenced line that is the command alone.
+  const std::regex named(
+    "`cmdatl strategy reference( ([a-z][a-z0-9-]*))?`|^cmdatl strategy reference( ([a-z][a-z0-9-]*))?$"
+  );
   std::set<std::string> topics;
   // The chapters a line offers beside it, as in "(or `run-spec`, `syntax`)".
   const std::regex offered("`([a-z][a-z0-9-]*)`");
   for (const auto& file : files) {
     for (const auto& line : lines_of(slurp(file))) {
       for (std::sregex_iterator it(line.begin(), line.end(), named), end; it != end; ++it) {
-        topics.insert((*it)[2].str());
+        topics.insert((*it)[2].matched ? (*it)[2].str() : (*it)[4].str());
       }
       const auto open = line.find("(or `");
       if (line.find("cmdatl strategy reference") == std::string::npos || open == std::string::npos) {
