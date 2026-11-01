@@ -114,20 +114,23 @@ public:
    * @brief Builds the client over a shared market.
    * @param market The market.
    */
-  explicit PaperClient(std::shared_ptr<SimMarket> market)
-  : market_(std::move(market)) {}
+  explicit PaperClient(std::shared_ptr<SimMarket> market) : market_(std::move(market)) {}
 
   /**
    * @brief The market.
    * @return It.
    */
-  SimMarket& market() { return *market_; }
+  SimMarket& market() {
+    return *market_;
+  }
 
   /**
    * @brief The market.
    * @return It.
    */
-  const SimMarket& market() const { return *market_; }
+  const SimMarket& market() const {
+    return *market_;
+  }
 
   /** @brief How long a fill stays out of the holdings answer (the operator's `holdings_lag`). */
   Clock::duration holdings_lag_{};
@@ -177,8 +180,8 @@ public:
         if (fill.first + holdings_lag_ <= market_->now()) {
           continue;
         }
-        out[order.request_.instrument_.symbol_] += order.request_.side_ == atl::OrderSide::BUY ? fill.second :
-          -fill.second;
+        out[order.request_.instrument_.symbol_] +=
+          order.request_.side_ == atl::OrderSide::BUY ? fill.second : -fill.second;
       }
     }
     return out;
@@ -214,8 +217,10 @@ public:
       p.quantity_ = atl::Decimal64(reported, 0);
       std::int64_t resting = 0;
       for (const auto& order : market_->orders()) {
-        if (SimMarket::is_open(order) && order.request_.side_ == atl::OrderSide::SELL &&
-            order.request_.instrument_.symbol_ == symbol) {
+        if (
+          SimMarket::is_open(order) && order.request_.side_ == atl::OrderSide::SELL &&
+          order.request_.instrument_.symbol_ == symbol
+        ) {
           resting += SimMarket::remaining(order);
         }
       }
@@ -267,10 +272,7 @@ public:
    * @return The acknowledgement, or the market's refusal.
    */
   atl::Result<PaperAck> place_checked(
-    const PaperAccount& account,
-    const atl::OrderRequest& request,
-    std::int64_t quantity,
-    std::optional<double> limit
+    const PaperAccount& account, const atl::OrderRequest& request, std::int64_t quantity, std::optional<double> limit
   ) {
     (void)account;
     std::string error;
@@ -427,7 +429,8 @@ private:
     }
     s.execution_.filled_quantity_ = atl::Decimal64(order.filled_, 0);
     if (order.filled_ != 0) {
-      s.execution_.average_filled_price_ = decimal_of(std::round(order.filled_value_ / static_cast<double>(order.filled_)));
+      s.execution_.average_filled_price_ =
+        decimal_of(std::round(order.filled_value_ / static_cast<double>(order.filled_)));
       s.execution_.filled_amount_ = atl::Money{decimal_of(std::round(order.filled_value_)), atl::Currency{"KRW"}};
       s.execution_.commission_ = atl::Money{decimal_of(order.commission_), atl::Currency{"KRW"}};
       s.execution_.tax_ = atl::Money{decimal_of(order.tax_), atl::Currency{"KRW"}};
@@ -439,8 +442,8 @@ private:
   std::shared_ptr<SimMarket> market_;
 };
 
-}  // namespace paper
-}  // namespace cmdatl
+} // namespace paper
+} // namespace cmdatl
 
 namespace algotradelib {
 
@@ -623,7 +626,9 @@ struct BrokerTraits<cmdatl::paper::PaperClient> {
    * @param instruction The amendment.
    * @return The amendment.
    */
-  static Result<Amendment> to_replacement(const OrderRef<cmdatl::paper::Broker>& ref, const AmendInstruction& instruction) {
+  static Result<Amendment> to_replacement(
+    const OrderRef<cmdatl::paper::Broker>& ref, const AmendInstruction& instruction
+  ) {
     Amendment amendment;
     amendment.id_ = ref.primary_;
     amendment.quantity_ = instruction.quantity_;
@@ -637,7 +642,9 @@ struct BrokerTraits<cmdatl::paper::PaperClient> {
    * @param instruction The cancellation.
    * @return The cancellation, or a refusal before the market.
    */
-  static Result<Amendment> to_cancellation(const OrderRef<cmdatl::paper::Broker>& ref, const AmendInstruction& instruction) {
+  static Result<Amendment> to_cancellation(
+    const OrderRef<cmdatl::paper::Broker>& ref, const AmendInstruction& instruction
+  ) {
     if (!instruction.all_remaining_) {
       return Result<Amendment>(cmdatl::paper::refusal("partial_cancel_unsupported", "cancel the whole order", false));
     }
@@ -674,21 +681,27 @@ struct BrokerTraits<cmdatl::paper::PaperClient> {
    * @param q The query.
    * @return The answer.
    */
-  static Result<BarSeries> bars(Client& c, BarQuery q) { return c.bars(q); }
+  static Result<BarSeries> bars(Client& c, BarQuery q) {
+    return c.bars(q);
+  }
   /**
    * @brief The quote.
    * @param c The client.
    * @param i The instrument.
    * @return The answer.
    */
-  static Result<QuoteSnapshot> quote(Client& c, InstrumentId i) { return c.quote(i); }
+  static Result<QuoteSnapshot> quote(Client& c, InstrumentId i) {
+    return c.quote(i);
+  }
   /**
    * @brief The holdings.
    * @param c The client.
    * @param a The account.
    * @return The answer.
    */
-  static Result<HoldingsSnapshot> holdings(Client& c, const Account& a) { return c.holdings(a); }
+  static Result<HoldingsSnapshot> holdings(Client& c, const Account& a) {
+    return c.holdings(a);
+  }
   /**
    * @brief The buying power.
    * @param c The client.
@@ -696,7 +709,9 @@ struct BrokerTraits<cmdatl::paper::PaperClient> {
    * @param cur The currency.
    * @return The answer.
    */
-  static Result<BuyingPower> buying_power(Client& c, const Account& a, Currency cur) { return c.buying_power(a, cur); }
+  static Result<BuyingPower> buying_power(Client& c, const Account& a, Currency cur) {
+    return c.buying_power(a, cur);
+  }
   /**
    * @brief A placement: the bare client places nothing, only the logged client does (desk.hpp).
    * @param c The client.
@@ -717,7 +732,9 @@ struct BrokerTraits<cmdatl::paper::PaperClient> {
    * @param m The amendment.
    * @return The answer.
    */
-  static Result<PlaceAck> replace_order(Client& c, const Account& a, Amendment m) { return c.replace(a, m); }
+  static Result<PlaceAck> replace_order(Client& c, const Account& a, Amendment m) {
+    return c.replace(a, m);
+  }
   /**
    * @brief A cancellation: the bare client cancels nothing, only the logged client does (desk.hpp).
    * @param c The client.
@@ -737,7 +754,9 @@ struct BrokerTraits<cmdatl::paper::PaperClient> {
    * @param a The account.
    * @return The answer.
    */
-  static Result<WorkingOrdersResult> working_orders(Client& c, const Account& a) { return c.open_orders(a); }
+  static Result<WorkingOrdersResult> working_orders(Client& c, const Account& a) {
+    return c.open_orders(a);
+  }
   /**
    * @brief The history.
    * @param c The client.
@@ -745,14 +764,18 @@ struct BrokerTraits<cmdatl::paper::PaperClient> {
    * @param q The query.
    * @return The answer.
    */
-  static Result<OrderPage> order_history(Client& c, const Account& a, HistoryQuery q) { return c.history(a, q); }
+  static Result<OrderPage> order_history(Client& c, const Account& a, HistoryQuery q) {
+    return c.history(a, q);
+  }
   /**
    * @brief Reference data.
    * @param c The client.
    * @param i The instrument.
    * @return The answer.
    */
-  static Result<Instrument> instrument(Client& c, InstrumentId i) { return c.instrument(i); }
+  static Result<Instrument> instrument(Client& c, InstrumentId i) {
+    return c.instrument(i);
+  }
   /**
    * @brief The calendar.
    * @param c The client.
@@ -770,7 +793,9 @@ struct BrokerTraits<cmdatl::paper::PaperClient> {
    * @param i The instrument.
    * @return The answer.
    */
-  static Result<PriceLimits> price_limits(Client& c, InstrumentId i) { return c.price_limits(i); }
+  static Result<PriceLimits> price_limits(Client& c, InstrumentId i) {
+    return c.price_limits(i);
+  }
 };
 
-}  // namespace algotradelib
+} // namespace algotradelib

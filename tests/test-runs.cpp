@@ -10,9 +10,9 @@
 
 #include <atomic>
 #include <csignal>
+#include <filesystem>
 #include <functional>
 #include <map>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -93,8 +93,7 @@ ConfigParts run_parts() {
  */
 template <typename P>
 RunResult run_child(
-  const PaperFixture& fixture,
-  const std::vector<std::string>& args,
+  const PaperFixture& fixture, const std::vector<std::string>& args,
   const std::function<void(const std::string&, const std::filesystem::path&)>& before = {}
 ) {
   RunResult ran;
@@ -124,7 +123,8 @@ RunResult run_child(
     for (auto& arg : owned) {
       argv.push_back(arg.data());
     }
-    const int code = cmdatl::driver::run_main<P>(static_cast<int>(argv.size()), argv.data(), runtest::Load{}, runtest::Make<P>{});
+    const int code =
+      cmdatl::driver::run_main<P>(static_cast<int>(argv.size()), argv.data(), runtest::Load{}, runtest::Make<P>{});
     std::fflush(nullptr);
     ::_exit(code);
   }
@@ -226,7 +226,7 @@ ConfigParts parts_with(const std::string& extra_limits) {
   return parts;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("a run trades its script on the mock, its start line first, and ends clean after withdrawing") {
   const PaperFixture fixture(run_parts());
@@ -279,7 +279,8 @@ TEST_CASE("a run refuses before trading: arguments, session legs, on_fill, the m
   const auto fill = run_child<runtest::FillProgram>(fixture, spec_args());
   CHECK(fill.exit_ == 5);
   CHECK(code_of(fill) == "program.live_unsupported");
-  const auto us = run_child<runtest::Program>(fixture, {"instrument.x=005930", "orders.type=limit", "orders.offset=0.01"});
+  const auto us =
+    run_child<runtest::Program>(fixture, {"instrument.x=005930", "orders.type=limit", "orders.offset=0.01"});
   CHECK(us.exit_ == 2);
   CHECK(code_of(us) == "spec.invalid");
   std::filesystem::remove(fixture.armed());
@@ -311,8 +312,14 @@ TEST_CASE("a run refuses each start condition in order, before anything is sent"
   CHECK(spec_code(with("replay.fill=legs")) == std::make_pair(2, std::string("spec.invalid")));
   CHECK(spec_code(with("param.bad=1")) == std::make_pair(5, std::string("program.invalid")));
   CHECK(spec_code(with("instrument.y=035720")) == std::make_pair(3, std::string("refused.symbol_not_allowed")));
-  CHECK(spec_code({"instrument.x=005930", "orders.type=market", "replay.market=kr"}) == std::make_pair(3, std::string("refused.order_type")));
-  CHECK(spec_code({"instrument.x=005930", "orders.type=limit", "orders.offset=0.06", "replay.market=kr"}) == std::make_pair(3, std::string("refused.collar")));
+  CHECK(
+    spec_code({"instrument.x=005930", "orders.type=market", "replay.market=kr"}) ==
+    std::make_pair(3, std::string("refused.order_type"))
+  );
+  CHECK(
+    spec_code({"instrument.x=005930", "orders.type=limit", "orders.offset=0.06", "replay.market=kr"}) ==
+    std::make_pair(3, std::string("refused.collar"))
+  );
   runtest::data().refuse_ = true;
   CHECK(spec_code(spec_args()) == std::make_pair(2, std::string("spec.invalid")));
   runtest::data().refuse_ = false;
@@ -340,16 +347,27 @@ TEST_CASE("a run refuses without an operator file, and a second driver of one ru
   fixture.arm();
   // Another process holds this run's lock: the driver answers at once, nothing created.
   std::unique_ptr<cmdatl::OwnerLock> held;
-  const auto ran = run_child<runtest::Program>(fixture, spec_args(), [&held](const std::string&, const std::filesystem::path& dir) {
-    held = std::make_unique<cmdatl::OwnerLock>(dir.string());
-    REQUIRE(held->acquire(std::chrono::milliseconds(0), [] { return false; }, [](const std::string&) {}) == cmdatl::OwnerLock::Outcome::HELD);
-  });
+  const auto ran =
+    run_child<runtest::Program>(fixture, spec_args(), [&held](const std::string&, const std::filesystem::path& dir) {
+      held = std::make_unique<cmdatl::OwnerLock>(dir.string());
+      REQUIRE(
+        held->acquire(
+          std::chrono::milliseconds(0),
+          [] {
+            return false;
+          },
+          [](const std::string&) {}
+        ) == cmdatl::OwnerLock::Outcome::HELD
+      );
+    });
   CHECK(ran.exit_ == 1);
   CHECK(code_of(ran) == "busy.locked");
   CHECK(!std::filesystem::exists(ran.dir_ / "journal.jsonl"));
 }
 
-TEST_CASE("the placement boundary refuses market orders, limits outside the collar, and phases the operator did not permit") {
+TEST_CASE(
+  "the placement boundary refuses market orders, limits outside the collar, and phases the operator did not permit"
+) {
   {
     const PaperFixture fixture(run_parts());
     fixture.arm();
@@ -392,7 +410,9 @@ TEST_CASE("the step guard: a disarm, a replaced lock and a signal each stop plac
     fixture.arm();
     set_script({{2, {10, "1"}}, {5, {0, "1"}}, {6, {10, "1"}}});
     const auto armed = fixture.armed();
-    runtest::script().actions_[5] = [armed] { std::filesystem::remove(armed); };
+    runtest::script().actions_[5] = [armed] {
+      std::filesystem::remove(armed);
+    };
     const auto ran = run_child<runtest::Program>(fixture, spec_args());
     INFO(json::serialize(ran.reply_));
     CHECK(ran.reply_.at("stopped").as_string() == "not_armed");
@@ -426,7 +446,9 @@ TEST_CASE("the step guard: a disarm, a replaced lock and a signal each stop plac
     const PaperFixture fixture(run_parts());
     fixture.arm();
     set_script({{2, {10, "1"}}, {5, {0, "1"}}});
-    runtest::script().actions_[4] = [] { std::raise(SIGTERM); };
+    runtest::script().actions_[4] = [] {
+      std::raise(SIGTERM);
+    };
     const auto ran = run_child<runtest::Program>(fixture, spec_args());
     INFO(json::serialize(ran.reply_));
     CHECK(ran.reply_.at("stopped").as_string() == "signal");
@@ -434,7 +456,9 @@ TEST_CASE("the step guard: a disarm, a replaced lock and a signal each stop plac
   }
 }
 
-TEST_CASE("the operator's stop file: this run's withdraw cancels, another run's line is noted, a line written before the start acts first") {
+TEST_CASE(
+  "the operator's stop file: this run's withdraw cancels, another run's line is noted, a line written before the start acts first"
+) {
   {
     const PaperFixture fixture(run_parts());
     fixture.arm();
@@ -443,10 +467,14 @@ TEST_CASE("the operator's stop file: this run's withdraw cancels, another run's 
     set_script({{4, {10, "0.97"}}});
     const auto stop = fixture.dir() / "paper.stop";
     std::string run_id;
-    runtest::script().actions_[4] = [&run_id, stop] { spit(stop, "withdraw " + run_id + "\n"); };
-    const auto ran = run_child<runtest::Program>(fixture, spec_args(), [&run_id](const std::string& run, const std::filesystem::path&) {
-      run_id = run;
-    });
+    runtest::script().actions_[4] = [&run_id, stop] {
+      spit(stop, "withdraw " + run_id + "\n");
+    };
+    const auto ran = run_child<runtest::Program>(
+      fixture, spec_args(), [&run_id](const std::string& run, const std::filesystem::path&) {
+        run_id = run;
+      }
+    );
     INFO(json::serialize(ran.reply_));
     CHECK(ran.exit_ == 0);
     CHECK(ran.reply_.at("stopped").as_string() == "operator");
@@ -469,9 +497,11 @@ TEST_CASE("the operator's stop file: this run's withdraw cancels, another run's 
     const PaperFixture fixture(run_parts());
     fixture.arm();
     set_script({{2, {10, "1"}}});
-    const auto ran = run_child<runtest::Program>(fixture, spec_args(), [&fixture](const std::string& run, const std::filesystem::path&) {
-      spit(fixture.dir() / "paper.stop", "quiesce " + run + "\n");
-    });
+    const auto ran = run_child<runtest::Program>(
+      fixture, spec_args(), [&fixture](const std::string& run, const std::filesystem::path&) {
+        spit(fixture.dir() / "paper.stop", "quiesce " + run + "\n");
+      }
+    );
     CHECK(ran.events_.at(0).at("event").as_string() == "start");
     CHECK(ran.events_.at(1).at("event").as_string() == "stop");
     CHECK(count_of(ran, "placed") == 0);
@@ -508,7 +538,10 @@ TEST_CASE("a lost acknowledgement, of a buy or a sale, changes nothing in the su
     INFO(json::serialize(ran.reply_));
     INFO(ran.stderr_);
     CHECK(ran.exit_ == 0);
-    for (const char* field : {"executions", "commission_paid", "tax_paid", "closing_equity", "holdings_at_end", "owed_at_end"}) {
+    for (
+      const char* field :
+      {"executions", "commission_paid", "tax_paid", "closing_equity", "holdings_at_end", "owed_at_end"}
+    ) {
       CAPTURE(field);
       CHECK(ran.reply_.at(field) == normal.reply_.at(field));
     }
@@ -517,18 +550,26 @@ TEST_CASE("a lost acknowledgement, of a buy or a sale, changes nothing in the su
   };
   // The buy's acknowledgement lost.
   set_script(decisions);
-  cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) { client.lose_next_reply(Call::PLACE); };
+  cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) {
+    client.lose_next_reply(Call::PLACE);
+  };
   const auto buy_lost = run_child<runtest::Program>(fixture, spec_args());
   same_summary(buy_lost);
   CHECK(events_of(buy_lost, "placed").front().at("acknowledged") == json::value(false));
   // The sale's acknowledgement lost.
   set_script(decisions);
-  cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) { current_client() = &client; };
-  runtest::script().actions_[6] = [] { current_client()->lose_next_reply(Call::PLACE); };
+  cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) {
+    current_client() = &client;
+  };
+  runtest::script().actions_[6] = [] {
+    current_client()->lose_next_reply(Call::PLACE);
+  };
   same_summary(run_child<runtest::Program>(fixture, spec_args()));
   // An order whose acknowledgement was lost and which then expires: placed, expired, nothing owed.
   set_script({{3, {10, "0.97"}}});
-  cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) { client.lose_next_reply(Call::PLACE); };
+  cmdatl::driver::client_hook() = [](algotradelib::mock::MockClient& client) {
+    client.lose_next_reply(Call::PLACE);
+  };
   const auto expired = run_child<runtest::Program>(fixture, spec_args());
   INFO(json::serialize(expired.reply_));
   INFO(expired.stderr_);
@@ -569,7 +610,9 @@ TEST_CASE("the run's clock never moves past its bound, and a wait at the bound t
   atl::mock::Market market({series}, settings);
   int steps = 0;
   const auto bound = settings.start_ + std::chrono::hours(1);
-  cmdatl::driver::RunClock clock(market, bound, [&steps] { ++steps; });
+  cmdatl::driver::RunClock clock(market, bound, [&steps] {
+    ++steps;
+  });
   clock.wait_for(std::chrono::minutes(30));
   CHECK(clock.now() == settings.start_ + std::chrono::minutes(30));
   clock.wait_for(std::chrono::hours(2));
@@ -610,19 +653,27 @@ TEST_CASE("the summary's cash and equity follow the fills, commission included, 
     const auto quantity = algotradelib::Decimal64::parse(std::string(filled.at("quantity").as_string()));
     const auto price = algotradelib::Decimal64::parse(std::string(filled.at("price").as_string()));
     const auto amount = *algotradelib::decimal_multiply(quantity, price);
-    cash = filled.at("side").as_string() == "buy" ? *algotradelib::decimal_subtract(cash, amount) : *algotradelib::decimal_add(cash, amount);
-    cash = *algotradelib::decimal_subtract(cash, algotradelib::Decimal64::parse(std::string(filled.at("commission").as_string())));
+    cash = filled.at("side").as_string() == "buy" ?
+      *algotradelib::decimal_subtract(cash, amount) :
+      *algotradelib::decimal_add(cash, amount);
+    cash = *algotradelib::decimal_subtract(
+      cash, algotradelib::Decimal64::parse(std::string(filled.at("commission").as_string()))
+    );
   }
   CHECK(ran.reply_.at("holdings_at_end").as_object().at("005930").as_string() == "0");
   CHECK(ran.reply_.at("closing_equity").as_string() == cash.str());
   CHECK(ran.reply_.at("commission_paid").as_string() != "0");
 }
 
-TEST_CASE("an exception after the start line is an unknown outcome, with the reply written before the lock is released") {
+TEST_CASE(
+  "an exception after the start line is an unknown outcome, with the reply written before the lock is released"
+) {
   const PaperFixture fixture(run_parts());
   fixture.arm();
   set_script({{2, {10, "1"}}});
-  runtest::script().actions_[4] = [] { throw std::runtime_error("the program failed"); };
+  runtest::script().actions_[4] = [] {
+    throw std::runtime_error("the program failed");
+  };
   const auto ran = run_child<runtest::Program>(fixture, spec_args());
   INFO(json::serialize(ran.reply_));
   CHECK(ran.exit_ == 4);
@@ -636,7 +687,15 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
   const ScratchDir dir;
   spit(dir.path() / "armed", "");
   cmdatl::OwnerLock lock(dir.path().string());
-  REQUIRE(lock.acquire(std::chrono::milliseconds(0), [] { return false; }, [](const std::string&) {}) == cmdatl::OwnerLock::Outcome::HELD);
+  REQUIRE(
+    lock.acquire(
+      std::chrono::milliseconds(0),
+      [] {
+        return false;
+      },
+      [](const std::string&) {}
+    ) == cmdatl::OwnerLock::Outcome::HELD
+  );
   cmdatl::driver::PlacementPolicy policy;
   policy.armed_ = (dir.path() / "armed").string();
   policy.lock_ = &lock;
@@ -682,7 +741,13 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
   atl::BlockingSession<atl::mock::MockClient> inner(client, atl::mock::MockAccount{});
   std::vector<cmdatl::driver::PlacementEvent> seen;
   cmdatl::driver::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> session(
-    inner, policy, [&market] { return market.now(); }, [&seen](const cmdatl::driver::PlacementEvent& e) { seen.push_back(e); }
+    inner, policy,
+    [&market] {
+      return market.now();
+    },
+    [&seen](const cmdatl::driver::PlacementEvent& e) {
+      seen.push_back(e);
+    }
   );
   CHECK(session.phase_now() == open);
   client->fail_next(atl::mock::Call::CALENDAR, broker_error(atl::ErrorCategory::TRANSPORT), 2);
@@ -693,7 +758,7 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
   CHECK(refused.error().broker_code_ == "phase");
   CHECK(market.order_history({}).orders_.empty());
   const auto placed = session.place(sell);
-  CHECK(!placed);  // nothing held: a sell with no holding is the broker's refusal, reached
+  CHECK(!placed); // nothing held: a sell with no holding is the broker's refusal, reached
   REQUIRE(seen.size() == 2);
   CHECK(seen[1].reason_ == "insufficient_holdings");
   // Closed: nothing reaches the broker any more.
@@ -708,8 +773,8 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
 
 #if !defined(_WIN32)
 TEST_CASE("the stop file holds one line per run, and each run reads the strongest line naming it") {
-  using cmdatl::stop_intent_of;
   using algotradelib::runner::StopIntent;
+  using cmdatl::stop_intent_of;
   const std::string a = "r00000000000a";
   const std::string b = "r00000000000b";
   const std::string text = "withdraw " + a + "\nquiesce " + b + "\n";

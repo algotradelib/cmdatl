@@ -150,15 +150,8 @@ struct Traded {
  */
 template <typename Strategy, typename Session, typename Clock, typename Ready, typename Rests, typename Closed>
 Traded trade_on_rails(
-  Session& session,
-  atl::runner::FileJournal& journal,
-  Strategy strategy,
-  const Wiring& wiring,
-  atl::runner::StopSource& stop,
-  Clock clock,
-  Ready&& on_ready,
-  Rests&& nothing_rests,
-  Closed&& on_closed,
+  Session& session, atl::runner::FileJournal& journal, Strategy strategy, const Wiring& wiring,
+  atl::runner::StopSource& stop, Clock clock, Ready&& on_ready, Rests&& nothing_rests, Closed&& on_closed,
   std::ostream& err
 ) {
   Traded traded;
@@ -218,10 +211,11 @@ Traded trade_on_rails(
   }
   traded.report_ = loop.run(stop, 0);
   const auto& report = *traded.report_;
-  err << "loop: " << report.iterations_ << " iteration(s), " << report.blocked_ << " blocked, "
-      << report.orders_guard_refused_ << " refused by the guard, " << report.orders_binding_refused_
-      << " refused before sending, final gate "
-      << (report.final_gate_ ? atl::strategy::halt_reason_name(*report.final_gate_) : std::string_view("none")) << '\n';
+  err
+    << "loop: " << report.iterations_ << " iteration(s), " << report.blocked_ << " blocked, "
+    << report.orders_guard_refused_ << " refused by the guard, " << report.orders_binding_refused_
+    << " refused before sending, final gate "
+    << (report.final_gate_ ? atl::strategy::halt_reason_name(*report.final_gate_) : std::string_view("none")) << '\n';
   // A failed journal write is the most urgent: what the runner was sending is unknown.
   if (const auto failure = bound.local_failure()) {
     traded.outcome_ = Outcome::LOCAL_FAILURE;
@@ -273,5 +267,5 @@ Traded trade_on_rails(
   return traded;
 }
 
-}  // namespace driver
-}  // namespace cmdatl
+} // namespace driver
+} // namespace cmdatl

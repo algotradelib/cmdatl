@@ -80,8 +80,7 @@ public:
    * @brief Moves.
    * @param dir The directory.
    */
-  explicit InDir(const std::filesystem::path& dir)
-  : back_(std::filesystem::current_path()) {
+  explicit InDir(const std::filesystem::path& dir) : back_(std::filesystem::current_path()) {
     std::filesystem::current_path(dir);
   }
 
@@ -89,7 +88,9 @@ public:
   InDir& operator=(const InDir&) = delete;
 
   /** @brief Moves back. */
-  ~InDir() { std::filesystem::current_path(back_); }
+  ~InDir() {
+    std::filesystem::current_path(back_);
+  }
 
 private:
   std::filesystem::path back_;
@@ -132,7 +133,9 @@ void write_bars(const std::filesystem::path& path) {
     const double high = std::max(open, close) * 1.01;
     const double low = std::min(open, close) * 0.99;
     char row[160];
-    std::snprintf(row, sizeof(row), "AAA,%s,%.2f,%.2f,%.2f,%.2f,1000\n", date_of(19358 + i).c_str(), open, high, low, close);
+    std::snprintf(
+      row, sizeof(row), "AAA,%s,%.2f,%.2f,%.2f,%.2f,1000\n", date_of(19358 + i).c_str(), open, high, low, close
+    );
     out << row;
     previous = close;
   }
@@ -178,7 +181,7 @@ std::string program_with_a_warning() {
   return text;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("each starter written by strategy new backtests and trades from another directory", "[acceptance]") {
   const auto equip = equipment();
@@ -232,14 +235,18 @@ TEST_CASE("strategy backtest's report is atlc run's for atlc's examples", "[acce
   CHECK(compared == 5);
 }
 
-TEST_CASE("strategy backtest agrees with atlc run on limits and -P and --fills and warnings and failures", "[acceptance]") {
+TEST_CASE(
+  "strategy backtest agrees with atlc run on limits and -P and --fills and warnings and failures", "[acceptance]"
+) {
   const auto equip = equipment();
   if (!equip) {
     SKIP(UNEQUIPPED);
   }
   const Equipped equipped(*equip);
   const ScratchDir dir;
-  const auto at = [&dir](const std::string& file) { return (dir.path() / file).string(); };
+  const auto at = [&dir](const std::string& file) {
+    return (dir.path() / file).string();
+  };
   std::filesystem::create_directories(dir.path() / "work");
   write_bars(dir.path() / "bars.csv");
   REQUIRE(run({"strategy", "new", "base", "--dir", dir.path().string()}).exit_ == 0);
@@ -247,7 +254,10 @@ TEST_CASE("strategy backtest agrees with atlc run on limits and -P and --fills a
 
   SECTION("a limit-order spec whose offset makes pricing refuse") {
     auto limit = spec;
-    limit.replace(limit.find("type = \"market\""), std::string("type = \"market\"").size(), "type = \"limit\"\noffset = 0.299999999999999999");
+    limit.replace(
+      limit.find("type = \"market\""), std::string("type = \"market\"").size(),
+      "type = \"limit\"\noffset = 0.299999999999999999"
+    );
     spit(at("limit.toml"), limit);
     const auto ran = backtest({at("limit.toml")});
     INFO(ran.out_ << "\n" << ran.err_);
@@ -279,7 +289,10 @@ TEST_CASE("strategy backtest agrees with atlc run on limits and -P and --fills a
   SECTION("a warning reaches the reader as progress") {
     spit(at("warn.atls"), program_with_a_warning());
     auto warned = spec;
-    warned.replace(warned.find("strategy = \"base.atls\""), std::string("strategy = \"base.atls\"").size(), "strategy = \"warn.atls\"");
+    warned.replace(
+      warned.find("strategy = \"base.atls\""), std::string("strategy = \"base.atls\"").size(),
+      "strategy = \"warn.atls\""
+    );
     spit(at("warn.toml"), warned);
     const auto ran = backtest({at("warn.toml")});
     INFO(ran.out_ << "\n" << ran.err_);
@@ -302,7 +315,9 @@ TEST_CASE("strategy backtest agrees with atlc run on limits and -P and --fills a
   SECTION("a program error") {
     spit(at("bad.atls"), "params {\n  int x = ;\n}\n");
     auto bad = spec;
-    bad.replace(bad.find("strategy = \"base.atls\""), std::string("strategy = \"base.atls\"").size(), "strategy = \"bad.atls\"");
+    bad.replace(
+      bad.find("strategy = \"base.atls\""), std::string("strategy = \"base.atls\"").size(), "strategy = \"bad.atls\""
+    );
     spit(at("bad.toml"), bad);
     const auto ran = backtest({at("bad.toml")});
     CHECK(ran.exit_ == 5);

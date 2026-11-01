@@ -25,8 +25,8 @@
 
 #include <boost/json.hpp>
 
-#include <chrono>
 #include <cerrno>
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -147,7 +147,8 @@ inline bool valid_key(const std::string& key) {
     return false;
   }
   return std::all_of(key.begin(), key.end(), [](char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-';
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' ||
+      c == '-';
   });
 }
 
@@ -184,7 +185,10 @@ inline bool valid_offset(const std::string& text) {
  */
 inline std::optional<Reply> spec_fields(const json::object& envelope, SpecFields& fields) {
   const auto bad = [](const std::string& field, const std::string& why) {
-    return error_reply(Exit::FAILED, "atlc.failed", "atlc spec gave a " + field + " a run cannot use: " + why, "check atlc with cmdatl env");
+    return error_reply(
+      Exit::FAILED, "atlc.failed", "atlc spec gave a " + field + " a run cannot use: " + why,
+      "check atlc with cmdatl env"
+    );
   };
   const auto* program = envelope.if_contains("program");
   if (program == nullptr || !program->is_object()) {
@@ -198,14 +202,17 @@ inline std::optional<Reply> spec_fields(const json::object& envelope, SpecFields
   fields.program_ = std::string(path->as_string());
   fields.struct_ = std::string(name->as_string());
   std::error_code ec;
-  if (fields.program_.empty() || fields.program_.front() != '/' || !std::filesystem::is_regular_file(fields.program_, ec)) {
+  if (
+    fields.program_.empty() || fields.program_.front() != '/' || !std::filesystem::is_regular_file(fields.program_, ec)
+  ) {
     return bad("program.path", "not an absolute path to a file");
   }
   if (!valid_struct(fields.struct_)) {
     return bad("program.struct", fields.struct_);
   }
   const auto* build = envelope.if_contains("build");
-  const auto* indicators = build != nullptr && build->is_object() ? build->as_object().if_contains("indicators") : nullptr;
+  const auto* indicators =
+    build != nullptr && build->is_object() ? build->as_object().if_contains("indicators") : nullptr;
   if (indicators == nullptr || !indicators->is_string()) {
     return bad("build.indicators", "missing");
   }
@@ -215,7 +222,9 @@ inline std::optional<Reply> spec_fields(const json::object& envelope, SpecFields
   }
   const auto* store = envelope.if_contains("store");
   if (store != nullptr && store->is_bool() && store->as_bool()) {
-    return error_reply(Exit::USAGE, "spec.invalid", "a run reads files, not a store: give [data] a file", "fix the run spec");
+    return error_reply(
+      Exit::USAGE, "spec.invalid", "a run reads files, not a store: give [data] a file", "fix the run spec"
+    );
   }
   const auto* orders = envelope.if_contains("orders");
   if (orders == nullptr || !orders->is_object()) {
@@ -242,7 +251,10 @@ inline std::optional<Reply> spec_fields(const json::object& envelope, SpecFields
   }
   std::set<std::string> seen;
   for (const auto& pair : args->as_array()) {
-    if (!pair.is_array() || pair.as_array().size() != 2 || !pair.as_array()[0].is_string() || !pair.as_array()[1].is_string()) {
+    if (
+      !pair.is_array() || pair.as_array().size() != 2 || !pair.as_array()[0].is_string() ||
+      !pair.as_array()[1].is_string()
+    ) {
       return bad("args", "a pair that is not two strings");
     }
     const std::string key(pair.as_array()[0].as_string());
@@ -320,7 +332,9 @@ inline std::optional<long> pid_of(const std::string& text) {
   if (!digits.empty() && digits.back() == '\n') {
     digits.pop_back();
   }
-  const auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+  const auto is_digit = [](char c) {
+    return c >= '0' && c <= '9';
+  };
   if (digits.empty() || digits.size() > 10 || !std::all_of(digits.begin(), digits.end(), is_digit)) {
     return std::nullopt;
   }
@@ -388,7 +402,9 @@ struct ExitRecord {
  * @param out Set to the value, or reset for `null`.
  * @return Whether the field is valid.
  */
-inline bool bounded_field(const json::object& object, const char* key, std::int64_t low, std::int64_t high, std::optional<int>& out) {
+inline bool bounded_field(
+  const json::object& object, const char* key, std::int64_t low, std::int64_t high, std::optional<int>& out
+) {
   const auto* value = object.if_contains(key);
   if (value == nullptr) {
     return false;
@@ -417,9 +433,11 @@ inline std::optional<ExitRecord> exit_record_of(const json::object& object) {
   const auto* pid = object.if_contains("pid");
   const auto* spawned = object.if_contains("spawned");
   const auto* ended = object.if_contains("ended");
-  if (format == nullptr || !format->is_int64() || format->as_int64() != 1 || pid == nullptr || !pid->is_int64() ||
-      pid->as_int64() < 0 || pid->as_int64() > 2147483647LL || spawned == nullptr || !spawned->is_bool() || ended == nullptr ||
-      !ended->is_string()) {
+  if (
+    format == nullptr || !format->is_int64() || format->as_int64() != 1 || pid == nullptr || !pid->is_int64() ||
+    pid->as_int64() < 0 || pid->as_int64() > 2147483647LL || spawned == nullptr || !spawned->is_bool() ||
+    ended == nullptr || !ended->is_string()
+  ) {
     return std::nullopt;
   }
   if (!bounded_field(object, "exit", 0, 255, record.exit_) || !bounded_field(object, "signal", 1, 64, record.signal_)) {
@@ -447,8 +465,10 @@ inline bool valid_reply(const json::object& object, const std::string& run) {
   const auto* id = object.if_contains("run");
   const auto* code = object.if_contains("exit");
   const auto* result = object.if_contains("result");
-  if (id == nullptr || !id->is_string() || id->as_string() != run || code == nullptr || !code->is_int64() ||
-      code->as_int64() < 0 || code->as_int64() > 5 || result == nullptr || !result->is_string()) {
+  if (
+    id == nullptr || !id->is_string() || id->as_string() != run || code == nullptr || !code->is_int64() ||
+    code->as_int64() < 0 || code->as_int64() > 5 || result == nullptr || !result->is_string()
+  ) {
     return false;
   }
   const auto exit = code->as_int64();
@@ -463,8 +483,8 @@ inline bool valid_reply(const json::object& object, const std::string& run) {
     const auto* owed = object.if_contains("owed_at_end");
     // The driver exits 0 only for a clean run.
     return error == nullptr && outcome != nullptr && outcome->is_string() && outcome->as_string() == "clean" &&
-      executions != nullptr && executions->is_int64() && executions->as_int64() >= 0 && owed != nullptr && owed->is_array() &&
-      owed->as_array().empty();
+      executions != nullptr && executions->is_int64() && executions->as_int64() >= 0 && owed != nullptr &&
+      owed->is_array() && owed->as_array().empty();
   }
   if (error == nullptr || !error->is_object()) {
     return false;
@@ -503,7 +523,10 @@ inline Records read_records(const std::filesystem::path& dir, const std::string&
     const auto object = described.ok_ ? record_of(described.text_, false) : std::nullopt;
     const auto* id = object ? object->if_contains("run") : nullptr;
     const auto* format = object ? object->if_contains("format") : nullptr;
-    if (id != nullptr && id->is_string() && id->as_string() == run && format != nullptr && format->is_int64() && format->as_int64() == 1) {
+    if (
+      id != nullptr && id->is_string() && id->as_string() == run && format != nullptr && format->is_int64() &&
+      format->as_int64() == 1
+    ) {
       records.run_ = object;
     } else {
       records.run_damaged_ = true;
@@ -557,7 +580,10 @@ inline Records read_records(const std::filesystem::path& dir, const std::string&
         const auto first = record_of(head.substr(0, newline + 1), true);
         const auto* kind = first ? first->if_contains("event") : nullptr;
         const auto* id = first ? first->if_contains("run") : nullptr;
-        if (kind != nullptr && kind->is_string() && kind->as_string() == "start" && id != nullptr && id->is_string() && id->as_string() == run) {
+        if (
+          kind != nullptr && kind->is_string() && kind->as_string() == "start" && id != nullptr && id->is_string() &&
+          id->as_string() == run
+        ) {
           records.start_ = first;
         }
       }
@@ -589,7 +615,10 @@ inline Records read_records(const std::filesystem::path& dir, const std::string&
     }
     if (count && size <= COUNT_LIMIT) {
       std::string all;
-      if (read_whole(events.get(), static_cast<std::size_t>(COUNT_LIMIT) + 1, all).status_ == FileRead::Status::OK || !all.empty()) {
+      if (
+        read_whole(events.get(), static_cast<std::size_t>(COUNT_LIMIT) + 1, all).status_ == FileRead::Status::OK ||
+        !all.empty()
+      ) {
         std::size_t start = 0;
         while (start < all.size()) {
           const auto end = all.find('\n', start);
@@ -643,8 +672,11 @@ inline Probe probe_lock(const std::filesystem::path& dir, const json::object& st
     return Probe::UNKNOWN;
   }
   struct stat info{};
-  if (::fstat(fd.get(), &info) != 0 || !S_ISREG(info.st_mode) || static_cast<std::int64_t>(info.st_dev) != device->as_int64() ||
-      static_cast<std::int64_t>(info.st_ino) != inode->as_int64()) {
+  if (
+    ::fstat(fd.get(), &info) != 0 || !S_ISREG(info.st_mode) ||
+    static_cast<std::int64_t>(info.st_dev) != device->as_int64() ||
+    static_cast<std::int64_t>(info.st_ino) != inode->as_int64()
+  ) {
     return Probe::UNKNOWN;
   }
   if (::flock(fd.get(), LOCK_EX | LOCK_NB) == 0) {
@@ -856,7 +888,9 @@ inline std::pair<Records, State> evaluate(const std::filesystem::path& dir, cons
  * @param state The state.
  * @return The reply (exit 0: it read the run).
  */
-inline Reply status_body(const std::filesystem::path& dir, const std::string& run, const Records& records, const State& state) {
+inline Reply status_body(
+  const std::filesystem::path& dir, const std::string& run, const Records& records, const State& state
+) {
   Reply reply;
   reply.body_["run"] = run;
   reply.body_["state"] = state.state_;
@@ -879,7 +913,8 @@ inline Reply status_body(const std::filesystem::path& dir, const std::string& ru
   reply.body_["from"] = at != nullptr ? *at : json::value(nullptr);
   const auto* to = records.start_ ? records.start_->if_contains("to") : nullptr;
   reply.body_["to"] = to != nullptr ? *to : json::value(nullptr);
-  reply.body_["summary"] = records.reply_ && state.state_ == "ended" ? json::value(*records.reply_) : json::value(nullptr);
+  reply.body_["summary"] =
+    records.reply_ && state.state_ == "ended" ? json::value(*records.reply_) : json::value(nullptr);
   if (records.run_damaged_) {
     reply.body_["run_record"] = "damaged";
   }
@@ -902,7 +937,9 @@ inline std::optional<std::string> new_run_id() {
     return std::nullopt;
   }
   char text[16];
-  std::snprintf(text, sizeof text, "r%02x%02x%02x%02x%02x%02x", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
+  std::snprintf(
+    text, sizeof text, "r%02x%02x%02x%02x%02x%02x", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
+  );
   return std::string(text);
 #endif
 }
@@ -960,8 +997,8 @@ inline bool write_exit_record(const Supervise& s, long pid, int status, bool spa
   std::strftime(ended, sizeof ended, "%Y-%m-%dT%H:%M:%SZ", &parts);
   char text[256];
   const int size = std::snprintf(
-    text, sizeof text, "{\"format\":1,\"pid\":%ld,\"exit\":%s,\"signal\":%s,\"spawned\":%s,\"ended\":\"%s\"}\n", pid, code,
-    signal, spawned ? "true" : "false", ended
+    text, sizeof text, "{\"format\":1,\"pid\":%ld,\"exit\":%s,\"signal\":%s,\"spawned\":%s,\"ended\":\"%s\"}\n", pid,
+    code, signal, spawned ? "true" : "false", ended
   );
   return size > 0 && write_record_raw(s.exit_tmp_.c_str(), s.exit_.c_str(), text, static_cast<std::size_t>(size));
 }
@@ -1020,7 +1057,9 @@ inline void close_inherited_descriptors() noexcept {
   long top = 1 << 16;
   if (::getrlimit(RLIMIT_NOFILE, &limit) == 0) {
     const rlim_t hard = limit.rlim_max == RLIM_INFINITY ? (1 << 20) : limit.rlim_max;
-    top = static_cast<long>(std::min<rlim_t>(std::max(hard, limit.rlim_cur == RLIM_INFINITY ? hard : limit.rlim_cur), 1 << 20));
+    top = static_cast<long>(
+      std::min<rlim_t>(std::max(hard, limit.rlim_cur == RLIM_INFINITY ? hard : limit.rlim_cur), 1 << 20)
+    );
   }
   for (long fd = 3; fd < top; ++fd) {
     ::close(static_cast<int>(fd));
@@ -1037,15 +1076,19 @@ inline void close_inherited_descriptors() noexcept {
   struct sigaction ignored{};
   ignored.sa_handler = SIG_IGN;
   sigemptyset(&ignored.sa_mask);
-  if (::sigaction(SIGINT, &ignored, nullptr) != 0 || ::sigaction(SIGTERM, &ignored, nullptr) != 0 ||
-      ::sigaction(SIGHUP, &ignored, nullptr) != 0) {
+  if (
+    ::sigaction(SIGINT, &ignored, nullptr) != 0 || ::sigaction(SIGTERM, &ignored, nullptr) != 0 ||
+    ::sigaction(SIGHUP, &ignored, nullptr) != 0
+  ) {
     ::_exit(SUPERVISOR_NOT_SPAWNED);
   }
   if (::setsid() < 0) {
     ::_exit(SUPERVISOR_NOT_SPAWNED);
   }
   const int null = ::open("/dev/null", O_RDWR);
-  if (null < 0 || ::dup2(null, STDIN_FILENO) < 0 || ::dup2(null, STDOUT_FILENO) < 0 || ::dup2(null, STDERR_FILENO) < 0) {
+  if (
+    null < 0 || ::dup2(null, STDIN_FILENO) < 0 || ::dup2(null, STDOUT_FILENO) < 0 || ::dup2(null, STDERR_FILENO) < 0
+  ) {
     ::_exit(SUPERVISOR_NOT_SPAWNED);
   }
   close_inherited_descriptors();
@@ -1065,10 +1108,14 @@ inline void close_inherited_descriptors() noexcept {
   // Opened by the spawn itself, so each survives POSIX_SPAWN_CLOEXEC_DEFAULT.
   int error = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
   if (error == 0) {
-    error = posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, s.reply_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    error = posix_spawn_file_actions_addopen(
+      &actions, STDOUT_FILENO, s.reply_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600
+    );
   }
   if (error == 0) {
-    error = posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, s.stderr_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    error = posix_spawn_file_actions_addopen(
+      &actions, STDERR_FILENO, s.stderr_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600
+    );
   }
   if (error == 0) {
     error = posix_spawnattr_setsigdefault(&attr, &defaults);
@@ -1136,7 +1183,9 @@ public:
   }
 
   /** @brief Keeps the directory: a run may now exist. */
-  void disarm() noexcept { armed_ = false; }
+  void disarm() noexcept {
+    armed_ = false;
+  }
 
 private:
   std::filesystem::path dir_;
@@ -1152,7 +1201,9 @@ private:
  * @param dir The run's directory.
  * @return The reply.
  */
-inline Reply relayed(const std::string& run, const Records& records, const State& state, const std::filesystem::path& dir) {
+inline Reply relayed(
+  const std::string& run, const Records& records, const State& state, const std::filesystem::path& dir
+) {
 #if defined(_WIN32)
   (void)run;
   (void)records;
@@ -1169,12 +1220,26 @@ inline Reply relayed(const std::string& run, const Records& records, const State
   }
   if (reply.exit_ != Exit::OK && !reply.body_.contains("error")) {
     reply.body_["error"] = json::object{
-      {"code", !state.run_error_.empty() ? state.run_error_ : state.state_ == "starting" ? "unknown.run_start" : "unknown.run_ended"},
+      {"code",
+        !state.run_error_.empty() ?
+          state.run_error_ :
+          state.state_ == "starting" ?
+          "unknown.run_start" :
+          "unknown.run_ended"},
       {"message", "the run is " + state.state_},
-      {"next", state.state_ == "starting" ? "it may be trading: do not start it again; cmdatl run status " + run : "cmdatl run status " + run},
+      {"next",
+        state.state_ == "starting" ?
+          "it may be trading: do not start it again; cmdatl run status " + run :
+          "cmdatl run status " + run},
     };
   }
-  reply.body_["result"] = state.state_ == "refused" ? "refused" : reply.exit_ == Exit::OK ? "ok" : reply.exit_ == Exit::UNKNOWN ? "unknown" : "failed";
+  reply.body_["result"] = state.state_ == "refused" ?
+    "refused" :
+    reply.exit_ == Exit::OK ?
+    "ok" :
+    reply.exit_ == Exit::UNKNOWN ?
+    "unknown" :
+    "failed";
   return reply;
 #endif
 }
@@ -1187,7 +1252,10 @@ inline Reply relayed(const std::string& run, const Records& records, const State
  * @return The reply (exit 4).
  */
 inline Reply unknown_start(const std::string& run, const std::string& message, const std::string& state = "starting") {
-  auto reply = error_reply(Exit::UNKNOWN, "unknown.run_start", message, "the run may be trading: cmdatl run status " + run + "; do not start it again");
+  auto reply = error_reply(
+    Exit::UNKNOWN, "unknown.run_start", message,
+    "the run may be trading: cmdatl run status " + run + "; do not start it again"
+  );
   reply.body_["run"] = run;
   reply.body_["state"] = state;
   return reply;
@@ -1228,10 +1296,16 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
     const auto atlc = find_atlc(&snapshot);
     const std::string install = "install atlc, or name it with CMDATL_ATLC; cmdatl env shows what was found";
     if (atlc.path_.empty() || atlc.version_.empty()) {
-      return error_reply(Exit::FAILED, "atlc.missing", atlc.path_.empty() ? "atlc was not found" : atlc.path_ + " did not answer --version", install);
+      return error_reply(
+        Exit::FAILED, "atlc.missing",
+        atlc.path_.empty() ? "atlc was not found" : atlc.path_ + " did not answer --version", install
+      );
     }
     if (!at_least(atlc.version_, MINIMUM_ATLC)) {
-      return error_reply(Exit::FAILED, "atlc.unsupported", "atlc " + atlc.version_ + " is not a version cmdatl reads", "install a newer atlc");
+      return error_reply(
+        Exit::FAILED, "atlc.unsupported", "atlc " + atlc.version_ + " is not a version cmdatl reads",
+        "install a newer atlc"
+      );
     }
     const auto spec = std::filesystem::absolute(spec_given).string();
     std::vector<std::string> argv{atlc.path_, "spec", spec};
@@ -1240,7 +1314,9 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
       argv.push_back(param);
     }
     argv.push_back("--json");
-    const auto checked = run_child(argv, [&output](const std::string& line) { output.progress(line); });
+    const auto checked = run_child(argv, [&output](const std::string& line) {
+      output.progress(line);
+    });
     if (auto failure = spec_failure(checked)) {
       return std::move(*failure);
     }
@@ -1258,23 +1334,36 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
       if (arg.rfind("instrument.", 0) == 0) {
         const auto symbol = arg.substr(arg.find('=') + 1);
         if (!config.allows(symbol)) {
-          auto reply = error_reply(Exit::REFUSED, "refused.symbol_not_allowed", symbol + " is not in the operator's limits.symbols", next_for("refused.symbol_not_allowed"));
+          auto reply = error_reply(
+            Exit::REFUSED, "refused.symbol_not_allowed", symbol + " is not in the operator's limits.symbols",
+            next_for("refused.symbol_not_allowed")
+          );
           reply.body_["symbol"] = symbol;
           return reply;
         }
       }
     }
     if (config.limits_.order_type_ == "limit" && fields.order_type_ != "limit") {
-      return error_reply(Exit::REFUSED, "refused.order_type", "the run spec's [orders] type is " + fields.order_type_ + "; the operator allows limit orders only",
-                         next_for("refused.order_type"));
+      return error_reply(
+        Exit::REFUSED, "refused.order_type",
+        "the run spec's [orders] type is " + fields.order_type_ + "; the operator allows limit orders only",
+        next_for("refused.order_type")
+      );
     }
     if (!fields.offset_.empty() && !(std::stod(fields.offset_) <= config.limits_.collar_)) {
-      return error_reply(Exit::REFUSED, "refused.collar", "the run spec's [orders] offset " + fields.offset_ + " is above the operator's collar " +
-                         decimal_text(config.limits_.collar_), next_for("refused.collar"));
+      return error_reply(
+        Exit::REFUSED, "refused.collar",
+        "the run spec's [orders] offset " + fields.offset_ + " is above the operator's collar " +
+          decimal_text(config.limits_.collar_),
+        next_for("refused.collar")
+      );
     }
     std::error_code ec;
     if (!std::filesystem::exists(config.armed_path(), ec)) {
-      return error_reply(Exit::REFUSED, "refused.not_armed", "the operator's armed file does not exist", next_for("refused.not_armed"), true);
+      return error_reply(
+        Exit::REFUSED, "refused.not_armed", "the operator's armed file does not exist", next_for("refused.not_armed"),
+        true
+      );
     }
     const auto id = new_run_id();
     if (!id) {
@@ -1300,22 +1389,32 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
     described["params_given"] = given;
     const auto record = json::serialize(described) + "\n";
     if (record.size() > RUN_RECORD_MAX) {
-      return error_reply(Exit::USAGE, "spec.invalid", "the run's description would be " + std::to_string(record.size()) +
-                         " bytes, above 64 KiB; fewer or shorter parameters", "fix the run spec");
+      return error_reply(
+        Exit::USAGE, "spec.invalid",
+        "the run's description would be " + std::to_string(record.size()) +
+          " bytes, above 64 KiB; fewer or shorter parameters",
+        "fix the run spec"
+      );
     }
     const auto where = run_dir(config, run);
     if (!where) {
-      return error_reply(Exit::FAILED, "state.unavailable", "neither XDG_STATE_HOME nor HOME names an absolute directory");
+      return error_reply(
+        Exit::FAILED, "state.unavailable", "neither XDG_STATE_HOME nor HOME names an absolute directory"
+      );
     }
     dir = *where;
     if (make_private_dirs(dir.parent_path()) != 0 || ::mkdir(dir.c_str(), 0700) != 0) {
       return error_reply(Exit::FAILED, "file.unwritable", "the run's directory " + dir.string() + " cannot be made");
     }
     guard.emplace(dir);
-    if (auto failed = build::build_driver(
-          build::Request{atlc.path_, atlc.version_, fields.program_, fields.struct_, fields.indicators_}, dir,
-          [&output](const std::string& line) { output.progress(line); }
-        )) {
+    if (
+      auto failed = build::build_driver(
+        build::Request{atlc.path_, atlc.version_, fields.program_, fields.struct_, fields.indicators_}, dir,
+        [&output](const std::string& line) {
+          output.progress(line);
+        }
+      )
+    ) {
       return std::move(*failed);
     }
     if (interrupted()) {
@@ -1352,7 +1451,10 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
     output.progress("cmdatl: starting run " + run);
     supervisor = ::fork();
     if (supervisor < 0) {
-      return error_reply(Exit::FAILED, "run.failed", "the run's supervisor could not be started: " + std::string(std::strerror(errno)), next_for("run.failed"), true);
+      return error_reply(
+        Exit::FAILED, "run.failed", "the run's supervisor could not be started: " + std::string(std::strerror(errno)),
+        next_for("run.failed"), true
+      );
     }
     if (supervisor == 0) {
       supervise(s);
@@ -1362,7 +1464,9 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
     if (supervisor > 0) {
       return unknown_start(run, error.what());
     }
-    return error_reply(Exit::FAILED, "internal.error", error.what(), "nothing was started; report the defect with the command line");
+    return error_reply(
+      Exit::FAILED, "internal.error", error.what(), "nothing was started; report the defect with the command line"
+    );
   }
   // After the fork a run may exist: every failure is unknown (exit 4), and nothing kills the run.
   try {
@@ -1413,7 +1517,10 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
         case EarlyEnd::NONE:
           break;
         case EarlyEnd::NOT_LAUNCHED: {
-          auto reply = error_reply(Exit::FAILED, "run.failed", "the driver could not be spawned; nothing was sent", next_for("run.failed"), true);
+          auto reply = error_reply(
+            Exit::FAILED, "run.failed", "the driver could not be spawned; nothing was sent", next_for("run.failed"),
+            true
+          );
           reply.body_["run"] = run;
           reply.body_["state"] = "failed";
           return reply;
@@ -1423,8 +1530,11 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
           return relayed(run, read, state, dir);
         }
         case EarlyEnd::UNKNOWN: {
-          auto reply = error_reply(Exit::UNKNOWN, "unknown.run_ended", "the run ended without a reply it could be read from; it may have sent orders",
-                                   next_for("unknown.run_ended"));
+          auto reply = error_reply(
+            Exit::UNKNOWN, "unknown.run_ended",
+            "the run ended without a reply it could be read from; it may have sent orders",
+            next_for("unknown.run_ended")
+          );
           reply.body_["run"] = run;
           reply.body_["state"] = "unknown";
           return reply;
@@ -1433,12 +1543,18 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
       if (supervisor_status && !records.pid_) {
         // A second read: a fast driver and a failed `pid` write can leave exit.json there already.
         records = read_records(dir, run);
-        if (!records.exit_present_ && !records.pid_ && WIFEXITED(*supervisor_status) && WEXITSTATUS(*supervisor_status) == SUPERVISOR_NOT_SPAWNED) {
+        if (
+          !records.exit_present_ && !records.pid_ && WIFEXITED(*supervisor_status) &&
+          WEXITSTATUS(*supervisor_status) == SUPERVISOR_NOT_SPAWNED
+        ) {
           Supervise paths;
           paths.exit_ = s.exit_;
           paths.exit_tmp_ = s.exit_tmp_;
           (void)write_exit_record(paths, 0, -1, false);
-          auto reply = error_reply(Exit::FAILED, "run.failed", "the run's supervisor failed before starting the driver; nothing was sent", next_for("run.failed"), true);
+          auto reply = error_reply(
+            Exit::FAILED, "run.failed", "the run's supervisor failed before starting the driver; nothing was sent",
+            next_for("run.failed"), true
+          );
           reply.body_["run"] = run;
           reply.body_["state"] = "failed";
           return reply;
@@ -1505,7 +1621,10 @@ inline std::optional<std::string> latest_run(const OperatorConfig& config) {
   const auto dir = std::filesystem::path(*root) / "runs" / config.account_name();
   std::optional<std::pair<std::string, std::string>> newest;
   std::error_code ec;
-  for (auto it = std::filesystem::directory_iterator(dir, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+  for (
+    auto it = std::filesystem::directory_iterator(dir, ec); !ec && it != std::filesystem::directory_iterator();
+    it.increment(ec)
+  ) {
     const auto id = it->path().filename().string();
     if (!valid_run_id(id)) {
       continue;
@@ -1545,7 +1664,9 @@ inline Reply status_reply(const Invocation& invocation, const ConfigSnapshot& sn
   const auto& config = *snapshot.config_;
   std::string run = invocation.get("RUN");
   if (!run.empty() && !valid_run_id(run)) {
-    return error_reply(Exit::USAGE, "usage.bad_value", "a run id is r and 12 lowercase hex digits, not '" + run.substr(0, 40) + "'");
+    return error_reply(
+      Exit::USAGE, "usage.bad_value", "a run id is r and 12 lowercase hex digits, not '" + run.substr(0, 40) + "'"
+    );
   }
   if (run.empty()) {
     const auto newest = latest_run(config);
@@ -1564,5 +1685,5 @@ inline Reply status_reply(const Invocation& invocation, const ConfigSnapshot& sn
 #endif
 }
 
-}  // namespace runs
-}  // namespace cmdatl
+} // namespace runs
+} // namespace cmdatl

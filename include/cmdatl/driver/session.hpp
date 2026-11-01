@@ -71,10 +71,7 @@ struct PlacementEvent {
  * @return `closed`, `not_armed`, `lock_lost`, `order_type`, `no_price`, `collar` or `phase`, or nothing.
  */
 inline std::optional<std::string> placement_refusal(
-  const PlacementPolicy& policy,
-  bool closed,
-  const atl::OrderRequest& order,
-  std::optional<atl::Decimal64> mark,
+  const PlacementPolicy& policy, bool closed, const atl::OrderRequest& order, std::optional<atl::Decimal64> mark,
   atl::strategy::MarketPhase phase
 ) {
   if (closed) {
@@ -133,9 +130,7 @@ public:
    * @param observer Told of every placement, forwarded or refused; may be empty.
    */
   GuardedSession(
-    Inner& inner,
-    PlacementPolicy policy,
-    std::function<std::chrono::system_clock::time_point()> now,
+    Inner& inner, PlacementPolicy policy, std::function<std::chrono::system_clock::time_point()> now,
     std::function<void(const PlacementEvent&)> observer
   )
   : inner_(&inner), policy_(std::move(policy)), now_(std::move(now)), observer_(std::move(observer)) {}
@@ -143,14 +138,18 @@ public:
   /**
    * @brief Stops every later placement: called when the loop has returned, so nothing the closing reads trigger sends.
    */
-  void close() noexcept { closed_ = true; }
+  void close() noexcept {
+    closed_ = true;
+  }
 
   /**
    * @brief Whether the order ids this boundary cancelled include one.
    * @param order_id The broker's order id.
    * @return Whether it cancelled it.
    */
-  bool cancelled(const std::string& order_id) const { return cancelled_.count(order_id) != 0; }
+  bool cancelled(const std::string& order_id) const {
+    return cancelled_.count(order_id) != 0;
+  }
 
   /**
    * @brief The market's phase now, from the calendar read through the session: `UNKNOWN` when it cannot be read.
@@ -213,27 +212,45 @@ public:
   }
 
   /** @brief Forwarded. @param query The query. @return The answer. */
-  auto bars(atl::BarQuery query) { return inner_->bars(std::move(query)); }
+  auto bars(atl::BarQuery query) {
+    return inner_->bars(std::move(query));
+  }
   /** @brief Forwarded. @param instrument The instrument. @return The answer. */
-  auto quote(atl::InstrumentId instrument) { return inner_->quote(std::move(instrument)); }
+  auto quote(atl::InstrumentId instrument) {
+    return inner_->quote(std::move(instrument));
+  }
   /** @brief Forwarded. @param subject The instrument. @return The answer. */
-  auto instrument(atl::InstrumentId subject) { return inner_->instrument(std::move(subject)); }
+  auto instrument(atl::InstrumentId subject) {
+    return inner_->instrument(std::move(subject));
+  }
   /** @brief Forwarded. @param country The country. @param from The first date. @return The answer. */
   auto calendar(atl::Country country, std::optional<atl::Date> from = std::nullopt) {
     return inner_->calendar(country, std::move(from));
   }
   /** @brief Forwarded. @return The answer. */
-  auto holdings() { return inner_->holdings(); }
+  auto holdings() {
+    return inner_->holdings();
+  }
   /** @brief Forwarded. @param currency The currency. @return The answer. */
-  auto buying_power(atl::Currency currency) { return inner_->buying_power(std::move(currency)); }
+  auto buying_power(atl::Currency currency) {
+    return inner_->buying_power(std::move(currency));
+  }
   /** @brief Forwarded. @return The answer. */
-  auto working_orders() { return inner_->working_orders(); }
+  auto working_orders() {
+    return inner_->working_orders();
+  }
   /** @brief Forwarded. @param query The query. @return The answer. */
-  auto order_history(const atl::OrderHistoryQuery& query) { return inner_->order_history(query); }
+  auto order_history(const atl::OrderHistoryQuery& query) {
+    return inner_->order_history(query);
+  }
   /** @brief Forwarded. @param instrument The instrument. @return The answer. */
-  auto sellable_quantity(atl::InstrumentId instrument) { return inner_->sellable_quantity(std::move(instrument)); }
+  auto sellable_quantity(atl::InstrumentId instrument) {
+    return inner_->sellable_quantity(std::move(instrument));
+  }
   /** @brief Forwarded. @param instrument The instrument. @return The answer. */
-  auto price_limits(atl::InstrumentId instrument) { return inner_->price_limits(std::move(instrument)); }
+  auto price_limits(atl::InstrumentId instrument) {
+    return inner_->price_limits(std::move(instrument));
+  }
 
 private:
   void tell(const char* kind, const atl::OrderRequest& order, std::string order_id, std::string reason) {
@@ -257,5 +274,5 @@ private:
   bool closed_{false};
 };
 
-}  // namespace driver
-}  // namespace cmdatl
+} // namespace driver
+} // namespace cmdatl

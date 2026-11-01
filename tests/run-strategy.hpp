@@ -165,11 +165,15 @@ struct Load {
 struct Program {
   static constexpr const char* atls_mode = "named";
   static constexpr bool atls_legs = false;
-  static std::vector<std::string> atls_instruments() { return {"x"}; }
+  static std::vector<std::string> atls_instruments() {
+    return {"x"};
+  }
 
   explicit Program(std::vector<atl::InstrumentId> ids) : ids_(std::move(ids)) {}
 
-  std::size_t warmup_bars() const { return script().stated_warmup_.value_or(script().warmup_); }
+  std::size_t warmup_bars() const {
+    return script().stated_warmup_.value_or(script().warmup_);
+  }
 
   template <class Ctx>
   void on_bar(Ctx& ctx, const atl::strategy::BarEvent& event) {
@@ -244,4 +248,4 @@ struct Make {
   }
 };
 
-}  // namespace runtest
+} // namespace runtest

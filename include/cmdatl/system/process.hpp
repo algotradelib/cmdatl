@@ -89,8 +89,7 @@ inline std::optional<std::string> find_on_path(const std::string& name) {
 class ScopedSpawnActions {
 public:
   /** @brief Initializes the actions; `ok()` says whether that worked. */
-  ScopedSpawnActions() noexcept
-  : ok_(posix_spawn_file_actions_init(&actions_) == 0) {}
+  ScopedSpawnActions() noexcept : ok_(posix_spawn_file_actions_init(&actions_) == 0) {}
 
   ScopedSpawnActions(const ScopedSpawnActions&) = delete;
   ScopedSpawnActions& operator=(const ScopedSpawnActions&) = delete;
@@ -106,13 +105,17 @@ public:
    * @brief Whether the actions were initialized.
    * @return Whether they were.
    */
-  bool ok() const noexcept { return ok_; }
+  bool ok() const noexcept {
+    return ok_;
+  }
 
   /**
    * @brief The actions.
    * @return A pointer to them.
    */
-  posix_spawn_file_actions_t* get() noexcept { return &actions_; }
+  posix_spawn_file_actions_t* get() noexcept {
+    return &actions_;
+  }
 
 private:
   posix_spawn_file_actions_t actions_{};
@@ -123,8 +126,7 @@ private:
 class ScopedSpawnAttr {
 public:
   /** @brief Initializes the attributes; `status()` is the error number of that, 0 when it worked. */
-  ScopedSpawnAttr() noexcept
-  : status_(posix_spawnattr_init(&attr_)) {}
+  ScopedSpawnAttr() noexcept : status_(posix_spawnattr_init(&attr_)) {}
 
   ScopedSpawnAttr(const ScopedSpawnAttr&) = delete;
   ScopedSpawnAttr& operator=(const ScopedSpawnAttr&) = delete;
@@ -140,13 +142,17 @@ public:
    * @brief The error number of the initialization.
    * @return 0 when it worked.
    */
-  int status() const noexcept { return status_; }
+  int status() const noexcept {
+    return status_;
+  }
 
   /**
    * @brief The attributes.
    * @return A pointer to them.
    */
-  posix_spawnattr_t* get() noexcept { return &attr_; }
+  posix_spawnattr_t* get() noexcept {
+    return &attr_;
+  }
 
 private:
   posix_spawnattr_t attr_{};
@@ -166,8 +172,7 @@ public:
    * @brief Takes a spawned child that leads its own process group.
    * @param pid The child's process id, which is its group's id.
    */
-  explicit ChildGroup(pid_t pid) noexcept
-  : pid_(pid) {}
+  explicit ChildGroup(pid_t pid) noexcept : pid_(pid) {}
 
   ChildGroup(const ChildGroup&) = delete;
   ChildGroup& operator=(const ChildGroup&) = delete;
@@ -366,8 +371,7 @@ inline int lifted_pipe(int (&fds)[2]) noexcept {
  * @return How it ended; partial output after a failure is never `FINISHED`.
  */
 inline ChildResult run_child(
-  const std::vector<std::string>& argv,
-  const std::function<void(const std::string&)>& on_stderr_line,
+  const std::vector<std::string>& argv, const std::function<void(const std::string&)>& on_stderr_line,
   const std::vector<std::string>* environment = nullptr
 ) {
   ChildResult result;
@@ -449,7 +453,9 @@ inline ChildResult run_child(
       error = posix_spawnattr_setsigmask(attr.get(), &unblocked);
     }
     if (error == 0) {
-      error = posix_spawn(&pid, args[0], actions.get(), attr.get(), args.data(), environment != nullptr ? envp.data() : environ);
+      error = posix_spawn(
+        &pid, args[0], actions.get(), attr.get(), args.data(), environment != nullptr ? envp.data() : environ
+      );
     }
     if (error != 0) {
       result.error_ = std::strerror(error);

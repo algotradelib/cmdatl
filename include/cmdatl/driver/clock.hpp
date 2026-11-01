@@ -106,7 +106,9 @@ struct Guard {
    * @param intent The intent.
    * @param at The instant, for the event.
    */
-  void latch(const std::string& reason, atl::runner::StopIntent intent, std::optional<std::chrono::system_clock::time_point> at) {
+  void latch(
+    const std::string& reason, atl::runner::StopIntent intent, std::optional<std::chrono::system_clock::time_point> at
+  ) {
     const auto held = stop_->intent();
     const bool stronger = !held || atl::runner::stop_intent_strength(intent) > atl::runner::stop_intent_strength(*held);
     stop_->request(intent);
@@ -142,12 +144,18 @@ struct Guard {
     const auto intent = stop_intent_of(*text, run_);
     if (!intent) {
       if (noted_.insert(*text).second) {
-        emit(json::object{{"event", "note"}, {"at", at_text(now)}, {"message", "the stop file names no stop for this run; ignored"}});
+        emit(
+          json::object{
+            {"event", "note"}, {"at", at_text(now)}, {"message", "the stop file names no stop for this run; ignored"}
+          }
+        );
       }
       return;
     }
-    if (!operator_intent_ ||
-        atl::runner::stop_intent_strength(*intent) > atl::runner::stop_intent_strength(*operator_intent_)) {
+    if (
+      !operator_intent_ ||
+      atl::runner::stop_intent_strength(*intent) > atl::runner::stop_intent_strength(*operator_intent_)
+    ) {
       operator_intent_ = intent;
       latch("operator", *intent, now);
     }
@@ -200,7 +208,9 @@ public:
    * @brief The market's time.
    * @return It.
    */
-  std::chrono::system_clock::time_point now() const noexcept { return market_->now(); }
+  std::chrono::system_clock::time_point now() const noexcept {
+    return market_->now();
+  }
 
   /**
    * @brief The market's time only moves forward, so it is its own monotonic reading.
@@ -240,5 +250,5 @@ private:
   std::function<void()> after_step_;
 };
 
-}  // namespace driver
-}  // namespace cmdatl
+} // namespace driver
+} // namespace cmdatl

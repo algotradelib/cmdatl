@@ -43,7 +43,9 @@ inline Reply env_reply() {
   reply.body_["algotradelib"] = ATL_VERSION_STRING;
   const auto snapshot = load_operator_config();
   const auto atlc = find_atlc(&snapshot);
-  const auto or_null = [](const std::string& text) { return text.empty() ? json::value(nullptr) : json::value(text); };
+  const auto or_null = [](const std::string& text) {
+    return text.empty() ? json::value(nullptr) : json::value(text);
+  };
   const auto error_json = [](const ConfigError& error) {
     return json::object{
       {"code", error.code_},
@@ -102,7 +104,8 @@ inline Reply env_reply() {
       {"portfolio_age", c.limits_.portfolio_age_},
     };
     std::error_code ec;
-    reply.body_["armed"] = json::object{{"path", c.armed_path()}, {"exists", std::filesystem::exists(c.armed_path(), ec)}};
+    reply.body_["armed"] =
+      json::object{{"path", c.armed_path()}, {"exists", std::filesystem::exists(c.armed_path(), ec)}};
     const auto dir = account_dir(c);
     reply.body_["state_dir"] = dir ? json::value(*dir) : json::value(nullptr);
 #if defined(_WIN32)
@@ -117,11 +120,12 @@ inline Reply env_reply() {
       {"bars", c.paper_.bars_},
       {"start", c.paper_.start_},
       {"cash", std::to_string(c.paper_.cash_)},
-      {"costs", json::object{
-        {"commission", decimal_text(costs.commission_)},
-        {"sell_tax", decimal_text(costs.sell_tax_)},
-        {"slippage_ticks", costs.slippage_ticks_},
-      }},
+      {"costs",
+        json::object{
+          {"commission", decimal_text(costs.commission_)},
+          {"sell_tax", decimal_text(costs.sell_tax_)},
+          {"slippage_ticks", costs.slippage_ticks_},
+        }},
     };
   }
   reply.body_["schema_version"] = SCHEMA_VERSION;
@@ -129,4 +133,4 @@ inline Reply env_reply() {
   return reply;
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl

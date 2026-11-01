@@ -40,6 +40,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <functional>
@@ -51,7 +52,6 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
-#include <cstdlib>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -249,7 +249,9 @@ struct Ledger {
  * @param at When it was seen.
  * @return The event.
  */
-inline json::object order_event(const char* kind, const atl::OrderSnapshot& order, std::chrono::system_clock::time_point at) {
+inline json::object order_event(
+  const char* kind, const atl::OrderSnapshot& order, std::chrono::system_clock::time_point at
+) {
   json::object event{
     {"event", kind},
     {"at", at_text(at)},
@@ -287,7 +289,9 @@ inline json::object order_event(const char* kind, const atl::OrderSnapshot& orde
  *   the run ends in an internal error before that scan).
  */
 template <typename Cancelled>
-void scan_orders(const atl::mock::Market& market, Ledger& ledger, Cancelled&& cancelled, Guard& guard, bool whole = false) {
+void scan_orders(
+  const atl::mock::Market& market, Ledger& ledger, Cancelled&& cancelled, Guard& guard, bool whole = false
+) {
   // Every order the run knows of has finished and the market lists none working: nothing can have changed, and the
   // history (every order the run ever placed) is not copied at every step.
   if (!whole && ledger.seen_.size() == ledger.finished_.size() && market.working_orders().orders_.empty()) {
@@ -314,9 +318,8 @@ void scan_orders(const atl::mock::Market& market, Ledger& ledger, Cancelled&& ca
       ledger.commission_ = add_exact(ledger.commission_, commission);
       ledger.tax_ = add_exact(ledger.tax_, tax);
       const auto& amount = execution.filled_amount_->amount_;
-      ledger.cash_ = order.side_ == atl::OrderSide::BUY ?
-        subtract_exact(ledger.cash_, amount) :
-        add_exact(ledger.cash_, amount);
+      ledger.cash_ =
+        order.side_ == atl::OrderSide::BUY ? subtract_exact(ledger.cash_, amount) : add_exact(ledger.cash_, amount);
       ledger.cash_ = subtract_exact(subtract_exact(ledger.cash_, commission), tax);
       guard.emit(order_event("filled", order, market.now()));
       ledger.finished_.insert(order.order_id_);
@@ -361,9 +364,11 @@ int run_main(int argc, char** argv, Load load, Make make) {
   base["run"] = args.id_;
   // Row 2: session legs have no live source.
   if (Program::atls_legs) {
-    return run_error(base, Exit::PROGRAM, "program.live_unsupported",
-                     "the program has on_open/on_close (session legs), which no live source delivers",
-                     "run it with cmdatl strategy backtest; a run takes programs without session legs", {{"unsupported", "legs"}});
+    return run_error(
+      base, Exit::PROGRAM, "program.live_unsupported",
+      "the program has on_open/on_close (session legs), which no live source delivers",
+      "run it with cmdatl strategy backtest; a run takes programs without session legs", {{"unsupported", "legs"}}
+    );
   }
   // Row 3: the market's settings.
   if (const auto refusal = spec_refusal(args.atlc_)) {
@@ -378,17 +383,23 @@ int run_main(int argc, char** argv, Load load, Make make) {
   } catch (const std::out_of_range& error) {
     return run_error(base, Exit::USAGE, "spec.invalid", error.what());
   }
-  if (loaded.symbols_.empty() || loaded.series_.size() != loaded.symbols_.size() ||
-      loaded.instruments_.size() != loaded.symbols_.size()) {
-    return run_error(base, Exit::USAGE, "spec.no_instruments", "the run's data names no instrument to trade",
-                     "name the symbols in the run spec's [instruments], as the data names them");
+  if (
+    loaded.symbols_.empty() || loaded.series_.size() != loaded.symbols_.size() ||
+    loaded.instruments_.size() != loaded.symbols_.size()
+  ) {
+    return run_error(
+      base, Exit::USAGE, "spec.no_instruments", "the run's data names no instrument to trade",
+      "name the symbols in the run spec's [instruments], as the data names them"
+    );
   }
   std::optional<std::chrono::system_clock::time_point> first_end;
   std::optional<std::chrono::system_clock::time_point> last_end;
   for (const auto& series : loaded.series_) {
     if (series.interval_ != atl::BarInterval::ONE_DAY) {
-      return run_error(base, Exit::FAILED, "unsupported.interval",
-                       series.instrument_.symbol_ + "'s bars are not daily; a run trades daily bars");
+      return run_error(
+        base, Exit::FAILED, "unsupported.interval",
+        series.instrument_.symbol_ + "'s bars are not daily; a run trades daily bars"
+      );
     }
     for (const auto& bar : series.bars_) {
       const auto end = atl::strategy::bar_period_end(bar, series.interval_, series.stamp_);
@@ -415,10 +426,12 @@ int run_main(int argc, char** argv, Load load, Make make) {
   // Row 6: the warm-up, compared before any arithmetic.
   const std::size_t warmup = strategy->warmup_bars();
   if (warmup > MAX_WARMUP_BARS) {
-    return run_error(base, Exit::PROGRAM, "program.live_unsupported",
-                     "the program warms up on " + std::to_string(warmup) + " bars, more than a run reads (" +
-                       std::to_string(MAX_WARMUP_BARS) + ")",
-                     "shorten the program's warm-up", {{"unsupported", "warmup"}});
+    return run_error(
+      base, Exit::PROGRAM, "program.live_unsupported",
+      "the program warms up on " + std::to_string(warmup) + " bars, more than a run reads (" +
+        std::to_string(MAX_WARMUP_BARS) + ")",
+      "shorten the program's warm-up", {{"unsupported", "warmup"}}
+    );
   }
   // Row 8: the operator's file, one snapshot for the whole run.
   const auto snapshot = load_operator_config();
@@ -429,15 +442,19 @@ int run_main(int argc, char** argv, Load load, Make make) {
   // Row 9: the operator's ceilings against the spec.
   for (const auto& symbol : loaded.symbols_) {
     if (!config.allows(symbol)) {
-      return run_error(base, Exit::REFUSED, "refused.symbol_not_allowed", symbol + " is not in the operator's limits.symbols",
-                       "", {{"symbol", symbol}});
+      return run_error(
+        base, Exit::REFUSED, "refused.symbol_not_allowed", symbol + " is not in the operator's limits.symbols", "",
+        {{"symbol", symbol}}
+      );
     }
   }
   const auto order_type = atlc_value(args.atlc_, "orders.type").value_or("market");
   if (config.limits_.order_type_ == "limit" && order_type != "limit") {
-    return run_error(base, Exit::REFUSED, "refused.order_type",
-                     "the run spec's [orders] type is " + order_type + "; the operator allows limit orders only",
-                     "set [orders] type = \"limit\" and an offset within the operator's collar");
+    return run_error(
+      base, Exit::REFUSED, "refused.order_type",
+      "the run spec's [orders] type is " + order_type + "; the operator allows limit orders only",
+      "set [orders] type = \"limit\" and an offset within the operator's collar"
+    );
   }
   if (const auto offset = atlc_value(args.atlc_, "orders.offset")) {
     double value = 0;
@@ -447,8 +464,11 @@ int run_main(int argc, char** argv, Load load, Make make) {
       return run_error(base, Exit::USAGE, "spec.invalid", "orders.offset " + *offset + " is not a number");
     }
     if (!(value <= config.limits_.collar_)) {
-      return run_error(base, Exit::REFUSED, "refused.collar",
-                       "the run spec's [orders] offset " + *offset + " is above the operator's collar " + decimal_text(config.limits_.collar_));
+      return run_error(
+        base, Exit::REFUSED, "refused.collar",
+        "the run spec's [orders] offset " + *offset + " is above the operator's collar " +
+          decimal_text(config.limits_.collar_)
+      );
     }
   }
   // Row 10: the run's own lock, in the directory `run start` made.
@@ -458,9 +478,17 @@ int run_main(int argc, char** argv, Load load, Make make) {
     return run_error(base, Exit::FAILED, "file.unwritable", "the run's directory does not exist; run start makes it");
   }
   OwnerLock lock(*dir);
-  const auto taken = lock.acquire(std::chrono::milliseconds(0), [] { return interrupted(); }, [](const std::string&) {});
+  const auto taken = lock.acquire(
+    std::chrono::milliseconds(0),
+    [] {
+      return interrupted();
+    },
+    [](const std::string&) {}
+  );
   if (taken == OwnerLock::Outcome::BUSY) {
-    return run_error(base, Exit::FAILED, "busy.locked", "another driver holds this run's lock", "cmdatl run status " + args.id_);
+    return run_error(
+      base, Exit::FAILED, "busy.locked", "another driver holds this run's lock", "cmdatl run status " + args.id_
+    );
   }
   if (taken != OwnerLock::Outcome::HELD) {
     return run_error(base, Exit::FAILED, "file.unwritable", "the run's lock could not be taken: " + lock.error());
@@ -477,12 +505,16 @@ int run_main(int argc, char** argv, Load load, Make make) {
     // Row 12, first part: the run's journal and event log, both new.
     const auto journal_path = *dir + "/journal.jsonl";
     if (std::filesystem::exists(journal_path, ec) || std::filesystem::exists(*dir + "/events.jsonl", ec)) {
-      return run_error(base, Exit::FAILED, "file.unwritable", "the run's directory already holds a journal or an event log");
+      return run_error(
+        base, Exit::FAILED, "file.unwritable", "the run's directory already holds a journal or an event log"
+      );
     }
     const auto scope = config.broker_ + ":" + config.number_ + ":run:" + args.id_;
     atl::runner::FileJournal journal(journal_path, scope);
     if (!journal.open()) {
-      return run_error(base, Exit::FAILED, "file.unwritable", "the run's journal could not be created: " + journal.rejection());
+      return run_error(
+        base, Exit::FAILED, "file.unwritable", "the run's journal could not be created: " + journal.rejection()
+      );
     }
     EventLog events(*dir + "/events.jsonl");
     if (!events.ok()) {
@@ -524,9 +556,10 @@ int run_main(int argc, char** argv, Load load, Make make) {
     }
     policy.window_ = settings.session_;
     GuardedSession<atl::BlockingSession<atl::mock::MockClient>> session(
-      inner,
-      policy,
-      [&market]() { return market.now(); },
+      inner, policy,
+      [&market]() {
+        return market.now();
+      },
       [&guard, &ledger](const PlacementEvent& placed) {
         json::object event{
           {"event", placed.kind_},
@@ -553,7 +586,13 @@ int run_main(int argc, char** argv, Load load, Make make) {
 #if defined(CMDATL_RUN_TEST_HOOKS)
       test_barrier(market);
 #endif
-      scan_orders(market, ledger, [&session](const std::string& id) { return session.cancelled(id); }, guard);
+      scan_orders(
+        market, ledger,
+        [&session](const std::string& id) {
+          return session.cancelled(id);
+        },
+        guard
+      );
       const auto wall = std::chrono::steady_clock::now();
       if (!heartbeat || wall - *heartbeat >= std::chrono::seconds(1)) {
         heartbeat = wall;
@@ -598,7 +637,9 @@ int run_main(int argc, char** argv, Load load, Make make) {
       }
       start["symbols"] = listed;
       const auto identity = lock.identity();
-      start["lock"] = json::object{{"device", static_cast<std::int64_t>(identity.dev_)}, {"inode", static_cast<std::int64_t>(identity.ino_)}};
+      start["lock"] = json::object{
+        {"device", static_cast<std::int64_t>(identity.dev_)}, {"inode", static_cast<std::int64_t>(identity.ino_)}
+      };
       if (!events.write(start)) {
         return false;
       }
@@ -612,7 +653,9 @@ int run_main(int argc, char** argv, Load load, Make make) {
     try {
       traded = trade_on_rails(
         session, journal, std::move(*strategy), wiring, stop, clock, on_ready,
-        [&market]() { return market.working_orders().orders_.empty(); },
+        [&market]() {
+          return market.working_orders().orders_.empty();
+        },
         [&client]() {
 #if defined(CMDATL_RUN_TEST_HOOKS)
           if (closed_hook()) {
@@ -643,8 +686,10 @@ int run_main(int argc, char** argv, Load load, Make make) {
     switch (traded.outcome_) {
       case Outcome::ON_FILL_UNSUPPORTED:
         if (thrown.empty()) {
-          return run_error(base, Exit::PROGRAM, "program.live_unsupported", traded.detail_,
-                           "a run takes programs without on_fill", {{"unsupported", "on_fill"}});
+          return run_error(
+            base, Exit::PROGRAM, "program.live_unsupported", traded.detail_, "a run takes programs without on_fill",
+            {{"unsupported", "on_fill"}}
+          );
         }
         break;
       case Outcome::RECOVERY_HALTED:
@@ -654,12 +699,16 @@ int run_main(int argc, char** argv, Load load, Make make) {
         break;
       case Outcome::REFERENCE_UNREADABLE:
         if (thrown.empty()) {
-          return run_error(base, Exit::FAILED, "run.reference_unreadable", traded.detail_, "nothing was sent; start the run again");
+          return run_error(
+            base, Exit::FAILED, "run.reference_unreadable", traded.detail_, "nothing was sent; start the run again"
+          );
         }
         break;
       case Outcome::NOT_STARTED:
         if (thrown.empty()) {
-          return run_error(base, Exit::FAILED, "file.unwritable", "the run's start line could not be written; nothing was sent");
+          return run_error(
+            base, Exit::FAILED, "file.unwritable", "the run's start line could not be written; nothing was sent"
+          );
         }
         break;
       default:
@@ -702,7 +751,13 @@ int run_main(int argc, char** argv, Load load, Make make) {
       message = "the run's lock file was replaced";
     }
     // The last scan, whole: the closing pass's cancellations happen after the last step.
-    scan_orders(market, ledger, [&session](const std::string& id) { return session.cancelled(id); }, guard, true);
+    scan_orders(
+      market, ledger,
+      [&session](const std::string& id) {
+        return session.cancelled(id);
+      },
+      guard, true
+    );
     body["stopped"] = guard.stopped_.empty() ? json::value(nullptr) : json::value(guard.stopped_);
     body["from"] = at_text(from);
     body["to"] = at_text(*last_end).substr(0, 10);
@@ -732,31 +787,40 @@ int run_main(int argc, char** argv, Load load, Make make) {
     body["holdings_at_end"] = holdings;
     json::array owed;
     for (const auto& o : view.owed_) {
-      owed.push_back(json::object{{"symbol", o.symbol_}, {"side", o.side_}, {"quantity", o.quantity_}, {"journal_id", o.journal_id_},
-                                  {"order_id", o.order_id_}, {"state", o.state_}});
+      owed.push_back(
+        json::object{
+          {"symbol", o.symbol_}, {"side", o.side_}, {"quantity", o.quantity_}, {"journal_id", o.journal_id_},
+          {"order_id", o.order_id_}, {"state", o.state_}
+        }
+      );
     }
     body["owed_at_end"] = owed;
     if (exit != Exit::OK) {
       body["error"] = json::object{
         {"code", code},
         {"message", message},
-        {"next", "the run's market ended with its process and no account was affected; its result is unknown: start a new run"},
+        {"next",
+          "the run's market ended with its process and no account was affected; its result is unknown: start a new run"},
       };
     }
     // The reply first, then the end event, then the lock released (when this scope ends).
     body["result"] = exit == Exit::OK ? "ended" : "unknown";
     const int exit_code = write_run_reply(body, exit);
-    (void)events.write(json::object{{"event", "end"}, {"at", at_text(market.now())}, {"exit", exit_code}, {"result", body["result"]}});
+    (void)events.write(
+      json::object{{"event", "end"}, {"at", at_text(market.now())}, {"exit", exit_code}, {"result", body["result"]}}
+    );
     return exit_code;
   } catch (const std::exception& error) {
     if (trading) {
-      return run_error(base, Exit::UNKNOWN, "unknown.internal", error.what(),
-                       "the run's market ended with its process and no account was affected; its result is unknown: start a new run");
+      return run_error(
+        base, Exit::UNKNOWN, "unknown.internal", error.what(),
+        "the run's market ended with its process and no account was affected; its result is unknown: start a new run"
+      );
     }
     return run_error(base, Exit::FAILED, "internal.error", error.what());
   }
 #endif
 }
 
-}  // namespace driver
-}  // namespace cmdatl
+} // namespace driver
+} // namespace cmdatl

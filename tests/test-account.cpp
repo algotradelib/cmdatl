@@ -1,8 +1,8 @@
 #include "./paper-support.hpp"
 
 #include <cmdatl/account/account.hpp>
-#include <cmdatl/cmdatl>
 #include <cmdatl/account/reads.hpp>
+#include <cmdatl/cmdatl>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -44,10 +44,7 @@ const std::string SCOPE = "paper:paper:paper-0001";
  * @return The entry.
  */
 runner::JournalEntry place_entry(
-  const std::string& id,
-  runner::JournalOutcome outcome,
-  paper::Clock::time_point at,
-  const std::string& order_id = "",
+  const std::string& id, runner::JournalOutcome outcome, paper::Clock::time_point at, const std::string& order_id = "",
   const std::string& symbol = "005930"
 ) {
   runner::JournalEntry entry;
@@ -128,7 +125,9 @@ public:
     const std::string program = CMDATL_HOLD_LOCK;
     const std::string where = dir.string();
     const std::string time = std::to_string(ms);
-    char* argv[] = {const_cast<char*>(program.c_str()), const_cast<char*>(where.c_str()), const_cast<char*>(time.c_str()), nullptr};
+    char* argv[] = {
+      const_cast<char*>(program.c_str()), const_cast<char*>(where.c_str()), const_cast<char*>(time.c_str()), nullptr
+    };
     const int spawned = posix_spawn(&pid_, argv[0], &actions, nullptr, argv, environ);
     posix_spawn_file_actions_destroy(&actions);
     ::close(out[1]);
@@ -144,7 +143,9 @@ public:
   Holder& operator=(const Holder&) = delete;
 
   /** @brief Kills and reaps it. */
-  ~Holder() { release(); }
+  ~Holder() {
+    release();
+  }
 
   /** @brief Kills it now, releasing the lock. */
   void release() {
@@ -167,7 +168,7 @@ void initialize(const PaperFixture& fixture) {
   REQUIRE(fixture.json({"status"}).exit_ == 0);
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("a fresh account is initialized under the lock: the log's genesis, then the journal") {
   const PaperFixture fixture;
@@ -224,7 +225,9 @@ TEST_CASE("a journal gone after the account was used, or a log gone beside a jou
   };
   // The journal removed: every account command refuses, the log untouched, no owner record written.
   std::filesystem::remove(fixture.journal());
-  for (const auto& args : std::vector<std::vector<std::string>>{{"status"}, {"account"}, {"quote", "005930"}, {"clock"}}) {
+  for (
+    const auto& args : std::vector<std::vector<std::string>>{{"status"}, {"account"}, {"quote", "005930"}, {"clock"}}
+  ) {
     expect("unknown.journal_missing", args);
   }
   expect("unknown.journal_missing", {"clock", "advance", "--minutes", "5"});
@@ -365,15 +368,18 @@ TEST_CASE("the journal's view: today's placements, what is owed, and what the ma
     REQUIRE(desk.advance_to(kst("2024-03-26T09:00")).status_ == paper::Appended::OK);
     REQUIRE(desk.session().place(order("005930", true, "10", "60000")));
   }
-  journal(fixture, {
-    // Yesterday's, settled, which does not count today.
-    place_entry("j0", runner::JournalOutcome::PENDING, kst("2024-03-25T10:00")),
-    place_entry("j0", runner::JournalOutcome::REJECTED, kst("2024-03-25T10:00")),
-    place_entry("j1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:59")),
-    place_entry("j1", runner::JournalOutcome::ACCEPTED, kst("2024-03-26T09:00"), "1"),
-    // The lab's regression: an order whose pending line alone survives is still owed.
-    place_entry("j2", runner::JournalOutcome::PENDING, kst("2024-03-26T09:01"), "", "000660"),
-  });
+  journal(
+    fixture,
+    {
+      // Yesterday's, settled, which does not count today.
+      place_entry("j0", runner::JournalOutcome::PENDING, kst("2024-03-25T10:00")),
+      place_entry("j0", runner::JournalOutcome::REJECTED, kst("2024-03-25T10:00")),
+      place_entry("j1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:59")),
+      place_entry("j1", runner::JournalOutcome::ACCEPTED, kst("2024-03-26T09:00"), "1"),
+      // The lab's regression: an order whose pending line alone survives is still owed.
+      place_entry("j2", runner::JournalOutcome::PENDING, kst("2024-03-26T09:01"), "", "000660"),
+    }
+  );
   const auto body = reply(fixture, {"account"});
   CHECK(body.at("orders_left_today").as_int64() == 1);
   const auto& owed = body.at("owed").as_array();
@@ -400,10 +406,13 @@ TEST_CASE("the journal's view: today's placements, what is owed, and what the ma
   CHECK(slurp(fixture.journal()) == journal_text);
   CHECK(reply(fixture, {"account", "--symbol", "005930"}).at("owed").as_array().size() == 1);
   // More placements than allowed: zero, never a wrapped count.
-  journal(fixture, {
-    place_entry("j3", runner::JournalOutcome::PENDING, kst("2024-03-26T09:02")),
-    place_entry("j4", runner::JournalOutcome::PENDING, kst("2024-03-26T09:03")),
-  });
+  journal(
+    fixture,
+    {
+      place_entry("j3", runner::JournalOutcome::PENDING, kst("2024-03-26T09:02")),
+      place_entry("j4", runner::JournalOutcome::PENDING, kst("2024-03-26T09:03")),
+    }
+  );
   const auto over = reply(fixture, {"status"});
   CHECK(over.at("orders_left_today").as_int64() == 0);
   CHECK(words(over.at("not_accepted")) == std::vector<std::string>{"daily_orders_used"});
@@ -413,10 +422,13 @@ TEST_CASE("the journal's view: today's placements, what is owed, and what the ma
 TEST_CASE("the day's count turns over at 00:00 KST, not at 00:00 UTC") {
   const PaperFixture fixture;
   initialize(fixture);
-  journal(fixture, {
-    place_entry("late", runner::JournalOutcome::PENDING, kst("2024-03-25T23:30")),
-    place_entry("early", runner::JournalOutcome::PENDING, kst("2024-03-26T00:30")),
-  });
+  journal(
+    fixture,
+    {
+      place_entry("late", runner::JournalOutcome::PENDING, kst("2024-03-25T23:30")),
+      place_entry("early", runner::JournalOutcome::PENDING, kst("2024-03-26T00:30")),
+    }
+  );
   // 2024-03-25T16:00 KST: the late one is today's.
   CHECK(reply(fixture, {"account"}).at("orders_left_today").as_int64() == 2);
   // 00:10 KST on the 26th is still the 25th in UTC; the early one is today's now, the late one is not.
@@ -470,7 +482,9 @@ TEST_CASE("a journal that is not this account's, or damaged, makes every account
     CHECK(missing.exit_ == 4);
     const auto missing_reply = reply_of(missing.out_);
     CHECK(missing_reply.at("error").as_object().at("code").as_string() == "unknown.journal_damaged");
-    CHECK(std::string(missing_reply.at("error").as_object().at("message").as_string()).find("MISSING") != std::string::npos);
+    CHECK(
+      std::string(missing_reply.at("error").as_object().at("message").as_string()).find("MISSING") != std::string::npos
+    );
     CHECK(!missing_reply.contains("quotes"));
     const auto advance = fixture.json({"clock", "advance", "--minutes", "5"});
     CHECK(advance.exit_ == 4);
@@ -540,8 +554,11 @@ TEST_CASE("a journal not established leaves the paper log unrepaired and writes 
       spit(fixture.journal(), j.second);
       spit(fixture.log(), l.second);
       spit(owner, record);
-      for (const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
-             {"status"}, {"account"}, {"quote", "005930"}, {"clock"}, {"clock", "advance", "--minutes", "5"}}) {
+      for (
+        const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
+          {"status"}, {"account"}, {"quote", "005930"}, {"clock"}, {"clock", "advance", "--minutes", "5"}
+        }
+      ) {
         INFO(args.front());
         const auto ran = fixture.json(args);
         CHECK(ran.exit_ == 4);
@@ -589,7 +606,7 @@ std::string operator_only_line(std::int64_t at) {
   return line;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("an operator-only line at an instant outside the interval makes the count unknown, never an overflow") {
   const PaperFixture fixture;
@@ -760,7 +777,9 @@ TEST_CASE("the account commands' replies, in every format, with every declared f
     REQUIRE(opened->account_->desk().session().place(order("005930", true, "5", "60000")));
   }
   const cmdatl::Table table(cmdatl::command_list());
-  const std::vector<std::vector<std::string>> commands{{"status"}, {"account"}, {"quote", "005930"}, {"order", "list"}, {"clock"}};
+  const std::vector<std::vector<std::string>> commands{
+    {"status"}, {"account"}, {"quote", "005930"}, {"order", "list"}, {"clock"}
+  };
   for (const auto& args : commands) {
     INFO(cmdatl::join(args));
     const auto body = reply(fixture, args);
@@ -801,7 +820,9 @@ TEST_CASE("the account commands' replies, in every format, with every declared f
   const auto missing = fixture.json({"quote", "005930", "NOPE", "ALSO"});
   CHECK(missing.exit_ == 1);
   CHECK(code_of(missing.out_) == "quote.no_data");
-  CHECK(reply_of(missing.out_).at("error").as_object().at("message").as_string().find("NOPE, ALSO") != std::string::npos);
+  CHECK(
+    reply_of(missing.out_).at("error").as_object().at("message").as_string().find("NOPE, ALSO") != std::string::npos
+  );
   CHECK(!reply_of(missing.out_).contains("quotes"));
   CHECK(declares({"quote"}, 1, "quote.no_data"));
   for (const auto& bad : std::vector<std::vector<std::string>>{{"quote", "00 59"}, {"account", "--symbol", "a/b"}}) {
@@ -874,7 +895,10 @@ TEST_CASE("clock advance: exactly one option, checked before the account opens, 
   CHECK(next.at("now").as_string() == "2024-04-20T09:00:00+09:00");
   CHECK(next.at("phase").as_string() == "open");
   // The last session's close plus a day is as far as it goes; then no session is left.
-  CHECK(reply(fixture, {"clock", "advance", "--to", "2024-04-21T15:30"}).at("now").as_string() == "2024-04-21T15:30:00+09:00");
+  CHECK(
+    reply(fixture, {"clock", "advance", "--to", "2024-04-21T15:30"}).at("now").as_string() ==
+    "2024-04-21T15:30:00+09:00"
+  );
   const auto none = fixture.json({"clock", "advance", "--next-open"});
   CHECK(none.exit_ == 1);
   CHECK(code_of(none.out_) == "clock.past_data");
@@ -891,7 +915,10 @@ TEST_CASE("the clock at the supported interval's end") {
     "000660,2100-12-30,180000,182000,178000,181000,1\n"
     "005930,2100-12-31,78500,80000,78000,79800,1\n";
   const PaperFixture fixture(parts, bars);
-  CHECK(reply(fixture, {"clock", "advance", "--to", "2100-12-31T23:59"}).at("now").as_string() == "2100-12-31T23:59:00+09:00");
+  CHECK(
+    reply(fixture, {"clock", "advance", "--to", "2100-12-31T23:59"}).at("now").as_string() ==
+    "2100-12-31T23:59:00+09:00"
+  );
   CHECK(code_of(fixture.json({"clock", "advance", "--minutes", "1"}).out_) == "clock.past_data");
   CHECK(reply(fixture, {"status"}).at("data_end").as_string() == "2100-12-31T15:30:00+09:00");
 }
@@ -1004,7 +1031,9 @@ TEST_CASE("twenty concurrent advances and reads end exactly twenty minutes on, w
   initialize(fixture);
   std::vector<std::unique_ptr<Spawned>> processes;
   for (int i = 0; i < 20; ++i) {
-    processes.push_back(std::make_unique<Spawned>(std::vector<std::string>{"--json", "clock", "advance", "--minutes", "1"}));
+    processes.push_back(
+      std::make_unique<Spawned>(std::vector<std::string>{"--json", "clock", "advance", "--minutes", "1"})
+    );
     processes.push_back(std::make_unique<Spawned>(std::vector<std::string>{"--json", "status"}));
   }
   for (auto& process : processes) {
@@ -1032,11 +1061,22 @@ TEST_CASE("an allocation failing anywhere in an account command leaks nothing an
   fixture.arm();
   const auto lock_free = [&fixture] {
     cmdatl::OwnerLock second(fixture.account().string());
-    const auto outcome = second.acquire(std::chrono::milliseconds(0), [] { return false; }, [](const std::string&) {});
+    const auto outcome = second.acquire(
+      std::chrono::milliseconds(0),
+      [] {
+        return false;
+      },
+      [](const std::string&) {}
+    );
     return outcome == cmdatl::OwnerLock::Outcome::HELD;
   };
   const std::vector<std::vector<std::string>> commands{
-    {"status"}, {"account"}, {"quote", "005930"}, {"order", "list"}, {"clock"}, {"clock", "advance", "--minutes", "1"},
+    {"status"},
+    {"account"},
+    {"quote", "005930"},
+    {"order", "list"},
+    {"clock"},
+    {"clock", "advance", "--minutes", "1"},
   };
   for (const bool fresh : {true, false}) {
     for (const auto& args : commands) {
@@ -1075,8 +1115,10 @@ TEST_CASE("an allocation failing anywhere in an account command leaks nothing an
         const bool consumed = fail_at.load() == 0;
         fail_allocation(0);
         const bool exit_ok = exit == -1 || exit == 0 || exit == 1 || exit == 4;
-        if ((!exit_ok || open_fds() != before || (std::filesystem::exists(fixture.account()) && !lock_free())) &&
-            first_bad == 0) {
+        if (
+          (!exit_ok || open_fds() != before || (std::filesystem::exists(fixture.account()) && !lock_free())) &&
+          first_bad == 0
+        ) {
           first_bad = n;
         }
         if (!consumed) {
@@ -1152,8 +1194,14 @@ TEST_CASE("no account command starts a child, and descriptors stay level over re
   fixture.arm();
   initialize(fixture);
   const std::vector<std::vector<std::string>> commands{
-    {"status"}, {"account"}, {"quote", "005930"}, {"order", "list"}, {"clock"}, {"clock", "advance", "--minutes", "1"},
-    {"quote", "NOPE"}, {"clock", "advance", "--to", "2024-03-25T15:00"},
+    {"status"},
+    {"account"},
+    {"quote", "005930"},
+    {"order", "list"},
+    {"clock"},
+    {"clock", "advance", "--minutes", "1"},
+    {"quote", "NOPE"},
+    {"clock", "advance", "--to", "2024-03-25T15:00"},
   };
   for (const auto& args : commands) {
     INFO(cmdatl::join(args));
@@ -1257,15 +1305,34 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
     }
     // Only order place, order cancel and run start send (a run places on its own mock market).
     const auto name = cmdatl::join(command.path_);
-    CHECK((!command.available_ || !command.may_send_ || name == "order place" || name == "order cancel" || name == "run start" ||
-           name == "run stop"));
+    CHECK((
+      !command.available_ || !command.may_send_ || name == "order place" || name == "order cancel" ||
+      name == "run start" || name == "run stop"
+    ));
   }
   std::sort(available.begin(), available.end());
   std::sort(mutating.begin(), mutating.end());
   const std::vector<std::string> expected{
-    "account", "clock", "clock advance", "env", "help", "order cancel", "order list", "order place", "order plan",
-    "order reconcile", "order release", "quote", "run log", "run start", "run status", "run stop", "schema", "status",
-    "strategy backtest", "strategy new",
+    "account",
+    "clock",
+    "clock advance",
+    "env",
+    "help",
+    "order cancel",
+    "order list",
+    "order place",
+    "order plan",
+    "order reconcile",
+    "order release",
+    "quote",
+    "run log",
+    "run start",
+    "run status",
+    "run stop",
+    "schema",
+    "status",
+    "strategy backtest",
+    "strategy new",
   };
   CHECK(available == expected);
   CHECK(mutating == std::vector<std::string>{"clock advance", "order release"});

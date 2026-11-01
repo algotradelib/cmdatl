@@ -21,8 +21,9 @@ inline constexpr std::size_t RUN_RECORD_MAX = 64u << 10;
  * @return Whether it is.
  */
 inline bool valid_run_id(const std::string& text) {
-  return text.size() == 13 && text[0] == 'r' &&
-    std::all_of(text.begin() + 1, text.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+  return text.size() == 13 && text[0] == 'r' && std::all_of(text.begin() + 1, text.end(), [](char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+  });
 }
 
 /**
@@ -59,12 +60,16 @@ inline std::optional<std::pair<std::string, std::string>> spec_refusal(const std
     return std::make_pair(std::string("data.store"), std::string("a run reads files, not a store: give [data] a file"));
   }
   if (atlc_value(args, "replay.shorts").value_or("false") == "true") {
-    return std::make_pair(std::string("replay.shorts"), std::string("a run keeps the sellable check on: remove [replay] shorts"));
+    return std::make_pair(
+      std::string("replay.shorts"), std::string("a run keeps the sellable check on: remove [replay] shorts")
+    );
   }
   if (atlc_value(args, "replay.fill").value_or("next-open") == "legs") {
-    return std::make_pair(std::string("replay.fill"), std::string("a run has no session legs: remove [replay] fill = \"legs\""));
+    return std::make_pair(
+      std::string("replay.fill"), std::string("a run has no session legs: remove [replay] fill = \"legs\"")
+    );
   }
   return std::nullopt;
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl

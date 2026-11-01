@@ -16,8 +16,8 @@
 
 #include <cmdatl/driver_files.hpp>
 
-#include <chrono>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -50,8 +50,16 @@ namespace build {
 
 /** @brief The environment CMake reads at configure time, part of a shape's key and passed to the build unchanged. */
 inline const std::vector<std::string> KEY_VARIABLES{
-  "CXX", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "CMAKE_GENERATOR", "CMAKE_TOOLCHAIN_FILE", "OPENSSL_ROOT_DIR", "BOOST_ROOT",
-  "Boost_ROOT", "Eigen3_ROOT",
+  "CXX",
+  "CXXFLAGS",
+  "CPPFLAGS",
+  "LDFLAGS",
+  "CMAKE_GENERATOR",
+  "CMAKE_TOOLCHAIN_FILE",
+  "OPENSSL_ROOT_DIR",
+  "BOOST_ROOT",
+  "Boost_ROOT",
+  "Eigen3_ROOT",
 };
 
 /** @brief How often a build waiting on another build of the same shape looks again. */
@@ -99,11 +107,8 @@ inline std::uint64_t fnv1a(const std::string& text) {
  * @return The name.
  */
 inline std::string shape_name(
-  const std::string& program,
-  const std::string& structure,
-  const std::string& indicators,
-  const std::function<std::optional<std::string>(const std::string&)>& lookup,
-  const std::string& package
+  const std::string& program, const std::string& structure, const std::string& indicators,
+  const std::function<std::optional<std::string>(const std::string&)>& lookup, const std::string& package
 ) {
   std::string encoded;
   const auto put = [&encoded](const std::string& field) {
@@ -193,7 +198,9 @@ inline std::filesystem::path temporary_for(const std::filesystem::path& target) 
     }
   }
   char tail[64];
-  std::snprintf(tail, sizeof tail, ".%ld.%016llx.tmp", static_cast<long>(::getpid()), static_cast<unsigned long long>(random));
+  std::snprintf(
+    tail, sizeof tail, ".%ld.%016llx.tmp", static_cast<long>(::getpid()), static_cast<unsigned long long>(random)
+  );
   return target.parent_path() / ("." + target.filename().string() + tail);
 }
 
@@ -258,7 +265,10 @@ inline Written write_if_changed(const std::filesystem::path& target, const std::
 inline void remove_stale_temporaries(const std::filesystem::path& dir) {
   std::error_code ec;
   std::vector<std::filesystem::path> stale;
-  for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+  for (
+    auto it = std::filesystem::recursive_directory_iterator(dir, ec);
+    !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)
+  ) {
     const auto name = it->path().filename().string();
     if (name.size() > 5 && name.front() == '.' && name.compare(name.size() - 4, 4, ".tmp") == 0) {
       stale.push_back(it->path());
@@ -277,7 +287,10 @@ inline void remove_stale_temporaries(const std::filesystem::path& dir) {
 inline std::set<std::string> files_under(const std::filesystem::path& dir) {
   std::set<std::string> out;
   std::error_code ec;
-  for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+  for (
+    auto it = std::filesystem::recursive_directory_iterator(dir, ec);
+    !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)
+  ) {
     if (it->is_regular_file(ec)) {
       out.insert(std::filesystem::relative(it->path(), dir, ec).generic_string());
     }
@@ -453,9 +466,7 @@ inline std::string tail_of(const ChildResult& result) {
  * @return A failure reply, or nothing when `run_dir/driver` exists.
  */
 inline std::optional<Reply> build_driver(
-  const Request& request,
-  const std::filesystem::path& run_dir,
-  const std::function<void(const std::string&)>& progress
+  const Request& request, const std::filesystem::path& run_dir, const std::function<void(const std::string&)>& progress
 ) {
 #if defined(_WIN32)
   (void)request;
@@ -465,22 +476,30 @@ inline std::optional<Reply> build_driver(
 #else
   const auto root = cache_root();
   if (!root) {
-    return error_reply(Exit::FAILED, "cache.unavailable", "neither XDG_CACHE_HOME nor HOME names an absolute directory");
+    return error_reply(
+      Exit::FAILED, "cache.unavailable", "neither XDG_CACHE_HOME nor HOME names an absolute directory"
+    );
   }
   const std::string package = request.package_;
   // The package the driver must be built against, checked before anything is built, copied or run.
   std::error_code ec;
-  if (package.empty() || !std::filesystem::is_regular_file(std::filesystem::path(package) / "algotradelibConfig.cmake", ec)) {
+  if (
+    package.empty() ||
+    !std::filesystem::is_regular_file(std::filesystem::path(package) / "algotradelibConfig.cmake", ec)
+  ) {
     return error_reply(
-      Exit::FAILED,
-      "build.failed",
-      "the algotradelib package cmdatl was built against is not there: " + (package.empty() ? std::string("(none)") : package),
+      Exit::FAILED, "build.failed",
+      "the algotradelib package cmdatl was built against is not there: " +
+        (package.empty() ? std::string("(none)") : package),
       "reinstall that algotradelib, or rebuild cmdatl against the one installed"
     );
   }
   const auto name = shape_name(
     request.program_, request.struct_, request.indicators_,
-    [](const std::string& key) { return variable(key.c_str()); }, package
+    [](const std::string& key) {
+      return variable(key.c_str());
+    },
+    package
   );
   const std::filesystem::path shape = std::filesystem::path(*root) / name;
   if (make_private_dirs(shape) != 0) {
@@ -491,7 +510,9 @@ inline std::optional<Reply> build_driver(
     if (interrupted()) {
       return interrupted_reply();
     }
-    return error_reply(Exit::FAILED, "cache.unavailable", "the build cache's lock " + (shape / "lock").string() + " cannot be taken");
+    return error_reply(
+      Exit::FAILED, "cache.unavailable", "the build cache's lock " + (shape / "lock").string() + " cannot be taken"
+    );
   }
   const auto environment = child_environment(own_environment());
   const auto src = shape / "src";
@@ -503,8 +524,8 @@ inline std::optional<Reply> build_driver(
   }
   progress("cmdatl: building the run's driver for " + request.struct_ + " in " + shape.string());
   const auto generated = run_child(
-    {request.atlc_, "build", request.program_, "-o", (next / "strategy.hpp").string(), "--indicators", request.indicators_,
-     "--emit-runtime", next.string()},
+    {request.atlc_, "build", request.program_, "-o", (next / "strategy.hpp").string(), "--indicators",
+      request.indicators_, "--emit-runtime", next.string()},
     progress, &environment
   );
   if (generated.kind_ == ChildResult::Kind::INTERRUPTED) {
@@ -512,15 +533,18 @@ inline std::optional<Reply> build_driver(
   }
   if (generated.kind_ != ChildResult::Kind::FINISHED || generated.signaled_ || generated.code_ != 0) {
     if (generated.kind_ == ChildResult::Kind::FINISHED && !generated.signaled_ && generated.code_ == 1) {
-      return atlc_failure(Exit::PROGRAM, "program.invalid", stderr_text(generated, "the program has errors"), generated, "fix the program");
+      return atlc_failure(
+        Exit::PROGRAM, "program.invalid", stderr_text(generated, "the program has errors"), generated, "fix the program"
+      );
     }
-    return atlc_failure(Exit::FAILED, "atlc.failed", "atlc build: " + ending_of(generated), generated, "check atlc with cmdatl env");
+    return atlc_failure(
+      Exit::FAILED, "atlc.failed", "atlc build: " + ending_of(generated), generated, "check atlc with cmdatl env"
+    );
   }
   for (const auto* runtime : {"atls/args.hpp", "atls/run.hpp"}) {
     if (!std::filesystem::is_regular_file(next / runtime, ec)) {
       return error_reply(
-        Exit::FAILED,
-        "atlc.failed",
+        Exit::FAILED, "atlc.failed",
         "atlc " + request.atlc_version_ + " wrote no " + runtime + "; a run's driver needs atlc afb2490 or later",
         "install a newer atlc"
       );
@@ -531,7 +555,9 @@ inline std::optional<Reply> build_driver(
   for (const auto& relative : files_under(next)) {
     std::string text;
     if (!read_file(next / relative, text)) {
-      return error_reply(Exit::FAILED, "build.failed", "atlc's output " + (next / relative).string() + " cannot be read");
+      return error_reply(
+        Exit::FAILED, "build.failed", "atlc's output " + (next / relative).string() + " cannot be read"
+      );
     }
     inputs[relative] = std::move(text);
   }
@@ -542,11 +568,14 @@ inline std::optional<Reply> build_driver(
     }
     inputs[file.path_] = std::move(text);
   }
-  inputs["program.hpp"] = "#pragma once\n\n// Written by cmdatl run start.\n\n#include \"strategy.hpp\"\n\nusing Program = atls::" +
+  inputs["program.hpp"] =
+    "#pragma once\n\n// Written by cmdatl run start.\n\n#include \"strategy.hpp\"\n\nusing Program = atls::" +
     request.struct_ + ";\n";
   for (const auto& [relative, text] : inputs) {
     if (write_if_changed(src / relative, text) == Written::FAILED) {
-      return error_reply(Exit::FAILED, "build.failed", "the driver's source " + (src / relative).string() + " cannot be written");
+      return error_reply(
+        Exit::FAILED, "build.failed", "the driver's source " + (src / relative).string() + " cannot be written"
+      );
     }
   }
   for (const auto& relative : files_under(src)) {
@@ -556,7 +585,9 @@ inline std::optional<Reply> build_driver(
   }
   const auto cmake = find_on_path("cmake");
   if (!cmake) {
-    return error_reply(Exit::FAILED, "build.failed", "cmake was not found on PATH; a run needs CMake and a C++17 compiler");
+    return error_reply(
+      Exit::FAILED, "build.failed", "cmake was not found on PATH; a run needs CMake and a C++17 compiler"
+    );
   }
   const auto build_dir = shape / "build";
   // A cache configured for another package, or before the package was named this way, is configured again.
@@ -566,7 +597,13 @@ inline std::optional<Reply> build_driver(
   }
   if (!std::filesystem::exists(build_dir / "CMakeCache.txt", ec)) {
     std::vector<std::string> configure{
-      *cmake, "-S", src.string(), "-B", build_dir.string(), "-DCMAKE_BUILD_TYPE=Release", "-DCMDATL_ALGOTRADELIB_DIR=" + package,
+      *cmake,
+      "-S",
+      src.string(),
+      "-B",
+      build_dir.string(),
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DCMDATL_ALGOTRADELIB_DIR=" + package,
     };
     const auto configured = run_child(configure, progress, &environment);
     if (configured.kind_ == ChildResult::Kind::INTERRUPTED) {
@@ -574,8 +611,10 @@ inline std::optional<Reply> build_driver(
     }
     if (configured.kind_ != ChildResult::Kind::FINISHED || configured.signaled_ || configured.code_ != 0) {
       std::filesystem::remove(build_dir / "CMakeCache.txt", ec);
-      return atlc_failure(Exit::FAILED, "build.failed", "configuring the driver failed: " + tail_of(configured), configured,
-                          "check CMake, the compiler and the algotradelib package " + package);
+      return atlc_failure(
+        Exit::FAILED, "build.failed", "configuring the driver failed: " + tail_of(configured), configured,
+        "check CMake, the compiler and the algotradelib package " + package
+      );
     }
   }
   const auto built = run_child({*cmake, "--build", build_dir.string()}, progress, &environment);
@@ -583,27 +622,32 @@ inline std::optional<Reply> build_driver(
     return interrupted_reply();
   }
   if (built.kind_ != ChildResult::Kind::FINISHED || built.signaled_ || built.code_ != 0) {
-    return atlc_failure(Exit::FAILED, "build.failed", "building the driver failed: " + tail_of(built), built,
-                        "check the compiler and the algotradelib package " + package);
+    return atlc_failure(
+      Exit::FAILED, "build.failed", "building the driver failed: " + tail_of(built), built,
+      "check the compiler and the algotradelib package " + package
+    );
   }
   // The package the build used, as CMake recorded it (also after CMake configured again by itself).
   cache.clear();
-  const auto used = read_file(build_dir / "CMakeCache.txt", cache) ? cache_value(cache, "algotradelib_DIR") : std::nullopt;
+  const auto used =
+    read_file(build_dir / "CMakeCache.txt", cache) ? cache_value(cache, "algotradelib_DIR") : std::nullopt;
   if (!used || real_path(*used) != real_path(package)) {
     std::filesystem::remove_all(build_dir, ec);
     return error_reply(
-      Exit::FAILED,
-      "build.failed",
+      Exit::FAILED, "build.failed",
       "the driver was configured against " + used.value_or(std::string("no algotradelib")) + ", not " + package,
       "run cmdatl run start again; the driver's build cache was cleared"
     );
   }
   if (const int error = copy_driver(build_dir / "driver", run_dir)) {
-    return error_reply(Exit::FAILED, "build.failed", "the driver could not be copied into the run's directory: " + std::string(std::strerror(error)));
+    return error_reply(
+      Exit::FAILED, "build.failed",
+      "the driver could not be copied into the run's directory: " + std::string(std::strerror(error))
+    );
   }
   return std::nullopt;
 #endif
 }
 
-}  // namespace build
-}  // namespace cmdatl
+} // namespace build
+} // namespace cmdatl

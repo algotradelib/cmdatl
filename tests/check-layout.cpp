@@ -106,7 +106,8 @@ std::vector<Directive> includes_of(const std::string& text) {
       } else if (j != std::string::npos && text.compare(j, 7, "include") == 0) {
         j = text.find_first_not_of(" \t", j + 7);
         const auto end = j == std::string::npos ? std::string::npos : text.find('\n', j);
-        auto operand = j == std::string::npos ? std::string() :
+        auto operand = j == std::string::npos ?
+          std::string() :
           text.substr(j, end == std::string::npos ? std::string::npos : end - j);
         const char close = operand.empty() ? 0 : operand[0] == '"' ? '"' : operand[0] == '<' ? '>' : 0;
         const auto last = close == 0 ? std::string::npos : operand.find(close, 1);
@@ -218,7 +219,9 @@ int main(int argc, char** argv) {
     const auto module = module_of(name);
     const auto rules = ALLOWED.find(module);
     if (!umbrella && rules == ALLOWED.end()) {
-      problems.push_back(name.string() + ": not in a module directory (" + (module.empty() ? "the root" : module) + ")");
+      problems.push_back(
+        name.string() + ": not in a module directory (" + (module.empty() ? "the root" : module) + ")"
+      );
       continue;
     }
     const auto& allowed = umbrella ? every : rules->second;
@@ -232,8 +235,10 @@ int main(int argc, char** argv) {
         continue;
       }
       const auto& operand = directive.operand_;
-      if (operand.size() < 2 || (operand.front() != '"' && operand.front() != '<') ||
-          operand.back() != (operand.front() == '"' ? '"' : '>')) {
+      if (
+        operand.size() < 2 || (operand.front() != '"' && operand.front() != '<') ||
+        operand.back() != (operand.front() == '"' ? '"' : '>')
+      ) {
         problems.push_back(where + "an include that is not \"...\" or <...>: " + operand);
         continue;
       }

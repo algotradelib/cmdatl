@@ -1,7 +1,7 @@
 #include "./paper-support.hpp"
 
-#include <cmdatl/paper/bars.hpp>
 #include <cmdatl/account/desk.hpp>
+#include <cmdatl/paper/bars.hpp>
 #include <cmdatl/paper/time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -40,11 +40,13 @@ struct DeskTest {
    * @brief A key.
    * @return It.
    */
-  static DeskKey key() { return DeskKey{}; }
+  static DeskKey key() {
+    return DeskKey{};
+  }
 };
 
-}  // namespace paper
-}  // namespace cmdatl
+} // namespace paper
+} // namespace cmdatl
 
 namespace {
 
@@ -120,7 +122,7 @@ std::vector<std::string> placed_log(const PaperFixture& fixture) {
   return lines(slurp(fixture.log()));
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("dates and instants are read strictly inside 1990-01-01 to 2100-12-31 KST") {
   CHECK(paper::parse_date("1990-01-01").has_value());
@@ -195,8 +197,8 @@ TEST_CASE("the bars file is read strictly, its first problem named by line") {
   std::string many = header;
   many.reserve(header.size() + 25 * (paper::MAX_BAR_ROWS + 1));
   for (std::size_t i = 0; i <= paper::MAX_BAR_ROWS; ++i) {
-    many += "S" + std::to_string(i % 1000) + "," + paper::date_text(paper::FIRST_DAY + static_cast<std::int64_t>(i / 1000)) +
-      ",1,1,1,1,0\n";
+    many += "S" + std::to_string(i % 1000) + "," +
+      paper::date_text(paper::FIRST_DAY + static_cast<std::int64_t>(i / 1000)) + ",1,1,1,1,0\n";
   }
   const auto problem = paper::parse_bars(many, data);
   REQUIRE(problem.has_value());
@@ -208,7 +210,8 @@ TEST_CASE("every paper.data case refuses at open and writes nothing") {
   const std::string header = "symbol,date,open,high,low,close,volume\n";
   const std::vector<std::string> bad{
     header + "005930,2024-03-25,78000,79000,77500,78500\n000660,2024-03-25,1,1,1,1,1\n",
-    header + "005930,2024-03-25,78000,79000,77500,78500,1\n000660,2024-03-25,1,1,1,1,1\nnot/allowed,2024-03-25,1,1,1,1,1\n",
+    header +
+      "005930,2024-03-25,78000,79000,77500,78500,1\n000660,2024-03-25,1,1,1,1,1\nnot/allowed,2024-03-25,1,1,1,1,1\n",
     header + "005930,2024-03-25,78000,79000,79500,78500,1\n000660,2024-03-25,1,1,1,1,1\n",
     header + "005930,2024-03-25,0.9,1,0.9,1,1\n000660,2024-03-25,1,1,1,1,1\n",
     header + "005930,2024-03-25,1.00001,2,1,1,1\n000660,2024-03-25,1,1,1,1,1\n",
@@ -237,7 +240,9 @@ TEST_CASE("every paper.data case refuses at open and writes nothing") {
     const auto ran = fixture.json({"status"});
     CHECK(ran.exit_ == 1);
     CHECK(code_of(ran.out_) == "paper.data");
-    CHECK(reply_of(ran.out_).at("error").as_object().at("message").as_string().find("larger than") != std::string::npos);
+    CHECK(
+      reply_of(ran.out_).at("error").as_object().at("message").as_string().find("larger than") != std::string::npos
+    );
   }
   // A FIFO with no writer: refused without blocking.
   {
@@ -409,10 +414,12 @@ TEST_CASE("inputs the rules refuse are not logged; refusals the market makes are
   {
     const auto opened = open_account();
     REQUIRE(opened->account_);
-    const auto canceled = opened->account_->desk().session().client().cancel(ACCOUNT, paper::PaperAmendment{"99", {}, {}});
+    const auto canceled =
+      opened->account_->desk().session().client().cancel(ACCOUNT, paper::PaperAmendment{"99", {}, {}});
     REQUIRE(!canceled);
     CHECK(canceled.error().message_ == "no such order");
-    const auto bad_id = opened->account_->desk().session().client().cancel(ACCOUNT, paper::PaperAmendment{"x1", {}, {}});
+    const auto bad_id =
+      opened->account_->desk().session().client().cancel(ACCOUNT, paper::PaperAmendment{"x1", {}, {}});
     REQUIRE(!bad_id);
     CHECK(!bad_id.error().reached_broker_);
   }
@@ -435,7 +442,9 @@ TEST_CASE("every log the writer could not have written is refused, and nothing i
   CHECK(result == R"({"op":"result","of":"place","id":"1","error":""})");
   const auto to = std::string("1711411200000000000");
   const auto later = std::string("1711411500000000000");
-  const auto with = [&](std::vector<std::string> replaced) { return joined(replaced); };
+  const auto with = [&](std::vector<std::string> replaced) {
+    return joined(replaced);
+  };
   const auto replace_first = [](std::string text, const std::string& from, const std::string& to_text) {
     const auto at = text.find(from);
     REQUIRE(at != std::string::npos);
@@ -455,10 +464,13 @@ TEST_CASE("every log the writer could not have written is refused, and nothing i
     {"a wrong type", with({genesis, R"({"op":"advance","to":")" + to + "\"}"})},
     {"another number spelling", with({genesis, R"({"op":"advance","to":1.7114112E18})"})},
     {"an extra member", with({genesis, R"({"op":"advance","to":)" + to + R"(,"x":1})"})},
-    {"an invalid enum", with({genesis, advance, replace_first(place, "\"side\":\"buy\"", "\"side\":\"short\""), result})},
+    {"an invalid enum",
+      with({genesis, advance, replace_first(place, "\"side\":\"buy\"", "\"side\":\"short\""), result})},
     {"quantity 0", with({genesis, advance, replace_first(place, "\"quantity\":10", "\"quantity\":0"), result})},
-    {"a fractional quantity", with({genesis, advance, replace_first(place, "\"quantity\":10", "\"quantity\":1.5"), result})},
-    {"a price on a market order", with({genesis, advance, replace_first(place, "\"type\":\"limit\"", "\"type\":\"market\""), result})},
+    {"a fractional quantity",
+      with({genesis, advance, replace_first(place, "\"quantity\":10", "\"quantity\":1.5"), result})},
+    {"a price on a market order",
+      with({genesis, advance, replace_first(place, "\"type\":\"limit\"", "\"type\":\"market\""), result})},
     {"a limit without its price", with({genesis, advance, replace_first(place, ",\"price\":\"78500\"", ""), result})},
     {"a symbol without bars", with({genesis, advance, replace_first(place, "005930", "999999"), result})},
     {"a placement at another instant", with({genesis, advance, replace_first(place, to, later), result})},
@@ -467,10 +479,12 @@ TEST_CASE("every log the writer could not have written is refused, and nothing i
     {"an advance outside the interval", with({genesis, R"({"op":"advance","to":4133894400000000000})"})},
     {"an advance past the data", with({genesis, R"({"op":"advance","to":1711700000000000000})"})},
     {"an input without its result, then another input", with({genesis, advance, place, advance})},
-    {"a result the market does not give", with({genesis, advance, place, replace_first(result, "\"id\":\"1\"", "\"id\":\"2\"")})},
+    {"a result the market does not give",
+      with({genesis, advance, place, replace_first(result, "\"id\":\"1\"", "\"id\":\"2\"")})},
     {"an orphan result", with({genesis, advance, result})},
     {"a duplicate result", with({genesis, advance, place, result, result})},
-    {"a cancel of an id the market never writes", with({genesis, advance, R"({"op":"cancel","at":)" + to + R"(,"id":"01"})"})},
+    {"a cancel of an id the market never writes",
+      with({genesis, advance, R"({"op":"cancel","at":)" + to + R"(,"id":"01"})"})},
     {"a bad prefix and a torn tail", with({genesis, R"({"op":"jump"})"}) + R"({"op":"adv)"},
     {"not JSON", with({genesis, "not json"})},
     {"invalid UTF-8", with({genesis, "{\"op\":\"\xff\"}"})},
@@ -572,7 +586,8 @@ TEST_CASE("amounts past 2^53 are refused as paper state, never invented and neve
     bars += "AAA," + paper::date_text(++day) + ",10000000,10000000,1,1,0\n";
   }
   ConfigParts parts;
-  parts.limits_ = "symbols = [\"AAA\"]\nposition = { \"AAA\" = 100000000 }\norder_value = 10000000000000\ndaily_orders = 3\n";
+  parts.limits_ =
+    "symbols = [\"AAA\"]\nposition = { \"AAA\" = 100000000 }\norder_value = 10000000000000\ndaily_orders = 3\n";
   parts.paper_ = "bars = \"bars.csv\"\ncash = 10000000000000\nstart = \"2024-01-01T16:00\"\n";
   const PaperFixture fixture(parts, bars);
   fixture.arm();
@@ -615,8 +630,15 @@ TEST_CASE("a desk refuses a lock that is not held or is another account's") {
   const auto other = fixture.dir() / "state" / "cmdatl" / "accounts" / "paper-paper-other";
   std::filesystem::create_directories(other);
   cmdatl::OwnerLock held(other.string());
-  REQUIRE(held.acquire(std::chrono::milliseconds(100), [] { return false; }, [](const std::string&) {}) ==
-    cmdatl::OwnerLock::Outcome::HELD);
+  REQUIRE(
+    held.acquire(
+      std::chrono::milliseconds(100),
+      [] {
+        return false;
+      },
+      [](const std::string&) {}
+    ) == cmdatl::OwnerLock::Outcome::HELD
+  );
   CHECK_THROWS_AS(paper::PaperDesk(paper::DeskTest::key(), *snapshot.config_, held, data), std::logic_error);
 }
 #endif

@@ -24,8 +24,8 @@
 #include <boost/json.hpp>
 
 #include <algorithm>
-#include <chrono>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <deque>
@@ -119,7 +119,9 @@ public:
    * @param limit The file size to read up to, or nothing for the whole file.
    * @return What it found.
    */
-  CursorRead read(const std::function<void(const std::string&)>& on_line, std::optional<std::uint64_t> limit = std::nullopt) {
+  CursorRead read(
+    const std::function<void(const std::string&)>& on_line, std::optional<std::uint64_t> limit = std::nullopt
+  ) {
     if (fd_.get() < 0) {
       fd_.reset(open_lifted(path_.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
       if (fd_.get() < 0) {
@@ -168,19 +170,25 @@ public:
    * @brief Whether the file was opened.
    * @return Whether it was.
    */
-  bool opened() const noexcept { return fd_.get() >= 0; }
+  bool opened() const noexcept {
+    return fd_.get() >= 0;
+  }
 
   /**
    * @brief Whether an unterminated tail is held.
    * @return Whether one is.
    */
-  bool tail() const noexcept { return !pending_.empty() || skipping_; }
+  bool tail() const noexcept {
+    return !pending_.empty() || skipping_;
+  }
 
   /**
    * @brief How many over-long lines were skipped.
    * @return The count.
    */
-  std::size_t skipped() const noexcept { return skipped_; }
+  std::size_t skipped() const noexcept {
+    return skipped_;
+  }
 
 private:
   std::optional<CursorRead> check() {
@@ -298,10 +306,14 @@ inline std::optional<json::object> event_of(const std::string& line) {
  * @param dir Set to its directory.
  * @return A refusal, or nothing.
  */
-inline std::optional<Reply> named_run(const Invocation& invocation, const OperatorConfig& config, std::string& run, std::filesystem::path& dir) {
+inline std::optional<Reply> named_run(
+  const Invocation& invocation, const OperatorConfig& config, std::string& run, std::filesystem::path& dir
+) {
   run = invocation.get("RUN");
   if (!run.empty() && !valid_run_id(run)) {
-    return error_reply(Exit::USAGE, "usage.bad_value", "a run id is r and 12 lowercase hex digits, not '" + run.substr(0, 40) + "'");
+    return error_reply(
+      Exit::USAGE, "usage.bad_value", "a run id is r and 12 lowercase hex digits, not '" + run.substr(0, 40) + "'"
+    );
   }
   if (run.empty()) {
     const auto newest = latest_run(config);
@@ -353,7 +365,10 @@ inline Reply log_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     reply.body_["run_exit"] = state.run_exit_ ? json::value(*state.run_exit_) : json::value(nullptr);
   };
   const auto replaced = [&](Exit exit) {
-    auto reply = error_reply(exit, "run.log_replaced", "the run's event log was replaced or shrank while it was read", next_for("run.log_replaced"));
+    auto reply = error_reply(
+      exit, "run.log_replaced", "the run's event log was replaced or shrank while it was read",
+      next_for("run.log_replaced")
+    );
     reply.body_["run"] = run;
     reply.body_["path"] = path.string();
     return reply;
@@ -371,7 +386,10 @@ inline Reply log_reply(const Invocation& invocation, const ConfigSnapshot& snaps
         reply.body_["truncated"] = false;
         return reply;
       }
-      auto reply = error_reply(Exit::FAILED, "run.log_unreadable", "the run started and its event log cannot be read", next_for("run.log_unreadable"));
+      auto reply = error_reply(
+        Exit::FAILED, "run.log_unreadable", "the run started and its event log cannot be read",
+        next_for("run.log_unreadable")
+      );
       reply.body_["run"] = run;
       return reply;
     }
@@ -385,38 +403,44 @@ inline Reply log_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     std::deque<Kept> kept;
     std::size_t bytes = 0;
     bool truncated = false;
-    const auto read = cursor.read([&](const std::string& line) {
-      auto event = event_of(line);
-      if (!event) {
-        noted_bad = true;
-        return;
-      }
-      if (!symbol_selects(*event, symbol)) {
-        return;
-      }
-      const bool clock = event->at("event").as_string() == "clock";
-      if (clock) {
-        for (auto it = kept.rbegin(); it != kept.rend(); ++it) {
-          if (it->clock_) {
-            bytes -= it->bytes_;
-            kept.erase(std::next(it).base());
-            break;
+    const auto read = cursor.read(
+      [&](const std::string& line) {
+        auto event = event_of(line);
+        if (!event) {
+          noted_bad = true;
+          return;
+        }
+        if (!symbol_selects(*event, symbol)) {
+          return;
+        }
+        const bool clock = event->at("event").as_string() == "clock";
+        if (clock) {
+          for (auto it = kept.rbegin(); it != kept.rend(); ++it) {
+            if (it->clock_) {
+              bytes -= it->bytes_;
+              kept.erase(std::next(it).base());
+              break;
+            }
           }
         }
-      }
-      bytes += line.size();
-      kept.push_back(Kept{std::move(*event), line.size(), clock});
-      while (kept.size() > LOG_EVENTS || bytes > LOG_BYTES) {
-        bytes -= kept.front().bytes_;
-        kept.pop_front();
-        truncated = true;
-      }
-    }, static_cast<std::uint64_t>(info.st_size));
+        bytes += line.size();
+        kept.push_back(Kept{std::move(*event), line.size(), clock});
+        while (kept.size() > LOG_EVENTS || bytes > LOG_BYTES) {
+          bytes -= kept.front().bytes_;
+          kept.pop_front();
+          truncated = true;
+        }
+      },
+      static_cast<std::uint64_t>(info.st_size)
+    );
     if (read == CursorRead::REPLACED) {
       return replaced(Exit::FAILED);
     }
     if (read != CursorRead::OK) {
-      auto reply = error_reply(Exit::FAILED, "run.log_unreadable", "the run's event log is not a regular file that can be read", next_for("run.log_unreadable"));
+      auto reply = error_reply(
+        Exit::FAILED, "run.log_unreadable", "the run's event log is not a regular file that can be read",
+        next_for("run.log_unreadable")
+      );
       reply.body_["run"] = run;
       return reply;
     }
@@ -463,7 +487,10 @@ inline Reply log_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       return replaced(Exit::UNKNOWN);
     }
     if (read == CursorRead::UNREADABLE) {
-      auto reply = error_reply(Exit::FAILED, "run.log_unreadable", "the run's event log is not a regular file that can be read", next_for("run.log_unreadable"));
+      auto reply = error_reply(
+        Exit::FAILED, "run.log_unreadable", "the run's event log is not a regular file that can be read",
+        next_for("run.log_unreadable")
+      );
       reply.body_["run"] = run;
       return reply;
     }
@@ -529,9 +556,7 @@ struct StopRewrite {
  * @return The rewrite.
  */
 inline StopRewrite rewrite_stop(
-  const std::string& text,
-  const std::string& run,
-  atl::runner::StopIntent intent,
+  const std::string& text, const std::string& run, atl::runner::StopIntent intent,
   const std::function<bool(const std::string&)>& finished
 ) {
   StopRewrite out;
@@ -618,7 +643,9 @@ public:
   }
 
   /** @brief Releases it. */
-  void release() noexcept { fd_.reset(); }
+  void release() noexcept {
+    fd_.reset();
+  }
 
 private:
   ScopedFd fd_;
@@ -659,9 +686,14 @@ inline int publish_stop(const std::filesystem::path& path, const std::string& te
  * @param recorded Set to the operator file the run recorded, when it did.
  * @return The operator file whose stop file the run reads.
  */
-inline std::string control_config(const Records& records, const OperatorConfig& config, std::optional<std::string>& recorded) {
+inline std::string control_config(
+  const Records& records, const OperatorConfig& config, std::optional<std::string>& recorded
+) {
   if (records.run_) {
-    if (const auto* path = records.run_->if_contains("config"); path != nullptr && path->is_string() && !path->as_string().empty()) {
+    if (
+      const auto* path = records.run_->if_contains("config");
+      path != nullptr && path->is_string() && !path->as_string().empty()
+    ) {
       recorded = std::string(path->as_string());
       return *recorded;
     }
@@ -681,11 +713,16 @@ inline bool acknowledges(const json::object& event, atl::runner::StopIntent inte
   const auto* kind = event.if_contains("event");
   const auto* reason = event.if_contains("reason");
   const auto* named = event.if_contains("intent");
-  if (kind == nullptr || !kind->is_string() || kind->as_string() != "stop" || reason == nullptr || !reason->is_string() ||
-      reason->as_string() != "operator" || named == nullptr || !named->is_string()) {
+  if (
+    kind == nullptr || !kind->is_string() || kind->as_string() != "stop" || reason == nullptr || !reason->is_string() ||
+    reason->as_string() != "operator" || named == nullptr || !named->is_string()
+  ) {
     return false;
   }
-  for (const auto candidate : {atl::runner::StopIntent::QUIESCE, atl::runner::StopIntent::WITHDRAW, atl::runner::StopIntent::FLATTEN}) {
+  for (
+    const auto candidate :
+    {atl::runner::StopIntent::QUIESCE, atl::runner::StopIntent::WITHDRAW, atl::runner::StopIntent::FLATTEN}
+  ) {
     if (atl::runner::stop_intent_name(candidate) == named->as_string()) {
       return atl::runner::stop_intent_strength(candidate) >= atl::runner::stop_intent_strength(intent);
     }
@@ -739,7 +776,9 @@ inline bool driver_gone(const Records& records, const State& state) {
  * @param state The state.
  * @return The reply.
  */
-inline Reply gone_reply(const std::filesystem::path& dir, const std::string& run, const Records& records, const State& state) {
+inline Reply gone_reply(
+  const std::filesystem::path& dir, const std::string& run, const Records& records, const State& state
+) {
   auto reply = status_body(dir, run, records, state);
   reply.body_["run_exit"] = records.exit_valid_ && !records.spawned_ ? 1 : 4;
   return reply;
@@ -785,11 +824,15 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
   // The control path: the stop file beside the operator file the run recorded.
   std::optional<std::string> recorded;
   const auto control = control_config(before, config, recorded);
-  const auto normal = [](const std::string& path) { return std::filesystem::absolute(path).lexically_normal().string(); };
+  const auto normal = [](const std::string& path) {
+    return std::filesystem::absolute(path).lexically_normal().string();
+  };
   if (recorded && normal(*recorded) != normal(config.path_)) {
-    return error_reply(Exit::USAGE, "usage.bad_value",
-                       "this run reads its stop from " + *recorded + "; run cmdatl run stop with that operator file",
-                       "CMDATL_CONFIG=" + *recorded + " cmdatl run stop " + run);
+    return error_reply(
+      Exit::USAGE, "usage.bad_value",
+      "this run reads its stop from " + *recorded + "; run cmdatl run stop with that operator file",
+      "CMDATL_CONFIG=" + *recorded + " cmdatl run stop " + run
+    );
   }
   const std::filesystem::path file(control);
   const auto stop_path = file.parent_path() / (file.stem().string() + ".stop");
@@ -800,16 +843,22 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
     case StopLock::Outcome::HELD:
       break;
     case StopLock::Outcome::BUSY:
-      return error_reply(Exit::FAILED, "busy.locked", "another run stop holds " + lock_path.string(), "run cmdatl run stop again", true);
+      return error_reply(
+        Exit::FAILED, "busy.locked", "another run stop holds " + lock_path.string(), "run cmdatl run stop again", true
+      );
     case StopLock::Outcome::INTERRUPTED:
       return interrupted_reply();
     case StopLock::Outcome::FAILED:
-      return error_reply(Exit::FAILED, "file.unwritable", "the stop file's lock " + lock_path.string() + " cannot be taken");
+      return error_reply(
+        Exit::FAILED, "file.unwritable", "the stop file's lock " + lock_path.string() + " cannot be taken"
+      );
   }
   // The driver's own reader: an existing file it could not read is refused, never replaced.
   const auto current = read_stop_file_checked(stop_path.string());
   if (!current.problem_.empty()) {
-    return error_reply(Exit::FAILED, "file.unwritable", current.problem_ + " (" + stop_path.string() + "); it was not replaced");
+    return error_reply(
+      Exit::FAILED, "file.unwritable", current.problem_ + " (" + stop_path.string() + "); it was not replaced"
+    );
   }
   const auto text = current.text_.value_or(std::string());
   const auto rewrite = rewrite_stop(text, run, intent, [&config](const std::string& other) {
@@ -824,9 +873,12 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
     for (const auto& other : rewrite.kept_runs_) {
       names += (names.empty() ? "" : ", ") + other;
     }
-    return error_reply(Exit::REFUSED, "refused.stop_file_full",
-                       "the stop file would be above 4096 bytes; it keeps the lines of " + (names.empty() ? std::string("no run") : names),
-                       next_for("refused.stop_file_full"));
+    return error_reply(
+      Exit::REFUSED, "refused.stop_file_full",
+      "the stop file would be above 4096 bytes; it keeps the lines of " +
+        (names.empty() ? std::string("no run") : names),
+      next_for("refused.stop_file_full")
+    );
   }
   if (rewrite.text_) {
     // Before the rename nothing is published; when this run's line already holds the intent, the request stood from
@@ -835,7 +887,10 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
       return interrupted_reply();
     }
     if (const int error = publish_stop(stop_path, *rewrite.text_)) {
-      return error_reply(Exit::FAILED, "file.unwritable", "the stop file " + stop_path.string() + " could not be written: " + std::strerror(error));
+      return error_reply(
+        Exit::FAILED, "file.unwritable",
+        "the stop file " + stop_path.string() + " could not be written: " + std::strerror(error)
+      );
     }
   }
   lock.release();
@@ -858,13 +913,18 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
       return reply;
     }
     if (read.reply_) {
-      if (const auto* stopped = read.reply_->if_contains("stopped"); stopped != nullptr && stopped->is_string() && stopped->as_string() == "operator") {
+      if (
+        const auto* stopped = read.reply_->if_contains("stopped");
+        stopped != nullptr && stopped->is_string() && stopped->as_string() == "operator"
+      ) {
         acknowledged = true;
       }
       if (final.state_ != "ended" && final.state_ != "refused" && final.state_ != "failed") {
         // A reply the records contradict proves nothing: keep waiting for evidence, until the deadline.
         if (std::chrono::steady_clock::now() >= deadline) {
-          auto reply = error_reply(Exit::UNKNOWN, "unknown.run_stop", "the run's records contradict each other", next_for("unknown.run_stop"));
+          auto reply = error_reply(
+            Exit::UNKNOWN, "unknown.run_stop", "the run's records contradict each other", next_for("unknown.run_stop")
+          );
           reply.body_["run"] = run;
           reply.body_["acknowledged"] = acknowledged;
           reply.body_["control"] = stop_path.string();
@@ -883,8 +943,10 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
       return reply;
     }
     if (interrupted()) {
-      auto reply = error_reply(Exit::UNKNOWN, acknowledged ? "unknown.run_stopping" : "unknown.run_stop",
-                               "interrupted: the stop request stands", next_for(acknowledged ? "unknown.run_stopping" : "unknown.run_stop"));
+      auto reply = error_reply(
+        Exit::UNKNOWN, acknowledged ? "unknown.run_stopping" : "unknown.run_stop",
+        "interrupted: the stop request stands", next_for(acknowledged ? "unknown.run_stopping" : "unknown.run_stop")
+      );
       reply.body_["run"] = run;
       reply.body_["acknowledged"] = acknowledged;
       reply.body_["control"] = stop_path.string();
@@ -892,9 +954,11 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
     }
     if (std::chrono::steady_clock::now() >= deadline) {
       const auto code = acknowledged ? std::string("unknown.run_stopping") : std::string("unknown.run_stop");
-      auto reply = error_reply(Exit::UNKNOWN, code,
-                               acknowledged ? "the run acknowledged the stop and has not ended" : "the run did not acknowledge the stop",
-                               next_for(code));
+      auto reply = error_reply(
+        Exit::UNKNOWN, code,
+        acknowledged ? "the run acknowledged the stop and has not ended" : "the run did not acknowledge the stop",
+        next_for(code)
+      );
       reply.body_["run"] = run;
       reply.body_["acknowledged"] = acknowledged;
       reply.body_["control"] = stop_path.string();
@@ -905,5 +969,5 @@ inline Reply stop_reply(const Invocation& invocation, const ConfigSnapshot& snap
 #endif
 }
 
-}  // namespace runs
-}  // namespace cmdatl
+} // namespace runs
+} // namespace cmdatl

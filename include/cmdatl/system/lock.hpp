@@ -130,8 +130,7 @@ public:
    * @brief Names the lock of an account's directory; nothing is opened yet.
    * @param dir The account's directory.
    */
-  explicit OwnerLock(std::string dir)
-  : dir_(std::move(dir)), path_(dir_ + "/lock") {}
+  explicit OwnerLock(std::string dir) : dir_(std::move(dir)), path_(dir_ + "/lock") {}
 
   OwnerLock(const OwnerLock&) = delete;
   OwnerLock& operator=(const OwnerLock&) = delete;
@@ -151,8 +150,7 @@ public:
    * @return How it ended; `error()` says why for `FAILED`.
    */
   Outcome acquire(
-    std::chrono::milliseconds timeout,
-    const std::function<bool()>& interrupted,
+    std::chrono::milliseconds timeout, const std::function<bool()>& interrupted,
     const std::function<void(const std::string&)>& on_wait
   ) {
     const auto until = std::chrono::steady_clock::now() + timeout;
@@ -223,37 +221,49 @@ public:
    * @brief Whether this process holds it.
    * @return Whether it does.
    */
-  bool held() const noexcept { return held_; }
+  bool held() const noexcept {
+    return held_;
+  }
 
   /**
    * @brief The account's directory.
    * @return The directory.
    */
-  const std::string& dir() const noexcept { return dir_; }
+  const std::string& dir() const noexcept {
+    return dir_;
+  }
 
   /**
    * @brief The lock file.
    * @return The path.
    */
-  const std::string& path() const noexcept { return path_; }
+  const std::string& path() const noexcept {
+    return path_;
+  }
 
   /**
    * @brief The locked file's identity, for a check without the descriptor.
    * @return The identity; empty when not held.
    */
-  const LockIdentity& identity() const noexcept { return identity_; }
+  const LockIdentity& identity() const noexcept {
+    return identity_;
+  }
 
   /**
    * @brief Whether the held descriptor is still the file at the lock's path.
    * @return Whether it is; false when not held.
    */
-  bool still_at_path() const { return held_ && identity_.still_at_path(); }
+  bool still_at_path() const {
+    return held_ && identity_.still_at_path();
+  }
 
   /**
    * @brief Why it was not taken: the failure, or who holds it.
    * @return The text.
    */
-  const std::string& error() const noexcept { return error_; }
+  const std::string& error() const noexcept {
+    return error_;
+  }
 
 private:
   std::string dir_;
@@ -318,4 +328,4 @@ inline bool write_owner_record(const OwnerLock& lock, const std::string& what) n
 }
 #endif
 
-}  // namespace cmdatl
+} // namespace cmdatl

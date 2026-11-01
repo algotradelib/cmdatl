@@ -155,10 +155,12 @@ public:
   Scoped& operator=(const Scoped&) = delete;
 
   /** @brief Clears it. */
-  ~Scoped() { clear(); }
+  ~Scoped() {
+    clear();
+  }
 };
 
-}  // namespace fault
+} // namespace fault
 
 namespace cmdatl {
 namespace sys {
@@ -241,8 +243,8 @@ void kill_point(const char* name) {
   }
 }
 
-}  // namespace sys
-}  // namespace cmdatl
+} // namespace sys
+} // namespace cmdatl
 
 #if defined(CMDATL_WRAP_FSYNC)
 extern "C" int __real_fsync(int fd);
@@ -312,7 +314,7 @@ std::string now_of(const PaperFixture& fixture) {
   return std::string(reply_of(fixture.json({"clock"}).out_).at("now").as_string());
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("a read failing after a prefix of the log changes nothing, a torn tail included") {
   const PaperFixture fixture;
@@ -538,7 +540,9 @@ struct Forked {
    * @brief The exit code, or -1 when it did not exit.
    * @return The code.
    */
-  int exit() const { return WIFEXITED(status_) ? WEXITSTATUS(status_) : -1; }
+  int exit() const {
+    return WIFEXITED(status_) ? WEXITSTATUS(status_) : -1;
+  }
 
   /**
    * @brief The error code of its reply.
@@ -563,9 +567,7 @@ struct Forked {
  * @return What it left.
  */
 Forked run_forked(
-  const PaperFixture& fixture,
-  std::vector<std::string> args,
-  const std::function<void(const std::string&)>& hook,
+  const PaperFixture& fixture, std::vector<std::string> args, const std::function<void(const std::string&)>& hook,
   const std::string& kill_at = ""
 ) {
   args.insert(args.begin(), "--json");
@@ -615,10 +617,7 @@ Forked run_forked(
  * @return The hook.
  */
 std::function<void(const std::string&)> limit_at(
-  const std::string& point,
-  const std::filesystem::path& file,
-  off_t extra,
-  bool fresh
+  const std::string& point, const std::filesystem::path& file, off_t extra, bool fresh
 ) {
   return [point, file, extra, fresh](const std::string& name) {
     if (name != point) {
@@ -652,9 +651,11 @@ std::string ready_plan(const PaperFixture& fixture, const std::string& limit = "
   return plan_id(fixture, "005930", "10", limit);
 }
 
-}  // namespace
+} // namespace
 
-TEST_CASE("a place killed after its plan was marked used: plan_used and nothing journaled or logged and a new plan works") {
+TEST_CASE(
+  "a place killed after its plan was marked used: plan_used and nothing journaled or logged and a new plan works"
+) {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
   const auto journal = slurp(fixture.journal());
@@ -667,7 +668,9 @@ TEST_CASE("a place killed after its plan was marked used: plan_used and nothing 
   CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
 }
 
-TEST_CASE("a place killed after its PENDING and before the paper line: owed unnamed and never a second order and release") {
+TEST_CASE(
+  "a place killed after its PENDING and before the paper line: owed unnamed and never a second order and release"
+) {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
   const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, "send.before_input");
@@ -687,9 +690,13 @@ TEST_CASE("a place killed after its PENDING and before the paper line: owed unna
     CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read"}).code_ == "refused.not_approved");
   }
   CHECK(ops_of(slurp(fixture.log()), "place").empty());
-  const auto journal_id = std::string(ask(fixture, {"account"}).body_.at("owed").as_array()[0].as_object().at("journal_id").as_string());
+  const auto journal_id =
+    std::string(ask(fixture, {"account"}).body_.at("owed").as_array()[0].as_object().at("journal_id").as_string());
   spit(fixture.dir() / "paper.release", "005930 " + journal_id + "\n");
-  CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read the order list and holdings"}).reason_ == "released");
+  CHECK(
+    ask_checked(fixture, {"order", "release", "005930", "--reason", "read the order list and holdings"}).reason_ ==
+    "released"
+  );
   CHECK(ask_checked(fixture, {"order", "reconcile"}).reason_ == "clean");
   const auto next = plan_id(fixture, "005930", "10", "75000");
   CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
@@ -750,7 +757,9 @@ TEST_CASE("an exception after a send and inside once() or after it and is unknow
   }
 }
 
-TEST_CASE("B1: the armed file removed before once() and or before the paper line and sends nothing and names the file") {
+TEST_CASE(
+  "B1: the armed file removed before once() and or before the paper line and sends nothing and names the file"
+) {
   {
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
@@ -788,7 +797,9 @@ TEST_CASE("B1: the armed file removed before once() and or before the paper line
   }
 }
 
-TEST_CASE("B5: the journal moved aside and emptied or replaced by a copy before once(): journal_missing and none created") {
+TEST_CASE(
+  "B5: the journal moved aside and emptied or replaced by a copy before once(): journal_missing and none created"
+) {
   for (const auto* how : {"moved", "emptied", "copied"}) {
     INFO(how);
     const PaperFixture fixture;
@@ -862,7 +873,8 @@ TEST_CASE("the journal's PENDING failing at zero bytes or as a prefix: refused.j
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
     const auto journal = slurp(fixture.journal());
-    const auto forked = run_forked(fixture, {"order", "place", id}, limit_at("order.before_once", fixture.journal(), 0, true));
+    const auto forked =
+      run_forked(fixture, {"order", "place", id}, limit_at("order.before_once", fixture.journal(), 0, true));
     INFO(forked.out_);
     CHECK(forked.exit() == 3);
     CHECK(forked.code() == "refused.journal_unwritable");
@@ -875,7 +887,8 @@ TEST_CASE("the journal's PENDING failing at zero bytes or as a prefix: refused.j
   {
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
-    const auto forked = run_forked(fixture, {"order", "place", id}, limit_at("order.before_once", fixture.journal(), 20, true));
+    const auto forked =
+      run_forked(fixture, {"order", "place", id}, limit_at("order.before_once", fixture.journal(), 20, true));
     INFO(forked.out_);
     CHECK(forked.exit() == 3);
     CHECK(forked.code() == "refused.journal_unwritable");
@@ -884,7 +897,10 @@ TEST_CASE("the journal's PENDING failing at zero bytes or as a prefix: refused.j
     const auto torn = slurp(fixture.journal());
     for (int round = 0; round < 2; ++round) {
       CHECK(ask_checked(fixture, {"account"}).code_ == "unknown.journal_damaged");
-      CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "75000"}).code_ == "unknown.journal_damaged");
+      CHECK(
+        ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "75000"}).code_ ==
+        "unknown.journal_damaged"
+      );
     }
     CHECK(slurp(fixture.journal()) == torn);
   }
@@ -909,7 +925,8 @@ TEST_CASE("the journal's PENDING failing at zero bytes or as a prefix: refused.j
 TEST_CASE("the journal's answer failing after the market answered: unknown.journal_write") {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
-  const auto forked = run_forked(fixture, {"order", "place", id}, limit_at("send.after_result", fixture.journal(), 0, false));
+  const auto forked =
+    run_forked(fixture, {"order", "place", id}, limit_at("send.after_result", fixture.journal(), 0, false));
   INFO(forked.out_);
   CHECK(forked.exit() == 4);
   CHECK(forked.code() == "unknown.journal_write");
@@ -927,7 +944,8 @@ TEST_CASE("a market-refused place whose journal answer fails: unknown.journal_wr
   fixture.arm();
   REQUIRE(outcome(fixture, {"clock", "advance", "--to", "2024-03-26T08:10"}).first == 0);
   const auto id = plan_id(fixture, "005930", "10", "78500");
-  const auto forked = run_forked(fixture, {"order", "place", id}, limit_at("send.after_result", fixture.journal(), 0, false));
+  const auto forked =
+    run_forked(fixture, {"order", "place", id}, limit_at("send.after_result", fixture.journal(), 0, false));
   INFO(forked.out_);
   CHECK(forked.exit() == 4);
   CHECK(forked.code() == "unknown.journal_write");
@@ -974,7 +992,8 @@ TEST_CASE("an interrupt before once() is 130 and sends nothing; after once() is 
     if (std::string(command) == "cancel") {
       REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
     }
-    const auto args = std::string(command) == "place" ? std::vector<std::string>{"order", "place", id} :
+    const auto args = std::string(command) == "place" ?
+      std::vector<std::string>{"order", "place", id} :
       std::vector<std::string>{"order", "cancel", "005930"};
     const auto forked = run_forked(fixture, args, [](const std::string& name) {
       if (name == "send.after_input") {
@@ -1029,7 +1048,8 @@ TEST_CASE("a former lock holder never publishes its plan book over a newer holde
         new_id = plan_id(fixture, "000660", "1", "180000");
         REQUIRE(cmdatl::PlanBook::load(fixture.account().string()).find(new_id).has_value());
       };
-      const auto line = std::string(command) == "place" ? std::vector<std::string>{"order", "place", id} :
+      const auto line = std::string(command) == "place" ?
+        std::vector<std::string>{"order", "place", id} :
         std::vector<std::string>{"order", "plan", "005930", "--target", "20", "--limit", "75000"};
       Answer answer;
       if (std::string(when) == "before the save") {

@@ -11,10 +11,10 @@
 #include <vector>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <signal.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
-#include <fcntl.h>
 #include <unistd.h>
 
 using namespace support;
@@ -67,8 +67,8 @@ std::vector<Case> cases() {
     {"a report", spec_ok + "run err atlc: building\nrun out " + REPORT + "\n", 0, ""},
     {"program errors", "spec out " + envelope("error", PROGRAM_ERROR) + "\nspec exit 1\n", 5, "program.invalid"},
     {"spec errors", "spec out " + envelope("error", SPEC_ERROR) + "\nspec exit 2\n", 2, "spec.invalid"},
-    {"an atlc without spec", "spec err usage: atlc <command> [arguments]\nspec err \nspec err commands:\nspec exit 2\n", 1,
-      "atlc.unsupported"},
+    {"an atlc without spec", "spec err usage: atlc <command> [arguments]\nspec err \nspec err commands:\nspec exit 2\n",
+      1, "atlc.unsupported"},
     {"exit 2 without JSON or usage", "spec err atlc spec: something else\nspec exit 2\n", 1, "atlc.failed"},
     {"exit 2, usage, and a broken object", "spec out {\"atlc_spec\":1\nspec err usage: atlc\nspec exit 2\n", 1,
       "atlc.failed"},
@@ -85,9 +85,10 @@ std::vector<Case> cases() {
       "atlc.failed"},
     {"a diagnostic without a code",
       "spec out " + envelope("error", R"([{"severity":"error","message":"x"}])") + "\nspec exit 2\n", 1, "atlc.failed"},
-    {"a status that is not a string",
-      "spec out {\"atlc_spec\":1,\"status\":true,\"warnings\":[],\"errors\":[]}\n", 1, "atlc.failed"},
-    {"another format", "spec out {\"atlc_spec\":2,\"status\":\"ok\",\"warnings\":[],\"errors\":[]}\n", 1, "atlc.failed"},
+    {"a status that is not a string", "spec out {\"atlc_spec\":1,\"status\":true,\"warnings\":[],\"errors\":[]}\n", 1,
+      "atlc.failed"},
+    {"another format", "spec out {\"atlc_spec\":2,\"status\":\"ok\",\"warnings\":[],\"errors\":[]}\n", 1,
+      "atlc.failed"},
     {"spec killed by a signal", "spec raise 9\n", 1, "atlc.failed"},
     {"spec exit 101", "spec err atlc: internal error\nspec exit 101\n", 1, "atlc.failed"},
     {"the program broke between the calls", spec_ok + "run err error[undefined-name]: `x` is not defined\nrun exit 1\n",
@@ -95,7 +96,8 @@ std::vector<Case> cases() {
     {"the spec broke between the calls", spec_ok + "run err atlc run: unknown key `dta`\nrun exit 2\n", 2,
       "spec.invalid"},
     {"a build failure",
-      spec_ok + "run err atlc: building\nrun err atlc run: cmake failed\nrun err (the build's log is /c/build.log)\n"
+      spec_ok +
+        "run err atlc: building\nrun err atlc run: cmake failed\nrun err (the build's log is /c/build.log)\n"
         "run exit 3\n",
       1, "build.failed"},
     {"a replay failure", spec_ok + "run err error: lookback=1 is below its lower bound 2\nrun exit 4\n", 1,
@@ -164,8 +166,7 @@ public:
    * @brief Moves.
    * @param dir The directory.
    */
-  explicit InDir(const std::filesystem::path& dir)
-  : back_(std::filesystem::current_path()) {
+  explicit InDir(const std::filesystem::path& dir) : back_(std::filesystem::current_path()) {
     std::filesystem::current_path(dir);
   }
 
@@ -173,7 +174,9 @@ public:
   InDir& operator=(const InDir&) = delete;
 
   /** @brief Moves back. */
-  ~InDir() { std::filesystem::current_path(back_); }
+  ~InDir() {
+    std::filesystem::current_path(back_);
+  }
 
 private:
   std::filesystem::path back_;
@@ -240,7 +243,7 @@ std::string template_text(const std::string& name) {
   return "";
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("every answer of atlc spec and atlc run maps to its reply in json and jsonl and text") {
   const Watchdog watchdog("the mapping", 300);
@@ -264,7 +267,8 @@ TEST_CASE("a failure carries atlc's diagnostics or its last stderr lines and nam
   }
   {
     const FakeAtlc fake(
-      "spec out " + SPEC_OK + "\nrun err atlc: building\nrun err atlc run: cmake failed\n"
+      "spec out " + SPEC_OK +
+      "\nrun err atlc: building\nrun err atlc run: cmake failed\n"
       "run err (the build's log is /c/build.log)\nrun exit 3\n"
     );
     const auto reply = reply_of(run({"strategy", "backtest", "s.toml"}).out_);
@@ -285,7 +289,9 @@ TEST_CASE("a failure carries atlc's diagnostics or its last stderr lines and nam
     const FakeAtlc fake("spec out " + SPEC_OK + "\nrun exit 130\n");
     const auto ran = run({"strategy", "backtest", "s.toml"});
     CHECK(ran.exit_ == 1);
-    CHECK(reply_of(ran.out_).at("error").as_object().at("message").as_string().find("exited with 130") != std::string::npos);
+    CHECK(
+      reply_of(ran.out_).at("error").as_object().at("message").as_string().find("exited with 130") != std::string::npos
+    );
   }
 }
 
@@ -345,7 +351,9 @@ TEST_CASE("--fields and --value select from the final reply only and never from 
 
 TEST_CASE("atlc's stderr reaches the reader as progress while atlc still runs") {
   const Watchdog watchdog("live progress", 60);
-  const FakeAtlc fake("spec out " + SPEC_OK + "\nrun err atlc: building\nrun sleep 300\nrun touch done\nrun out " + REPORT + "\n");
+  const FakeAtlc fake(
+    "spec out " + SPEC_OK + "\nrun err atlc: building\nrun sleep 300\nrun touch done\nrun out " + REPORT + "\n"
+  );
   MarkWatcher watcher(fake, "atlc: building", "done");
   std::ostream err(&watcher);
   std::ostringstream out;
@@ -363,8 +371,10 @@ TEST_CASE("strategy new: the name rules with atlc's reserved names") {
     CHECK(code_of(ran.out_) == "strategy.name");
     CHECK(declares({"strategy", "new"}, 2, "strategy.name"));
   };
-  for (const auto* name : {"a.b", "a b", "1dip", "d\xc3\xafp", "a/b", "..", "params", "Params", "lane", "Lane",
-                           "params-", "lane__", "_dip"}) {
+  for (
+    const auto* name :
+    {"a.b", "a b", "1dip", "d\xc3\xafp", "a/b", "..", "params", "Params", "lane", "Lane", "params-", "lane__", "_dip"}
+  ) {
     refused(name);
   }
   refused(std::string(65, 'a'));
@@ -410,7 +420,9 @@ TEST_CASE("strategy new writes each template and a spec atlc reads and lists the
 
 TEST_CASE("strategy new refuses an existing destination of any kind and writes nothing") {
   const ScratchDir dir;
-  const auto path = [&dir](const std::string& file) { return dir.path() / file; };
+  const auto path = [&dir](const std::string& file) {
+    return dir.path() / file;
+  };
   spit(path("a.atls"), "mine");
   spit(path("b.toml"), "mine");
   spit(path("c.atls"), "mine");
@@ -508,7 +520,9 @@ TEST_CASE("two strategy new at once: one wins and the other is refused and no fi
 TEST_CASE("strategy new --force replaces regular files and refuses a directory or a link or a FIFO first") {
   const Watchdog watchdog("--force", 60);
   const ScratchDir dir;
-  const auto path = [&dir](const std::string& file) { return dir.path() / file; };
+  const auto path = [&dir](const std::string& file) {
+    return dir.path() / file;
+  };
   spit(path("one.atls"), "old");
   spit(path("both.atls"), "old");
   spit(path("both.toml"), "old");
@@ -516,7 +530,10 @@ TEST_CASE("strategy new --force replaces regular files and refuses a directory o
     INFO(name);
     CHECK(strategy_new({name, "--dir", dir.path().string(), "--force"}).exit_ == 0);
     CHECK(slurp(path(std::string(name) + ".atls")) == template_text("mean-reversion"));
-    CHECK(slurp(path(std::string(name) + ".toml")).find("strategy = \"" + std::string(name) + ".atls\"") != std::string::npos);
+    CHECK(
+      slurp(path(std::string(name) + ".toml")).find("strategy = \"" + std::string(name) + ".atls\"") !=
+      std::string::npos
+    );
   }
   spit(path("target"), "the link's target");
   spit(path("dir.atls"), "keep me");

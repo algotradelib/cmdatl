@@ -40,7 +40,9 @@
 namespace cmdatl {
 
 /** @brief The exit codes of an order command. */
-inline const std::vector<Exit> ORDER_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE, Exit::REFUSED, Exit::UNKNOWN, Exit::INTERRUPTED};
+inline const std::vector<Exit> ORDER_EXITS{
+  Exit::OK, Exit::FAILED, Exit::USAGE, Exit::REFUSED, Exit::UNKNOWN, Exit::INTERRUPTED
+};
 
 /** @brief The error codes the order commands' own checks answer with, beside once()'s. */
 inline const std::vector<std::string> ORDER_ERRORS{
@@ -59,15 +61,19 @@ inline const std::vector<std::string> ORDER_ERRORS{
  */
 inline std::vector<std::string> order_error_codes() {
   auto codes = ORDER_ERRORS;
-  for (const auto* code : {"refused.not_armed", "refused.no_plan", "refused.plan_used", "refused.stale_plan",
-                           "refused.holding_moved", "refused.awaiting", "unknown.journal_missing"}) {
+  for (
+    const auto* code :
+    {"refused.not_armed", "refused.no_plan", "refused.plan_used", "refused.stale_plan", "refused.holding_moved",
+      "refused.awaiting", "unknown.journal_missing"}
+  ) {
     codes.emplace_back(code);
   }
   for (const auto& reason : sending::ONCE_REASONS) {
     if (reason.exit_ == sending::OnceExit::DONE) {
       continue;
     }
-    const auto code = std::string(reason.exit_ == sending::OnceExit::REFUSED ? "refused." : "unknown.") + reason.reason_;
+    const auto code =
+      std::string(reason.exit_ == sending::OnceExit::REFUSED ? "refused." : "unknown.") + reason.reason_;
     if (std::find(codes.begin(), codes.end(), code) == codes.end()) {
       codes.push_back(code);
     }
@@ -137,7 +143,9 @@ inline bool valid_reason(std::string_view text) {
       point = (point << 6) | (next & 0x3f);
     }
     const std::uint32_t least[] = {0, 0x80, 0x800, 0x10000};
-    if (point < least[more] || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff) || (point >= 0x80 && point < 0xa0)) {
+    if (
+      point < least[more] || point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff) || (point >= 0x80 && point < 0xa0)
+    ) {
       return false;
     }
     i += more + 1;
@@ -155,7 +163,9 @@ inline std::optional<Reply> check_order_args(const Invocation& invocation) {
   if (auto refused = check_symbols(invocation)) {
     return refused;
   }
-  const auto bad = [](const std::string& message) { return error_reply(Exit::USAGE, "usage.bad_value", message, ""); };
+  const auto bad = [](const std::string& message) {
+    return error_reply(Exit::USAGE, "usage.bad_value", message, "");
+  };
   if (invocation.has("target") && !valid_target(invocation.get("target"))) {
     return bad("--target is whole shares written 0 or 1 to 999999999, with no sign, fraction or leading zero");
   }
@@ -364,8 +374,7 @@ inline Started start(Account& account) {
   const auto target = desk.now() + std::chrono::seconds(1);
   if (target > desk.clock_limit()) {
     started.refusal_ = error_reply(
-      Exit::FAILED,
-      "clock.past_data",
+      Exit::FAILED, "clock.past_data",
       "the paper market's data ends " + data_end_text(desk) + "; an order command takes one simulated second, past it",
       "cmdatl clock shows where the data ends"
     );
@@ -380,17 +389,15 @@ inline Started start(Account& account) {
       return started;
     case paper::Appended::NOT_WRITTEN:
       started.refusal_ = error_reply(
-        Exit::FAILED,
-        "file.unwritable",
-        "the command's simulated second could not be written to the paper log (" + std::string(std::strerror(outcome.error_)) +
-          "); the clock has not moved and nothing was sent",
+        Exit::FAILED, "file.unwritable",
+        "the command's simulated second could not be written to the paper log (" +
+          std::string(std::strerror(outcome.error_)) + "); the clock has not moved and nothing was sent",
         "check the account's directory"
       );
       return started;
     case paper::Appended::NOT_SYNCED:
       started.refusal_ = error_reply(
-        Exit::FAILED,
-        "file.unwritable",
+        Exit::FAILED, "file.unwritable",
         "the command's simulated second was written but not flushed (" + std::string(std::strerror(outcome.error_)) +
           "); the paper clock may have moved one second and nothing was sent",
         "check the account's directory"
@@ -409,7 +416,10 @@ inline Started start(Account& account) {
  */
 inline Reply interrupted_before_send(json::object body) {
   return with_body(
-    error_reply(Exit::INTERRUPTED, "interrupted", "interrupted by a signal before anything could be sent", "run the command again", true),
+    error_reply(
+      Exit::INTERRUPTED, "interrupted", "interrupted by a signal before anything could be sent",
+      "run the command again", true
+    ),
     std::move(body)
   );
 }
@@ -451,11 +461,7 @@ struct Precheck {
  * @return The first refusal, or none.
  */
 inline Precheck precheck(
-  Account& account,
-  const std::string& symbol,
-  const std::string& target,
-  const std::string& limit,
-  bool need_armed,
+  Account& account, const std::string& symbol, const std::string& target, const std::string& limit, bool need_armed,
   std::optional<algotradelib::Decimal64>& held
 ) {
   namespace atl = algotradelib;
@@ -499,14 +505,14 @@ inline Precheck precheck(
   if (!value || atl::decimal_less(ceiling, *value)) {
     return {
       "refused.order_value",
-      "an order of " + std::to_string(change) + " shares at " + limit + " is " + (value ? value->str() : std::string("too large")) +
-        " KRW; the operator allows " + config.limits_.order_value_
+      "an order of " + std::to_string(change) + " shares at " + limit + " is " +
+        (value ? value->str() : std::string("too large")) + " KRW; the operator allows " + config.limits_.order_value_
     };
   }
   return {};
 }
 
-}  // namespace orders_detail
+} // namespace orders_detail
 
 /**
  * @brief `cmdatl order plan SYMBOL --target N --limit P`: what `order place` would send, checked, with a plan id.
@@ -560,7 +566,8 @@ inline Reply plan_reply(const Invocation& invocation, Account& account, Output& 
     plan.symbol_ = symbol;
     plan.target_ = target;
     plan.limit_ = limit;
-    plan.snapshot_ = snapshot_of(account.desk().session(), account.config().scope(), symbol, target, limit, journal_size(account));
+    plan.snapshot_ =
+      snapshot_of(account.desk().session(), account.config().scope(), symbol, target, limit, journal_size(account));
     plan.sim_ = paper::nanos(account.desk().now());
     const auto id = book.issue(plan);
     const auto saved = book.save(account.lock());
@@ -568,19 +575,27 @@ inline Reply plan_reply(const Invocation& invocation, Account& account, Output& 
       return with_body(lock_lost_reply(), std::move(body));
     }
     if (saved.error_ != 0) {
-      return finish(account, with_body(error_reply(
-        Exit::FAILED,
-        "file.unwritable",
-        "the plan book could not be written (" + std::string(std::strerror(saved.error_)) + "); no plan was issued and nothing was sent",
-        "check the account's directory"
-      ), std::move(body)), symbol);
+      return finish(
+        account,
+        with_body(
+          error_reply(
+            Exit::FAILED, "file.unwritable",
+            "the plan book could not be written (" + std::string(std::strerror(saved.error_)) +
+              "); no plan was issued and nothing was sent",
+            "check the account's directory"
+          ),
+          std::move(body)
+        ),
+        symbol
+      );
     }
     body["plan_id"] = id;
     body["would"] = result.plan_kind_;
     if (result.plan_kind_ != "withdraw" && held) {
       body["quantity"] = std::to_string(std::llabs(std::stoll(target) - std::stoll(held->str())));
     }
-    body["expires_at"] = paper::kst_iso(account.desk().now() + std::chrono::seconds(account.config().limits_.plan_ttl_));
+    body["expires_at"] =
+      paper::kst_iso(account.desk().now() + std::chrono::seconds(account.config().limits_.plan_ttl_));
     body["next"] = "cmdatl order place " + id;
   }
   return finish(account, from_once(result, std::move(body)), symbol);
@@ -607,35 +622,52 @@ inline Reply place_reply(const Invocation& invocation, Account& account, Output&
   auto plan = book.find(id);
   const auto now_nanos = paper::nanos(account.desk().now());
   if (!plan || plan->sim_ > now_nanos) {
-    return finish(account, coded(
-      Exit::REFUSED,
-      "refused.no_plan",
-      book.damaged() || plan ? "the plan book is damaged and is read as empty" : "the plan book holds no plan " + id,
-      std::move(body)
-    ), std::nullopt);
+    return finish(
+      account,
+      coded(
+        Exit::REFUSED, "refused.no_plan",
+        book.damaged() || plan ? "the plan book is damaged and is read as empty" : "the plan book holds no plan " + id,
+        std::move(body)
+      ),
+      std::nullopt
+    );
   }
   body["symbol"] = plan->symbol_;
   body["target"] = plan->target_;
   body["limit"] = plan->limit_;
   std::optional<algotradelib::Decimal64> held;
-  if (const auto refused = precheck(account, plan->symbol_, plan->target_, plan->limit_, true, held); !refused.code_.empty()) {
+  if (
+    const auto refused = precheck(account, plan->symbol_, plan->target_, plan->limit_, true, held);
+    !refused.code_.empty()
+  ) {
     return finish(account, coded(Exit::REFUSED, refused.code_, refused.message_, std::move(body)), plan->symbol_);
   }
   if (plan->used_) {
-    return finish(account, coded(Exit::REFUSED, "refused.plan_used", "a plan sends once; plan again", std::move(body)), plan->symbol_);
+    return finish(
+      account, coded(Exit::REFUSED, "refused.plan_used", "a plan sends once; plan again", std::move(body)),
+      plan->symbol_
+    );
   }
   const auto snapshot = snapshot_of(
-    account.desk().session(), account.config().scope(), plan->symbol_, plan->target_, plan->limit_, journal_size(account)
+    account.desk().session(), account.config().scope(), plan->symbol_, plan->target_, plan->limit_,
+    journal_size(account)
   );
   const auto age = now_nanos - plan->sim_;
-  const auto ttl = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(account.config().limits_.plan_ttl_)).count();
+  const auto ttl =
+    std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(account.config().limits_.plan_ttl_))
+      .count();
   if (snapshot != plan->snapshot_ || age > ttl) {
-    return finish(account, coded(
-      Exit::REFUSED,
-      "refused.stale_plan",
-      snapshot != plan->snapshot_ ? "the account moved since the plan was made" : "the plan is older than limits.plan_ttl",
-      std::move(body)
-    ), plan->symbol_);
+    return finish(
+      account,
+      coded(
+        Exit::REFUSED, "refused.stale_plan",
+        snapshot != plan->snapshot_ ?
+          "the account moved since the plan was made" :
+          "the plan is older than limits.plan_ttl",
+        std::move(body)
+      ),
+      plan->symbol_
+    );
   }
   if (interrupted()) {
     return interrupted_before_send(std::move(body));
@@ -647,12 +679,19 @@ inline Reply place_reply(const Invocation& invocation, Account& account, Output&
     return with_body(lock_lost_reply(), std::move(body));
   }
   if (saved.error_ != 0) {
-    return finish(account, with_body(error_reply(
-      Exit::FAILED,
-      "file.unwritable",
-      "the plan book could not be written (" + std::string(std::strerror(saved.error_)) + "); the plan is unused and nothing was sent",
-      "check the account's directory"
-    ), std::move(body)), plan->symbol_);
+    return finish(
+      account,
+      with_body(
+        error_reply(
+          Exit::FAILED, "file.unwritable",
+          "the plan book could not be written (" + std::string(std::strerror(saved.error_)) +
+            "); the plan is unused and nothing was sent",
+          "check the account's directory"
+        ),
+        std::move(body)
+      ),
+      plan->symbol_
+    );
   }
   sys::kill_point("order.before_once");
   if (interrupted()) {
@@ -710,12 +749,13 @@ inline Reply cancel_reply(const Invocation& invocation, Account& account, Output
   const auto symbol = invocation.get("SYMBOL");
   body["symbol"] = symbol;
   if (!account.desk().has_symbol(symbol)) {
-    return with_body(error_reply(
-      Exit::FAILED,
-      "quote.no_data",
-      "the paper market's bars have no rows for " + symbol,
-      "cmdatl env shows the bars file"
-    ), std::move(body));
+    return with_body(
+      error_reply(
+        Exit::FAILED, "quote.no_data", "the paper market's bars have no rows for " + symbol,
+        "cmdatl env shows the bars file"
+      ),
+      std::move(body)
+    );
   }
   if (interrupted()) {
     return interrupted_before_send(std::move(body));
@@ -757,12 +797,13 @@ inline Reply reconcile_reply(const Invocation& invocation, Account& account, Out
   if (invocation.has("SYMBOL")) {
     const auto symbol = invocation.get("SYMBOL");
     if (!account.desk().has_symbol(symbol)) {
-      return with_body(error_reply(
-        Exit::FAILED,
-        "quote.no_data",
-        "the paper market's bars have no rows for " + symbol,
-        "cmdatl env shows the bars file"
-      ), std::move(body));
+      return with_body(
+        error_reply(
+          Exit::FAILED, "quote.no_data", "the paper market's bars have no rows for " + symbol,
+          "cmdatl env shows the bars file"
+        ),
+        std::move(body)
+      );
     }
     symbols.push_back(symbol);
   } else {
@@ -823,12 +864,17 @@ inline Reply reconcile_reply(const Invocation& invocation, Account& account, Out
     return finish(account, std::move(reply), std::nullopt);
   }
   body["reason"] = overall.second.substr(overall.second.find('.') + 1);
-  return finish(account, coded(
-    overall.first,
-    overall.second,
-    overall.first == Exit::UNKNOWN ? "an order's outcome is unknown; see checked" : "an order is owed or resting; see checked and owed",
-    std::move(body)
-  ), std::nullopt);
+  return finish(
+    account,
+    coded(
+      overall.first, overall.second,
+      overall.first == Exit::UNKNOWN ?
+        "an order's outcome is unknown; see checked" :
+        "an order is owed or resting; see checked and owed",
+      std::move(body)
+    ),
+    std::nullopt
+  );
 }
 
 /**
@@ -860,14 +906,10 @@ inline Reply release_reply(const Invocation& invocation, Account& account, Outpu
       return with_body(std::move(*opened.refusal_), std::move(body));
     }
     result = sending::release(
-      account.desk(),
-      *opened.journal_,
-      account.lock(),
-      paper::kr(symbol),
-      invocation.get("reason"),
-      account.config().armed_path(),
-      account.config().release_path(),
-      [](std::string_view text) { return paper::valid_symbol(text); }
+      account.desk(), *opened.journal_, account.lock(), paper::kr(symbol), invocation.get("reason"),
+      account.config().armed_path(), account.config().release_path(), [](std::string_view text) {
+        return paper::valid_symbol(text);
+      }
     );
   }
 #endif
@@ -878,4 +920,4 @@ inline Reply release_reply(const Invocation& invocation, Account& account, Outpu
   return finish(account, from_once(result, std::move(body)), symbol);
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl

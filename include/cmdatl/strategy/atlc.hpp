@@ -47,7 +47,8 @@ inline Atlc find_atlc(const ConfigSnapshot* snapshot = nullptr) {
     if (snapshot->state_ == ConfigSnapshot::State::MISSING || snapshot->state_ == ConfigSnapshot::State::INVALID) {
       // The person named a file: falling through to PATH would run an atlc they did not choose.
       const auto code = snapshot->state_ == ConfigSnapshot::State::MISSING ? "config.missing" : "config.invalid";
-      atlc.config_error_ = ConfigError{code, snapshot->error_.message_, snapshot->error_.line_, snapshot->error_.column_};
+      atlc.config_error_ =
+        ConfigError{code, snapshot->error_.message_, snapshot->error_.line_, snapshot->error_.column_};
       return atlc;
     }
     if (snapshot->state_ == ConfigSnapshot::State::OK && !snapshot->config_->atlc_.empty()) {

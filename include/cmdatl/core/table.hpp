@@ -51,7 +51,9 @@ struct Invocation {
    * @param name The argument's or option's name.
    * @return Whether it was given.
    */
-  bool has(const std::string& name) const { return values_.count(name) != 0; }
+  bool has(const std::string& name) const {
+    return values_.count(name) != 0;
+  }
 
   /**
    * @brief The first value given, or a default.
@@ -380,14 +382,15 @@ public:
    * @brief Builds the table.
    * @param commands The commands.
    */
-  explicit Table(std::vector<Command> commands)
-  : commands_(std::move(commands)) {}
+  explicit Table(std::vector<Command> commands) : commands_(std::move(commands)) {}
 
   /**
    * @brief Every command, in the order the help lists them.
    * @return The commands.
    */
-  const std::vector<Command>& commands() const noexcept { return commands_; }
+  const std::vector<Command>& commands() const noexcept {
+    return commands_;
+  }
 
   /**
    * @brief The command named by the longest leading run of words, by its path or an alias.
@@ -428,9 +431,9 @@ public:
     std::vector<const Command*> out;
     for (const auto& command : commands_) {
       const bool by_alias = std::any_of(
-        command.aliases_.begin(),
-        command.aliases_.end(),
-        [&selector](const std::vector<std::string>& alias) { return starts_with(alias, selector, false); }
+        command.aliases_.begin(), command.aliases_.end(), [&selector](const std::vector<std::string>& alias) {
+          return starts_with(alias, selector, false);
+        }
       );
       if (starts_with(command.path_, selector, false) || by_alias) {
         out.push_back(&command);
@@ -493,10 +496,7 @@ private:
    * @param best The best match so far.
    */
   static void consider(
-    const Command& command,
-    const std::vector<std::string>& path,
-    bool alias,
-    const std::vector<std::string>& words,
+    const Command& command, const std::vector<std::string>& path, bool alias, const std::vector<std::string>& words,
     Resolution& best
   ) {
     if (path.size() > words.size() || path.size() <= best.used_) {
@@ -513,4 +513,4 @@ private:
   std::vector<Command> commands_;
 };
 
-}  // namespace cmdatl
+} // namespace cmdatl

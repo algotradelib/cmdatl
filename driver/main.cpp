@@ -102,7 +102,7 @@ Program make(const std::vector<std::string>& args, const std::vector<atl::Instru
   return strategy;
 }
 
-}  // namespace
+} // namespace
 
 /**
  * @brief Runs the program on its own mock market; see `cmdatl::driver::run_main`.

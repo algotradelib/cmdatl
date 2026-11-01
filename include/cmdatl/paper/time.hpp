@@ -199,12 +199,7 @@ inline std::string date_text(std::int64_t days) {
   const auto civil = civil_from_days(days);
   char buffer[32];
   std::snprintf(
-    buffer,
-    sizeof(buffer),
-    "%04lld-%02u-%02u",
-    static_cast<long long>(civil.year_),
-    civil.month_,
-    civil.day_
+    buffer, sizeof(buffer), "%04lld-%02u-%02u", static_cast<long long>(civil.year_), civil.month_, civil.day_
   );
   return buffer;
 }
@@ -220,12 +215,8 @@ inline std::string kst_iso(Clock::time_point at) {
   const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(local - open_of(days)).count();
   char buffer[48];
   std::snprintf(
-    buffer,
-    sizeof(buffer),
-    "%sT%02lld:%02lld:%02lld+09:00",
-    date_text(days).c_str(),
-    static_cast<long long>(seconds / 3600),
-    static_cast<long long>(seconds / 60 % 60),
+    buffer, sizeof(buffer), "%sT%02lld:%02lld:%02lld+09:00", date_text(days).c_str(),
+    static_cast<long long>(seconds / 3600), static_cast<long long>(seconds / 60 % 60),
     static_cast<long long>(seconds % 60)
   );
   return buffer;
@@ -257,5 +248,5 @@ inline std::optional<Clock::time_point> from_nanos(std::int64_t value) {
   return at;
 }
 
-}  // namespace paper
-}  // namespace cmdatl
+} // namespace paper
+} // namespace cmdatl

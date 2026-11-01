@@ -71,7 +71,9 @@ public:
    * @brief Whether every line so far was written whole.
    * @return Whether it was.
    */
-  bool ok() const noexcept { return !failed_; }
+  bool ok() const noexcept {
+    return !failed_;
+  }
 
   /**
    * @brief Writes one event.
@@ -104,9 +106,12 @@ private:
 inline int write_run_reply(json::object body, Exit exit) {
   body["exit"] = static_cast<int>(exit);
   if (!body.contains("result")) {
-    body["result"] = exit == Exit::OK ? "ended" :
-      exit == Exit::REFUSED ? "refused" :
-      exit == Exit::UNKNOWN ? "unknown" :
+    body["result"] = exit == Exit::OK ?
+      "ended" :
+      exit == Exit::REFUSED ?
+      "refused" :
+      exit == Exit::UNKNOWN ?
+      "unknown" :
       "failed";
   }
   const auto line = json::serialize(body) + "\n";
@@ -126,11 +131,7 @@ inline int write_run_reply(json::object body, Exit exit) {
  * @return The exit, as an int.
  */
 inline int run_error(
-  const json::object& base,
-  Exit exit,
-  const std::string& code,
-  const std::string& message,
-  std::string next = "",
+  const json::object& base, Exit exit, const std::string& code, const std::string& message, std::string next = "",
   json::object extra = {}
 ) {
   json::object body = base;
@@ -159,5 +160,5 @@ inline int relay(const json::object& base, const Reply& reply) {
 }
 #endif
 
-}  // namespace driver
-}  // namespace cmdatl
+} // namespace driver
+} // namespace cmdatl

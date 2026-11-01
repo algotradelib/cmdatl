@@ -9,9 +9,9 @@
 #include <fstream>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <regex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -69,7 +69,6 @@ CMDATL_OUT_OF_LINE void operator delete(void* memory, std::size_t) noexcept {
 using namespace support;
 
 namespace {
-
 
 /**
  * @brief A table with one command that "does something" and records that it ran, as a sending command would.
@@ -160,7 +159,7 @@ bool names_command(const std::string& span, const cmdatl::Table& table) {
   return variadic || path.size() - found.used_ <= args.size();
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("the table is sound: paths, arguments, options, errors and exit codes") {
   const cmdatl::Table table(cmdatl::command_list());
@@ -257,9 +256,10 @@ TEST_CASE("tune and check are gone; new and backtest are the strategy commands t
   // Each catalog code's own exit is among the exits of every command that declares it.
   for (const auto& command : table.commands()) {
     for (const auto& code : command.errors_) {
-      const auto spec = std::find_if(cmdatl::error_catalog().begin(), cmdatl::error_catalog().end(), [&code](const auto& e) {
-        return e.code_ == code;
-      });
+      const auto spec =
+        std::find_if(cmdatl::error_catalog().begin(), cmdatl::error_catalog().end(), [&code](const auto& e) {
+          return e.code_ == code;
+        });
       REQUIRE(spec != cmdatl::error_catalog().end());
       INFO(cmdatl::join(command.path_) << " " << code);
       CHECK(declares(command.path_, static_cast<int>(spec->exit_), code));
@@ -297,10 +297,8 @@ TEST_CASE("fields and value select from a reply, nested selections included") {
   CHECK(arg.contains("name"));
   CHECK(arg.contains("required"));
   CHECK(!arg.contains("variadic"));
-  const auto both = cmdatl::select_fields(
-    boost::json::parse(R"({"a":{"b":{"x":1,"y":2,"z":3},"c":4}})"),
-    {"a.b.y", "a.b.x", "a.b"}
-  );
+  const auto both =
+    cmdatl::select_fields(boost::json::parse(R"({"a":{"b":{"x":1,"y":2,"z":3},"c":4}})"), {"a.b.y", "a.b.x", "a.b"});
   CHECK(both.as_object().at("a").as_object().at("b").as_object().size() == 3);
   const auto value = run({"--value", "cmdatl", "env"});
   CHECK(value.exit_ == 0);
@@ -449,7 +447,9 @@ TEST_CASE("the schema declares the errors its commands return") {
   std::vector<cmdatl::Command> bad;
   bad.push_back(cmdatl::make_command({"x"}, "Read", "x").example("cmdatl x").returns("x", "x").error("bogus.code"));
   const auto problems = cmdatl::check_table(cmdatl::Table(std::move(bad)));
-  const auto names_bogus = [](const std::string& problem) { return problem.find("bogus.code") != std::string::npos; };
+  const auto names_bogus = [](const std::string& problem) {
+    return problem.find("bogus.code") != std::string::npos;
+  };
   CHECK(std::any_of(problems.begin(), problems.end(), names_bogus));
 }
 
@@ -638,7 +638,9 @@ TEST_CASE("an example belongs to its own command, and the schema keeps the examp
     cmdatl::make_command({"clock", "advance"}, "Paper", "move").example("cmdatl clock advance").returns("now", "t")
   );
   const auto problems = cmdatl::check_table(cmdatl::Table(std::move(commands)));
-  const auto about_clock = [](const std::string& problem) { return problem.rfind("clock: the example", 0) == 0; };
+  const auto about_clock = [](const std::string& problem) {
+    return problem.rfind("clock: the example", 0) == 0;
+  };
   CHECK(std::count_if(problems.begin(), problems.end(), about_clock) == 1);
   const auto env = reply_of(run({"schema", "env"}).out_);
   CHECK(!env.at("commands").as_array()[0].as_object().at("examples").as_array().empty());
@@ -708,7 +710,9 @@ protected:
    * @brief Refuses a character.
    * @return End of file.
    */
-  int_type overflow(int_type) override { return traits_type::eof(); }
+  int_type overflow(int_type) override {
+    return traits_type::eof();
+  }
 };
 
 /** @brief A stream buffer that takes every write but fails when flushed, as a buffered pipe that broke would. */
@@ -718,7 +722,9 @@ protected:
    * @brief Fails the flush.
    * @return -1.
    */
-  int sync() override { return -1; }
+  int sync() override {
+    return -1;
+  }
 };
 
 /**
@@ -784,7 +790,7 @@ cmdatl::Table outcome_table(const std::shared_ptr<int>& ran, bool fail_after_ret
   return cmdatl::Table(std::move(commands));
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("after a sending command ran, a failure to report keeps exit 4") {
   const auto ran = std::make_shared<int>(0);

@@ -65,20 +65,23 @@ public:
    * @brief Takes a descriptor.
    * @param fd The descriptor, or -1 for none.
    */
-  explicit ScopedFd(int fd = -1) noexcept
-  : fd_(fd) {}
+  explicit ScopedFd(int fd = -1) noexcept : fd_(fd) {}
 
   ScopedFd(const ScopedFd&) = delete;
   ScopedFd& operator=(const ScopedFd&) = delete;
 
   /** @brief Closes the descriptor, if any. */
-  ~ScopedFd() { reset(); }
+  ~ScopedFd() {
+    reset();
+  }
 
   /**
    * @brief The descriptor.
    * @return It, or -1.
    */
-  int get() const noexcept { return fd_; }
+  int get() const noexcept {
+    return fd_;
+  }
 
   /** @brief Closes the descriptor now. */
   void reset() noexcept {
@@ -236,4 +239,4 @@ inline int sync_directory(const std::string& dir) noexcept {
 }
 #endif
 
-}  // namespace cmdatl
+} // namespace cmdatl

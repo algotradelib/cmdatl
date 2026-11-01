@@ -1,7 +1,7 @@
 #include "./paper-support.hpp"
 
-#include <cmdatl/cmdatl>
 #include <cmdatl/account/operator.hpp>
+#include <cmdatl/cmdatl>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -101,7 +101,7 @@ std::string paper_with(const std::string& key, const std::string& line) {
   return out;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("the operator's file: every rule refused alone, with its line and column") {
   const PaperFixture fixture;
@@ -125,7 +125,8 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"env demo on paper", with("broker = \"paper\"\nenv = \"demo\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},
     {"env real on paper", with("broker = \"paper\"\nenv = \"real\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},
     {"a number leaving its directory", with("broker = \"paper\"\nnumber = \"../x\"\n", "", ""), "config.invalid", 3},
-    {"a number too long", with("broker = \"paper\"\nnumber = \"" + std::string(65, 'a') + "\"\n", "", ""), "config.invalid", 3},
+    {"a number too long", with("broker = \"paper\"\nnumber = \"" + std::string(65, 'a') + "\"\n", "", ""),
+      "config.invalid", 3},
     {"an empty number", with("broker = \"paper\"\nnumber = \"\"\n", "", ""), "config.invalid", 3},
     {"no number", with("broker = \"paper\"\n", "", ""), "config.invalid", 0},
     {"an unknown key in [account]", with(ConfigParts{}.account_ + "nummber = \"x\"\n", "", ""), "config.invalid", 4},
@@ -133,24 +134,37 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"symbols not an array", with("", limits_with("symbols", "symbols = \"005930\""), ""), "config.invalid", 6},
     {"no symbol", with("", limits_with("symbols", "symbols = []"), ""), "config.invalid", 6},
     {"51 symbols", with("", limits_with("symbols", "symbols = [" + fifty + "]"), ""), "config.invalid", 6},
-    {"a symbol that is a number", with("", limits_with("symbols", "symbols = [5930, \"000660\"]"), ""), "config.invalid", 6},
-    {"a symbol with a space", with("", limits_with("symbols", "symbols = [\"00 5930\", \"000660\"]"), ""), "config.invalid", 6},
-    {"a repeated symbol", with("", limits_with("symbols", "symbols = [\"005930\", \"005930\"]"), ""), "config.invalid", 6},
+    {"a symbol that is a number", with("", limits_with("symbols", "symbols = [5930, \"000660\"]"), ""),
+      "config.invalid", 6},
+    {"a symbol with a space", with("", limits_with("symbols", "symbols = [\"00 5930\", \"000660\"]"), ""),
+      "config.invalid", 6},
+    {"a repeated symbol", with("", limits_with("symbols", "symbols = [\"005930\", \"005930\"]"), ""), "config.invalid",
+      6},
     {"no position", with("", limits_with("position", ""), ""), "config.invalid", 0},
     {"position not a table", with("", limits_with("position", "position = 100"), ""), "config.invalid", 7},
-    {"position missing a symbol", with("", limits_with("position", "position = { \"005930\" = 100 }"), ""), "config.invalid", 7},
-    {"position adding a symbol", with("", limits_with("position", "position = { \"005930\" = 100, \"000660\" = 20, \"035720\" = 1 }"), ""), "config.invalid", 7},
-    {"a float position", with("", limits_with("position", "position = { \"005930\" = 100.0, \"000660\" = 20 }"), ""), "config.invalid", 7},
-    {"a negative position", with("", limits_with("position", "position = { \"005930\" = -1, \"000660\" = 20 }"), ""), "config.invalid", 7},
-    {"a position past 10^8", with("", limits_with("position", "position = { \"005930\" = 100000001, \"000660\" = 20 }"), ""), "config.invalid", 7},
+    {"position missing a symbol", with("", limits_with("position", "position = { \"005930\" = 100 }"), ""),
+      "config.invalid", 7},
+    {"position adding a symbol",
+      with("", limits_with("position", "position = { \"005930\" = 100, \"000660\" = 20, \"035720\" = 1 }"), ""),
+      "config.invalid", 7},
+    {"a float position", with("", limits_with("position", "position = { \"005930\" = 100.0, \"000660\" = 20 }"), ""),
+      "config.invalid", 7},
+    {"a negative position", with("", limits_with("position", "position = { \"005930\" = -1, \"000660\" = 20 }"), ""),
+      "config.invalid", 7},
+    {"a position past 10^8",
+      with("", limits_with("position", "position = { \"005930\" = 100000001, \"000660\" = 20 }"), ""), "config.invalid",
+      7},
     {"no order_value", with("", limits_with("order_value", ""), ""), "config.invalid", 0},
     {"a float order_value", with("", limits_with("order_value", "order_value = 5000000.0"), ""), "config.invalid", 8},
     {"order_value 0", with("", limits_with("order_value", "order_value = 0"), ""), "config.invalid", 8},
-    {"order_value past 10^13", with("", limits_with("order_value", "order_value = 10000000000001"), ""), "config.invalid", 8},
+    {"order_value past 10^13", with("", limits_with("order_value", "order_value = 10000000000001"), ""),
+      "config.invalid", 8},
     {"order_value text", with("", limits_with("order_value", "order_value = \"lots\""), ""), "config.invalid", 8},
-    {"order_value five decimals", with("", limits_with("order_value", "order_value = \"1.00001\""), ""), "config.invalid", 8},
+    {"order_value five decimals", with("", limits_with("order_value", "order_value = \"1.00001\""), ""),
+      "config.invalid", 8},
     {"order_value zero text", with("", limits_with("order_value", "order_value = \"0.0\""), ""), "config.invalid", 8},
-    {"order_value text past 10^13", with("", limits_with("order_value", "order_value = \"10000000000000.01\""), ""), "config.invalid", 8},
+    {"order_value text past 10^13", with("", limits_with("order_value", "order_value = \"10000000000000.01\""), ""),
+      "config.invalid", 8},
     {"no daily_orders", with("", limits_with("daily_orders", ""), ""), "config.invalid", 0},
     {"daily_orders as text", with("", limits_with("daily_orders", "daily_orders = \"3\""), ""), "config.invalid", 9},
     {"negative daily_orders", with("", limits_with("daily_orders", "daily_orders = -1"), ""), "config.invalid", 9},
@@ -183,7 +197,8 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"an impossible date", with("", "", paper_with("start", "start = \"2024-02-30T09:30\"")), "config.invalid", 14},
     {"a date before 1990", with("", "", paper_with("start", "start = \"1989-12-31T09:30\"")), "config.invalid", 14},
     {"a date after 2100", with("", "", paper_with("start", "start = \"2101-01-01T09:30\"")), "config.invalid", 14},
-    {"a start with seconds", with("", "", paper_with("start", "start = \"2024-03-25T09:30:00\"")), "config.invalid", 14},
+    {"a start with seconds", with("", "", paper_with("start", "start = \"2024-03-25T09:30:00\"")), "config.invalid",
+      14},
     {"a negative listing lag", with("", "", paper_plus("listing_lag = -1")), "config.invalid", 15},
     {"a holdings lag past a day", with("", "", paper_plus("holdings_lag = 86401")), "config.invalid", 15},
     {"a state_dir key", with("", "", paper_plus("state_dir = \"/tmp\"")), "config.invalid", 15},
@@ -199,7 +214,8 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"invalid UTF-8", with("broker = \"paper\"\nnumber = \"\xff\"\n", "", ""), "config.invalid", 3},
     // A table header toml++ 3.4.0 meets with an internal assertion: refused, never an abort.
     {"a header starting with ~", ConfigParts{}.text() + "[~imits]\n", "config.invalid", 0},
-    {"a header starting with ~ in place of a table", "[account]\n" + ConfigParts{}.account_ + "[~imits]\n", "config.invalid", 0},
+    {"a header starting with ~ in place of a table", "[account]\n" + ConfigParts{}.account_ + "[~imits]\n",
+      "config.invalid", 0},
   };
   for (const auto& c : cases) {
     INFO(c.what_ << "\n" << c.text_);
@@ -342,7 +358,8 @@ TEST_CASE("an operator's file nesting tables past the bound is refused before to
     {"a dotted key of quoted segments", ConfigParts{}.text() + dots("\"x\"", 9000) + " = 1\n", 15},
     {"a dotted key in an inline table", ConfigParts{}.text() + "t = { " + dots("x", 16000) + " = 1 }\n", 15},
     {"nested arrays", ConfigParts{}.text() + "t = " + std::string(16000, '[') + std::string(16000, ']') + "\n", 15},
-    {"nested inline tables", ConfigParts{}.text() + "t = { a = { a = { a = { a = { a = { a = { a = { a = { a = 1 } } } } } } } } }\n", 15},
+    {"nested inline tables",
+      ConfigParts{}.text() + "t = { a = { a = { a = { a = { a = { a = { a = { a = { a = 1 } } } } } } } } }\n", 15},
     {"nine segments", ConfigParts{}.text() + dots("x", 9) + " = 1\n", 15},
   };
   for (const auto& c : cases) {
@@ -387,9 +404,11 @@ TEST_CASE("the state root: XDG_STATE_HOME when absolute, else HOME, else state.u
     const ScopedVariable home("HOME", (fixture.dir() / "home").string());
     CHECK(cmdatl::state_root() == (fixture.dir() / "home" / ".local" / "state" / "cmdatl").string());
     REQUIRE(fixture.json({"status"}).exit_ == 0);
-    CHECK(std::filesystem::exists(
-      fixture.dir() / "home" / ".local" / "state" / "cmdatl" / "accounts" / "paper-paper-paper-0001" / "paper.jsonl"
-    ));
+    CHECK(
+      std::filesystem::exists(
+        fixture.dir() / "home" / ".local" / "state" / "cmdatl" / "accounts" / "paper-paper-paper-0001" / "paper.jsonl"
+      )
+    );
   }
   {
     const ScopedVariable unset("XDG_STATE_HOME", std::nullopt);
@@ -418,7 +437,9 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
   const ScopedVariable on_path("PATH", bin.string() + ":" + (path == nullptr ? "/usr/bin:/bin" : path));
   spit(fixture.dir() / "script", "version out atlc 0.0.0-9000\n");
   const ScopedVariable script("FAKE_ATLC_SCRIPT", (fixture.dir() / "script").string());
-  const auto env = [&fixture] { return reply_of(fixture.json({"env"}).out_); };
+  const auto env = [&fixture] {
+    return reply_of(fixture.json({"env"}).out_);
+  };
   {
     // Unset: PATH.
     const ScopedVariable unset("CMDATL_CONFIG", std::nullopt);

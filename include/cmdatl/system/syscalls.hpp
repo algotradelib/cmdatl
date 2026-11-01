@@ -10,8 +10,8 @@
 #if !defined(_WIN32)
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <cstdio>
 #include <unistd.h>
+#include <cstdio>
 
 namespace cmdatl {
 namespace sys {
@@ -136,6 +136,6 @@ inline void kill_point(const char* name) noexcept {
 }
 #endif
 
-}  // namespace sys
-}  // namespace cmdatl
+} // namespace sys
+} // namespace cmdatl
 #endif

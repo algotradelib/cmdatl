@@ -301,16 +301,17 @@ struct DecisionClock {
    * @brief The instant.
    * @return It.
    */
-  std::chrono::system_clock::time_point now() const { return now_(); }
+  std::chrono::system_clock::time_point now() const {
+    return now_();
+  }
 };
 
 /** @brief The bound runner of a session, journaling to a file on the decision clock. */
 template <typename Session>
 using Bound = atl::runner::Runner<
-  NoStrategy,
-  typename Session::Caps,
-  typename Session::BrokerTag,
-  atl::runner::JournalingExecutor<atl::live::SessionExecutor<Session>, atl::runner::FileJournal, DecisionClock>>;
+  NoStrategy, typename Session::Caps, typename Session::BrokerTag,
+  atl::runner::JournalingExecutor<atl::live::SessionExecutor<Session>, atl::runner::FileJournal, DecisionClock>
+>;
 
 /**
  * @brief Binds a runner to a session and a journal: journal ids prefixed by the wall clock's nanoseconds, unique
@@ -324,16 +325,11 @@ using Bound = atl::runner::Runner<
  */
 template <typename Session>
 Bound<Session> bind(
-  Session& session,
-  atl::runner::FileJournal& journal,
-  const atl::strategy::RiskLimits& limits,
+  Session& session, atl::runner::FileJournal& journal, const atl::strategy::RiskLimits& limits,
   const std::function<std::chrono::system_clock::time_point()>& now
 ) {
-  atl::runner::JournalingExecutor<atl::live::SessionExecutor<Session>, atl::runner::FileJournal, DecisionClock> executor(
-    atl::live::SessionExecutor<Session>(session, atl::Venue::UNSPECIFIED),
-    journal,
-    DecisionClock{now}
-  );
+  atl::runner::JournalingExecutor<atl::live::SessionExecutor<Session>, atl::runner::FileJournal, DecisionClock>
+    executor(atl::live::SessionExecutor<Session>(session, atl::Venue::UNSPECIFIED), journal, DecisionClock{now});
   executor.set_id_prefix(std::to_string(nanos(std::chrono::system_clock::now())));
   return Bound<Session>(NoStrategy{}, limits, atl::live::default_series_capacity, std::move(executor));
 }
@@ -347,11 +343,13 @@ Bound<Session> bind(
  */
 template <typename Runner>
 bool recovered(const atl::runner::RecoveryReport& recovery, const Runner& runner) {
-  return !(recovery.truncated_ || recovery.unattributable_ || recovery.unreadable_lines_ > 0 ||
-    recovery.unreadable_file_ || runner.guard().halted());
+  return !(
+    recovery.truncated_ || recovery.unattributable_ || recovery.unreadable_lines_ > 0 || recovery.unreadable_file_ ||
+    runner.guard().halted()
+  );
 }
 
-}  // namespace once_detail
+} // namespace once_detail
 
 /** @brief The reply's outcome as `map_report` decides it. */
 struct Mapped {
@@ -388,11 +386,7 @@ struct Mapped {
  */
 template <typename Report>
 Mapped map_report(
-  const Report& report,
-  std::uint64_t logged,
-  bool failed,
-  std::size_t withdrawals,
-  const std::string& binding_refusal,
+  const Report& report, std::uint64_t logged, bool failed, std::size_t withdrawals, const std::string& binding_refusal,
   const std::string& broker_refusal
 ) {
   if (!report.indeterminate_.empty() || !report.indeterminate_cancel_.empty()) {
@@ -400,15 +394,13 @@ Mapped map_report(
   }
   if (failed && logged > 0) {
     return {
-      OnceExit::UNKNOWN,
-      "journal_write",
+      OnceExit::UNKNOWN, "journal_write",
       "the request reached the paper log but its journal answer could not be written whole"
     };
   }
   if (failed) {
     return {
-      OnceExit::REFUSED,
-      "journal_unwritable",
+      OnceExit::REFUSED, "journal_unwritable",
       "the journal could not be written, so nothing reached the market; the journal may now hold the request's PENDING "
       "line whole (owed until order release), a fragment of it (the journal is then damaged), or nothing (plan again); "
       "the next cmdatl account shows which"
@@ -420,11 +412,7 @@ Mapped map_report(
     report.withheld_plans_.empty() && report.unavailable_.empty();
   if (withdrawals > 0) {
     if (report.would_place_.empty() && places_quiet && cancels_quiet && report.would_cancel_.size() == withdrawals) {
-      return {
-        OnceExit::DONE,
-        "withdrawal_sent",
-        "sent, not confirmed: cmdatl order list shows when they are gone"
-      };
+      return {OnceExit::DONE, "withdrawal_sent", "sent, not confirmed: cmdatl order list shows when they are gone"};
     }
     return {OnceExit::UNKNOWN, "withdrawal", "a withdrawal was not taken as asked; an order may have filled"};
   }
@@ -440,12 +428,13 @@ Mapped map_report(
   const bool nothing_sent = report.would_cancel_.empty() && cancels_quiet;
   if (logged == 0 && nothing_sent) {
     if (!report.refused_.empty()) {
-      return {OnceExit::REFUSED, "guard", std::string(atl::strategy::guard_reason_name(report.refused_.front().reason_))};
+      return {
+        OnceExit::REFUSED, "guard", std::string(atl::strategy::guard_reason_name(report.refused_.front().reason_))
+      };
     }
     if (!report.rejected_.empty() && report.rejected_.front().reason_ == atl::strategy::RejectReason::BINDING_REFUSED) {
       return {
-        OnceExit::REFUSED,
-        "not_reached",
+        OnceExit::REFUSED, "not_reached",
         "the paper client refused the request before writing it" +
           (binding_refusal.empty() ? std::string() : ": " + binding_refusal)
       };
@@ -458,8 +447,7 @@ Mapped map_report(
     for (const auto& rejected : report.rejected_) {
       if (rejected.reason_ == atl::strategy::RejectReason::BROKER_REFUSED) {
         return {
-          OnceExit::UNKNOWN,
-          "broker_refused",
+          OnceExit::UNKNOWN, "broker_refused",
           "the request reached the paper market, which refused it" +
             (broker_refusal.empty() ? std::string() : " (" + broker_refusal + ")") + "; nothing rests"
         };
@@ -486,10 +474,7 @@ Mapped map_report(
  */
 template <typename Desk>
 OnceResult once(
-  Desk& desk,
-  atl::runner::FileJournal& journal,
-  const OwnerLock& lock,
-  const OnceRequest& request,
+  Desk& desk, atl::runner::FileJournal& journal, const OwnerLock& lock, const OnceRequest& request,
   const OnceConfig& config
 ) {
   using atl::runner::PollKind;
@@ -501,7 +486,9 @@ OnceResult once(
     throw std::logic_error("once() takes no target below zero");
   }
   auto& session = desk.session();
-  const std::function<std::chrono::system_clock::time_point()> now = [&desk] { return desk.now(); };
+  const std::function<std::chrono::system_clock::time_point()> now = [&desk] {
+    return desk.now();
+  };
   OnceResult result;
   const auto refuse = [&result](std::string reason, std::string detail = {}) {
     result.exit_ = OnceExit::REFUSED;
@@ -571,7 +558,9 @@ OnceResult once(
   source.set_buying_power_currencies({currency});
   once_detail::arm(bound, now(), config.maximum_portfolio_age_);
   if (!once_detail::answered(source.read_order_list(bound))) {
-    if (bound.ledger().requires_reconcile(request.instrument_) || once_detail::owes_unknown(bound, request.instrument_)) {
+    if (
+      bound.ledger().requires_reconcile(request.instrument_) || once_detail::owes_unknown(bound, request.instrument_)
+    ) {
       return unknown("unresolved", "recovery marked this instrument and the listing could not be read");
     }
     return refuse(
@@ -590,7 +579,9 @@ OnceResult once(
     return unaccounted();
   }
   if (!once_detail::answered(source.poll(PollKind::HOLDINGS, bound))) {
-    return refuse("holdings_unread", source.last_error() ? once_detail::described(*source.last_error()) : std::string());
+    return refuse(
+      "holdings_unread", source.last_error() ? once_detail::described(*source.last_error()) : std::string()
+    );
   }
   if constexpr (Session::Traits::has_buying_power) {
     source.poll(PollKind::BUYING_POWER, bound);
@@ -609,9 +600,13 @@ OnceResult once(
   bound.context().set_phase(phase);
   result.phase_ = std::string(atl::strategy::market_phase_name(phase));
   // 10. Outside a permitted phase, refused before the book is judged; a withdrawal is let through.
-  if (const auto& permitted = config.limits_.permitted_phases_; !config.withdraw_only_ && permitted &&
-      std::find(permitted->begin(), permitted->end(), phase) == permitted->end()) {
-    return refuse("phase", "the market is " + result.phase_ + "; the operator's limits trade only in a permitted phase");
+  if (
+    const auto& permitted = config.limits_.permitted_phases_;
+    !config.withdraw_only_ && permitted && std::find(permitted->begin(), permitted->end(), phase) == permitted->end()
+  ) {
+    return refuse(
+      "phase", "the market is " + result.phase_ + "; the operator's limits trade only in a permitted phase"
+    );
   }
   const auto& book = bound.context().portfolio();
 
@@ -690,8 +685,10 @@ OnceResult once(
   std::vector<decltype(book.working_.front().ref_)> working_refs;
   double committed = 0;
   for (const auto& working : book.working_) {
-    if (working.reserved_ || !(working.order_.instrument_ == request.instrument_) ||
-        !atl::strategy::order_is_open(working.order_.status_)) {
+    if (
+      working.reserved_ || !(working.order_.instrument_ == request.instrument_) ||
+      !atl::strategy::order_is_open(working.order_.status_)
+    ) {
       continue;
     }
     working_refs.push_back(working.ref_);
@@ -740,7 +737,9 @@ OnceResult once(
     }
     const double target = once_detail::number(request.target_quantity_);
     if (reserved != 0 && once_detail::number(*held) + committed + reserved == target) {
-      return waiting("an order on this instrument is partly filled and holdings do not show it yet; call again after they do");
+      return waiting(
+        "an order on this instrument is partly filled and holdings do not show it yet; call again after they do"
+      );
     }
     if (reserved == 0 && once_detail::number(*held) + committed == target) {
       return done("met", "met by the holding and the orders working");
@@ -748,7 +747,8 @@ OnceResult once(
     if (config.dry_run_) {
       return planned(
         "withdraw",
-        "would withdraw " + std::to_string(working_refs.size()) + " working order(s) first; the placement waits for a later call"
+        "would withdraw " + std::to_string(working_refs.size()) +
+          " working order(s) first; the placement waits for a later call"
       );
     }
     if (!armed()) {
@@ -770,8 +770,10 @@ OnceResult once(
       }
       return planned(
         delta > 0 ? "buy" : "sell",
-        std::string("would ") + (delta > 0 ? "buy " : "sell ") + std::to_string(static_cast<long long>(std::abs(delta))) +
-          (request.limit_ ? " at " + request.limit_->str() + " (limit)" : std::string()) + ", subject to the risk limits at send"
+        std::string("would ") + (delta > 0 ? "buy " : "sell ") +
+          std::to_string(static_cast<long long>(std::abs(delta))) +
+          (request.limit_ ? " at " + request.limit_->str() + " (limit)" : std::string()) +
+          ", subject to the risk limits at send"
       );
     }
     if (!armed()) {
@@ -799,11 +801,7 @@ OnceResult once(
     const auto& binding = bound.executor().last_error();
     const auto& broker = bound.last_broker_refusal();
     const auto mapped = map_report(
-      report,
-      logged,
-      failed,
-      result.withdrawn_.size(),
-      binding ? once_detail::described(*binding) : std::string(),
+      report, logged, failed, result.withdrawn_.size(), binding ? once_detail::described(*binding) : std::string(),
       broker ? (broker->code_.empty() ? std::string() : "[" + broker->code_ + "] ") + broker->message_ : std::string()
     );
     if (mapped.reason_ == "placed") {
@@ -865,9 +863,7 @@ inline bool valid_journal_id(std::string_view text) {
  * @return The ids, or why the text is refused (naming the line).
  */
 inline Approval parse_approval(
-  const std::string& text,
-  const std::string& symbol,
-  const std::function<bool(std::string_view)>& valid_symbol
+  const std::string& text, const std::string& symbol, const std::function<bool(std::string_view)>& valid_symbol
 ) {
   Approval approval;
   std::size_t start = 0;
@@ -885,8 +881,11 @@ inline Approval parse_approval(
       line.pop_back();
     }
     const auto space = line.find(' ');
-    if (space == std::string::npos || line.find(' ', space + 1) != std::string::npos ||
-        !valid_symbol(std::string_view(line).substr(0, space)) || !valid_journal_id(std::string_view(line).substr(space + 1))) {
+    if (
+      space == std::string::npos || line.find(' ', space + 1) != std::string::npos ||
+      !valid_symbol(std::string_view(line).substr(0, space)) ||
+      !valid_journal_id(std::string_view(line).substr(space + 1))
+    ) {
       approval.refused_ = "line " + std::to_string(number) + " is not SYMBOL JOURNAL_ID with one space";
       return approval;
     }
@@ -938,13 +937,8 @@ inline std::string read_approval(const std::string& path, std::string& text) {
  */
 template <typename Desk>
 OnceResult release(
-  Desk& desk,
-  atl::runner::FileJournal& journal,
-  const OwnerLock& lock,
-  const atl::InstrumentId& instrument,
-  const std::string& reason,
-  const std::string& armed_file,
-  const std::string& approval_file,
+  Desk& desk, atl::runner::FileJournal& journal, const OwnerLock& lock, const atl::InstrumentId& instrument,
+  const std::string& reason, const std::string& armed_file, const std::string& approval_file,
   const std::function<bool(std::string_view)>& valid_symbol
 ) {
   OnceResult result;
@@ -972,11 +966,15 @@ OnceResult release(
   if (!journal.open()) {
     return answer(OnceExit::UNKNOWN, "journal_damaged", "the journal is not open: " + journal.rejection());
   }
-  const std::function<std::chrono::system_clock::time_point()> now = [&desk] { return desk.now(); };
+  const std::function<std::chrono::system_clock::time_point()> now = [&desk] {
+    return desk.now();
+  };
   auto bound = once_detail::bind(desk.session(), journal, atl::strategy::RiskLimits{}, now);
   const auto recovery = atl::runner::recover_runner(bound, journal);
   if (!once_detail::recovered(recovery, bound)) {
-    return answer(OnceExit::UNKNOWN, "journal_damaged", recovery.detail_.empty() ? "the journal is damaged" : recovery.detail_);
+    return answer(
+      OnceExit::UNKNOWN, "journal_damaged", recovery.detail_.empty() ? "the journal is damaged" : recovery.detail_
+    );
   }
   const auto owed = bound.obligations(instrument);
   if (owed.empty()) {
@@ -985,8 +983,7 @@ OnceResult release(
   for (const auto& o : owed) {
     if (o.state_ == atl::runner::ObligationState::NAMED) {
       return answer(
-        OnceExit::REFUSED,
-        "named",
+        OnceExit::REFUSED, "named",
         "order " + o.order_id_ + " is named and waits for holdings: " + once_detail::owed_text(bound, instrument)
       );
     }
@@ -1000,16 +997,14 @@ OnceResult release(
   std::sort(wanted.begin(), wanted.end());
   if (approved != wanted) {
     return answer(
-      OnceExit::REFUSED,
-      "not_approved",
+      OnceExit::REFUSED, "not_approved",
       "the approval file does not name exactly the orders owed: " + once_detail::owed_text(bound, instrument)
     );
   }
   const auto released = once_detail::owed_text(bound, instrument);
   if (!bound.release_obligations(instrument, reason)) {
     return answer(
-      OnceExit::UNKNOWN,
-      "journal_write",
+      OnceExit::UNKNOWN, "journal_write",
       bound.local_failure().value_or("a release could not be written") + "; some confirmations may be written"
     );
   }
@@ -1022,5 +1017,5 @@ OnceResult release(
 }
 #endif
 
-}  // namespace sending
-}  // namespace cmdatl
+} // namespace sending
+} // namespace cmdatl

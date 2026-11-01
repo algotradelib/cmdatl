@@ -28,19 +28,25 @@ namespace cmdatl {
  * @param status What the market shows for its order (`pending`, `filled`, `canceled`), or nothing.
  * @return The hint.
  */
-inline std::string owed_next(const std::string& symbol, const std::string& state, const std::optional<std::string>& status) {
+inline std::string owed_next(
+  const std::string& symbol, const std::string& state, const std::optional<std::string>& status
+) {
   if (state == "operator") {
     return "only the operator settles it: cmdatl order release " + symbol + " with the approval file";
   }
   if (status && *status == "pending") {
-    return "still working: cmdatl order cancel " + symbol + " withdraws it, or wait (cmdatl clock advance on paper); "
-      "then cmdatl order reconcile " + symbol;
+    return "still working: cmdatl order cancel " + symbol +
+      " withdraws it, or wait (cmdatl clock advance on paper); "
+      "then cmdatl order reconcile " +
+      symbol;
   }
   if (status) {
     return "cmdatl order reconcile " + symbol + " records it from holdings; sends nothing";
   }
-  return "the broker never named it: cmdatl order reconcile " + symbol + "; if it stays owed, the operator reads the "
-    "order list and holdings, then cmdatl order release " + symbol;
+  return "the broker never named it: cmdatl order reconcile " + symbol +
+    "; if it stays owed, the operator reads the "
+    "order list and holdings, then cmdatl order release " +
+    symbol;
 }
 
 /**
@@ -368,9 +374,7 @@ Reply quote_reply(const Invocation& invocation, Account& account, Desk& desk, Ou
       return reply;
     }
     return error_reply(
-      Exit::FAILED,
-      "quote.no_data",
-      "the paper market's bars have no rows for " + names,
+      Exit::FAILED, "quote.no_data", "the paper market's bars have no rows for " + names,
       "cmdatl env shows the bars file"
     );
   }
@@ -455,9 +459,7 @@ inline std::optional<Reply> check_advance(const Invocation& invocation) {
   }
   if (given != 1) {
     return error_reply(
-      Exit::USAGE,
-      "usage.bad_option",
-      "clock advance takes exactly one of --minutes, --hours, --to and --next-open",
+      Exit::USAGE, "usage.bad_option", "clock advance takes exactly one of --minutes, --hours, --to and --next-open",
       "cmdatl clock advance --help"
     );
   }
@@ -469,10 +471,7 @@ inline std::optional<Reply> check_advance(const Invocation& invocation) {
   }
   if (invocation.has("to") && !paper::parse_kst(invocation.get("to"))) {
     return error_reply(
-      Exit::USAGE,
-      "usage.bad_value",
-      "--to is a KST time written YYYY-MM-DDTHH:MM, from 1990-01-01 to 2100-12-31",
-      ""
+      Exit::USAGE, "usage.bad_value", "--to is a KST time written YYYY-MM-DDTHH:MM, from 1990-01-01 to 2100-12-31", ""
     );
   }
   return std::nullopt;
@@ -492,10 +491,8 @@ inline std::optional<Reply> check_symbols(const Invocation& invocation) {
     for (const auto& symbol : found->second) {
       if (!paper::valid_symbol(symbol)) {
         return error_reply(
-          Exit::USAGE,
-          "usage.bad_value",
-          "'" + symbol + "' is not a symbol: 1 to 32 of letters, digits, '.', '_' or '-'",
-          ""
+          Exit::USAGE, "usage.bad_value",
+          "'" + symbol + "' is not a symbol: 1 to 32 of letters, digits, '.', '_' or '-'", ""
         );
       }
     }
@@ -537,9 +534,7 @@ json::array events_json(Desk& desk) {
  */
 inline Reply advance_unknown(const std::string& what) {
   return error_reply(
-    Exit::UNKNOWN,
-    "unknown.clock_advance",
-    what + "; the clock may have moved",
+    Exit::UNKNOWN, "unknown.clock_advance", what + "; the clock may have moved",
     "cmdatl clock shows where the clock stands; do not repeat the advance before reading it"
   );
 }
@@ -577,8 +572,7 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
     const auto next = desk.next_session_after(from);
     if (!next) {
       return error_reply(
-        Exit::FAILED,
-        "clock.past_data",
+        Exit::FAILED, "clock.past_data",
         "no session after " + paper::kst_iso(from) + " in the paper market's data, which ends " + data_end_text(desk),
         "cmdatl clock shows where the data ends"
       );
@@ -587,16 +581,13 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
   }
   if (target <= from) {
     return error_reply(
-      Exit::FAILED,
-      "clock.backwards",
-      "the clock is at " + paper::kst_iso(from) + " and only moves forward",
+      Exit::FAILED, "clock.backwards", "the clock is at " + paper::kst_iso(from) + " and only moves forward",
       "cmdatl clock shows where the clock stands"
     );
   }
   if (target > desk.clock_limit()) {
     return error_reply(
-      Exit::FAILED,
-      "clock.past_data",
+      Exit::FAILED, "clock.past_data",
       "the paper market's data ends " + data_end_text(desk) + "; the clock goes at most a day past it",
       "cmdatl clock shows where the data ends"
     );
@@ -609,8 +600,7 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
       return lock_lost_reply();
     case paper::Appended::NOT_WRITTEN:
       return error_reply(
-        Exit::FAILED,
-        "file.unwritable",
+        Exit::FAILED, "file.unwritable",
         "the advance could not be written to the paper log (" + std::string(std::strerror(outcome.error_)) +
           "); the clock has not moved",
         "check the account's directory"
@@ -636,4 +626,4 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
   }
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl

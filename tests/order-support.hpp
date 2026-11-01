@@ -145,7 +145,9 @@ inline Answer ask_checked(const PaperFixture& fixture, const std::vector<std::st
  * @param limit The limit.
  * @return The plan id.
  */
-inline std::string plan_id(const PaperFixture& fixture, const std::string& symbol, const std::string& target, const std::string& limit) {
+inline std::string plan_id(
+  const PaperFixture& fixture, const std::string& symbol, const std::string& target, const std::string& limit
+) {
   const auto planned = ask_checked(fixture, {"order", "plan", symbol, "--target", target, "--limit", limit});
   INFO(boost::json::serialize(planned.body_));
   REQUIRE(planned.exit_ == 0);
@@ -153,4 +155,4 @@ inline std::string plan_id(const PaperFixture& fixture, const std::string& symbo
   return std::string(planned.body_.at("plan_id").as_string());
 }
 
-}  // namespace support
+} // namespace support

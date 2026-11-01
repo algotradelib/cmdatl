@@ -89,7 +89,9 @@ inline std::optional<double> parse_price(std::string_view text) {
   const auto dot = text.find('.');
   const auto whole = text.substr(0, dot);
   const auto fraction = dot == std::string_view::npos ? std::string_view() : text.substr(dot + 1);
-  if (whole.empty() || whole.size() > 8 || (dot != std::string_view::npos && (fraction.empty() || fraction.size() > 4))) {
+  if (
+    whole.empty() || whole.size() > 8 || (dot != std::string_view::npos && (fraction.empty() || fraction.size() > 4))
+  ) {
     return std::nullopt;
   }
   std::int64_t units = 0;
@@ -213,8 +215,7 @@ inline std::optional<BarsProblem> parse_bars(std::string_view text, MarketData& 
       const auto price = parse_price(cells[2 + k]);
       if (!price) {
         return BarsProblem{
-          line_number,
-          "the " + std::string(names[k]) + " is not a price from 1 to 10000000 with at most four decimals"
+          line_number, "the " + std::string(names[k]) + " is not a price from 1 to 10000000 with at most four decimals"
         };
       }
       *targets[k] = *price;
@@ -239,5 +240,5 @@ inline std::optional<BarsProblem> parse_bars(std::string_view text, MarketData& 
   return std::nullopt;
 }
 
-}  // namespace paper
-}  // namespace cmdatl
+} // namespace paper
+} // namespace cmdatl

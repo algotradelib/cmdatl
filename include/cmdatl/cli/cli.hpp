@@ -38,9 +38,7 @@ struct Globals {
  * @return An error reply when a global option is malformed.
  */
 inline std::optional<Reply> take_globals(
-  const std::vector<std::string>& args,
-  Globals& globals,
-  std::vector<std::string>& rest
+  const std::vector<std::string>& args, Globals& globals, std::vector<std::string>& rest
 ) {
   for (std::size_t i = 0; i < args.size(); ++i) {
     const auto& arg = args[i];
@@ -102,9 +100,7 @@ inline std::optional<Reply> take_globals(
  * @return An error reply when they do not fit the command.
  */
 inline std::optional<Reply> parse_command(
-  const Command& command,
-  const std::vector<std::string>& words,
-  Invocation& invocation
+  const Command& command, const std::vector<std::string>& words, Invocation& invocation
 ) {
   CLI::App app{command.summary_, "cmdatl " + join(command.path_)};
   app.set_help_flag();
@@ -250,18 +246,14 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
   if (prepared.found_.command_ == nullptr) {
     if (table.is_group(words)) {
       prepared.refusal_ = error_reply(
-        Exit::USAGE,
-        "usage.unknown_command",
-        "cmdatl " + join(words) + " needs a command",
+        Exit::USAGE, "usage.unknown_command", "cmdatl " + join(words) + " needs a command",
         "cmdatl " + join(words) + " --help"
       );
       return prepared;
     }
     const auto suggestions = table.suggest(words);
     prepared.refusal_ = error_reply(
-      Exit::USAGE,
-      "usage.unknown_command",
-      "no command " + join(words),
+      Exit::USAGE, "usage.unknown_command", "no command " + join(words),
       suggestions.empty() ? "cmdatl --help lists the commands" : "did you mean: " + join(suggestions, ", ")
     );
     return prepared;
@@ -285,9 +277,7 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
   for (const auto& field : asked) {
     if (!declares_field(command, field)) {
       prepared.refusal_ = error_reply(
-        Exit::USAGE,
-        "usage.no_such_field",
-        "cmdatl " + join(command.path_) + " replies have no field " + field,
+        Exit::USAGE, "usage.no_such_field", "cmdatl " + join(command.path_) + " replies have no field " + field,
         "cmdatl schema " + join(command.path_, ".") + " lists its fields"
       );
       prepared.refusal_->body_["usage"] = usage_line;
@@ -367,19 +357,20 @@ inline std::string owner_what(const Command& command, const Invocation& invocati
  * @return The reply.
  */
 inline Reply account_command_reply(
-  const Command& command,
-  const Invocation& invocation,
-  const ConfigSnapshot& snapshot,
-  Output& output
+  const Command& command, const Invocation& invocation, const ConfigSnapshot& snapshot, Output& output
 ) {
 #if defined(_WIN32)
   (void)command;
   (void)invocation;
   (void)snapshot;
   (void)output;
-  return error_reply(Exit::FAILED, "unavailable.platform", "account commands run on macOS and Linux only in this version");
+  return error_reply(
+    Exit::FAILED, "unavailable.platform", "account commands run on macOS and Linux only in this version"
+  );
 #else
-  auto opened = Account::open(snapshot, output, [] { return interrupted(); });
+  auto opened = Account::open(snapshot, output, [] {
+    return interrupted();
+  });
   if (opened.refusal_) {
     return std::move(*opened.refusal_);
   }
@@ -428,11 +419,9 @@ inline int run_on_account(const Command& command, const Prepared& prepared, std:
     }
   };
 #if defined(_WIN32)
-  return offline(error_reply(
-    Exit::FAILED,
-    "unavailable.platform",
-    "account commands run on macOS and Linux only in this version"
-  ));
+  return offline(
+    error_reply(Exit::FAILED, "unavailable.platform", "account commands run on macOS and Linux only in this version")
+  );
 #else
   std::optional<ConfigSnapshot> snapshot;
   try {
@@ -466,7 +455,9 @@ inline int run_on_account(const Command& command, const Prepared& prepared, std:
         error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line");
     } catch (...) {
       reply = unknown_if_lost ?
-        error_reply(Exit::UNKNOWN, "unknown.internal", "an unknown exception", hint.empty() ? "cmdatl order reconcile" : hint) :
+        error_reply(
+          Exit::UNKNOWN, "unknown.internal", "an unknown exception", hint.empty() ? "cmdatl order reconcile" : hint
+        ) :
         error_reply(Exit::FAILED, "internal.error", "an unknown exception", "report the defect with the command line");
     }
     if (prepared.found_.alias_) {
@@ -547,11 +538,7 @@ inline int run_on_config(const Command& command, const Prepared& prepared, std::
  * @return The exit code.
  */
 inline int run(
-  const std::vector<std::string>& args,
-  std::ostream& out,
-  std::ostream& err,
-  bool terminal,
-  const Table& table
+  const std::vector<std::string>& args, std::ostream& out, std::ostream& err, bool terminal, const Table& table
 ) {
   const auto prepared = prepare(args, table, terminal);
   const auto& rendering = prepared.globals_.rendering_;
@@ -582,9 +569,7 @@ inline int run(
   const auto& command = *prepared.found_.command_;
   if (!command.available_) {
     const auto not_yet = error_reply(
-      Exit::FAILED,
-      "unavailable.not_yet",
-      "cmdatl " + join(command.path_) + " is not built in this version"
+      Exit::FAILED, "unavailable.not_yet", "cmdatl " + join(command.path_) + " is not built in this version"
     );
     return write(not_yet, "offline");
   }
@@ -635,4 +620,4 @@ inline int run(const std::vector<std::string>& args, std::ostream& out, std::ost
   return run(args, out, err, terminal, table);
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl

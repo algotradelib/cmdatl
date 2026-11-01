@@ -15,22 +15,22 @@
 #include <chrono>
 #include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
 #include <optional>
 #include <set>
-#include <cstdlib>
 #include <string>
 #include <thread>
 #include <tuple>
 #include <vector>
 
 #if !defined(_WIN32)
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -67,7 +67,7 @@ json::object reply_record(int exit, const std::string& code = "", bool summary =
   return reply;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("run grammars: run ids, argument keys, structs and offsets") {
   CHECK(cmdatl::valid_run_id("r0123456789ab"));
@@ -131,8 +131,8 @@ TEST_CASE("a shape's key changes with each input it holds, and with nothing else
 
 TEST_CASE("a build's children run without the locators the key does not hold") {
   const auto out = build::child_environment(
-    {"PATH=/bin", "CMAKE_PREFIX_PATH=/x", "algotradelib_DIR=/y", "ALGOTRADELIB_ROOT=/z", "OPENSSL_ROOT_DIR=/o", "BOOST_ROOT=/b",
-     "Foo_DIR=/f", "HOME=/h", "CXX=clang++"}
+    {"PATH=/bin", "CMAKE_PREFIX_PATH=/x", "algotradelib_DIR=/y", "ALGOTRADELIB_ROOT=/z", "OPENSSL_ROOT_DIR=/o",
+      "BOOST_ROOT=/b", "Foo_DIR=/f", "HOME=/h", "CXX=clang++"}
   );
   CHECK(out == std::vector<std::string>{"PATH=/bin", "OPENSSL_ROOT_DIR=/o", "BOOST_ROOT=/b", "HOME=/h", "CXX=clang++"});
 }
@@ -263,7 +263,9 @@ TEST_CASE("atlc spec's fields a run consumes are checked at and past each bound"
 TEST_CASE("a run's state from its records, every row") {
   using runs::Alive;
   using runs::Probe;
-  const auto state = [](const runs::Records& r, Alive sup, Alive drv, Probe probe) { return runs::run_state(r, sup, drv, probe); };
+  const auto state = [](const runs::Records& r, Alive sup, Alive drv, Probe probe) {
+    return runs::run_state(r, sup, drv, probe);
+  };
   auto r = records();
   // No pid yet: starting while the supervisor may live, else unknown.
   CHECK(state(r, Alive::MAYBE, Alive::NO_PID, Probe::UNKNOWN).state_ == "starting");
@@ -329,8 +331,10 @@ TEST_CASE("records are trusted only whole: unterminated lines, damaged files and
   CHECK(!r.start_);
   CHECK(!r.pid_);
   spit(dir.path() / "reply.json", "{\"run\":\"r000000000002\",\"exit\":0}\n");
-  spit(dir.path() / "events.jsonl",
-       "{\"event\":\"start\",\"run\":\"r000000000001\",\"at\":\"a\"}\n{\"event\":\"clock\",\"at\":\"b\"}\n{\"event\":\"placed\",\"at\":\"c\"}\n");
+  spit(
+    dir.path() / "events.jsonl",
+    "{\"event\":\"start\",\"run\":\"r000000000001\",\"at\":\"a\"}\n{\"event\":\"clock\",\"at\":\"b\"}\n{\"event\":\"placed\",\"at\":\"c\"}\n"
+  );
   spit(dir.path() / "pid", "12\n");
   spit(dir.path() / "exit.json", "{\"format\":1,\"pid\":12,\"exit\":300,\"signal\":null,\"spawned\":true}");
   r = runs::read_records(dir.path(), run);
@@ -351,7 +355,9 @@ TEST_CASE("records are trusted only whole: unterminated lines, damaged files and
 }
 
 TEST_CASE("exit.json and reply.json are admitted only whole, every field with its type, for this run") {
-  const auto exit_of = [](const std::string& text) { return runs::exit_record_of(json::parse(text).as_object()); };
+  const auto exit_of = [](const std::string& text) {
+    return runs::exit_record_of(json::parse(text).as_object());
+  };
   CHECK(exit_of("{\"format\":1,\"pid\":0,\"exit\":null,\"signal\":null,\"spawned\":false,\"ended\":\"t\"}"));
   CHECK(exit_of("{\"format\":1,\"pid\":7,\"exit\":0,\"signal\":null,\"spawned\":true,\"ended\":\"t\"}"));
   CHECK(exit_of("{\"format\":1,\"pid\":7,\"exit\":null,\"signal\":9,\"spawned\":true,\"ended\":\"t\"}"));
@@ -365,22 +371,38 @@ TEST_CASE("exit.json and reply.json are admitted only whole, every field with it
   CHECK(!exit_of("{\"format\":2,\"pid\":0,\"exit\":null,\"signal\":null,\"spawned\":false,\"ended\":\"t\"}"));
   CHECK(!exit_of("{\"format\":1,\"pid\":0,\"exit\":null,\"signal\":null,\"spawned\":false}"));
   const std::string run = "r000000000001";
-  const auto reply_ok = [&run](const std::string& text) { return runs::valid_reply(json::parse(text).as_object(), run); };
+  const auto reply_ok = [&run](const std::string& text) {
+    return runs::valid_reply(json::parse(text).as_object(), run);
+  };
   const std::string success =
     "{\"run\":\"r000000000001\",\"exit\":0,\"result\":\"ended\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[]}";
   CHECK(reply_ok(success));
   CHECK(!reply_ok("{\"exit\":0}"));
   CHECK(!reply_ok("{\"exit\":0,\"result\":\"ended\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[]}"));
-  CHECK(!reply_ok("{\"run\":\"r000000000002\",\"exit\":0,\"result\":\"ended\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[]}"));
+  CHECK(!reply_ok(
+    "{\"run\":\"r000000000002\",\"exit\":0,\"result\":\"ended\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[]}"
+  ));
   CHECK(!reply_ok("{\"run\":\"r000000000001\",\"exit\":0,\"result\":\"ended\",\"executions\":3,\"owed_at_end\":[]}"));
-  CHECK(!reply_ok("{\"run\":\"r000000000001\",\"exit\":0,\"result\":\"failed\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[]}"));
-  CHECK(!reply_ok("{\"run\":\"r000000000001\",\"exit\":0,\"result\":\"ended\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[{}]}"));
-  CHECK(!reply_ok("{\"run\":\"r000000000001\",\"exit\":0,\"result\":\"ended\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[],"
-                  "\"error\":{\"code\":\"x\"}}"));
-  CHECK(reply_ok("{\"run\":\"r000000000001\",\"exit\":4,\"result\":\"unknown\",\"error\":{\"code\":\"unknown.owed_at_end\"}}"));
-  CHECK(reply_ok("{\"run\":\"r000000000001\",\"exit\":3,\"result\":\"refused\",\"error\":{\"code\":\"refused.not_armed\"}}"));
+  CHECK(!reply_ok(
+    "{\"run\":\"r000000000001\",\"exit\":0,\"result\":\"failed\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[]}"
+  ));
+  CHECK(!reply_ok(
+    "{\"run\":\"r000000000001\",\"exit\":0,\"result\":\"ended\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[{}]}"
+  ));
+  CHECK(!reply_ok(
+    "{\"run\":\"r000000000001\",\"exit\":0,\"result\":\"ended\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[],"
+    "\"error\":{\"code\":\"x\"}}"
+  ));
+  CHECK(reply_ok(
+    "{\"run\":\"r000000000001\",\"exit\":4,\"result\":\"unknown\",\"error\":{\"code\":\"unknown.owed_at_end\"}}"
+  ));
+  CHECK(
+    reply_ok("{\"run\":\"r000000000001\",\"exit\":3,\"result\":\"refused\",\"error\":{\"code\":\"refused.not_armed\"}}")
+  );
   CHECK(!reply_ok("{\"run\":\"r000000000001\",\"exit\":3,\"result\":\"refused\"}"));
-  CHECK(!reply_ok("{\"run\":\"r000000000001\",\"exit\":3,\"result\":\"failed\",\"error\":{\"code\":\"refused.not_armed\"}}"));
+  CHECK(
+    !reply_ok("{\"run\":\"r000000000001\",\"exit\":3,\"result\":\"failed\",\"error\":{\"code\":\"refused.not_armed\"}}")
+  );
   CHECK(!reply_ok("{\"run\":\"r000000000001\",\"exit\":9,\"result\":\"failed\",\"error\":{\"code\":\"x\"}}"));
 }
 
@@ -391,16 +413,23 @@ TEST_CASE("contradictory or damaged completion records never establish success, 
     "{\"run\":\"r000000000001\",\"exit\":0,\"result\":\"ended\",\"outcome\":\"clean\",\"executions\":3,\"owed_at_end\":[]}\n";
   const auto state_of = [&dir, &run]() {
     const auto records = runs::read_records(dir.path(), run);
-    return std::make_pair(runs::run_state(records, runs::Alive::GONE, runs::Alive::GONE, runs::Probe::FREE), runs::early_end(records));
+    return std::make_pair(
+      runs::run_state(records, runs::Alive::GONE, runs::Alive::GONE, runs::Probe::FREE), runs::early_end(records)
+    );
   };
   // A success reply beside a record saying no driver was spawned.
   spit(dir.path() / "reply.json", success);
-  spit(dir.path() / "exit.json", "{\"format\":1,\"pid\":0,\"exit\":null,\"signal\":null,\"spawned\":false,\"ended\":\"t\"}");
+  spit(
+    dir.path() / "exit.json", "{\"format\":1,\"pid\":0,\"exit\":null,\"signal\":null,\"spawned\":false,\"ended\":\"t\"}"
+  );
   auto [state, early] = state_of();
   CHECK(state.state_ == "unknown");
   CHECK(early == runs::EarlyEnd::RELAY);
   // A success reply beside a damaged exit record.
-  spit(dir.path() / "exit.json", "{\"format\":1,\"pid\":7,\"exit\":\"bad\",\"signal\":null,\"spawned\":true,\"ended\":\"t\"}");
+  spit(
+    dir.path() / "exit.json",
+    "{\"format\":1,\"pid\":7,\"exit\":\"bad\",\"signal\":null,\"spawned\":true,\"ended\":\"t\"}"
+  );
   std::tie(state, early) = state_of();
   CHECK(state.state_ == "unknown");
   // Only a bare reply.
@@ -416,18 +445,24 @@ TEST_CASE("contradictory or damaged completion records never establish success, 
   CHECK(state.state_ == "unknown");
   CHECK(early == runs::EarlyEnd::UNKNOWN);
   // A spawned driver that left no reply: unknown.
-  spit(dir.path() / "exit.json", "{\"format\":1,\"pid\":7,\"exit\":0,\"signal\":null,\"spawned\":true,\"ended\":\"t\"}");
+  spit(
+    dir.path() / "exit.json", "{\"format\":1,\"pid\":7,\"exit\":0,\"signal\":null,\"spawned\":true,\"ended\":\"t\"}"
+  );
   std::tie(state, early) = state_of();
   CHECK(state.state_ == "unknown");
   CHECK(early == runs::EarlyEnd::UNKNOWN);
   // Only a validated record not spawned says nothing was launched.
-  spit(dir.path() / "exit.json", "{\"format\":1,\"pid\":0,\"exit\":null,\"signal\":null,\"spawned\":false,\"ended\":\"t\"}");
+  spit(
+    dir.path() / "exit.json", "{\"format\":1,\"pid\":0,\"exit\":null,\"signal\":null,\"spawned\":false,\"ended\":\"t\"}"
+  );
   std::tie(state, early) = state_of();
   CHECK(state.state_ == "failed");
   CHECK(early == runs::EarlyEnd::NOT_LAUNCHED);
   // The writer's own success with its matching record.
   spit(dir.path() / "reply.json", success);
-  spit(dir.path() / "exit.json", "{\"format\":1,\"pid\":7,\"exit\":0,\"signal\":null,\"spawned\":true,\"ended\":\"t\"}");
+  spit(
+    dir.path() / "exit.json", "{\"format\":1,\"pid\":7,\"exit\":0,\"signal\":null,\"spawned\":true,\"ended\":\"t\"}"
+  );
   std::tie(state, early) = state_of();
   CHECK(state.state_ == "ended");
   CHECK(early == runs::EarlyEnd::RELAY);
@@ -474,7 +509,9 @@ TEST_CASE("the table's run commands: options, codes, kinds of code and the schem
   auto list = cmdatl::command_list();
   for (auto& command : list) {
     if (command.path_ == std::vector<std::string>{"run", "status"}) {
-      command.runs([](const cmdatl::Invocation&, const cmdatl::Table&, cmdatl::Output&) { return cmdatl::Reply{}; });
+      command.runs([](const cmdatl::Invocation&, const cmdatl::Table&, cmdatl::Output&) {
+        return cmdatl::Reply{};
+      });
     }
   }
   const cmdatl::Table doubled(list);
@@ -518,7 +555,7 @@ std::optional<std::pair<std::string, std::string>> run_equipment() {
  */
 std::string dip_bars(int days, int extra_symbols = 0) {
   std::string out = "symbol,date,open,high,low,close,volume\n";
-  long day = 19724;  // 2024-01-02
+  long day = 19724; // 2024-01-02
   long close = 78000;
   std::vector<std::string> rows;
   for (int k = 0, made = 0; made < days; ++day) {
@@ -552,7 +589,10 @@ std::string dip_bars(int days, int extra_symbols = 0) {
     char date[64];
     std::snprintf(date, sizeof date, "%04ld-%02ld-%02ld", y, m, d);
     char row[160];
-    std::snprintf(row, sizeof row, ",%s,%ld,%ld,%ld,%ld,100000\n", date, open, std::max(open, close) + 300, std::min(open, close) - 300, close);
+    std::snprintf(
+      row, sizeof row, ",%s,%ld,%ld,%ld,%ld,100000\n", date, open, std::max(open, close) + 300,
+      std::min(open, close) - 300, close
+    );
     out += std::string("005930") + row;
     for (int s = 0; s < extra_symbols; ++s) {
       char symbol[16];
@@ -571,15 +611,22 @@ struct Shared {
   ScratchDir dir_;
 
   Shared() {
-    spit(dir_.path() / "dip.atls", slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "templates" / "mean-reversion.atls"));
+    spit(
+      dir_.path() / "dip.atls", slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "templates" / "mean-reversion.atls")
+    );
     spit(dir_.path() / "bars.csv", dip_bars(160));
     spit(dir_.path() / "long.csv", dip_bars(500));
     spit(dir_.path() / "wide.csv", dip_bars(400, 600));
-    for (const auto& [name, data] : std::vector<std::pair<std::string, std::string>>{{"dip", "bars.csv"}, {"long", "long.csv"}, {"wide", "wide.csv"}}) {
-      spit(dir_.path() / (name + ".toml"),
-           "strategy = \"dip.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"" + data +
-             "\"\nsymbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n"
-             "[replay]\ncash = 100000000\ncommission = 0.0005\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n");
+    for (
+      const auto& [name, data] :
+      std::vector<std::pair<std::string, std::string>>{{"dip", "bars.csv"}, {"long", "long.csv"}, {"wide", "wide.csv"}}
+    ) {
+      spit(
+        dir_.path() / (name + ".toml"),
+        "strategy = \"dip.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"" + data +
+          "\"\nsymbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n"
+          "[replay]\ncash = 100000000\ncommission = 0.0005\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n"
+      );
     }
     std::filesystem::create_directories(dir_.path() / "cache");
   }
@@ -589,7 +636,9 @@ struct Shared {
    * @param name `dip`, `long` or `wide`.
    * @return The path.
    */
-  std::string spec(const std::string& name) const { return (dir_.path() / (name + ".toml")).string(); }
+  std::string spec(const std::string& name) const {
+    return (dir_.path() / (name + ".toml")).string();
+  }
 };
 
 /**
@@ -673,8 +722,10 @@ std::vector<std::string> run_fills(const std::filesystem::path& dir) {
   for (const auto& line : lines_of(slurp(dir / "events.jsonl"))) {
     const auto event = json::parse(line).as_object();
     if (event.at("event").as_string() == "filled") {
-      out.push_back(std::string(event.at("at").as_string()).substr(0, 10) + "," + std::string(event.at("side").as_string()) + "," +
-                    std::string(event.at("quantity").as_string()) + "," + std::string(event.at("price").as_string()));
+      out.push_back(
+        std::string(event.at("at").as_string()).substr(0, 10) + "," + std::string(event.at("side").as_string()) + "," +
+        std::string(event.at("quantity").as_string()) + "," + std::string(event.at("price").as_string())
+      );
     }
   }
   return out;
@@ -705,7 +756,7 @@ std::vector<std::string> backtest_fills(const std::filesystem::path& path) {
   return out;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("run start --wait trades as strategy backtest does on the same spec, fill for fill", "[acceptance][runs]") {
   const auto equipment = run_equipment();
@@ -733,7 +784,10 @@ TEST_CASE("run start --wait trades as strategy backtest does on the same spec, f
   CHECK(summary.at("executions").as_int64() == static_cast<std::int64_t>(expected.size()));
   const auto run = std::string(reply.at("run").as_string());
   CHECK(run_fills(run_path(fixture, run)) == expected);
-  CHECK(reply_of(backtest.out_).at("report").as_object().at("executions").as_int64() == static_cast<std::int64_t>(expected.size()));
+  CHECK(
+    reply_of(backtest.out_).at("report").as_object().at("executions").as_int64() ==
+    static_cast<std::int64_t>(expected.size())
+  );
   // The cache: a second start of the same program builds nothing.
   const auto driver = shared().dir_.path() / "cache" / "cmdatl" / "drivers";
   std::optional<std::filesystem::file_time_type> before;
@@ -797,7 +851,10 @@ TEST_CASE("two runs started at once on one account build the program once and tr
   CHECK(shapes == 1);
 }
 
-TEST_CASE("run start returns while the run trades, its output closed, and run status follows the run to its end", "[acceptance][runs]") {
+TEST_CASE(
+  "run start returns while the run trades, its output closed, and run status follows the run to its end",
+  "[acceptance][runs]"
+) {
   const auto equipment = run_equipment();
   if (!equipment) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
@@ -860,9 +917,11 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
     fixture.arm();
     spit(fixture.dir() / "trail.atls", slurp(std::filesystem::path(*examples) / "trailing-stop.atls"));
     spit(fixture.dir() / "bars.csv", dip_bars(60));
-    spit(fixture.dir() / "trail.toml",
-         "strategy = \"trail.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\n"
-         "time_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n[replay]\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n");
+    spit(
+      fixture.dir() / "trail.toml",
+      "strategy = \"trail.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\n"
+      "time_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n[replay]\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n"
+    );
     const auto ran = fixture.json({"run", "start", (fixture.dir() / "trail.toml").string()});
     INFO(ran.out_);
     INFO(ran.err_);
@@ -872,7 +931,9 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
   }
 }
 
-TEST_CASE("a driver stopped before its start line is unknown, never lost, and a killed one is lost", "[acceptance][runs]") {
+TEST_CASE(
+  "a driver stopped before its start line is unknown, never lost, and a killed one is lost", "[acceptance][runs]"
+) {
   const auto equipment = run_equipment();
   if (!equipment) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
@@ -973,7 +1034,10 @@ std::optional<long> parent_of(long pid) {
 std::optional<std::filesystem::path> new_run_dir(const PaperFixture& fixture, const std::set<std::string>& known) {
   const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
   std::error_code ec;
-  for (auto it = std::filesystem::directory_iterator(runs_dir, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+  for (
+    auto it = std::filesystem::directory_iterator(runs_dir, ec); !ec && it != std::filesystem::directory_iterator();
+    it.increment(ec)
+  ) {
     if (known.count(it->path().filename().string()) == 0) {
       return it->path();
     }
@@ -990,15 +1054,20 @@ std::set<std::string> run_dirs(const PaperFixture& fixture) {
   std::set<std::string> out;
   const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
   std::error_code ec;
-  for (auto it = std::filesystem::directory_iterator(runs_dir, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+  for (
+    auto it = std::filesystem::directory_iterator(runs_dir, ec); !ec && it != std::filesystem::directory_iterator();
+    it.increment(ec)
+  ) {
     out.insert(it->path().filename().string());
   }
   return out;
 }
 
-}  // namespace
+} // namespace
 
-TEST_CASE("a driver is built against the package it names and no other, and a missing package is refused", "[acceptance][runs]") {
+TEST_CASE(
+  "a driver is built against the package it names and no other, and a missing package is refused", "[acceptance][runs]"
+) {
   const auto equipment = run_equipment();
   if (!equipment) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
@@ -1049,7 +1118,8 @@ TEST_CASE("a driver is built against the package it names and no other, and a mi
   CHECK(std::string(gone->body_.at("error").as_object().at("code").as_string()) == "build.failed");
   CHECK(!std::filesystem::exists(work.path() / "run-gone" / "driver"));
   spit(work.path() / "other.atls", slurp(program));
-  const auto fresh = build::build_driver(request(package_a, (work.path() / "other.atls").string()), work.path() / "run-fresh", quiet);
+  const auto fresh =
+    build::build_driver(request(package_a, (work.path() / "other.atls").string()), work.path() / "run-fresh", quiet);
   REQUIRE(fresh);
   CHECK(!std::filesystem::exists(work.path() / "run-fresh" / "driver"));
   // CMake's own check, below cmdatl's: the driver's project configured for the missing package fails though the
@@ -1057,15 +1127,18 @@ TEST_CASE("a driver is built against the package it names and no other, and a mi
   const auto cmake = cmdatl::find_on_path("cmake");
   REQUIRE(cmake);
   const auto configured = cmdatl::run_child(
-    {*cmake, "-S", (shapes.at(build::real_path(package_b)) / "src").string(), "-B", (work.path() / "probe-build").string(),
-     "-DCMAKE_BUILD_TYPE=Release", "-DCMDATL_ALGOTRADELIB_DIR=" + package_a},
+    {*cmake, "-S", (shapes.at(build::real_path(package_b)) / "src").string(), "-B",
+      (work.path() / "probe-build").string(), "-DCMAKE_BUILD_TYPE=Release", "-DCMDATL_ALGOTRADELIB_DIR=" + package_a},
     quiet
   );
   CHECK(configured.kind_ == cmdatl::ChildResult::Kind::FINISHED);
   CHECK(configured.code_ != 0);
 }
 
-TEST_CASE("run start never answers running for a run whose driver and supervisor died after its start line", "[acceptance][runs]") {
+TEST_CASE(
+  "run start never answers running for a run whose driver and supervisor died after its start line",
+  "[acceptance][runs]"
+) {
   const auto equipment = run_equipment();
   if (!equipment) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
@@ -1102,7 +1175,9 @@ TEST_CASE("run start never answers running for a run whose driver and supervisor
     const auto supervisor = parent_of(driver);
     REQUIRE(supervisor);
     const auto line_until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
-    while (slurp(*dir / "events.jsonl").find('\n') == std::string::npos && std::chrono::steady_clock::now() < line_until) {
+    while (
+      slurp(*dir / "events.jsonl").find('\n') == std::string::npos && std::chrono::steady_clock::now() < line_until
+    ) {
       std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     REQUIRE(slurp(*dir / "events.jsonl").find('\n') != std::string::npos);
@@ -1122,7 +1197,9 @@ TEST_CASE("run start never answers running for a run whose driver and supervisor
   CHECK(exercised);
 }
 
-TEST_CASE("a descriptor inherited above a lowered limit reaches neither the supervisor nor the driver", "[acceptance][runs]") {
+TEST_CASE(
+  "a descriptor inherited above a lowered limit reaches neither the supervisor nor the driver", "[acceptance][runs]"
+) {
   const auto equipment = run_equipment();
   if (!equipment) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");

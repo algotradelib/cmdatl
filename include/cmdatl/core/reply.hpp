@@ -77,11 +77,7 @@ struct Reply {
  * @return The reply.
  */
 inline Reply error_reply(
-  Exit exit,
-  const std::string& code,
-  const std::string& message,
-  const std::string& next = "",
-  bool retry = false
+  Exit exit, const std::string& code, const std::string& message, const std::string& next = "", bool retry = false
 ) {
   Reply reply;
   reply.exit_ = exit;
@@ -593,13 +589,17 @@ public:
    * @brief How the caller asked to see replies.
    * @return The rendering.
    */
-  const Rendering& rendering() const noexcept { return rendering_; }
+  const Rendering& rendering() const noexcept {
+    return rendering_;
+  }
 
   /**
    * @brief The command's environment.
    * @return The environment.
    */
-  const std::string& env() const noexcept { return env_; }
+  const std::string& env() const noexcept {
+    return env_;
+  }
 
 private:
   std::ostream& out_;
@@ -608,4 +608,4 @@ private:
   std::string env_;
 };
 
-}  // namespace cmdatl
+} // namespace cmdatl

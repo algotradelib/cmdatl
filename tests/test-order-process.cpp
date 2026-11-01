@@ -62,7 +62,9 @@ Answer step(const PaperFixture& fixture, const std::vector<std::string>& args) {
  * @param limit The limit.
  * @return The plan id.
  */
-std::string plan_of(const PaperFixture& fixture, const std::string& symbol, const std::string& target, const std::string& limit) {
+std::string plan_of(
+  const PaperFixture& fixture, const std::string& symbol, const std::string& target, const std::string& limit
+) {
   const auto planned = step(fixture, {"order", "plan", symbol, "--target", target, "--limit", limit});
   INFO(boost::json::serialize(planned.body_));
   REQUIRE(planned.reason_ == "plan");
@@ -80,9 +82,12 @@ double day_price(const std::string& symbol, std::int64_t at) {
   return symbol == "005930" ? 79000 : 182000;
 }
 
-}  // namespace
+} // namespace
 
-TEST_CASE("a session against the binary: plans and places on both symbols across the data's days and buys and sells", "[orders][process]") {
+TEST_CASE(
+  "a session against the binary: plans and places on both symbols across the data's days and buys and sells",
+  "[orders][process]"
+) {
   const Watchdog watchdog("the order session", 300);
   ConfigParts parts;
   parts.limits_ =
@@ -172,8 +177,11 @@ TEST_CASE("two places on one plan id race: one place line and the other plan_use
       const int status = racer->wait(60);
       REQUIRE(WIFEXITED(status));
       const auto reply = reply_of(racer->out());
-      outcomes.push_back(reply.contains("error") ? std::string(reply.at("error").as_object().at("code").as_string()) :
-        std::string(reply.at("reason").as_string()));
+      outcomes.push_back(
+        reply.contains("error") ?
+          std::string(reply.at("error").as_object().at("code").as_string()) :
+          std::string(reply.at("reason").as_string())
+      );
     }
     std::sort(outcomes.begin(), outcomes.end());
     CHECK(outcomes == std::vector<std::string>{"placed", "refused.plan_used"});
@@ -209,7 +217,10 @@ TEST_CASE("three accounts reads and two places and a clock advance together end 
   CHECK(step(fixture, {"status"}).exit_ == 0);
 }
 
-TEST_CASE("two operator files naming one account: their places serialize and one placed and the other plan_used", "[orders][process]") {
+TEST_CASE(
+  "two operator files naming one account: their places serialize and one placed and the other plan_used",
+  "[orders][process]"
+) {
   const Watchdog watchdog("two operator files", 120);
   const PaperFixture fixture;
   fixture.arm();
@@ -226,8 +237,11 @@ TEST_CASE("two operator files naming one account: their places serialize and one
     const int status = process->wait(60);
     REQUIRE(WIFEXITED(status));
     const auto reply = reply_of(process->out());
-    outcomes.push_back(reply.contains("error") ? std::string(reply.at("error").as_object().at("code").as_string()) :
-      std::string(reply.at("reason").as_string()));
+    outcomes.push_back(
+      reply.contains("error") ?
+        std::string(reply.at("error").as_object().at("code").as_string()) :
+        std::string(reply.at("reason").as_string())
+    );
   }
   std::sort(outcomes.begin(), outcomes.end());
   CHECK(outcomes == std::vector<std::string>{"placed", "refused.plan_used"});
@@ -284,9 +298,11 @@ Swept swept(const PaperFixture& fixture, const std::vector<std::string>& args, l
   return result;
 }
 
-}  // namespace
+} // namespace
 
-TEST_CASE("an allocation failing anywhere in an order command's refusals leaks nothing and sends nothing", "[orders][sweep]") {
+TEST_CASE(
+  "an allocation failing anywhere in an order command's refusals leaks nothing and sends nothing", "[orders][sweep]"
+) {
   const Watchdog watchdog("the order allocation sweep", 1800);
   const std::vector<std::vector<std::string>> lines{
     {"order", "plan", "005930", "--target", "10", "--limit", "75000"},
@@ -325,7 +341,10 @@ TEST_CASE("an allocation failing anywhere in an order command's refusals leaks n
   CHECK(injected > 1000);
 }
 
-TEST_CASE("an allocation failing anywhere in a place that sends leaks nothing and reports what reached the market", "[orders][sweep]") {
+TEST_CASE(
+  "an allocation failing anywhere in a place that sends leaks nothing and reports what reached the market",
+  "[orders][sweep]"
+) {
   const Watchdog watchdog("the send allocation sweep", 1800);
   long injected = 0;
   long bad = 0;
@@ -336,7 +355,8 @@ TEST_CASE("an allocation failing anywhere in a place that sends leaks nothing an
     const auto planned = ask(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
     REQUIRE(planned.reason_ == "plan");
     const int before = open_fds();
-    const auto result = swept(fixture, {"order", "place", std::string(planned.body_.at("plan_id").as_string())}, n, before);
+    const auto result =
+      swept(fixture, {"order", "place", std::string(planned.body_.at("plan_id").as_string())}, n, before);
     if (!result.consumed_) {
       // The run the failure never reached is an ordinary placement.
       CHECK(result.reason_ == "placed");
@@ -357,7 +377,9 @@ TEST_CASE("an allocation failing anywhere in a place that sends leaks nothing an
   CHECK(injected > 1000);
 }
 
-TEST_CASE("an allocation failing in the journal-open refusal: the library gap is counted and not passed", "[orders][sweep]") {
+TEST_CASE(
+  "an allocation failing in the journal-open refusal: the library gap is counted and not passed", "[orders][sweep]"
+) {
   const Watchdog watchdog("the journal-open refusal sweep", 1800);
   const PaperFixture fixture;
   fixture.arm();
@@ -406,14 +428,20 @@ TEST_CASE("an allocation failing in the journal-open refusal: the library gap is
       CHECK(no_children());
     }
   }
-  WARN("journal-open refusal sweep: " << refusal_runs << " injected iterations, " << gap
-    << " left a descriptor open (the library gap in FileJournal's constructor)");
+  WARN(
+    "journal-open refusal sweep: "
+    << refusal_runs << " injected iterations, " << gap
+    << " left a descriptor open (the library gap in FileJournal's constructor)"
+  );
   CHECK(refusal_runs > 10);
 }
 #endif
 
 #if !defined(_WIN32)
-TEST_CASE("descriptors and children: 200 in-process runs of each order command leave the counts as they were", "[orders][process]") {
+TEST_CASE(
+  "descriptors and children: 200 in-process runs of each order command leave the counts as they were",
+  "[orders][process]"
+) {
   const Watchdog watchdog("the descriptor count", 600);
   const PaperFixture fixture;
   fixture.arm();

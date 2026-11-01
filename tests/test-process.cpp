@@ -17,11 +17,11 @@
 #include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/resource.h>
-#include <algorithm>
-#include <chrono>
 #include <sys/wait.h>
 #include <termios.h>
 #include <unistd.h>
+#include <algorithm>
+#include <chrono>
 
 using namespace support;
 
@@ -58,8 +58,7 @@ public:
    * @brief Sets how many lines it takes.
    * @param lines The lines.
    */
-  explicit RefusingAfter(int lines)
-  : lines_(lines) {}
+  explicit RefusingAfter(int lines) : lines_(lines) {}
 
 protected:
   /**
@@ -149,7 +148,7 @@ void check_interrupted(const Stopped& stopped) {
   CHECK(declares({"strategy", "backtest"}, 130, "interrupted"));
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("run_child drains stdout and stderr larger than a pipe and interleaved") {
   const Watchdog watchdog("the flood", 60);
@@ -173,7 +172,9 @@ TEST_CASE("run_child hands on an unterminated last line and splits a line too lo
   {
     const FakeAtlc fake("run err first\nrun errpart last\nrun exit 3\n");
     std::vector<std::string> lines;
-    const auto result = run_fake([&lines](const std::string& line) { lines.push_back(line); });
+    const auto result = run_fake([&lines](const std::string& line) {
+      lines.push_back(line);
+    });
     REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
     CHECK(!result.signaled_);
     CHECK(result.code_ == 3);
@@ -183,7 +184,9 @@ TEST_CASE("run_child hands on an unterminated last line and splits a line too lo
   {
     const FakeAtlc fake("run errbytes 20000\n");
     std::vector<std::size_t> sizes;
-    const auto result = run_fake([&sizes](const std::string& line) { sizes.push_back(line.size()); });
+    const auto result = run_fake([&sizes](const std::string& line) {
+      sizes.push_back(line.size());
+    });
     CHECK(sizes == std::vector<std::size_t>{8192, 8192, 3616});
     std::size_t kept = 0;
     for (const auto& line : result.stderr_tail_) {
@@ -245,7 +248,12 @@ TEST_CASE("a throwing callback kills the child's whole group with its grandchild
   const Watchdog watchdog("the abandoned group", 30);
   const FakeAtlc fake("run grandchild hold\nrun pid\nrun err hello\nrun block\n");
   const int before = open_fds();
-  CHECK_THROWS_AS(run_fake([](const std::string&) { throw std::runtime_error("the output broke"); }), std::runtime_error);
+  CHECK_THROWS_AS(
+    run_fake([](const std::string&) {
+      throw std::runtime_error("the output broke");
+    }),
+    std::runtime_error
+  );
   CHECK(open_fds() == before);
   CHECK(no_children());
   const auto pids = fake.pids();
@@ -361,7 +369,9 @@ TEST_CASE("an allocation failing anywhere in run_child or its lines or its tail 
     std::vector<std::string> copies;
     fail_allocation(n);
     try {
-      (void)run_fake([&copies](const std::string& line) { copies.push_back(line); });
+      (void)run_fake([&copies](const std::string& line) {
+        copies.push_back(line);
+      });
     } catch (const std::bad_alloc&) {
       ++threw;
     }
@@ -512,7 +522,8 @@ TEST_CASE("SIGINT or SIGTERM while atlc runs stops its group whatever it is doin
     {"draining a long reply", "run pid\nrun touch running\nrun forever\n"},
     {"waiting on a child with a grandchild", "run grandchild hold\nrun pid\nrun touch running\nrun block\n"},
     {"just before a wait: both pipes closed", "run pid\nrun close\nrun touch running\nrun block\n"},
-    {"a grandchild that ignores SIGTERM, pipes closed", "run grandchild ignore-term-closed\nrun pid\nrun touch running\nrun block\n"},
+    {"a grandchild that ignores SIGTERM, pipes closed",
+      "run grandchild ignore-term-closed\nrun pid\nrun touch running\nrun block\n"},
   };
   for (const auto& scenario : scenarios) {
     for (const int sig : {SIGINT, SIGTERM}) {
@@ -529,7 +540,8 @@ TEST_CASE("what ignores SIGTERM is killed two seconds later") {
   const Watchdog watchdog("the grace period", 120);
   const std::string spec = "spec out " + SPEC_OK + "\n";
   const std::vector<std::pair<std::string, std::string>> scenarios{
-    {"a grandchild that ignores SIGTERM, pipes kept open", "run grandchild ignore-term\nrun pid\nrun touch running\nrun block\n"},
+    {"a grandchild that ignores SIGTERM, pipes kept open",
+      "run grandchild ignore-term\nrun pid\nrun touch running\nrun block\n"},
     {"atlc itself ignoring SIGTERM", "run ignore-term\nrun pid\nrun touch running\nrun block\n"},
   };
   for (const auto& scenario : scenarios) {
@@ -550,7 +562,9 @@ TEST_CASE("Ctrl-C on a terminal reaches cmdatl only and it stops atlc's group an
   const Watchdog watchdog("Ctrl-C", 60);
   const std::vector<std::pair<std::string, std::string>> scenarios{
     {"while probing", "version pid\nversion touch waiting\nversion block\n"},
-    {"while running", "version out atlc 0.0.0-9000\nspec out " + SPEC_OK + "\nrun grandchild hold\nrun pid\nrun touch waiting\nrun block\n"},
+    {"while running",
+      "version out atlc 0.0.0-9000\nspec out " + SPEC_OK +
+        "\nrun grandchild hold\nrun pid\nrun touch waiting\nrun block\n"},
   };
   for (const auto& scenario : scenarios) {
     INFO(scenario.first);

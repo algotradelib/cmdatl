@@ -51,7 +51,9 @@ inline bool valid_target(std::string_view text) {
   if (text.empty() || text.size() > 9 || (text.size() > 1 && text.front() == '0')) {
     return false;
   }
-  return std::all_of(text.begin(), text.end(), [](char c) { return c >= '0' && c <= '9'; });
+  return std::all_of(text.begin(), text.end(), [](char c) {
+    return c >= '0' && c <= '9';
+  });
 }
 
 /**
@@ -128,12 +130,8 @@ struct Plan {
  */
 template <typename Session>
 std::string snapshot_text(
-  Session& session,
-  const std::string& scope,
-  const std::string& symbol,
-  const std::string& target,
-  const std::string& limit,
-  std::optional<std::int64_t> journal_size
+  Session& session, const std::string& scope, const std::string& symbol, const std::string& target,
+  const std::string& limit, std::optional<std::int64_t> journal_size
 ) {
   std::string text = scope + "|" + symbol + "|" + target + "|" + limit;
   if (auto holdings = session.holdings()) {
@@ -178,12 +176,8 @@ std::string snapshot_text(
  */
 template <typename Session>
 std::string snapshot_of(
-  Session& session,
-  const std::string& scope,
-  const std::string& symbol,
-  const std::string& target,
-  const std::string& limit,
-  std::optional<std::int64_t> journal_size
+  Session& session, const std::string& scope, const std::string& symbol, const std::string& target,
+  const std::string& limit, std::optional<std::int64_t> journal_size
 ) {
   return hex_digits(paper::fnv1a(snapshot_text(session, scope, symbol, target, limit, journal_size)), 16);
 }
@@ -258,9 +252,11 @@ public:
       const auto* snapshot = o.if_contains("snapshot");
       const auto* sim = o.if_contains("sim");
       const auto* used = o.if_contains("used");
-      if (symbol == nullptr || target == nullptr || limit == nullptr || snapshot == nullptr || sim == nullptr ||
-          used == nullptr || !symbol->is_string() || !target->is_string() || !limit->is_string() ||
-          !snapshot->is_string() || !sim->is_int64() || !used->is_bool()) {
+      if (
+        symbol == nullptr || target == nullptr || limit == nullptr || snapshot == nullptr || sim == nullptr ||
+        used == nullptr || !symbol->is_string() || !target->is_string() || !limit->is_string() ||
+        !snapshot->is_string() || !sim->is_int64() || !used->is_bool()
+      ) {
         return std::nullopt;
       }
       Plan plan;
@@ -270,8 +266,10 @@ public:
       plan.snapshot_ = std::string(snapshot->as_string());
       plan.sim_ = sim->as_int64();
       plan.used_ = used->as_bool();
-      if (!paper::valid_symbol(plan.symbol_) || !valid_target(plan.target_) || !valid_limit(plan.limit_) ||
-          !valid_snapshot(plan.snapshot_) || !paper::from_nanos(plan.sim_)) {
+      if (
+        !paper::valid_symbol(plan.symbol_) || !valid_target(plan.target_) || !valid_limit(plan.limit_) ||
+        !valid_snapshot(plan.snapshot_) || !paper::from_nanos(plan.sim_)
+      ) {
         return std::nullopt;
       }
       out.emplace_back(id, std::move(plan));
@@ -295,7 +293,9 @@ public:
     }
     int error = 0;
     std::string text;
-    if (!single_regular(fd.get(), error) || read_whole(fd.get(), MAX_PLAN_BYTES, text).status_ != FileRead::Status::OK) {
+    if (
+      !single_regular(fd.get(), error) || read_whole(fd.get(), MAX_PLAN_BYTES, text).status_ != FileRead::Status::OK
+    ) {
       book.damaged_ = true;
       return book;
     }
@@ -313,13 +313,17 @@ public:
    * @brief The book's file.
    * @return The path.
    */
-  std::string path() const { return dir_ + "/plans.json"; }
+  std::string path() const {
+    return dir_ + "/plans.json";
+  }
 
   /**
    * @brief Whether the file failed a check and was read as empty.
    * @return Whether it did.
    */
-  bool damaged() const noexcept { return damaged_; }
+  bool damaged() const noexcept {
+    return damaged_;
+  }
 
   /**
    * @brief A plan.
@@ -341,12 +345,16 @@ public:
    * @return Its id: `p` and ten hex digits of FNV-1a over the snapshot and the wall clock's nanoseconds.
    */
   std::string issue(Plan plan) {
-    const auto wall = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::system_clock::now().time_since_epoch()
-    ).count();
+    const auto wall =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     auto id = "p" + hex_digits(paper::fnv1a(plan.snapshot_ + std::to_string(wall)), 10);
     plans_.erase(
-      std::remove_if(plans_.begin(), plans_.end(), [&id](const auto& entry) { return entry.first == id; }),
+      std::remove_if(
+        plans_.begin(), plans_.end(),
+        [&id](const auto& entry) {
+          return entry.first == id;
+        }
+      ),
       plans_.end()
     );
     plans_.emplace_back(id, std::move(plan));
@@ -450,12 +458,11 @@ private:
    * @brief An empty book in a directory.
    * @param dir The directory.
    */
-  explicit PlanBook(std::string dir)
-  : dir_(std::move(dir)) {}
+  explicit PlanBook(std::string dir) : dir_(std::move(dir)) {}
 
   std::string dir_;
   std::vector<std::pair<std::string, Plan>> plans_;
   bool damaged_{false};
 };
 
-}  // namespace cmdatl
+} // namespace cmdatl

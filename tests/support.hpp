@@ -207,11 +207,12 @@ public:
    * @param what The test, named in the message.
    * @param seconds The time it has.
    */
-  Watchdog(std::string what, int seconds)
-  : what_(std::move(what)) {
+  Watchdog(std::string what, int seconds) : what_(std::move(what)) {
     thread_ = std::thread([this, seconds] {
       std::unique_lock<std::mutex> lock(mutex_);
-      const auto finished = [this] { return finished_; };
+      const auto finished = [this] {
+        return finished_;
+      };
       if (!done_.wait_for(lock, std::chrono::seconds(seconds), finished)) {
         std::fprintf(stderr, "watchdog: %s did not finish in %d s\n", what_.c_str(), seconds);
         std::fflush(stderr);
@@ -322,7 +323,9 @@ public:
    * @brief Where it is.
    * @return The path.
    */
-  const std::filesystem::path& path() const noexcept { return path_; }
+  const std::filesystem::path& path() const noexcept {
+    return path_;
+  }
 
 private:
   std::filesystem::path path_;
@@ -394,7 +397,9 @@ public:
    * @brief The scratch directory the script is in.
    * @return The path.
    */
-  const std::filesystem::path& dir() const noexcept { return dir_.path(); }
+  const std::filesystem::path& dir() const noexcept {
+    return dir_.path();
+  }
 
   /**
    * @brief The processes the script recorded (`pid`, `grandchild`).
@@ -520,13 +525,17 @@ public:
    * @brief cmdatl's process id.
    * @return It.
    */
-  pid_t pid() const noexcept { return pid_; }
+  pid_t pid() const noexcept {
+    return pid_;
+  }
 
   /**
    * @brief Sends cmdatl a signal.
    * @param sig The signal.
    */
-  void signal(int sig) const { ::kill(pid_, sig); }
+  void signal(int sig) const {
+    ::kill(pid_, sig);
+  }
 
   /**
    * @brief Reads one line of stdout or stderr.
@@ -551,13 +560,17 @@ public:
   }
 
   /** @brief Closes cmdatl's stdout at the reading end, as `head` does when it has read enough. */
-  void close_stdout() { out_.reset(); }
+  void close_stdout() {
+    out_.reset();
+  }
 
   /**
    * @brief Whether stdout reached its end: every writer, the spawned process and anything it left behind, closed it.
    * @return Whether it did.
    */
-  bool stdout_ended() const noexcept { return out_.get() < 0; }
+  bool stdout_ended() const noexcept {
+    return out_.get() < 0;
+  }
 
   /**
    * @brief Waits for cmdatl to end, reading both pipes meanwhile.
@@ -595,13 +608,17 @@ public:
    * @brief What cmdatl wrote on stdout and was not read by `line`.
    * @return The text.
    */
-  const std::string& out() const noexcept { return out_text_; }
+  const std::string& out() const noexcept {
+    return out_text_;
+  }
 
   /**
    * @brief What cmdatl wrote on stderr and was not read by `line`.
    * @return The text.
    */
-  const std::string& err() const noexcept { return err_text_; }
+  const std::string& err() const noexcept {
+    return err_text_;
+  }
 
 private:
   /**
@@ -634,4 +651,4 @@ private:
 };
 #endif
 
-}  // namespace support
+} // namespace support

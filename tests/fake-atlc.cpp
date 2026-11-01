@@ -84,7 +84,7 @@ void grandchild(const std::string& mode, const std::string& pids) {
   ::close(sync[0]);
 }
 
-}  // namespace
+} // namespace
 
 /**
  * @brief Runs the steps of the script for the command it was called as.
@@ -119,7 +119,9 @@ int main(int argc, char** argv) {
     const auto second = step.find(' ', first + 1);
     const auto action = step.substr(first + 1, second == std::string::npos ? std::string::npos : second - first - 1);
     const auto text = second == std::string::npos ? std::string() : step.substr(second + 1);
-    const auto number = [&text] { return std::atol(text.c_str()); };
+    const auto number = [&text] {
+      return std::atol(text.c_str());
+    };
     if (action == "out") {
       put(STDOUT_FILENO, text + "\n");
     } else if (action == "outpart") {

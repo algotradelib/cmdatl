@@ -77,7 +77,11 @@ bool none_finished(const std::string&) {
 std::filesystem::path make_run(const PaperFixture& fixture, const std::string& run) {
   const auto dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001" / run;
   std::filesystem::create_directories(dir);
-  spit(dir / "run.json", "{\"format\":1,\"run\":\"" + run + "\",\"config\":\"" + fixture.config().string() + "\",\"started\":\"2026-01-01T00:00:00Z\"}\n");
+  spit(
+    dir / "run.json",
+    "{\"format\":1,\"run\":\"" + run + "\",\"config\":\"" + fixture.config().string() +
+      "\",\"started\":\"2026-01-01T00:00:00Z\"}\n"
+  );
   return dir;
 }
 
@@ -94,7 +98,8 @@ std::string success_reply(const std::string& run, const std::string& stopped = "
 
 /** @brief A valid `exit.json` of a driver that exited. */
 std::string exited(int code) {
-  return "{\"format\":1,\"pid\":7,\"exit\":" + std::to_string(code) + ",\"signal\":null,\"spawned\":true,\"ended\":\"t\"}";
+  return "{\"format\":1,\"pid\":7,\"exit\":" + std::to_string(code) +
+    ",\"signal\":null,\"spawned\":true,\"ended\":\"t\"}";
 }
 
 /**
@@ -107,7 +112,8 @@ std::string start_line(const std::string& run, const std::filesystem::path& lock
   struct stat info{};
   REQUIRE(::stat(lock.c_str(), &info) == 0);
   return "{\"event\":\"start\",\"run\":\"" + run + "\",\"at\":\"2024-01-02T09:00:00+09:00\",\"lock\":{\"device\":" +
-    std::to_string(static_cast<long long>(info.st_dev)) + ",\"inode\":" + std::to_string(static_cast<long long>(info.st_ino)) + "}}\n";
+    std::to_string(static_cast<long long>(info.st_dev)) +
+    ",\"inode\":" + std::to_string(static_cast<long long>(info.st_ino)) + "}}\n";
 }
 
 /** @brief A run held by this test: its lock taken, its pid this process's own (alive). */
@@ -125,7 +131,15 @@ struct LiveRun {
    */
   LiveRun(const PaperFixture& fixture, const std::string& run, bool probeable = true) : dir_(make_run(fixture, run)) {
     lock_ = std::make_unique<cmdatl::OwnerLock>(dir_.string());
-    REQUIRE(lock_->acquire(std::chrono::milliseconds(0), [] { return false; }, [](const std::string&) {}) == cmdatl::OwnerLock::Outcome::HELD);
+    REQUIRE(
+      lock_->acquire(
+        std::chrono::milliseconds(0),
+        [] {
+          return false;
+        },
+        [](const std::string&) {}
+      ) == cmdatl::OwnerLock::Outcome::HELD
+    );
     spit(dir_ / "pid", std::to_string(::getpid()) + "\n");
     if (probeable) {
       spit(dir_ / "events.jsonl", start_line(run, dir_ / "lock"));
@@ -143,11 +157,15 @@ public:
    * @brief Sets it.
    * @param wait The wait.
    */
-  explicit ShortWait(std::chrono::milliseconds wait) { runs::stop_wait_hook() = wait; }
+  explicit ShortWait(std::chrono::milliseconds wait) {
+    runs::stop_wait_hook() = wait;
+  }
   ShortWait(const ShortWait&) = delete;
   ShortWait& operator=(const ShortWait&) = delete;
   /** @brief Restores 30 s. */
-  ~ShortWait() { runs::stop_wait_hook() = std::chrono::milliseconds(30000); }
+  ~ShortWait() {
+    runs::stop_wait_hook() = std::chrono::milliseconds(30000);
+  }
 };
 
 /**
@@ -164,7 +182,7 @@ std::thread write_later(std::filesystem::path path, std::string text, std::chron
   });
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("the stop file's rewrite keeps every other run's line, terminated, and writes this run's once") {
   // Another run's unterminated last line: kept, terminated, still read by the driver's parser.
@@ -186,18 +204,23 @@ TEST_CASE("the stop file's rewrite keeps every other run's line, terminated, and
   CHECK(*out.text_ == "quiesce " + RUN_B + " x\nquiesce " + RUN_B + "\n");
   // A malformed line naming a path is kept byte for byte and never looked up.
   std::vector<std::string> asked;
-  out = runs::rewrite_stop("quiesce ../../etc\nwithdraw " + RUN_A + "\n", RUN_B, StopIntent::QUIESCE, [&asked](const std::string& run) {
-    asked.push_back(run);
-    return false;
-  });
+  out = runs::rewrite_stop(
+    "quiesce ../../etc\nwithdraw " + RUN_A + "\n", RUN_B, StopIntent::QUIESCE, [&asked](const std::string& run) {
+      asked.push_back(run);
+      return false;
+    }
+  );
   CHECK(*out.text_ == "quiesce ../../etc\nwithdraw " + RUN_A + "\nquiesce " + RUN_B + "\n");
   CHECK(asked == std::vector<std::string>{RUN_A});
   // A's unread withdraw is kept when B writes, and on B's retry.
-  out = runs::rewrite_stop("withdraw " + RUN_A + "\nquiesce " + RUN_B + "\n", RUN_B, StopIntent::WITHDRAW, none_finished);
+  out =
+    runs::rewrite_stop("withdraw " + RUN_A + "\nquiesce " + RUN_B + "\n", RUN_B, StopIntent::WITHDRAW, none_finished);
   CHECK(*out.text_ == "withdraw " + RUN_A + "\nwithdraw " + RUN_B + "\n");
   CHECK(out.kept_runs_ == std::vector<std::string>{RUN_A});
   // A's line goes once A is finished.
-  out = runs::rewrite_stop("withdraw " + RUN_A + "\n", RUN_B, StopIntent::QUIESCE, [](const std::string& run) { return run == RUN_A; });
+  out = runs::rewrite_stop("withdraw " + RUN_A + "\n", RUN_B, StopIntent::QUIESCE, [](const std::string& run) {
+    return run == RUN_A;
+  });
   CHECK(*out.text_ == "quiesce " + RUN_B + "\n");
   // A weaker request over a stronger: nothing to write.
   out = runs::rewrite_stop("withdraw " + RUN_B + "\n", RUN_B, StopIntent::QUIESCE, none_finished);
@@ -222,7 +245,9 @@ TEST_CASE("the event cursor gives each complete line once, holds a split line, a
   const auto path = dir.path() / "events.jsonl";
   runs::EventCursor cursor(path);
   std::vector<std::string> lines;
-  const auto take = [&lines](const std::string& line) { lines.push_back(line); };
+  const auto take = [&lines](const std::string& line) {
+    lines.push_back(line);
+  };
   CHECK(cursor.read(take) == runs::CursorRead::MISSING);
   spit(path, "{\"event\":\"start\"}\n{\"event\":\"pla");
   CHECK(cursor.read(take) == runs::CursorRead::OK);
@@ -268,7 +293,10 @@ TEST_CASE("run log without --follow: every event but heartbeats and the last hea
   const PaperFixture fixture;
   const auto dir = make_run(fixture, RUN_A);
   // No log, and a run that never traded: empty, with its state.
-  spit(dir / "reply.json", "{\"run\":\"" + RUN_A + "\",\"exit\":3,\"result\":\"refused\",\"error\":{\"code\":\"refused.not_armed\"}}\n");
+  spit(
+    dir / "reply.json",
+    "{\"run\":\"" + RUN_A + "\",\"exit\":3,\"result\":\"refused\",\"error\":{\"code\":\"refused.not_armed\"}}\n"
+  );
   spit(dir / "exit.json", exited(3));
   auto ran = fixture.json({"run", "log", RUN_A});
   CHECK(ran.exit_ == 0);
@@ -314,12 +342,17 @@ TEST_CASE("run log without --follow: every event but heartbeats and the last hea
   CHECK(filled == 10);
 }
 
-TEST_CASE("run log --follow finishes on the end line, or on a final state with the writer gone, and says when it is incomplete") {
+TEST_CASE(
+  "run log --follow finishes on the end line, or on a final state with the writer gone, and says when it is incomplete"
+) {
   const PaperFixture fixture;
   {
     // Refused before trading: a reply, exit.json, no log.
     const auto dir = make_run(fixture, RUN_A);
-    spit(dir / "reply.json", "{\"run\":\"" + RUN_A + "\",\"exit\":3,\"result\":\"refused\",\"error\":{\"code\":\"refused.not_armed\"}}\n");
+    spit(
+      dir / "reply.json",
+      "{\"run\":\"" + RUN_A + "\",\"exit\":3,\"result\":\"refused\",\"error\":{\"code\":\"refused.not_armed\"}}\n"
+    );
     spit(dir / "exit.json", exited(3));
     const auto ran = fixture.json({"run", "log", RUN_A, "--follow"});
     CHECK(ran.exit_ == 0);
@@ -340,7 +373,10 @@ TEST_CASE("run log --follow finishes on the end line, or on a final state with t
     const std::string run = "r00000000000c";
     const auto dir = make_run(fixture, run);
     spit(dir / "lock", "");
-    spit(dir / "events.jsonl", start_line(run, dir / "lock") + "{\"event\":\"placed\",\"symbol\":\"005930\"}\n{\"event\":\"fil");
+    spit(
+      dir / "events.jsonl",
+      start_line(run, dir / "lock") + "{\"event\":\"placed\",\"symbol\":\"005930\"}\n{\"event\":\"fil"
+    );
     spit(dir / "reply.json", success_reply(run));
     spit(dir / "exit.json", exited(0));
     const auto ran = fixture.json({"run", "log", run, "--follow"});
@@ -356,9 +392,12 @@ TEST_CASE("run log --follow finishes on the end line, or on a final state with t
     const std::string run = "r00000000000d";
     const auto dir = make_run(fixture, run);
     spit(dir / "lock", "");
-    spit(dir / "events.jsonl",
-         start_line(run, dir / "lock") + "{\"event\":\"placed\",\"symbol\":\"005930\"}\n{\"event\":\"placed\",\"symbol\":\"000660\"}\n"
-           "{\"event\":\"clock\"}\n{\"event\":\"end\"}\n");
+    spit(
+      dir / "events.jsonl",
+      start_line(run, dir / "lock") +
+        "{\"event\":\"placed\",\"symbol\":\"005930\"}\n{\"event\":\"placed\",\"symbol\":\"000660\"}\n"
+        "{\"event\":\"clock\"}\n{\"event\":\"end\"}\n"
+    );
     spit(dir / "reply.json", success_reply(run));
     spit(dir / "exit.json", exited(0));
     const auto ran = fixture.json({"run", "log", run, "--follow", "--symbol", "000660"});
@@ -372,7 +411,9 @@ TEST_CASE("run log --follow finishes on the end line, or on a final state with t
   }
 }
 
-TEST_CASE("run log --follow keeps reading a live driver behind an unprobeable lock until interrupted, and picks up appended lines") {
+TEST_CASE(
+  "run log --follow keeps reading a live driver behind an unprobeable lock until interrupted, and picks up appended lines"
+) {
   const PaperFixture fixture;
   const LiveRun live(fixture, RUN_A, false);
   std::thread appender([&live] {
@@ -443,7 +484,9 @@ TEST_CASE("run stop answers success only on evidence that trading ended") {
   }
 }
 
-TEST_CASE("run stop: an acknowledgement then the reply is stopped, a retried stop counts the earlier acknowledgement, an end without one says so") {
+TEST_CASE(
+  "run stop: an acknowledgement then the reply is stopped, a retried stop counts the earlier acknowledgement, an end without one says so"
+) {
   const ShortWait wait(std::chrono::milliseconds(3000));
   const PaperFixture fixture;
   {
@@ -537,7 +580,11 @@ TEST_CASE("run stop refuses a stop file that is not a regular file, a full one, 
   // A run that recorded another operator file.
   const std::string other = "r00000000000e";
   const auto dir = make_run(fixture, other);
-  spit(dir / "run.json", "{\"format\":1,\"run\":\"" + other + "\",\"config\":\"/somewhere/else.toml\",\"started\":\"2026-01-01T00:00:00Z\"}\n");
+  spit(
+    dir / "run.json",
+    "{\"format\":1,\"run\":\"" + other +
+      "\",\"config\":\"/somewhere/else.toml\",\"started\":\"2026-01-01T00:00:00Z\"}\n"
+  );
   const auto elsewhere = fixture.json({"run", "stop", other});
   CHECK(elsewhere.exit_ == 2);
   CHECK(code_of(elsewhere.out_) == "usage.bad_value");
@@ -564,7 +611,9 @@ TEST_CASE("the stop file's writer lock: busy past its deadline, and replaced whi
   CHECK(outcome == static_cast<int>(runs::StopLock::Outcome::FAILED));
 }
 
-TEST_CASE("run log --follow finishes a killed or crashed driver's run as unknown and incomplete, on evidence the driver is gone") {
+TEST_CASE(
+  "run log --follow finishes a killed or crashed driver's run as unknown and incomplete, on evidence the driver is gone"
+) {
   const PaperFixture fixture;
   {
     // Killed: a start line and events, no end, a valid exit.json recording the signal, no reply.
@@ -584,7 +633,15 @@ TEST_CASE("run log --follow finishes a killed or crashed driver's run as unknown
     // A damaged exit.json, the lock still held by another process, and the driver's pid gone.
     const auto dir = make_run(fixture, RUN_B);
     cmdatl::OwnerLock lock(dir.string());
-    REQUIRE(lock.acquire(std::chrono::milliseconds(0), [] { return false; }, [](const std::string&) {}) == cmdatl::OwnerLock::Outcome::HELD);
+    REQUIRE(
+      lock.acquire(
+        std::chrono::milliseconds(0),
+        [] {
+          return false;
+        },
+        [](const std::string&) {}
+      ) == cmdatl::OwnerLock::Outcome::HELD
+    );
     spit(dir / "events.jsonl", start_line(RUN_B, dir / "lock"));
     spit(dir / "pid", std::to_string(gone_pid()) + "\n");
     spit(dir / "exit.json", "{\"format\":1}");
@@ -612,7 +669,9 @@ TEST_CASE("run stop and Ctrl-C: before publication 130 with nothing written, aft
     const LiveRun live(fixture, RUN_B);
     std::thread interrupter([&stop_file] {
       const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-      while (slurp_if(stop_file).find("quiesce " + RUN_B) == std::string::npos && std::chrono::steady_clock::now() < until) {
+      while (
+        slurp_if(stop_file).find("quiesce " + RUN_B) == std::string::npos && std::chrono::steady_clock::now() < until
+      ) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
       }
       cmdatl::interruption = 1;
@@ -641,8 +700,10 @@ TEST_CASE("run stop answers at once when the driver goes during its wait without
   const ShortWait wait(std::chrono::milliseconds(10000));
   const PaperFixture fixture;
   const LiveRun live(fixture, RUN_A);
-  auto writer = write_later(live.dir_ / "exit.json", "{\"format\":1,\"pid\":7,\"exit\":null,\"signal\":9,\"spawned\":true,\"ended\":\"t\"}",
-                            std::chrono::milliseconds(300));
+  auto writer = write_later(
+    live.dir_ / "exit.json", "{\"format\":1,\"pid\":7,\"exit\":null,\"signal\":9,\"spawned\":true,\"ended\":\"t\"}",
+    std::chrono::milliseconds(300)
+  );
   const auto started = std::chrono::steady_clock::now();
   const auto ran = fixture.json({"run", "stop", RUN_A});
   writer.join();
@@ -652,7 +713,9 @@ TEST_CASE("run stop answers at once when the driver goes during its wait without
 }
 
 TEST_CASE("a finished run's hand-written line is retired whatever whitespace splits its words") {
-  const auto finished = [](const std::string& run) { return run == RUN_A; };
+  const auto finished = [](const std::string& run) {
+    return run == RUN_A;
+  };
   auto out = runs::rewrite_stop("withdraw " + RUN_A + "\r\n", RUN_B, StopIntent::QUIESCE, finished);
   CHECK(*out.text_ == "quiesce " + RUN_B + "\n");
   out = runs::rewrite_stop("withdraw\t" + RUN_A + "\n", RUN_B, StopIntent::QUIESCE, finished);
@@ -674,7 +737,7 @@ namespace {
 std::string dip_csv(int days) {
   std::string out = "symbol,date,open,high,low,close,volume\n";
   long close = 78000;
-  long day = 19724;  // 2024-01-02
+  long day = 19724; // 2024-01-02
   for (int k = 0, made = 0; made < days; ++day) {
     if ((day + 3) % 7 >= 5) {
       continue;
@@ -698,8 +761,10 @@ std::string dip_csv(int days) {
     const long m = mp < 10 ? mp + 3 : mp - 9;
     const long y = yoe + era * 400 + (m <= 2 ? 1 : 0);
     char row[160];
-    std::snprintf(row, sizeof row, "005930,%04ld-%02ld-%02ld,%ld,%ld,%ld,%ld,100000\n", y, m, d, open, std::max(open, close) + 300,
-                  std::min(open, close) - 300, close);
+    std::snprintf(
+      row, sizeof row, "005930,%04ld-%02ld-%02ld,%ld,%ld,%ld,%ld,100000\n", y, m, d, open, std::max(open, close) + 300,
+      std::min(open, close) - 300, close
+    );
     out += row;
     ++k;
     ++made;
@@ -713,14 +778,18 @@ struct Shared {
   ScratchDir dir_;
 
   Shared() {
-    spit(dir_.path() / "dip.atls", slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "templates" / "mean-reversion.atls"));
+    spit(
+      dir_.path() / "dip.atls", slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "templates" / "mean-reversion.atls")
+    );
     spit(dir_.path() / "short.csv", dip_csv(120));
     spit(dir_.path() / "mid.csv", dip_csv(250));
     for (const auto* name : {"short", "mid"}) {
-      spit(dir_.path() / (std::string(name) + ".toml"),
-           "strategy = \"dip.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"" + std::string(name) +
-             ".csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n"
-             "[replay]\ncash = 100000000\ncommission = 0.0005\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n");
+      spit(
+        dir_.path() / (std::string(name) + ".toml"),
+        "strategy = \"dip.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"" + std::string(name) +
+          ".csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n"
+          "[replay]\ncash = 100000000\ncommission = 0.0005\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n"
+      );
     }
     std::filesystem::create_directories(dir_.path() / "cache");
   }
@@ -730,13 +799,17 @@ struct Shared {
    * @param name `short` or `mid`.
    * @return The path.
    */
-  std::string spec(const std::string& name) const { return (dir_.path() / (name + ".toml")).string(); }
+  std::string spec(const std::string& name) const {
+    return (dir_.path() / (name + ".toml")).string();
+  }
 
   /**
    * @brief The barrier file's path.
    * @return The path.
    */
-  std::filesystem::path barrier() const { return dir_.path() / "barrier"; }
+  std::filesystem::path barrier() const {
+    return dir_.path() / "barrier";
+  }
 };
 
 /**
@@ -751,7 +824,8 @@ Shared& shared() {
 /** @brief The operator's file: 005930 allowed with room for every order. */
 ConfigParts operator_parts() {
   ConfigParts parts;
-  parts.limits_ = "symbols = [\"005930\"]\nposition = { \"005930\" = 100000 }\norder_value = 100000000000\ndaily_orders = 1000\n";
+  parts.limits_ =
+    "symbols = [\"005930\"]\nposition = { \"005930\" = 100000 }\norder_value = 100000000000\ndaily_orders = 1000\n";
   return parts;
 }
 
@@ -831,11 +905,14 @@ std::string start_held(const PaperFixture& fixture, const std::string& spec) {
  */
 json::object final_status(const PaperFixture& fixture, const std::string& run) {
   json::object reply;
-  REQUIRE(eventually([&] {
-    reply = reply_of(fixture.json({"run", "status", run}).out_);
-    const std::string state(reply.at("state").as_string());
-    return state != "starting" && state != "running";
-  }, 120));
+  REQUIRE(eventually(
+    [&] {
+      reply = reply_of(fixture.json({"run", "status", run}).out_);
+      const std::string state(reply.at("state").as_string());
+      return state != "starting" && state != "running";
+    },
+    120
+  ));
   return reply;
 }
 
@@ -849,21 +926,25 @@ std::filesystem::path dir_of(const PaperFixture& fixture, const std::string& run
   return fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001" / run;
 }
 
-}  // namespace
+} // namespace
 
 TEST_CASE("run stop is acknowledged and the run ends; --withdraw cancels a resting limit", "[acceptance][runs]") {
   const auto equip = equipment();
   if (!equip) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
   }
-  const auto stop_file = [](const PaperFixture& fixture) { return fixture.dir() / "paper.stop"; };
+  const auto stop_file = [](const PaperFixture& fixture) {
+    return fixture.dir() / "paper.stop";
+  };
   {
     const PaperFixture fixture(operator_parts());
     const Equipped equipped(equip->first, equip->second);
     fixture.arm();
     const auto run = start_held(fixture, shared().spec("mid"));
     Spawned stopper({"run", "stop", run, "--json"});
-    REQUIRE(eventually([&] { return slurp(stop_file(fixture)).find("quiesce " + run) != std::string::npos; }));
+    REQUIRE(eventually([&] {
+      return slurp(stop_file(fixture)).find("quiesce " + run) != std::string::npos;
+    }));
     std::filesystem::remove(shared().barrier());
     const int status = stopper.wait(60);
     INFO(stopper.out());
@@ -880,9 +961,13 @@ TEST_CASE("run stop is acknowledged and the run ends; --withdraw cancels a resti
     fixture.arm();
     const auto run = start_held(fixture, shared().spec("mid"));
     // Held at the step after the first placement, while the limit rests.
-    REQUIRE(eventually([&] { return slurp(dir_of(fixture, run) / "events.jsonl").find("\"event\":\"placed\"") != std::string::npos; }));
+    REQUIRE(eventually([&] {
+      return slurp(dir_of(fixture, run) / "events.jsonl").find("\"event\":\"placed\"") != std::string::npos;
+    }));
     Spawned stopper({"run", "stop", run, "--withdraw", "--json"});
-    REQUIRE(eventually([&] { return slurp(stop_file(fixture)).find("withdraw " + run) != std::string::npos; }));
+    REQUIRE(eventually([&] {
+      return slurp(stop_file(fixture)).find("withdraw " + run) != std::string::npos;
+    }));
     std::filesystem::remove(shared().barrier());
     const int status = stopper.wait(60);
     INFO(stopper.out());
@@ -907,9 +992,13 @@ TEST_CASE("two runs of one operator file are each stopped, neither erasing the o
   const auto b = start_held(fixture, shared().spec("mid"));
   const auto stop_file = fixture.dir() / "paper.stop";
   Spawned stop_a({"run", "stop", a, "--withdraw", "--json"});
-  REQUIRE(eventually([&] { return slurp(stop_file).find("withdraw " + a) != std::string::npos; }));
+  REQUIRE(eventually([&] {
+    return slurp(stop_file).find("withdraw " + a) != std::string::npos;
+  }));
   Spawned stop_b({"run", "stop", b, "--json"});
-  REQUIRE(eventually([&] { return slurp(stop_file).find("quiesce " + b) != std::string::npos; }));
+  REQUIRE(eventually([&] {
+    return slurp(stop_file).find("quiesce " + b) != std::string::npos;
+  }));
   const auto both = slurp(stop_file);
   CHECK(both.find("withdraw " + a + "\n") != std::string::npos);
   CHECK(both.find("quiesce " + b + "\n") != std::string::npos);
@@ -923,7 +1012,10 @@ TEST_CASE("two runs of one operator file are each stopped, neither erasing the o
   }
 }
 
-TEST_CASE("run stop of a stopped driver ends unknown, of an ended run writes nothing, and from another operator file is refused", "[acceptance][runs]") {
+TEST_CASE(
+  "run stop of a stopped driver ends unknown, of an ended run writes nothing, and from another operator file is refused",
+  "[acceptance][runs]"
+) {
   const auto equip = equipment();
   if (!equip) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
@@ -970,7 +1062,10 @@ TEST_CASE("run stop of a stopped driver ends unknown, of an ended run writes not
   CHECK(final_status(fixture, live).at("state").as_string() == "ended");
 }
 
-TEST_CASE("run log --follow prints each event once across a run's end, and Ctrl-C stops the watching, never the run", "[acceptance][runs]") {
+TEST_CASE(
+  "run log --follow prints each event once across a run's end, and Ctrl-C stops the watching, never the run",
+  "[acceptance][runs]"
+) {
   const auto equip = equipment();
   if (!equip) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");

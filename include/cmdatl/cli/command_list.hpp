@@ -476,4 +476,4 @@ inline std::vector<Command> command_list() {
   return list;
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl

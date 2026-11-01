@@ -309,13 +309,15 @@ inline json::object schema_entry(const Command& command) {
   entry["args"] = std::move(args);
   json::array options;
   for (const auto& option : command.options_) {
-    options.push_back(json::object{
-      {"name", "--" + option.name_},
-      {"short", option.short_name_.empty() ? json::value(nullptr) : json::value("-" + option.short_name_)},
-      {"value", option.value_name_},
-      {"required", option.required_},
-      {"repeated", option.repeated_},
-    });
+    options.push_back(
+      json::object{
+        {"name", "--" + option.name_},
+        {"short", option.short_name_.empty() ? json::value(nullptr) : json::value("-" + option.short_name_)},
+        {"value", option.value_name_},
+        {"required", option.required_},
+        {"repeated", option.repeated_},
+      }
+    );
   }
   entry["options"] = std::move(options);
   json::object returns;
@@ -351,12 +353,14 @@ inline Reply schema_reply(const Table& table, const std::vector<std::string>& wo
   if (words.size() == 1 && words.front() == "errors") {
     json::array errors;
     for (const auto& error : error_catalog()) {
-      errors.push_back(json::object{
-        {"code", error.code_},
-        {"exit", static_cast<int>(error.exit_)},
-        {"retry", error.retry_},
-        {"next", error.next_},
-      });
+      errors.push_back(
+        json::object{
+          {"code", error.code_},
+          {"exit", static_cast<int>(error.exit_)},
+          {"retry", error.retry_},
+          {"next", error.next_},
+        }
+      );
     }
     reply.body_["errors"] = std::move(errors);
     return reply;
@@ -371,9 +375,7 @@ inline Reply schema_reply(const Table& table, const std::vector<std::string>& wo
   if (selected.empty()) {
     const auto suggestions = table.suggest(selector);
     return error_reply(
-      Exit::USAGE,
-      "usage.unknown_command",
-      "no command " + join(selector),
+      Exit::USAGE, "usage.unknown_command", "no command " + join(selector),
       suggestions.empty() ? "cmdatl schema lists every command" : "did you mean: " + join(suggestions, ", ")
     );
   }
@@ -412,7 +414,9 @@ inline std::vector<std::string> check_table(const Table& table) {
     const auto name = join(command.path_);
     std::vector<std::vector<std::string>> all{command.path_};
     all.insert(all.end(), command.aliases_.begin(), command.aliases_.end());
-    const auto empty_word = [](const std::string& w) { return w.empty(); };
+    const auto empty_word = [](const std::string& w) {
+      return w.empty();
+    };
     for (const auto& path : all) {
       if (path.empty() || std::any_of(path.begin(), path.end(), empty_word)) {
         problems.push_back(name + ": an empty path or word");
@@ -452,7 +456,9 @@ inline std::vector<std::string> check_table(const Table& table) {
     if ((runs_on_account || runs_on_config) && command.env_ != "account") {
       problems.push_back(name + ": runs on the account but its replies do not carry the account's environment");
     }
-    if (command.mutates_ && std::find(command.exits_.begin(), command.exits_.end(), Exit::UNKNOWN) == command.exits_.end()) {
+    if (
+      command.mutates_ && std::find(command.exits_.begin(), command.exits_.end(), Exit::UNKNOWN) == command.exits_.end()
+    ) {
       problems.push_back(name + ": changes the account but cannot answer unknown (4)");
     }
     std::set<std::string> keys;
@@ -488,8 +494,10 @@ inline std::vector<std::string> check_table(const Table& table) {
     }
     if (command.may_send_) {
       const auto& exits = command.exits_;
-      if (std::find(exits.begin(), exits.end(), Exit::REFUSED) == exits.end() ||
-          std::find(exits.begin(), exits.end(), Exit::UNKNOWN) == exits.end()) {
+      if (
+        std::find(exits.begin(), exits.end(), Exit::REFUSED) == exits.end() ||
+        std::find(exits.begin(), exits.end(), Exit::UNKNOWN) == exits.end()
+      ) {
         problems.push_back(name + ": may send but cannot answer refused (3) or unknown (4)");
       }
     }
@@ -497,4 +505,4 @@ inline std::vector<std::string> check_table(const Table& table) {
   return problems;
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl

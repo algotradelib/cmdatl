@@ -33,11 +33,8 @@ namespace cmdatl {
  */
 inline Reply interrupted_reply() {
   return error_reply(
-    Exit::INTERRUPTED,
-    "interrupted",
-    "interrupted by a signal: atlc was stopped and nothing more was run",
-    "run the command again",
-    true
+    Exit::INTERRUPTED, "interrupted", "interrupted by a signal: atlc was stopped and nothing more was run",
+    "run the command again", true
   );
 }
 
@@ -63,7 +60,8 @@ inline std::string ending_of(const ChildResult& result) {
 #else
     const char* name = ::strsignal(result.code_);
 #endif
-    return "atlc was ended by signal " + std::to_string(result.code_) + (name == nullptr ? "" : std::string(" (") + name + ")");
+    return "atlc was ended by signal " + std::to_string(result.code_) +
+      (name == nullptr ? "" : std::string(" (") + name + ")");
   }
   return "atlc exited with " + std::to_string(result.code_);
 }
@@ -78,11 +76,7 @@ inline std::string ending_of(const ChildResult& result) {
  * @return The reply.
  */
 inline Reply atlc_failure(
-  Exit exit,
-  const std::string& code,
-  const std::string& message,
-  const ChildResult& result,
-  const std::string& next
+  Exit exit, const std::string& code, const std::string& message, const ChildResult& result, const std::string& next
 ) {
   auto reply = error_reply(exit, code, message, next);
   json::array lines;
@@ -226,8 +220,7 @@ inline std::optional<Reply> spec_failure(const ChildResult& result) {
     if ((result.code_ == 1 || result.code_ == 2) && !ok) {
       const bool program = result.code_ == 1;
       auto reply = error_reply(
-        program ? Exit::PROGRAM : Exit::USAGE,
-        program ? "program.invalid" : "spec.invalid",
+        program ? Exit::PROGRAM : Exit::USAGE, program ? "program.invalid" : "spec.invalid",
         first_error(errors, program ? "the program has errors" : "the run spec has errors"),
         program ? "fix the program; atlc check FILE.atls checks it alone" : "fix the run spec"
       );
@@ -240,14 +233,12 @@ inline std::optional<Reply> spec_failure(const ChildResult& result) {
   });
   if (!result.signaled_ && result.code_ == 2 && result.stdout_.find('{') == std::string::npos && usage) {
     return atlc_failure(
-      Exit::FAILED,
-      "atlc.unsupported",
-      "this atlc has no atlc spec: it is older than the atlc cmdatl reads",
-      result,
+      Exit::FAILED, "atlc.unsupported", "this atlc has no atlc spec: it is older than the atlc cmdatl reads", result,
       "install a newer atlc"
     );
   }
-  const auto why = envelope ? ending_of(result) + " with a contradictory reply" :
+  const auto why = envelope ?
+    ending_of(result) + " with a contradictory reply" :
     ending_of(result) + " without a valid atlc spec --json reply";
   return atlc_failure(Exit::FAILED, "atlc.failed", "atlc spec: " + why, result, "check atlc with cmdatl env");
 }
@@ -264,8 +255,7 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   (void)invocation;
   (void)output;
   return error_reply(
-    Exit::FAILED,
-    "unavailable.platform",
+    Exit::FAILED, "unavailable.platform",
     "strategy backtest runs atlc as a child process, which this version does on macOS and Linux only",
     "run atlc run SPEC directly"
   );
@@ -294,7 +284,8 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   }
   const std::string install = "install atlc, or name it with CMDATL_ATLC; cmdatl env shows what was found";
   if (atlc.path_.empty()) {
-    const auto where = atlc.requested_.empty() ? std::string("atlc was not found on PATH") :
+    const auto where = atlc.requested_.empty() ?
+      std::string("atlc was not found on PATH") :
       "CMDATL_ATLC names " + atlc.requested_ + ", which was not found on PATH";
     return error_reply(Exit::FAILED, "atlc.missing", where, install);
   }
@@ -304,15 +295,15 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   }
   if (!at_least(atlc.version_, MINIMUM_ATLC)) {
     return error_reply(
-      Exit::FAILED,
-      "atlc.unsupported",
-      "atlc " + atlc.version_ + " is not a version cmdatl reads (at least " + MINIMUM_ATLC + ")",
-      "install a newer atlc"
+      Exit::FAILED, "atlc.unsupported",
+      "atlc " + atlc.version_ + " is not a version cmdatl reads (at least " + MINIMUM_ATLC + ")", "install a newer atlc"
     );
   }
   // Absolute, so atlc never reads the path as an option and the reply names the file the report came from.
   const auto spec = std::filesystem::absolute(spec_given).string();
-  const auto forward = [&output](const std::string& line) { output.progress(line); };
+  const auto forward = [&output](const std::string& line) {
+    output.progress(line);
+  };
   std::vector<std::string> argv{atlc.path_, "spec", spec};
   for (const auto& param : params) {
     argv.push_back("-P");
@@ -348,23 +339,21 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     case 0:
       break;
     case 1:
-      return atlc_failure(Exit::PROGRAM, "program.invalid", stderr_text(ran, "the program has errors"), ran, "fix the program");
+      return atlc_failure(
+        Exit::PROGRAM, "program.invalid", stderr_text(ran, "the program has errors"), ran, "fix the program"
+      );
     case 2:
-      return atlc_failure(Exit::USAGE, "spec.invalid", stderr_text(ran, "the run spec has errors"), ran, "fix the run spec");
+      return atlc_failure(
+        Exit::USAGE, "spec.invalid", stderr_text(ran, "the run spec has errors"), ran, "fix the run spec"
+      );
     case 3:
       return atlc_failure(
-        Exit::FAILED,
-        "build.failed",
-        "atlc could not build the strategy: " + last_line(ran),
-        ran,
+        Exit::FAILED, "build.failed", "atlc could not build the strategy: " + last_line(ran), ran,
         "read atlc's build log named in stderr"
       );
     case 4:
       return atlc_failure(
-        Exit::FAILED,
-        "replay.failed",
-        "the replay failed: " + last_line(ran),
-        ran,
+        Exit::FAILED, "replay.failed", "the replay failed: " + last_line(ran), ran,
         "check the data and the parameters' bounds"
       );
     default:
@@ -420,14 +409,18 @@ inline std::string camel_case(const std::string& name) {
  * @return The reason, or nothing when it can.
  */
 inline std::optional<std::string> name_problem(const std::string& name) {
-  const auto letter = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
+  const auto letter = [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+  };
   if (name.empty() || name.size() > MAX_NAME) {
     return "a name has 1 to " + std::to_string(MAX_NAME) + " characters";
   }
   if (!letter(name.front())) {
     return "a name starts with an ASCII letter";
   }
-  const auto allowed = [&letter](char c) { return letter(c) || (c >= '0' && c <= '9') || c == '-' || c == '_'; };
+  const auto allowed = [&letter](char c) {
+    return letter(c) || (c >= '0' && c <= '9') || c == '-' || c == '_';
+  };
   if (!std::all_of(name.begin(), name.end(), allowed)) {
     return "a name holds ASCII letters, digits, - and _ only";
   }
@@ -467,16 +460,13 @@ inline std::string shell_quoted(const std::string& word) {
 inline Reply exists_reply(const std::filesystem::path& path, bool force) {
   if (force) {
     return error_reply(
-      Exit::FAILED,
-      "strategy.exists",
+      Exit::FAILED, "strategy.exists",
       path.string() + " is a directory, a link or a special file; --force replaces regular files only",
       "choose another NAME or --dir"
     );
   }
   return error_reply(
-    Exit::FAILED,
-    "strategy.exists",
-    path.string() + " already exists; nothing was written",
+    Exit::FAILED, "strategy.exists", path.string() + " already exists; nothing was written",
     "choose another NAME or --dir, or add --force to replace the files"
   );
 }
@@ -505,11 +495,7 @@ inline Reply unwritable_reply(const std::filesystem::path& path, int error) {
  * @return The refusal, or nothing when it is open.
  */
 inline std::optional<Reply> open_destination(
-  const std::filesystem::path& path,
-  bool force,
-  ScopedFd& fd,
-  bool& created,
-  struct stat& info
+  const std::filesystem::path& path, bool force, ScopedFd& fd, bool& created, struct stat& info
 ) {
   const int flags = O_WRONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK;
   fd.reset(::open(path.c_str(), flags | O_CREAT | O_EXCL, 0666));
@@ -577,11 +563,8 @@ inline int write_all(int fd, const std::string& text) noexcept {
  * @return The refusal, or nothing when both were written.
  */
 inline std::optional<Reply> write_pair(
-  const std::filesystem::path& program,
-  const std::string& program_text,
-  const std::filesystem::path& spec,
-  const std::string& spec_text,
-  bool force
+  const std::filesystem::path& program, const std::string& program_text, const std::filesystem::path& spec,
+  const std::string& spec_text, bool force
 ) {
 #if defined(_WIN32)
   // No exclusive creation here: the paths are checked, then written (Windows is not a supported platform yet).
@@ -631,9 +614,7 @@ inline std::optional<Reply> write_pair(
   if (program_info.st_dev == spec_info.st_dev && program_info.st_ino == spec_info.st_ino) {
     discard();
     return error_reply(
-      Exit::FAILED,
-      "strategy.exists",
-      program.string() + " and " + spec.string() + " are one file",
+      Exit::FAILED, "strategy.exists", program.string() + " and " + spec.string() + " are one file",
       "remove one of the two names, or choose another NAME"
     );
   }
@@ -719,4 +700,4 @@ inline Reply new_reply(const Invocation& invocation) {
   return reply;
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl

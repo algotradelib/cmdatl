@@ -108,10 +108,12 @@ struct ReadContents {
    * @brief The contents, the same each call.
    * @return A copy of the one read.
    */
-  algotradelib::runner::JournalReplay replay() const { return *replay_; }
+  algotradelib::runner::JournalReplay replay() const {
+    return *replay_;
+  }
 };
 
-}  // namespace account_detail
+} // namespace account_detail
 
 /**
  * @brief Checks a journal's ownership against the account: readable, a header of this scope, and every entry carrying
@@ -120,7 +122,9 @@ struct ReadContents {
  * @param scope The account's scope.
  * @param view Where `owned_`, `scope_found_` and `detail_` go.
  */
-inline void check_ownership(const algotradelib::runner::JournalReplay& replay, const std::string& scope, JournalView& view) {
+inline void check_ownership(
+  const algotradelib::runner::JournalReplay& replay, const std::string& scope, JournalView& view
+) {
   view.scope_found_ = replay.scope_;
   if (!replay.readable()) {
     view.detail_ = replay.detail_.empty() ? "the journal cannot be read" : replay.detail_;
@@ -156,10 +160,7 @@ inline void check_ownership(const algotradelib::runner::JournalReplay& replay, c
  */
 template <typename Session>
 JournalView journal_view(
-  Session& session,
-  const algotradelib::runner::JournalReplay& replay,
-  const std::string& scope,
-  std::int64_t today
+  Session& session, const algotradelib::runner::JournalReplay& replay, const std::string& scope, std::int64_t today
 ) {
   namespace atl = algotradelib;
   JournalView view;
@@ -168,18 +169,19 @@ JournalView journal_view(
     return view;
   }
   using Executor = atl::runner::JournalingExecutor<atl::live::SessionExecutor<Session>, atl::runner::MemoryJournal>;
-  using Bound = atl::runner::Runner<account_detail::NoStrategy, typename Session::Caps, typename Session::BrokerTag, Executor>;
+  using Bound =
+    atl::runner::Runner<account_detail::NoStrategy, typename Session::Caps, typename Session::BrokerTag, Executor>;
   atl::runner::MemoryJournal memory;
   Bound bound(
-    account_detail::NoStrategy{},
-    atl::strategy::RiskLimits{},
-    atl::live::default_series_capacity,
+    account_detail::NoStrategy{}, atl::strategy::RiskLimits{}, atl::live::default_series_capacity,
     Executor(atl::live::SessionExecutor<Session>(session, atl::Venue::UNSPECIFIED), memory)
   );
   const account_detail::ReadContents contents{&replay};
   const auto recovery = atl::runner::recover_runner(bound, contents);
-  view.intact_ = !(recovery.truncated_ || recovery.unattributable_ || recovery.unreadable_lines_ > 0 ||
-    recovery.unreadable_file_ || bound.guard().halted());
+  view.intact_ = !(
+    recovery.truncated_ || recovery.unattributable_ || recovery.unreadable_lines_ > 0 || recovery.unreadable_file_ ||
+    bound.guard().halted()
+  );
   if (!view.intact_) {
     view.detail_ = recovery.detail_.empty() ? "the journal is damaged" : recovery.detail_;
   }
@@ -254,9 +256,7 @@ inline int make_private_dirs(const std::filesystem::path& dir) {
  */
 inline Reply paper_state_reply(const std::string& what) {
   return error_reply(
-    Exit::UNKNOWN,
-    "unknown.paper_state",
-    what + "; the paper account's state cannot be rebuilt",
+    Exit::UNKNOWN, "unknown.paper_state", what + "; the paper account's state cannot be rebuilt",
     "restore paper.jsonl from where it was, or move the account's whole directory aside to abandon this paper "
     "account and start a fresh one"
   );
@@ -269,8 +269,7 @@ inline Reply paper_state_reply(const std::string& what) {
  */
 inline Reply journal_missing_reply(const std::string& what) {
   return error_reply(
-    Exit::UNKNOWN,
-    "unknown.journal_missing",
+    Exit::UNKNOWN, "unknown.journal_missing",
     "the account's journal is " + what + " while other state exists; what was sent and today's count are unknown",
     "the operator reads the broker's order list and holdings, then restores the journal (moving the whole "
     "directory aside starts the account afresh and forgets any order the broker still holds)"
@@ -283,8 +282,7 @@ inline Reply journal_missing_reply(const std::string& what) {
  */
 inline Reply lock_lost_reply() {
   return error_reply(
-    Exit::UNKNOWN,
-    "unknown.lock_lost",
+    Exit::UNKNOWN, "unknown.lock_lost",
     "the account's lock file was replaced while this command held it; it wrote nothing more",
     "find what replaced the lock file and stop it, then run cmdatl status"
   );
@@ -347,8 +345,7 @@ public:
    * @param config The operator's file.
    * @param dir The account's directory.
    */
-  Account(AccountKey key, OperatorConfig config, std::string dir)
-  : config_(std::move(config)), lock_(std::move(dir)) {
+  Account(AccountKey key, OperatorConfig config, std::string dir) : config_(std::move(config)), lock_(std::move(dir)) {
     (void)key;
   }
 
@@ -375,17 +372,14 @@ public:
     const auto dir = account_dir(config);
     if (!dir) {
       opened.refusal_ = error_reply(
-        Exit::FAILED,
-        "state.unavailable",
-        "no state directory: neither XDG_STATE_HOME nor HOME is set as an absolute path",
-        "set XDG_STATE_HOME or HOME"
+        Exit::FAILED, "state.unavailable",
+        "no state directory: neither XDG_STATE_HOME nor HOME is set as an absolute path", "set XDG_STATE_HOME or HOME"
       );
       return opened;
     }
     if (const int error = make_private_dirs(*dir)) {
       opened.refusal_ = error_reply(
-        Exit::FAILED,
-        "state.unavailable",
+        Exit::FAILED, "state.unavailable",
         "the account's directory " + *dir + " cannot be made: " + std::strerror(error),
         "check the state directory and its permissions"
       );
@@ -400,28 +394,19 @@ public:
         break;
       case OwnerLock::Outcome::BUSY:
         opened.refusal_ = error_reply(
-          Exit::FAILED,
-          "busy.locked",
-          "the account is held by " + account->lock_.error() + "; nothing was done",
-          "run the command again when it is free",
-          true
+          Exit::FAILED, "busy.locked", "the account is held by " + account->lock_.error() + "; nothing was done",
+          "run the command again when it is free", true
         );
         return opened;
       case OwnerLock::Outcome::INTERRUPTED:
         opened.refusal_ = error_reply(
-          Exit::INTERRUPTED,
-          "interrupted",
-          "interrupted by a signal while waiting for the account; nothing was done",
-          "run the command again",
-          true
+          Exit::INTERRUPTED, "interrupted", "interrupted by a signal while waiting for the account; nothing was done",
+          "run the command again", true
         );
         return opened;
       case OwnerLock::Outcome::FAILED:
         opened.refusal_ = error_reply(
-          Exit::FAILED,
-          "state.unavailable",
-          account->lock_.error(),
-          "check the account's directory " + *dir
+          Exit::FAILED, "state.unavailable", account->lock_.error(), "check the account's directory " + *dir
         );
         return opened;
     }
@@ -438,37 +423,49 @@ public:
    * @brief The operator's file.
    * @return The config.
    */
-  const OperatorConfig& config() const noexcept { return config_; }
+  const OperatorConfig& config() const noexcept {
+    return config_;
+  }
 
   /**
    * @brief The held lock.
    * @return The lock.
    */
-  const OwnerLock& lock() const noexcept { return lock_; }
+  const OwnerLock& lock() const noexcept {
+    return lock_;
+  }
 
   /**
    * @brief The account's directory.
    * @return The directory.
    */
-  const std::string& dir() const noexcept { return lock_.dir(); }
+  const std::string& dir() const noexcept {
+    return lock_.dir();
+  }
 
   /**
    * @brief The paper desk.
    * @return The desk.
    */
-  paper::PaperDesk& desk() { return *desk_; }
+  paper::PaperDesk& desk() {
+    return *desk_;
+  }
 
   /**
    * @brief The journal's view, computed at open, or at the last `refresh_view`.
    * @return The view.
    */
-  const JournalView& journal() const noexcept { return journal_; }
+  const JournalView& journal() const noexcept {
+    return journal_;
+  }
 
   /**
    * @brief The journal's path.
    * @return The path.
    */
-  std::string journal_path() const { return dir() + "/journal.jsonl"; }
+  std::string journal_path() const {
+    return dir() + "/journal.jsonl";
+  }
 
 #if !defined(_WIN32)
   /**
@@ -510,7 +507,9 @@ public:
    * @brief Whether the journal's view lets an affirmative answer stand: it is this account's and intact.
    * @return Whether it does.
    */
-  bool journal_intact() const noexcept { return journal_.intact_; }
+  bool journal_intact() const noexcept {
+    return journal_.intact_;
+  }
 
   /**
    * @brief Whether a torn last line of the journal or a damaged one stood in the way at open.
@@ -518,8 +517,7 @@ public:
    */
   Reply journal_damaged_reply() const {
     return error_reply(
-      Exit::UNKNOWN,
-      "unknown.journal_damaged",
+      Exit::UNKNOWN, "unknown.journal_damaged",
       "the account's journal is damaged or not this account's (" + journal_.detail_ + "); what was sent is unknown",
       "the operator reads the broker's order list and holdings, then restores the journal; nothing was written"
     );
@@ -609,7 +607,8 @@ private:
     const auto start = config_.paper_.start_at_;
     if (start < paper::open_of(first) + paper::SESSION_LENGTH) {
       return bad(
-        "begin " + paper::date_text(first) + "; paper.start must be at or after that date's 15:30 KST, so a symbol has a "
+        "begin " + paper::date_text(first) +
+        "; paper.start must be at or after that date's 15:30 KST, so a symbol has a "
         "last price and a previous close"
       );
     }
@@ -633,7 +632,8 @@ private:
     }
     int error = 0;
     if (!single_regular(fd.get(), error)) {
-      why = error != 0 ? name + "'s status cannot be read: " + std::strerror(error) :
+      why = error != 0 ?
+        name + "'s status cannot be read: " + std::strerror(error) :
         name + " is not a regular file with one name";
       return false;
     }
@@ -649,13 +649,17 @@ private:
    */
   std::optional<Reply> initialize(const paper::MarketData& data, bool exists) {
     const auto path = dir() + "/paper.jsonl";
-    const auto genesis = paper::genesis_line(paper::fingerprint_of(data, config_.paper_), paper::nanos(config_.paper_.start_at_));
+    const auto genesis =
+      paper::genesis_line(paper::fingerprint_of(data, config_.paper_), paper::nanos(config_.paper_.start_at_));
     const auto unwritable = [&path](const std::string& what) {
-      return error_reply(Exit::FAILED, "file.unwritable", "cannot write " + path + ": " + what, "check the account's directory");
+      return error_reply(
+        Exit::FAILED, "file.unwritable", "cannot write " + path + ": " + what, "check the account's directory"
+      );
     };
     paper::OpsLog log(path, lock_.identity(), !exists);
     if (log.open_error() != 0) {
-      return exists ? paper_state_reply(std::string("the paper log cannot be opened: ") + std::strerror(log.open_error())) :
+      return exists ?
+        paper_state_reply(std::string("the paper log cannot be opened: ") + std::strerror(log.open_error())) :
         unwritable(std::strerror(log.open_error()));
     }
     std::string why;
@@ -701,17 +705,12 @@ private:
     algotradelib::runner::FileJournal journal(dir() + "/journal.jsonl", config_.scope());
     if (!journal.open()) {
       return error_reply(
-        Exit::FAILED,
-        "journal.unopened",
-        "the account's journal could not be created: " + journal.rejection(),
+        Exit::FAILED, "journal.unopened", "the account's journal could not be created: " + journal.rejection(),
         "check the account's directory"
       );
     }
     return std::nullopt;
   }
-
-
-
 
   /**
    * @brief Everything `open` does once the lock is held.
@@ -725,10 +724,8 @@ private:
     Found found;
     if (const int error = list(found)) {
       return error_reply(
-        Exit::FAILED,
-        "state.unavailable",
-        "the account's directory " + dir() + " cannot be listed: " + std::strerror(error),
-        "check its permissions"
+        Exit::FAILED, "state.unavailable",
+        "the account's directory " + dir() + " cannot be listed: " + std::strerror(error), "check its permissions"
       );
     }
     if (!found.journal_) {
@@ -746,9 +743,7 @@ private:
     std::string why;
     if (!state_file_ok("journal.jsonl", why)) {
       return error_reply(
-        Exit::UNKNOWN,
-        "unknown.journal_damaged",
-        "the account's journal is refused: " + why,
+        Exit::UNKNOWN, "unknown.journal_damaged", "the account's journal is refused: " + why,
         "the operator restores the journal as a regular file; nothing was written"
       );
     }
@@ -808,4 +803,4 @@ private:
 #endif
 };
 
-}  // namespace cmdatl
+} // namespace cmdatl

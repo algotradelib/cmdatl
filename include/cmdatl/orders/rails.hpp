@@ -52,7 +52,7 @@ inline std::optional<atl::strategy::MarketPhase> phase_named(const std::string& 
   return std::nullopt;
 }
 
-}  // namespace orders_detail
+} // namespace orders_detail
 
 /**
  * @brief The risk limits a call enforces, from the operator's file: the allowed universe, the smallest cap of the
@@ -65,9 +65,7 @@ inline std::optional<atl::strategy::MarketPhase> phase_named(const std::string& 
  * @return The limits.
  */
 inline algotradelib::strategy::RiskLimits risk_limits(
-  const OperatorConfig& config,
-  const std::vector<std::string>& symbols,
-  std::int64_t orders_left
+  const OperatorConfig& config, const std::vector<std::string>& symbols, std::int64_t orders_left
 ) {
   namespace atl = algotradelib;
   atl::strategy::RiskLimits limits;
@@ -128,19 +126,18 @@ inline OpenedJournal open_journal(Account& account) {
     return opened;
   }
 #endif
-  opened.journal_ = std::make_unique<algotradelib::runner::FileJournal>(account.journal_path(), account.config().scope());
+  opened.journal_ =
+    std::make_unique<algotradelib::runner::FileJournal>(account.journal_path(), account.config().scope());
   if (!opened.journal_->open()) {
     opened.refusal_ = error_reply(
-      Exit::UNKNOWN,
-      "unknown.journal_damaged",
-      "the account's journal refused to open: " + opened.journal_->rejection(),
-      catalog_next("unknown.journal_damaged")
+      Exit::UNKNOWN, "unknown.journal_damaged",
+      "the account's journal refused to open: " + opened.journal_->rejection(), catalog_next("unknown.journal_damaged")
     );
     opened.journal_.reset();
   }
   return opened;
 }
 
-}  // namespace orders_detail
+} // namespace orders_detail
 
-}  // namespace cmdatl
+} // namespace cmdatl

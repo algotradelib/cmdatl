@@ -67,8 +67,7 @@ public:
    * @brief Builds the error.
    * @param what What is wrong.
    */
-  explicit PaperStateError(const std::string& what)
-  : std::runtime_error(what) {}
+  explicit PaperStateError(const std::string& what) : std::runtime_error(what) {}
 };
 
 /** @brief The account's lock was replaced after this process took it: exit 4 `unknown.lock_lost`. */
@@ -207,8 +206,9 @@ inline std::string result_line(const std::string& of, const std::string& id, con
  * @return Whether it is.
  */
 inline bool valid_order_id(const std::string& id) {
-  return !id.empty() && id.size() <= 18 && id.front() != '0' &&
-    std::all_of(id.begin(), id.end(), [](char c) { return c >= '0' && c <= '9'; });
+  return !id.empty() && id.size() <= 18 && id.front() != '0' && std::all_of(id.begin(), id.end(), [](char c) {
+    return c >= '0' && c <= '9';
+  });
 }
 
 /** @brief A placement the shared rules accepted, in the market's terms. */
@@ -229,12 +229,16 @@ struct CheckedPlace {
  * @param checked Where the accepted values go.
  * @return Why it is refused, or nothing.
  */
-inline std::optional<std::string> check_place(const SimMarket& market, const PlaceFields& fields, CheckedPlace& checked) {
+inline std::optional<std::string> check_place(
+  const SimMarket& market, const PlaceFields& fields, CheckedPlace& checked
+) {
   if (!market.has_symbol(fields.symbol_)) {
     return "the paper market has no bars for " + fields.symbol_;
   }
-  if (fields.country_ != "kr" || fields.route_ != "combined" || fields.session_ != "regular" ||
-      fields.venue_ != "unspecified") {
+  if (
+    fields.country_ != "kr" || fields.route_ != "combined" || fields.session_ != "regular" ||
+    fields.venue_ != "unspecified"
+  ) {
     return "the paper market takes KRX orders in the regular session, routed by the broker";
   }
   if (fields.tif_ != "day") {
@@ -279,8 +283,10 @@ inline std::optional<std::string> fields_of(const atl::OrderRequest& request, Pl
   fields.symbol_ = request.instrument_.symbol_;
   fields.country_ = request.instrument_.country_ == atl::Country::KR ? "kr" : "other";
   fields.route_ = request.instrument_.venue_ == atl::Venue::COMBINED ? "combined" : "other";
-  fields.side_ = request.side_ == atl::OrderSide::BUY ? "buy" : (request.side_ == atl::OrderSide::SELL ? "sell" : "other");
-  fields.type_ = request.type_ == atl::OrderType::LIMIT ? "limit" : (request.type_ == atl::OrderType::MARKET ? "market" : "other");
+  fields.side_ =
+    request.side_ == atl::OrderSide::BUY ? "buy" : (request.side_ == atl::OrderSide::SELL ? "sell" : "other");
+  fields.type_ =
+    request.type_ == atl::OrderType::LIMIT ? "limit" : (request.type_ == atl::OrderType::MARKET ? "market" : "other");
   fields.tif_ = request.time_in_force_ == atl::TimeInForce::DAY ? "day" : "other";
   fields.session_ = request.session_ == atl::OrderSession::REGULAR ? "regular" : "other";
   fields.venue_ = request.venue_ == atl::Venue::UNSPECIFIED ? "unspecified" : "other";
@@ -342,8 +348,7 @@ public:
    * @param lock The held lock's identity.
    * @param create Whether to create it.
    */
-  OpsLog(std::string path, LockIdentity lock, bool create)
-  : path_(std::move(path)), lock_(std::move(lock)) {
+  OpsLog(std::string path, LockIdentity lock, bool create) : path_(std::move(path)), lock_(std::move(lock)) {
     const int flags = O_RDWR | O_APPEND | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC | (create ? O_CREAT | O_EXCL : 0);
     fd_.reset(open_lifted(path_.c_str(), flags, 0600));
     open_error_ = fd_.get() < 0 ? errno : 0;
@@ -356,13 +361,17 @@ public:
    * @brief Why it did not open.
    * @return The error number, or 0.
    */
-  int open_error() const noexcept { return open_error_; }
+  int open_error() const noexcept {
+    return open_error_;
+  }
 
   /**
    * @brief The log's path.
    * @return The path.
    */
-  const std::string& path() const noexcept { return path_; }
+  const std::string& path() const noexcept {
+    return path_;
+  }
 
   /**
    * @brief Whether the log is a regular file with one name.
@@ -374,7 +383,8 @@ public:
     if (single_regular(fd_.get(), error)) {
       return true;
     }
-    why = error != 0 ? "its status cannot be read: " + std::string(std::strerror(error)) :
+    why = error != 0 ?
+      "its status cannot be read: " + std::string(std::strerror(error)) :
       "it is not a regular file with one name";
     return false;
   }
@@ -409,8 +419,10 @@ public:
       throw LockLost();
     }
     struct stat info{};
-    if (sys::ftruncate(fd_.get(), static_cast<off_t>(size)) != 0 || sys::fsync(fd_.get()) != 0 ||
-        sys::fstat(fd_.get(), &info) != 0 || info.st_size != static_cast<off_t>(size)) {
+    if (
+      sys::ftruncate(fd_.get(), static_cast<off_t>(size)) != 0 || sys::fsync(fd_.get()) != 0 ||
+      sys::fstat(fd_.get(), &info) != 0 || info.st_size != static_cast<off_t>(size)
+    ) {
       const int error = errno;
       poisoned_ = true;
       throw PaperStateError(
@@ -479,7 +491,9 @@ public:
    * @brief Holds the log, or lets it go: while held, nothing is cut or appended.
    * @param held Whether it is held.
    */
-  void hold(bool held) noexcept { held_ = held; }
+  void hold(bool held) noexcept {
+    held_ = held;
+  }
 
 private:
   std::string path_;
@@ -538,7 +552,9 @@ public:
     }
     sys::kill_point("send.after_input");
     auto result = place_checked(account, request, checked.quantity_, checked.limit_);
-    log_result(result_line("place", result ? result.value().id_ : std::string(), result ? std::string() : result.error().message_));
+    log_result(result_line(
+      "place", result ? result.value().id_ : std::string(), result ? std::string() : result.error().message_
+    ));
     sys::kill_point("send.after_result");
     return result;
   }
@@ -568,7 +584,9 @@ public:
    * @brief How many `place` and `cancel` lines this process wrote whole, counted when the last byte was written.
    * @return The count.
    */
-  std::uint64_t inputs_logged() const noexcept { return inputs_logged_; }
+  std::uint64_t inputs_logged() const noexcept {
+    return inputs_logged_;
+  }
 
 private:
   /**
@@ -586,7 +604,11 @@ private:
       case Appended::LOCK_LOST:
         return refusal("lock_lost", "the account's lock file was replaced; nothing was written", false);
       case Appended::NOT_WRITTEN:
-        return refusal("paper_log", "the paper log could not be written (" + std::string(std::strerror(error)) + "); nothing reached the market", false);
+        return refusal(
+          "paper_log",
+          "the paper log could not be written (" + std::string(std::strerror(error)) + "); nothing reached the market",
+          false
+        );
       case Appended::NOT_SYNCED:
         break;
     }
@@ -615,8 +637,8 @@ private:
 };
 #endif
 
-}  // namespace paper
-}  // namespace cmdatl
+} // namespace paper
+} // namespace cmdatl
 
 #if !defined(_WIN32)
 namespace algotradelib {
@@ -634,7 +656,9 @@ struct BrokerTraits<cmdatl::paper::LoggedClient> : BrokerTraits<cmdatl::paper::P
    * @param o The order.
    * @return The answer.
    */
-  static Result<PlaceAck> place_order(Client& c, const Account& a, OrderRequest o) { return c.place(a, o); }
+  static Result<PlaceAck> place_order(Client& c, const Account& a, OrderRequest o) {
+    return c.place(a, o);
+  }
   /**
    * @brief A cancellation, logged.
    * @param c The client.
@@ -642,7 +666,9 @@ struct BrokerTraits<cmdatl::paper::LoggedClient> : BrokerTraits<cmdatl::paper::P
    * @param m The cancellation.
    * @return The answer.
    */
-  static Result<PlaceAck> cancel_order(Client& c, const Account& a, Amendment m) { return c.cancel(a, m); }
+  static Result<PlaceAck> cancel_order(Client& c, const Account& a, Amendment m) {
+    return c.cancel(a, m);
+  }
   /**
    * @brief No rate limit.
    * @param client The client.
@@ -654,7 +680,7 @@ struct BrokerTraits<cmdatl::paper::LoggedClient> : BrokerTraits<cmdatl::paper::P
   }
 };
 
-}  // namespace algotradelib
+} // namespace algotradelib
 
 namespace cmdatl {
 namespace paper {
@@ -702,8 +728,7 @@ public:
    * @throws std::logic_error When the lock is not held or is another account's (a defect).
    * @throws PaperStateError When the log cannot be read or replayed; nothing was written then.
    */
-  PaperDesk(DeskKey key, const OperatorConfig& config, const OwnerLock& lock, MarketData data)
-  : config_(config) {
+  PaperDesk(DeskKey key, const OperatorConfig& config, const OwnerLock& lock, MarketData data) : config_(config) {
     (void)key;
     const auto dir = account_dir(config);
     if (!lock.held() || !dir || lock.dir() != *dir) {
@@ -718,7 +743,8 @@ public:
     if (!log_->check(why)) {
       throw PaperStateError("the paper log is refused: " + why);
     }
-    market_ = std::make_shared<SimMarket>(std::move(data), static_cast<double>(config.paper_.cash_), config.paper_.start_at_);
+    market_ =
+      std::make_shared<SimMarket>(std::move(data), static_cast<double>(config.paper_.cash_), config.paper_.start_at_);
     client_ = std::make_shared<LoggedClient>(market_, log_, config.armed_path());
     client_->listing_lag_ = std::chrono::seconds(config.paper_.listing_lag_);
     client_->holdings_lag_ = std::chrono::seconds(config.paper_.holdings_lag_);
@@ -757,20 +783,26 @@ public:
    * @brief The session every read uses, borrowed.
    * @return The session.
    */
-  Session& session() { return *session_; }
+  Session& session() {
+    return *session_;
+  }
 
   /**
    * @brief The market's clock.
    * @return The instant.
    */
-  Clock::time_point now() const { return market_->now(); }
+  Clock::time_point now() const {
+    return market_->now();
+  }
 
   /**
    * @brief The cash after every fill's value, commission and tax, floored.
    * @return The cash.
    * @throws OutOfRange When it left the supported range.
    */
-  std::int64_t paper_cash() const { return amount_of(std::floor(market_->cash())); }
+  std::int64_t paper_cash() const {
+    return amount_of(std::floor(market_->cash()));
+  }
 
   /**
    * @brief What the market shows for an order: `pending`, `filled`, `canceled`.
@@ -799,7 +831,9 @@ public:
    * @brief The last date any symbol trades.
    * @return The date, as days from 1970-01-01.
    */
-  std::int64_t data_end() const { return market_->last_day(); }
+  std::int64_t data_end() const {
+    return market_->last_day();
+  }
 
   /**
    * @brief The latest instant the clock may reach: the last session's close plus a day, inside the supported interval.
@@ -815,13 +849,17 @@ public:
    * @param at The instant.
    * @return The open, or nothing.
    */
-  std::optional<Clock::time_point> next_session_after(Clock::time_point at) const { return market_->next_open_after(at); }
+  std::optional<Clock::time_point> next_session_after(Clock::time_point at) const {
+    return market_->next_open_after(at);
+  }
 
   /**
    * @brief Takes what the market did since the last call.
    * @return The events.
    */
-  std::vector<MarketEvent> drain_events() { return market_->drain_events(); }
+  std::vector<MarketEvent> drain_events() {
+    return market_->drain_events();
+  }
 
   /**
    * @brief Whether the market takes an order for a symbol at an instant.
@@ -838,7 +876,9 @@ public:
    * @param symbol The symbol.
    * @return Whether they do.
    */
-  bool has_symbol(const std::string& symbol) const { return market_->has_symbol(symbol); }
+  bool has_symbol(const std::string& symbol) const {
+    return market_->has_symbol(symbol);
+  }
 
   /**
    * @brief Moves the clock: the `advance` line logged and flushed, then applied.
@@ -860,13 +900,17 @@ public:
    * @brief How many `place` and `cancel` lines this process wrote whole (not those replayed at open).
    * @return The count.
    */
-  std::uint64_t inputs_logged() const noexcept { return client_->inputs_logged(); }
+  std::uint64_t inputs_logged() const noexcept {
+    return client_->inputs_logged();
+  }
 
   /**
    * @brief How many inputs were replayed.
    * @return The count.
    */
-  std::size_t replayed() const noexcept { return replayed_; }
+  std::size_t replayed() const noexcept {
+    return replayed_;
+  }
 
 private:
   /**
@@ -945,15 +989,14 @@ private:
         const auto market = integer_at(o, "market");
         const auto fingerprint = text_at(o, "fingerprint");
         const auto at = integer_at(o, "start");
-        if (*op != "genesis" || !format || !market || !fingerprint || !at ||
-            genesis_line(*fingerprint, *at) != line) {
+        if (*op != "genesis" || !format || !market || !fingerprint || !at || genesis_line(*fingerprint, *at) != line) {
           throw broken(number, "is not the genesis line the paper log begins with");
         }
         if (*format != LOG_FORMAT || *market != MARKET_VERSION) {
           throw broken(
             number,
-            "is of format " + std::to_string(*format) + " and market " + std::to_string(*market) + "; this version reads " +
-              std::to_string(LOG_FORMAT) + " and " + std::to_string(MARKET_VERSION)
+            "is of format " + std::to_string(*format) + " and market " + std::to_string(*market) +
+              "; this version reads " + std::to_string(LOG_FORMAT) + " and " + std::to_string(MARKET_VERSION)
           );
         }
         if (*fingerprint != fingerprint_ || *at != nanos(config_.paper_.start_at_)) {
@@ -1006,7 +1049,8 @@ private:
         if (!at || !symbol || !country || !route || !side || !type || !tif || !session || !venue || !quantity) {
           throw broken(number, "is not a placement line the paper log writes");
         }
-        fields = PlaceFields{*symbol, *country, *route, *side, *type, *tif, *session, *venue, *quantity, text_at(o, "price")};
+        fields =
+          PlaceFields{*symbol, *country, *route, *side, *type, *tif, *session, *venue, *quantity, text_at(o, "price")};
         if (place_line(*at, fields) != line) {
           throw broken(number, "is not a placement line the paper log writes");
         }
@@ -1068,6 +1112,6 @@ private:
   std::optional<std::string> owed_result_;
 };
 
-}  // namespace paper
-}  // namespace cmdatl
+} // namespace paper
+} // namespace cmdatl
 #endif

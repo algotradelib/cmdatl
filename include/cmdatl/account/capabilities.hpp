@@ -26,4 +26,4 @@ boost::json::object account_capabilities(bool clock) {
   };
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl

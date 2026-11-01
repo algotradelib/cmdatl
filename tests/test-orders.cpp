@@ -3,8 +3,8 @@
 
 #include "./order-support.hpp"
 
-#include <cmdatl/cmdatl>
 #include <cmdatl/cli/command_list.hpp>
+#include <cmdatl/cmdatl>
 #include <cmdatl/orders/once.hpp>
 #include <cmdatl/orders/orders.hpp>
 #include <cmdatl/orders/plans.hpp>
@@ -14,8 +14,8 @@
 #include <algotradelib/runner>
 
 #include <climits>
-#include <random>
 #include <filesystem>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -63,11 +63,8 @@ double day_mark(const std::string& symbol, std::int64_t at) {
  * @return The entry.
  */
 atl::runner::JournalEntry place_entry(
-  const std::string& id,
-  atl::runner::JournalOutcome outcome,
-  paper::Clock::time_point at,
-  const std::string& order_id = "",
-  const std::string& symbol = "005930"
+  const std::string& id, atl::runner::JournalOutcome outcome, paper::Clock::time_point at,
+  const std::string& order_id = "", const std::string& symbol = "005930"
 ) {
   atl::runner::JournalEntry entry;
   entry.id_ = id;
@@ -103,7 +100,7 @@ void journal(const PaperFixture& fixture, const std::vector<atl::runner::Journal
 /** @brief The report type once() maps. */
 using Report = atl::runner::DryRunReport<cmdatl::paper::PaperDesk::Session::BrokerTag>;
 
-}  // namespace
+} // namespace
 
 TEST_CASE("order arguments: each grammar at its edges and refused before the account opens") {
   const PaperFixture fixture;
@@ -129,7 +126,9 @@ TEST_CASE("order arguments: each grammar at its edges and refused before the acc
     {"order", "release", "005930", "--reason", ""},
     {"order", "release", "005930", "--reason", "   "},
     {"order", "release", "005930", "--reason", std::string(201, 'x')},
-    {"order", "release", "005930", "--reason", "a\x01" "b"},
+    {"order", "release", "005930", "--reason",
+      "a\x01"
+      "b"},
     {"order", "release", "005930", "--reason", "\xc3\x28"},
     {"order", "release", "005930", "--reason", "\xed\xa0\x80"},
     {"order", "cancel", "005930/x"},
@@ -185,20 +184,39 @@ TEST_CASE("plan checks and in order and each refusing alone with nothing sent") 
     "daily_orders = 1\n";
   const PaperFixture fixture(parts);
   open_session(fixture);
-  CHECK(ask_checked(fixture, {"order", "plan", "000660", "--target", "1", "--limit", "181000"}).code_ == "refused.symbol_not_allowed");
+  CHECK(
+    ask_checked(fixture, {"order", "plan", "000660", "--target", "1", "--limit", "181000"}).code_ ==
+    "refused.symbol_not_allowed"
+  );
   // The first failing check wins: a symbol not allowed and a target over any cap.
-  CHECK(ask_checked(fixture, {"order", "plan", "000660", "--target", "500", "--limit", "181000"}).code_ == "refused.symbol_not_allowed");
-  CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "101", "--limit", "78500"}).code_ == "refused.position_limit");
+  CHECK(
+    ask_checked(fixture, {"order", "plan", "000660", "--target", "500", "--limit", "181000"}).code_ ==
+    "refused.symbol_not_allowed"
+  );
+  CHECK(
+    ask_checked(fixture, {"order", "plan", "005930", "--target", "101", "--limit", "78500"}).code_ ==
+    "refused.position_limit"
+  );
   // The order's value equal to the ceiling passes; one tick above refuses.
   CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "78500"}).reason_ == "plan");
-  CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "78600"}).code_ == "refused.order_value");
+  CHECK(
+    ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "78600"}).code_ ==
+    "refused.order_value"
+  );
   // The collar and the tick grid are once()'s.
-  CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "70000"}).code_ == "refused.collar");
-  CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "78550"}).code_ == "refused.off_tick");
+  CHECK(
+    ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "70000"}).code_ == "refused.collar"
+  );
+  CHECK(
+    ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "78550"}).code_ == "refused.off_tick"
+  );
   // The daily count: the fourth placement of a day with three allowed, here the second with one.
   const auto id = plan_id(fixture, "005930", "5", "75000");
   REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
-  CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "6", "--limit", "75000"}).code_ == "refused.daily_order_limit");
+  CHECK(
+    ask_checked(fixture, {"order", "plan", "005930", "--target", "6", "--limit", "75000"}).code_ ==
+    "refused.daily_order_limit"
+  );
   // A target that changes no holding is not a placement: no daily refusal (it plans to withdraw the working 5).
   const auto withdraw = ask_checked(fixture, {"order", "plan", "005930", "--target", "0", "--limit", "75000"});
   CHECK(withdraw.reason_ == "plan");
@@ -229,7 +247,8 @@ TEST_CASE("the collar's exact edges at 0.05 and 0.30: the edge plans and places 
     ConfigParts parts;
     parts.limits_ =
       "symbols = [\"005930\"]\nposition = { \"005930\" = 100 }\norder_value = 5000000\ndaily_orders = 3\n"
-      "collar = " + edge.collar_ + "\n";
+      "collar = " +
+      edge.collar_ + "\n";
     const PaperFixture fixture(parts, bars);
     open_session(fixture);
     const auto id = plan_id(fixture, "005930", "1", edge.inside_);
@@ -390,7 +409,9 @@ TEST_CASE("the plan book's values: every rule refuses the whole book and and the
   CHECK(!cmdatl::PlanBook::parse(many + "}}").has_value());
 }
 
-TEST_CASE("a plan's age: exactly plan_ttl is accepted and one clock tick more is stale and a future instant is damage") {
+TEST_CASE(
+  "a plan's age: exactly plan_ttl is accepted and one clock tick more is stale and a future instant is damage"
+) {
   const PaperFixture fixture;
   open_session(fixture);
   const auto path = fixture.account() / "plans.json";
@@ -402,11 +423,14 @@ TEST_CASE("a plan's age: exactly plan_ttl is accepted and one clock tick more is
     REQUIRE(plans);
     // The place's own second moves the clock one second: the plan's instant is set so that the age at place is
     // plan_ttl plus the offset.
-    const auto now = paper::nanos(*paper::parse_kst(std::string(ask(fixture, {"clock"}).body_.at("now").as_string()).substr(0, 16)));
+    const auto now =
+      paper::nanos(*paper::parse_kst(std::string(ask(fixture, {"clock"}).body_.at("now").as_string()).substr(0, 16)));
     (void)now;
-    const auto clock = paper::nanos(paper::Clock::time_point(std::chrono::duration_cast<paper::Clock::duration>(
-      std::chrono::nanoseconds(plans->back().second.sim_)
-    )));
+    const auto clock = paper::nanos(
+      paper::Clock::time_point(
+        std::chrono::duration_cast<paper::Clock::duration>(std::chrono::nanoseconds(plans->back().second.sim_))
+      )
+    );
     const auto sim = std::to_string(plans->back().second.sim_);
     const auto place_at = clock + 1000000000LL;
     // The clock's own tick: a microsecond on macOS, a nanosecond on Linux; finer instants are refused as damage.
@@ -469,7 +493,8 @@ TEST_CASE("map_report: every step reached and and its precedence") {
     "the paper client refused the request before writing it: [NOT_ARMED] binding text"
   );
   CHECK(
-    sending::map_report(binding, 0, false, 0, "", "").detail_ == "the paper client refused the request before writing it"
+    sending::map_report(binding, 0, false, 0, "", "").detail_ ==
+    "the paper client refused the request before writing it"
   );
   CHECK(mapped(binding, 0, true, 0).reason_ == "journal_unwritable");
   CHECK(mapped(binding, 0, true, 0).exit_ == OnceExit::REFUSED);
@@ -513,23 +538,39 @@ TEST_CASE("reconcile's rows and its overall exit and as a table") {
 }
 
 TEST_CASE("the owed rows' next and by case") {
-  CHECK(cmdatl::owed_next("005930", "named", std::string("pending")).find("cmdatl order cancel 005930") != std::string::npos);
-  CHECK(cmdatl::owed_next("005930", "named", std::string("filled")).find("records it from holdings") != std::string::npos);
-  CHECK(cmdatl::owed_next("005930", "named", std::string("canceled")).find("records it from holdings") != std::string::npos);
+  CHECK(
+    cmdatl::owed_next("005930", "named", std::string("pending")).find("cmdatl order cancel 005930") != std::string::npos
+  );
+  CHECK(
+    cmdatl::owed_next("005930", "named", std::string("filled")).find("records it from holdings") != std::string::npos
+  );
+  CHECK(
+    cmdatl::owed_next("005930", "named", std::string("canceled")).find("records it from holdings") != std::string::npos
+  );
   CHECK(cmdatl::owed_next("005930", "unnamed", std::nullopt).find("never named it") != std::string::npos);
   CHECK(cmdatl::owed_next("005930", "operator", std::nullopt).find("only the operator") != std::string::npos);
 }
 
 TEST_CASE("approval files: the grammar and line by line") {
-  const auto symbol = [](std::string_view text) { return paper::valid_symbol(text); };
-  CHECK(sending::parse_approval("005930 j1\n005930 j2\r\n000660 j3\n", "005930", symbol).ids_ == std::vector<std::string>{"j1", "j2"});
+  const auto symbol = [](std::string_view text) {
+    return paper::valid_symbol(text);
+  };
+  CHECK(
+    sending::parse_approval("005930 j1\n005930 j2\r\n000660 j3\n", "005930", symbol).ids_ ==
+    std::vector<std::string>{"j1", "j2"}
+  );
   CHECK(sending::parse_approval("000660 j3\n", "005930", symbol).ids_.empty());
-  CHECK(sending::parse_approval("005930 j1\n\n", "005930", symbol).refused_ == "line 2 is not SYMBOL JOURNAL_ID with one space");
+  CHECK(
+    sending::parse_approval("005930 j1\n\n", "005930", symbol).refused_ ==
+    "line 2 is not SYMBOL JOURNAL_ID with one space"
+  );
   CHECK(sending::parse_approval("005930  j1\n", "005930", symbol).refused_.find("line 1") == 0);
   CHECK(sending::parse_approval("005930\tj1\n", "005930", symbol).refused_.find("line 1") == 0);
   CHECK(sending::parse_approval("005930 j1 x\n", "005930", symbol).refused_.find("line 1") == 0);
   CHECK(sending::parse_approval("005930 j1", "005930", symbol).refused_.find("no line ending") != std::string::npos);
-  CHECK(sending::parse_approval("005930 " + std::string(129, 'a') + "\n", "005930", symbol).refused_.find("line 1") == 0);
+  CHECK(
+    sending::parse_approval("005930 " + std::string(129, 'a') + "\n", "005930", symbol).refused_.find("line 1") == 0
+  );
   CHECK(sending::parse_approval("", "005930", symbol).refused_ == "it is empty");
   CHECK(sending::valid_journal_id("1793396756070367000-1"));
   CHECK(!sending::valid_journal_id("a/b"));
@@ -538,16 +579,24 @@ TEST_CASE("approval files: the grammar and line by line") {
 TEST_CASE("order release: the approval names exactly the owed set and renamed after one use") {
   const PaperFixture fixture;
   open_session(fixture);
-  const auto at = paper::Clock::time_point(std::chrono::duration_cast<paper::Clock::duration>(
-    std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
-  ));
-  journal(fixture, {
-    place_entry("j1", atl::runner::JournalOutcome::PENDING, at),
-    place_entry("j2", atl::runner::JournalOutcome::PENDING, at, "", "000660"),
-  });
+  const auto at = paper::Clock::time_point(
+    std::chrono::duration_cast<paper::Clock::duration>(
+      std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
+    )
+  );
+  journal(
+    fixture,
+    {
+      place_entry("j1", atl::runner::JournalOutcome::PENDING, at),
+      place_entry("j2", atl::runner::JournalOutcome::PENDING, at, "", "000660"),
+    }
+  );
   const auto approval = fixture.dir() / "paper.release";
   // Missing, a symbolic link to nothing, a FIFO, oversized, malformed.
-  CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read the order list"}).code_ == "refused.not_approved");
+  CHECK(
+    ask_checked(fixture, {"order", "release", "005930", "--reason", "read the order list"}).code_ ==
+    "refused.not_approved"
+  );
   ::mkfifo(approval.c_str(), 0600);
   CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read"}).code_ == "refused.not_approved");
   std::filesystem::remove(approval);
@@ -556,7 +605,9 @@ TEST_CASE("order release: the approval names exactly the owed set and renamed af
   spit(approval, "005930 j1\nbad line here\n");
   auto refused = ask_checked(fixture, {"order", "release", "005930", "--reason", "read"});
   CHECK(refused.code_ == "refused.not_approved");
-  CHECK(std::string(refused.body_.at("error").as_object().at("message").as_string()).find("line 2") != std::string::npos);
+  CHECK(
+    std::string(refused.body_.at("error").as_object().at("message").as_string()).find("line 2") != std::string::npos
+  );
   // Another symbol's lines alone, a superset, a subset (here: the wrong id).
   spit(approval, "000660 j2\n");
   CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read"}).code_ == "refused.not_approved");
@@ -571,7 +622,8 @@ TEST_CASE("order release: the approval names exactly the owed set and renamed af
   fixture.arm();
   // The owed symbol answers unknown until released.
   CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "75000"}).exit_ == 4);
-  const auto released = ask_checked(fixture, {"order", "release", "005930", "--reason", "read the order list and holdings"});
+  const auto released =
+    ask_checked(fixture, {"order", "release", "005930", "--reason", "read the order list and holdings"});
   INFO(boost::json::serialize(released.body_));
   CHECK(released.exit_ == 0);
   CHECK(released.reason_ == "released");
@@ -595,7 +647,9 @@ TEST_CASE("order release refuses a named order and which waits for holdings") {
   REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
   const auto owed = ask(fixture, {"account"}).body_.at("owed").as_array();
   REQUIRE(owed.size() == 1);
-  spit(fixture.dir() / "paper.release", "005930 " + std::string(owed[0].as_object().at("journal_id").as_string()) + "\n");
+  spit(
+    fixture.dir() / "paper.release", "005930 " + std::string(owed[0].as_object().at("journal_id").as_string()) + "\n"
+  );
   CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read"}).code_ == "refused.named");
 }
 
@@ -633,13 +687,18 @@ TEST_CASE("H6: a cancel reports what it sent and never met; nothing listed is no
     REQUIRE(opened->account_);
     REQUIRE(opened->account_->desk().session().place(order("005930", true, "10", "75000")));
   }
-  const auto at = paper::Clock::time_point(std::chrono::duration_cast<paper::Clock::duration>(
-    std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
-  ));
-  journal(fixture, {
-    place_entry("j1", atl::runner::JournalOutcome::PENDING, at),
-    place_entry("j1", atl::runner::JournalOutcome::ACCEPTED, at, "1"),
-  });
+  const auto at = paper::Clock::time_point(
+    std::chrono::duration_cast<paper::Clock::duration>(
+      std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
+    )
+  );
+  journal(
+    fixture,
+    {
+      place_entry("j1", atl::runner::JournalOutcome::PENDING, at),
+      place_entry("j1", atl::runner::JournalOutcome::ACCEPTED, at, "1"),
+    }
+  );
   // Held 0 and working 10 meet a target of 10, which a cancel never reads as met.
   const auto canceled = ask_checked(fixture, {"order", "cancel", "005930"});
   INFO(boost::json::serialize(canceled.body_));
@@ -658,15 +717,20 @@ TEST_CASE("two journaled orders on one symbol are the operator's: a cancel sends
     REQUIRE(opened->account_->desk().session().place(order("005930", true, "10", "75000")));
     REQUIRE(opened->account_->desk().session().place(order("005930", true, "10", "75000")));
   }
-  const auto at = paper::Clock::time_point(std::chrono::duration_cast<paper::Clock::duration>(
-    std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
-  ));
-  journal(fixture, {
-    place_entry("j1", atl::runner::JournalOutcome::PENDING, at),
-    place_entry("j1", atl::runner::JournalOutcome::ACCEPTED, at, "1"),
-    place_entry("j2", atl::runner::JournalOutcome::PENDING, at),
-    place_entry("j2", atl::runner::JournalOutcome::ACCEPTED, at, "2"),
-  });
+  const auto at = paper::Clock::time_point(
+    std::chrono::duration_cast<paper::Clock::duration>(
+      std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
+    )
+  );
+  journal(
+    fixture,
+    {
+      place_entry("j1", atl::runner::JournalOutcome::PENDING, at),
+      place_entry("j1", atl::runner::JournalOutcome::ACCEPTED, at, "1"),
+      place_entry("j2", atl::runner::JournalOutcome::PENDING, at),
+      place_entry("j2", atl::runner::JournalOutcome::ACCEPTED, at, "2"),
+    }
+  );
   const auto log = slurp(fixture.log());
   const auto canceled = ask_checked(fixture, {"order", "cancel", "005930"});
   CHECK(canceled.exit_ == 4);
@@ -683,7 +747,10 @@ TEST_CASE("H12: an order the journal does not name refuses plan and place and ca
     REQUIRE(opened->account_);
     REQUIRE(opened->account_->desk().session().place(order("005930", true, "5", "75000")));
   }
-  CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"}).code_ == "refused.unjournaled_order");
+  CHECK(
+    ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"}).code_ ==
+    "refused.unjournaled_order"
+  );
   // A plan made before the order: the snapshot wall refuses it first, nothing sent either way.
   CHECK(ask_checked(fixture, {"order", "place", id}).code_ == "refused.stale_plan");
   CHECK(ask_checked(fixture, {"order", "cancel", "005930"}).code_ == "refused.unjournaled_order");
@@ -745,7 +812,9 @@ TEST_CASE("the per-call second: an order command past the data's end is clock.pa
   CHECK(slurp(fixture.log()) == log);
 }
 
-TEST_CASE("the market refusing a logged request is unknown.broker_refused and says why and the journal's answer settles it") {
+TEST_CASE(
+  "the market refusing a logged request is unknown.broker_refused and says why and the journal's answer settles it"
+) {
   ConfigParts parts;
   parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
   const PaperFixture fixture(parts);
@@ -771,7 +840,9 @@ TEST_CASE("the market refusing a logged request is unknown.broker_refused and sa
   CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().empty());
 }
 
-TEST_CASE("B2 and the table: no order option names a ceiling; each catalogued once() reason is declared by the order commands") {
+TEST_CASE(
+  "B2 and the table: no order option names a ceiling; each catalogued once() reason is declared by the order commands"
+) {
   const cmdatl::Table table(cmdatl::command_list());
   std::vector<std::string> options;
   for (const auto& command : table.commands()) {
@@ -816,7 +887,8 @@ TEST_CASE("--fields and --value accept each new field before the command runs") 
   const auto ran = fixture.json({"--value", "plan_id", "order", "plan", "005930", "--target", "1", "--limit", "75000"});
   CHECK(ran.exit_ == 0);
   CHECK(ran.out_.size() > 5);
-  const auto fields = fixture.json({"--fields", "now,would,expires_at", "order", "plan", "005930", "--target", "1", "--limit", "75000"});
+  const auto fields =
+    fixture.json({"--fields", "now,would,expires_at", "order", "plan", "005930", "--target", "1", "--limit", "75000"});
   CHECK(fields.exit_ == 0);
   CHECK(reply_of(fields.out_).contains("would"));
   CHECK(fixture.json({"--value", "nonsense", "order", "place", "p0123456789"}).exit_ == 2);
@@ -887,9 +959,11 @@ TEST_CASE("hostile inputs: mutated plan books never authorize a send their snaps
 TEST_CASE("hostile inputs: mutated approval files never release a set they do not name exactly", "[hostile]") {
   const PaperFixture fixture;
   open_session(fixture);
-  const auto at = paper::Clock::time_point(std::chrono::duration_cast<paper::Clock::duration>(
-    std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
-  ));
+  const auto at = paper::Clock::time_point(
+    std::chrono::duration_cast<paper::Clock::duration>(
+      std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
+    )
+  );
   int serial = 0;
   const auto owe = [&] {
     journal(fixture, {place_entry("j" + std::to_string(++serial), atl::runner::JournalOutcome::PENDING, at)});
@@ -918,7 +992,9 @@ TEST_CASE("hostile inputs: mutated approval files never release a set they do no
     CHECK((ran.exit_ == 0 || ran.exit_ == 3));
     if (ran.exit_ == 0) {
       ++released;
-      const auto parsed = sending::parse_approval(text, "005930", [](std::string_view t) { return paper::valid_symbol(t); });
+      const auto parsed = sending::parse_approval(text, "005930", [](std::string_view t) {
+        return paper::valid_symbol(t);
+      });
       CHECK(parsed.refused_.empty());
       CHECK(parsed.ids_ == std::vector<std::string>{wanted});
       owe();
@@ -932,9 +1008,39 @@ TEST_CASE("hostile inputs: generated order command lines end in a declared exit 
   const PaperFixture fixture;
   open_session(fixture);
   const std::vector<std::string> words{
-    "order", "plan", "place", "cancel", "reconcile", "release", "005930", "000660", "999999", "--target", "--limit",
-    "--reason", "10", "0", "-1", "1e3", "75000", "75000.5", "0.0001", "p0123456789", "pXYZ", "", " ", "--json",
-    "--fields", "now", "--value", "plan_id", "read", "\xff", "--", "-x", "100000000000",
+    "order",
+    "plan",
+    "place",
+    "cancel",
+    "reconcile",
+    "release",
+    "005930",
+    "000660",
+    "999999",
+    "--target",
+    "--limit",
+    "--reason",
+    "10",
+    "0",
+    "-1",
+    "1e3",
+    "75000",
+    "75000.5",
+    "0.0001",
+    "p0123456789",
+    "pXYZ",
+    "",
+    " ",
+    "--json",
+    "--fields",
+    "now",
+    "--value",
+    "plan_id",
+    "read",
+    "\xff",
+    "--",
+    "-x",
+    "100000000000",
   };
   std::mt19937 random(7);
   for (int i = 0; i < 2000; ++i) {
@@ -993,11 +1099,16 @@ TEST_CASE("snapshots: a failed read is written ? and never matches a good read")
     bad.holdings_ = k != 0;
     bad.orders_ = k != 1;
     bad.cash_ = k != 2;
-    const auto text = cmdatl::snapshot_text(bad, SCOPE, "005930", "1", "75000", k == 3 ? std::nullopt : std::optional<std::int64_t>(10));
+    const auto text = cmdatl::snapshot_text(
+      bad, SCOPE, "005930", "1", "75000", k == 3 ? std::nullopt : std::optional<std::int64_t>(10)
+    );
     INFO(text);
     CHECK(text.find("?") != std::string::npos);
-    CHECK(cmdatl::snapshot_of(bad, SCOPE, "005930", "1", "75000", k == 3 ? std::nullopt : std::optional<std::int64_t>(10)) !=
-      cmdatl::snapshot_of(good, SCOPE, "005930", "1", "75000", 10));
+    CHECK(
+      cmdatl::snapshot_of(
+        bad, SCOPE, "005930", "1", "75000", k == 3 ? std::nullopt : std::optional<std::int64_t>(10)
+      ) != cmdatl::snapshot_of(good, SCOPE, "005930", "1", "75000", 10)
+    );
   }
   CHECK(ok.find("?") == std::string::npos);
 }

@@ -176,44 +176,58 @@ public:
    * @brief The market's clock.
    * @return The instant.
    */
-  Clock::time_point now() const { return now_; }
+  Clock::time_point now() const {
+    return now_;
+  }
 
   /**
    * @brief The cash after every fill's value, commission and tax.
    * @return The cash.
    */
-  double cash() const { return cash_; }
+  double cash() const {
+    return cash_;
+  }
 
   /**
    * @brief The holdings.
    * @return Each symbol's holding.
    */
-  const std::map<std::string, Holding>& holdings() const { return holdings_; }
+  const std::map<std::string, Holding>& holdings() const {
+    return holdings_;
+  }
 
   /**
    * @brief Every order the market accepted.
    * @return The orders, in the order accepted.
    */
-  const std::vector<PaperOrder>& orders() const { return orders_; }
+  const std::vector<PaperOrder>& orders() const {
+    return orders_;
+  }
 
   /**
    * @brief Takes what happened since the last call.
    * @return The events.
    */
-  std::vector<MarketEvent> drain_events() { return std::exchange(events_, {}); }
+  std::vector<MarketEvent> drain_events() {
+    return std::exchange(events_, {});
+  }
 
   /**
    * @brief Whether the bars have a symbol.
    * @param symbol The symbol.
    * @return Whether they do.
    */
-  bool has_symbol(const std::string& symbol) const { return bars_.count(symbol) != 0; }
+  bool has_symbol(const std::string& symbol) const {
+    return bars_.count(symbol) != 0;
+  }
 
   /**
    * @brief Every symbol of the bars.
    * @return The bars by symbol.
    */
-  const std::map<std::string, std::vector<DayBar>>& bars() const { return bars_; }
+  const std::map<std::string, std::vector<DayBar>>& bars() const {
+    return bars_;
+  }
 
   /**
    * @brief The last date any symbol trades, as days from 1970-01-01.
@@ -349,8 +363,7 @@ public:
   std::optional<double> price_at(const std::string& symbol, Clock::time_point at) const {
     if (const auto* bar = session_bar(symbol, at); bar != nullptr && at >= open_of(bar->day_)) {
       const double f = std::min(
-        1.0,
-        std::chrono::duration<double>(at - open_of(bar->day_)) / std::chrono::duration<double>(SESSION_LENGTH)
+        1.0, std::chrono::duration<double>(at - open_of(bar->day_)) / std::chrono::duration<double>(SESSION_LENGTH)
       );
       const double o = bar->open_;
       const double h = bar->high_;
@@ -403,10 +416,7 @@ public:
    * @return The new order's id, or empty when refused.
    */
   std::string place(
-    const atl::OrderRequest& request,
-    std::int64_t quantity,
-    std::optional<double> limit,
-    std::string& error
+    const atl::OrderRequest& request, std::int64_t quantity, std::optional<double> limit, std::string& error
   ) {
     const auto& symbol = request.instrument_.symbol_;
     if (!accepts_orders_at(symbol, now_)) {
@@ -481,7 +491,9 @@ public:
    * @param target The new instant, not before now.
    */
   void advance_to(Clock::time_point target) {
-    const auto open_order = [](const PaperOrder& order) { return is_open(order); };
+    const auto open_order = [](const PaperOrder& order) {
+      return is_open(order);
+    };
     while (now_ < target) {
       if (std::none_of(orders_.begin(), orders_.end(), open_order)) {
         now_ = target;
@@ -627,10 +639,8 @@ private:
       if (!order.limit_) {
         // One tick against the order per slippage tick: a buy rounded up, a sell down.
         for (int k = 0; k < costs_.slippage_ticks_; ++k) {
-          const auto nudged = rule.round_to_tick(
-            decimal_of(buy ? fill + 1 : fill - 1),
-            buy ? atl::OrderSide::SELL : atl::OrderSide::BUY
-          );
+          const auto nudged =
+            rule.round_to_tick(decimal_of(buy ? fill + 1 : fill - 1), buy ? atl::OrderSide::SELL : atl::OrderSide::BUY);
           if (nudged) {
             fill = to_double(*nudged);
           }
@@ -682,5 +692,5 @@ private:
   std::int64_t next_id_{0};
 };
 
-}  // namespace paper
-}  // namespace cmdatl
+} // namespace paper
+} // namespace cmdatl

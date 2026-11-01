@@ -22,11 +22,10 @@ public:
    * @brief Builds the error.
    * @param what The invariant.
    */
-  explicit TomlInvariant(const char* what)
-  : std::runtime_error(what) {}
+  explicit TomlInvariant(const char* what) : std::runtime_error(what) {}
 };
 
-}  // namespace cmdatl
+} // namespace cmdatl
 
 // toml++ checks its own invariants with TOML_ASSERT, an abort without NDEBUG and, with it, an assumption the optimizer
 // may build on (`TOML_ASSERT_ASSUME`); a table header such as `[~x]` reaches one in toml++ 3.4.0.
@@ -163,13 +162,17 @@ struct OperatorConfig {
    * @brief The journal's scope, `<broker>:<env>:<number>`.
    * @return The scope.
    */
-  std::string scope() const { return broker_ + ":" + env_ + ":" + number_; }
+  std::string scope() const {
+    return broker_ + ":" + env_ + ":" + number_;
+  }
 
   /**
    * @brief The account's directory name, `<broker>-<env>-<number>`.
    * @return The name.
    */
-  std::string account_name() const { return broker_ + "-" + env_ + "-" + number_; }
+  std::string account_name() const {
+    return broker_ + "-" + env_ + "-" + number_;
+  }
 
   /**
    * @brief Whether a symbol may be traded.
@@ -289,22 +292,22 @@ inline std::string type_name(const toml::node& node) {
  * @return The refusal of the first other key, or nothing.
  */
 inline std::optional<Refusal> only_keys(
-  const toml::table& table,
-  const std::string& name,
-  const std::set<std::string>& allowed
+  const toml::table& table, const std::string& name, const std::set<std::string>& allowed
 ) {
   for (const auto& entry : table) {
     const auto key = std::string(entry.first.str());
     if (allowed.count(key) == 0) {
       return refuse(
         entry.first.source(),
-        (name.empty() ? "" : "[" + name + "] ") + "has no key " + key + " (the keys are: " + [&] {
-          std::string list;
-          for (const auto& k : allowed) {
-            list += (list.empty() ? "" : ", ") + k;
-          }
-          return list;
-        }() + ")"
+        (name.empty() ? "" : "[" + name + "] ") + "has no key " + key + " (the keys are: " +
+          [&] {
+            std::string list;
+            for (const auto& k : allowed) {
+              list += (list.empty() ? "" : ", ") + k;
+            }
+            return list;
+          }() +
+          ")"
       );
     }
   }
@@ -322,11 +325,7 @@ inline std::optional<Refusal> only_keys(
  * @return The refusal, or nothing (also when absent).
  */
 inline std::optional<Refusal> integer_in(
-  const toml::table& table,
-  const char* key,
-  const std::string& name,
-  std::int64_t low,
-  std::int64_t high,
+  const toml::table& table, const char* key, const std::string& name, std::int64_t low, std::int64_t high,
   std::int64_t& out
 ) {
   const auto* node = table.get(key);
@@ -357,10 +356,7 @@ inline std::optional<Refusal> integer_in(
  * @return The refusal, or nothing (also when absent).
  */
 inline std::optional<Refusal> string_of(
-  const toml::table& table,
-  const char* key,
-  const std::string& name,
-  std::optional<std::string>& out
+  const toml::table& table, const char* key, const std::string& name, std::optional<std::string>& out
 ) {
   const auto* node = table.get(key);
   if (node == nullptr) {
@@ -401,7 +397,9 @@ inline std::optional<Refusal> table_of(const toml::table& table, const char* key
  */
 inline std::string resolved(const std::string& text, const std::string& dir) {
   const std::filesystem::path path(text);
-  return path.is_absolute() ? path.lexically_normal().string() : (std::filesystem::path(dir) / path).lexically_normal().string();
+  return path.is_absolute() ?
+    path.lexically_normal().string() :
+    (std::filesystem::path(dir) / path).lexically_normal().string();
 }
 
 /**
@@ -414,7 +412,9 @@ inline bool order_value_text(const std::string& text) {
   const auto whole = text.substr(0, dot);
   const auto fraction = dot == std::string::npos ? std::string() : text.substr(dot + 1);
   const auto digits = [](const std::string& part) {
-    return std::all_of(part.begin(), part.end(), [](char c) { return c >= '0' && c <= '9'; });
+    return std::all_of(part.begin(), part.end(), [](char c) {
+      return c >= '0' && c <= '9';
+    });
   };
   if (whole.empty() || whole.size() > 14 || !digits(whole)) {
     return false;
@@ -468,8 +468,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   config.broker_ = broker->as_string()->get();
   if (config.broker_ == "kis" || config.broker_ == "kiwoom" || config.broker_ == "toss") {
     return refuse(
-      broker->source(),
-      "the broker " + config.broker_ + " is not supported in this version; broker = \"paper\" is",
+      broker->source(), "the broker " + config.broker_ + " is not supported in this version; broker = \"paper\" is",
       "unsupported.broker"
     );
   }
@@ -506,11 +505,13 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (auto bad = table_of(root, "limits", limits)) {
     return bad;
   }
-  if (auto bad = only_keys(
-        *limits,
-        "limits",
-        {"collar", "daily_orders", "order_type", "order_value", "phases", "plan_ttl", "portfolio_age", "position", "symbols"}
-      )) {
+  if (
+    auto bad = only_keys(
+      *limits, "limits",
+      {"collar", "daily_orders", "order_type", "order_value", "phases", "plan_ttl", "portfolio_age", "position",
+        "symbols"}
+    )
+  ) {
     return bad;
   }
   auto& l = config.limits_;
@@ -551,7 +552,10 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
       return refuse(entry.first.source(), "limits.position names " + symbol + ", which limits.symbols does not list");
     }
     std::int64_t cap = 0;
-    if (auto bad = integer_in(*position->as_table(), symbol.c_str(), "limits.position." + symbol, 0, paper::MAX_SHARES, cap)) {
+    if (
+      auto bad =
+        integer_in(*position->as_table(), symbol.c_str(), "limits.position." + symbol, 0, paper::MAX_SHARES, cap)
+    ) {
       return bad;
     }
     l.position_[symbol] = cap;
@@ -678,8 +682,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   const auto at = paper::parse_kst(start->as_string()->get());
   if (!at) {
     return refuse(
-      start->source(),
-      "paper.start must be a real KST instant written YYYY-MM-DDTHH:MM, from 1990-01-01 to 2100-12-31"
+      start->source(), "paper.start must be a real KST instant written YYYY-MM-DDTHH:MM, from 1990-01-01 to 2100-12-31"
     );
   }
   p.start_ = start->as_string()->get();
@@ -732,7 +735,9 @@ inline std::optional<Refusal> nesting_refusal(std::string_view text) {
       }
     }
   };
-  const auto at = [&](std::string_view token) { return text.compare(i, token.size(), token) == 0; };
+  const auto at = [&](std::string_view token) {
+    return text.compare(i, token.size(), token) == 0;
+  };
   // Skips a string opened at `i`, ending a single-line one at a new line as toml++ refuses it there.
   const auto skip_string = [&](char quote) {
     const bool escapes = quote == '"';
@@ -816,7 +821,7 @@ inline std::optional<Refusal> nesting_refusal(std::string_view text) {
   return std::nullopt;
 }
 
-}  // namespace config_detail
+} // namespace config_detail
 
 /**
  * @brief Reads the operator's file named by `CMDATL_CONFIG`, once: opened without blocking on a FIFO, checked through
@@ -863,8 +868,7 @@ inline ConfigSnapshot load_operator_config() {
   config.dir_ = std::filesystem::path(config.path_).parent_path().string();
   if (auto deep = config_detail::nesting_refusal(text)) {
     return invalid(
-      "the operator's file " + snapshot.path_ + " is not TOML this version reads: " + deep->message_,
-      deep->at_.line,
+      "the operator's file " + snapshot.path_ + " is not TOML this version reads: " + deep->message_, deep->at_.line,
       deep->at_.column
     );
   }
@@ -878,8 +882,7 @@ inline ConfigSnapshot load_operator_config() {
   } catch (const toml::parse_error& error) {
     return invalid(
       "the operator's file " + snapshot.path_ + " is not valid TOML: " + std::string(error.description()),
-      error.source().begin.line,
-      error.source().begin.column
+      error.source().begin.line, error.source().begin.column
     );
   }
   if (auto refusal = config_detail::validate(root, config)) {
@@ -964,4 +967,4 @@ inline std::optional<std::string> run_dir(const OperatorConfig& config, const st
   return (std::filesystem::path(*root) / "runs" / config.account_name() / run).string();
 }
 
-}  // namespace cmdatl
+} // namespace cmdatl
