@@ -451,8 +451,20 @@ TEST_CASE("descriptors running out at either pipe or at the spawn leak nothing")
   const FakeAtlc fake("run out ok\n");
   rlimit saved{};
   REQUIRE(::getrlimit(RLIMIT_NOFILE, &saved) == 0);
-  const int before = open_fds();
+  // The limit below leaves exactly `spare` descriptors free only when none is free under the highest open one; a
+  // runner can start the process with gaps there, so they are filled first.
   const int highest = highest_fd();
+  std::vector<int> fillers;
+  for (;;) {
+    const int fd = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
+    REQUIRE(fd >= 0);
+    if (fd > highest) {
+      ::close(fd);
+      break;
+    }
+    fillers.push_back(fd);
+  }
+  const int before = open_fds();
   std::vector<cmdatl::ChildResult> results;
   for (int spare = 0; spare <= 10; ++spare) {
     rlimit low = saved;
@@ -461,9 +473,13 @@ TEST_CASE("descriptors running out at either pipe or at the spawn leak nothing")
     auto result = run_fake();
     ::setrlimit(RLIMIT_NOFILE, &saved);
     results.push_back(std::move(result));
-    INFO("spare descriptors: " << spare);
+    INFO("spare descriptors: " << spare << ", result " << static_cast<int>(results.back().kind_) << ": "
+                                << results.back().error_);
     CHECK(open_fds() == before);
     CHECK(no_children());
+  }
+  for (const int fd : fillers) {
+    ::close(fd);
   }
   const auto refused = std::count_if(results.begin(), results.end(), [](const cmdatl::ChildResult& result) {
     return result.kind_ == cmdatl::ChildResult::Kind::NOT_STARTED &&
@@ -594,7 +610,8 @@ TEST_CASE("Ctrl-C on a terminal reaches cmdatl only and it stops atlc's group an
           }
         }
         if (fds[1].revents != 0) {
-          (void)::read(master, chunk, sizeof(chunk));
+          // Drained and dropped; a bare `(void)` does not silence GCC's unused-result warning.
+          [[maybe_unused]] const auto drained = ::read(master, chunk, sizeof(chunk));
         }
       }
       if (::waitpid(pid, &status, WNOHANG) == pid) {

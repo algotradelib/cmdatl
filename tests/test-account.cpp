@@ -586,7 +586,6 @@ std::string operator_only_line(std::int64_t at) {
   const auto checksum = runner::journal_detail::checksum_text(runner::journal_detail::line_checksum(line));
   line.pop_back();
   line += std::string(runner::journal_detail::kChecksumMember) + checksum + "\"}";
-  REQUIRE(runner::journal_entry_from_line(line).has_value());
   return line;
 }
 
@@ -608,16 +607,28 @@ TEST_CASE("an operator-only line at an instant outside the interval makes the co
     {"just before 1990 KST", micros(paper::first_instant()) - 1},
     {"2101 KST", micros(paper::end_instant())},
   };
+  // The library reads an instant only if system_clock holds it (Linux counts nanoseconds, macOS microseconds); one it
+  // cannot hold makes the line unreadable, damage either way.
+  const auto held = [](std::int64_t value) {
+    const auto limit =
+      std::chrono::duration_cast<std::chrono::microseconds>(paper::Clock::duration::max()).count();
+    return value >= -limit && value <= limit;
+  };
   for (const auto& c : extreme) {
     INFO(c.first);
-    const auto text = good + operator_only_line(c.second) + "\n";
+    const auto line = operator_only_line(c.second);
+    REQUIRE(runner::journal_entry_from_line(line).has_value() == held(c.second));
+    const auto text = good + line + "\n";
     spit(fixture.journal(), text);
     for (const char* command : {"status", "account"}) {
       const auto ran = fixture.json({command});
+      INFO(ran.out_);
       CHECK(ran.exit_ == 4);
       CHECK(code_of(ran.out_) == "unknown.journal_damaged");
-      CHECK(ran.out_.find("outside 1990 to 2100") != std::string::npos);
-      CHECK(reply_of(ran.out_).at("orders_left_today").is_null());
+      if (held(c.second)) {
+        CHECK(ran.out_.find("outside 1990 to 2100") != std::string::npos);
+        CHECK(reply_of(ran.out_).at("orders_left_today").is_null());
+      }
     }
     CHECK(slurp(fixture.journal()) == text);
     CHECK(slurp(fixture.log()) == log);

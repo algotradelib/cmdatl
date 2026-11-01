@@ -1,5 +1,4 @@
 # Builds cmdatl against the installed algotradelib and atlc that the organization's actions pull, and runs the whole suite, the real-atlc acceptance cases included (a skipped one fails the job).
-# The repository is private, so its minutes are billed: Linux on every push and pull request, macOS (about ten times a Linux minute) only on main and by hand.
 on:
   workflow_dispatch:
   push:
@@ -43,33 +42,19 @@ permissions:
   contents: read
 
 jobs:
-  # The matrix is computed so macOS runs only on a push to main or a manual run.
-  matrix:
-    runs-on: ubuntu-latest
-    outputs:
-      os: ${{ steps.pick.outputs.os }}
-    steps:
-      - id: pick
-        shell: bash
-        run: |
-          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ] || { [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF" = refs/heads/main ]; }; then
-            echo 'os=["ubuntu-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
-          else
-            echo 'os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
-          fi
-
   cmake:
-    needs: matrix
+    runs-on: ${{ matrix.config.os }}
+
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(needs.matrix.outputs.os) }}
-    runs-on: ${{ matrix.os }}
+        config:
+          - {os: ubuntu-latest}
+          - {os: macos-latest}
+
     # A hung build or run stops here, not at GitHub's six-hour default, which a private repository pays for.
     timeout-minutes: 60
-    env:
-      CMAKE_BUILD_PARALLEL_LEVEL: '4'
-    name: ${{ matrix.os }}
+    name: ${{ matrix.config.os }}
     steps:
       - uses: actions/checkout@v7
 
@@ -128,7 +113,7 @@ jobs:
           XDG_CACHE_HOME: ${{ runner.temp }}/cache
         with:
           test-dir: build
-          args: --output-on-failure --no-tests=error -E ^test-acceptance$
+          args: -E ^test-acceptance$
 
       - name: Acceptance
         shell: bash

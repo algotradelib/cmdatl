@@ -47,8 +47,6 @@ jobs:
     runs-on: ubuntu-latest
     # A hung build or run stops here, not at GitHub's six-hour default, which a private repository pays for.
     timeout-minutes: 60
-    env:
-      CMAKE_BUILD_PARALLEL_LEVEL: '4'
     steps:
       - uses: actions/checkout@v7
 
@@ -104,7 +102,7 @@ jobs:
           XDG_CACHE_HOME: ${{ runner.temp }}/cache
         with:
           test-dir: build
-          args: --output-on-failure --no-tests=error -E ^test-acceptance$
+          args: -E ^test-acceptance$
 
       - name: Acceptance
         shell: bash
