@@ -1,0 +1,4 @@
+# Commits git blame skips: run `git config blame.ignoreRevsFile .git-blame-ignore-revs` once; GitHub reads this file itself.
+
+# style: format every file with clang-format
+e5cd784d13874c5a4b22cfe95adc21177789a2b5
