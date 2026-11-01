@@ -4,10 +4,6 @@ algotradelib from the command line.
 With [algotradelib](https://github.com/algotradelib/algotradelib) alone you write your own C++ for a backtest or a trading loop; with cmdatl you write the strategy in [atls](https://github.com/algotradelib/atlc), describe the run in a TOML file, and backtest and trade it from the command line.
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
 
-Status: in development, before its first release; commands and replies may change without notice.
-This version answers `cmdatl strategy new`, `cmdatl strategy backtest`, the paper account's reads (`cmdatl status`, `cmdatl account`, `cmdatl quote`, `cmdatl order list`, `cmdatl clock`), `cmdatl clock advance`, the order commands (`cmdatl order plan`, `cmdatl order place`, `cmdatl order cancel`, `cmdatl order reconcile`, `cmdatl order release`), the run commands (`cmdatl run start`, `cmdatl run status`, `cmdatl run log`, `cmdatl run stop`), `cmdatl env`, `cmdatl schema` and `cmdatl help`: every command an agent uses answers.
-`cmdatl strategy reference` and `cmdatl guide` are listed and answer that they are not built yet; orders reach only the paper market and a run's own mock market.
-
 ```sh
 cmdatl strategy new dip --template mean-reversion      # dip.atls and dip.toml to start from
 cmdatl strategy backtest dip.toml -P lookback=30       # atlc builds and replays it; the report as JSON
