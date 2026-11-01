@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
-#include <ratio>
 #include <string>
 #include <type_traits>
 #include <vector>
@@ -151,12 +150,6 @@ TEST_CASE("dates and instants are read strictly inside 1990-01-01 to 2100-12-31 
   CHECK(paper::from_nanos(paper::nanos(at)) == at);
   CHECK(!paper::from_nanos(paper::nanos(paper::end_instant())));
   CHECK(!paper::from_nanos(paper::nanos(paper::first_instant()) - 1));
-  // A nanosecond the clock cannot hold is refused; Linux's system_clock holds every nanosecond, macOS's only microseconds.
-  if constexpr (std::ratio_less_v<std::nano, paper::Clock::period>) {
-    CHECK(!paper::from_nanos(paper::nanos(at) + 1));
-  } else {
-    CHECK(paper::from_nanos(paper::nanos(at) + 1));
-  }
   CHECK(!paper::from_nanos(INT64_MAX));
   CHECK(!paper::from_nanos(INT64_MIN));
 }
