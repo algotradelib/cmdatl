@@ -29,18 +29,10 @@ on:
 
 name: test-coverage
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
-
 jobs:
   coverage:
     runs-on: ubuntu-latest
-    # A hung build or run stops here, not at GitHub's six-hour default, which a private repository pays for.
-    timeout-minutes: 60
+
     steps:
       - uses: actions/checkout@v7
 
@@ -50,67 +42,43 @@ jobs:
       - id: atlc
         uses: algotradelib/.github/actions/setup-atlc@main
 
-      # atlc's examples from the revision the package was built from, or from main when it names none.
-      - id: revisions
-        name: Package revisions
-        shell: bash
-        run: |
-          revision() {
-            oras manifest fetch "ghcr.io/algotradelib/$1:main-linux-x64" |
-              python3 -c "import json, sys; print(json.load(sys.stdin).get('annotations', {}).get('org.opencontainers.image.revision') or '')"
-          }
-          atl="$(revision algotradelib)"
-          atlc="$(revision atlc)"
-          echo "algotradelib revision: ${atl:-unknown}"
-          echo "atlc revision: ${atlc:-unknown, examples from main}"
-          echo "atlc=${atlc:-main}" >> "$GITHUB_OUTPUT"
-
+      # atlc's examples, for the acceptance cases.
       - uses: actions/checkout@v7
         with:
           repository: algotradelib/atlc
-          ref: ${{ steps.revisions.outputs.atlc }}
           path: atlc-src
 
       - name: gcovr
         run: pipx install gcovr
 
-      # -g0: no debug information, which coverage does not need and which made GCC's coverage builds slower.
-      # It goes in the Debug flags, since CMake puts those after the general ones.
       - uses: threeal/cmake-action@v2.1.0
         with:
           run-build: true
           cxx-flags: --coverage
           options: |
             CMAKE_BUILD_TYPE=Debug
+            CMAKE_CXX_FLAGS_DEBUG=-g0
             CMDATL_FETCH_DEPS=ON
             "CMAKE_PREFIX_PATH=${{ steps.atl.outputs.path }}"
-            "CMAKE_CXX_FLAGS_DEBUG=-O0 -g0"
-            CMAKE_EXE_LINKER_FLAGS=--coverage
 
-      # The acceptance cases run apart from ctest, as in cmake-check.yaml.
       - uses: threeal/ctest-action@v1.1.0
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
           CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
-          XDG_CACHE_HOME: ${{ runner.temp }}/cache
         with:
           test-dir: build
           args: -E ^test-acceptance$
 
       - name: Acceptance
-        shell: bash
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
           CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
-          XDG_CACHE_HOME: ${{ runner.temp }}/cache
         run: .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
 
       - name: Coverage
-        shell: bash
-        run: |
-          gcovr --root . --filter 'include/cmdatl/' --filter 'src/' --merge-lines --xml coverage.xml build
+        run: gcovr --root . --filter 'include/cmdatl/' --filter 'src/' --merge-lines --xml coverage.xml build
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5

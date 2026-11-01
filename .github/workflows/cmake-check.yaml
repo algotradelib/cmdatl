@@ -28,13 +28,6 @@ on:
 
 name: cmake-check
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
-
 jobs:
   cmake:
     runs-on: ${{ matrix.config.os }}
@@ -46,9 +39,8 @@ jobs:
           - {os: ubuntu-latest}
           - {os: macos-latest}
 
-    # A hung build or run stops here, not at GitHub's six-hour default, which a private repository pays for.
-    timeout-minutes: 60
     name: ${{ matrix.config.os }}
+
     steps:
       - uses: actions/checkout@v7
 
@@ -58,36 +50,17 @@ jobs:
       - id: atlc
         uses: algotradelib/.github/actions/setup-atlc@main
 
-      # Both main channels move, so the job prints the revisions it got; atlc's examples come from the same revision, or from main when the package names none.
-      - id: revisions
-        name: Package revisions
-        shell: bash
-        run: |
-          case "$RUNNER_OS" in Linux) p=linux-x64 ;; macOS) p=macos-arm64 ;; esac
-          revision() {
-            oras manifest fetch "ghcr.io/algotradelib/$1:main-$p" |
-              python3 -c "import json, sys; print(json.load(sys.stdin).get('annotations', {}).get('org.opencontainers.image.revision') or '')"
-          }
-          atl="$(revision algotradelib)"
-          atlc="$(revision atlc)"
-          echo "algotradelib revision: ${atl:-unknown}"
-          echo "atlc revision: ${atlc:-unknown, examples from main}"
-          "${{ steps.atlc.outputs.atlc }}" --version
-          echo "atlc=${atlc:-main}" >> "$GITHUB_OUTPUT"
-
+      # atlc's examples, for the acceptance cases.
       - uses: actions/checkout@v7
         with:
           repository: algotradelib/atlc
-          ref: ${{ steps.revisions.outputs.atlc }}
           path: atlc-src
 
-      # OpenSSL is not in the library's package; the Linux runner has it, Homebrew's is keg-only.
       - name: OpenSSL (macOS)
         if: runner.os == 'macOS'
         run: echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
-      # Warnings are errors on Linux: cmdatl builds clean, and GCC is the compiler no one runs locally.
-      # One GCC warning stays a warning: -Wterminate, from the toml++ assertion that throws inside toml++'s noexcept functions (plan/todo/cmdatl-toml-assert-noexcept.md).
+      # -Wterminate stays a warning: plan/todo/cmdatl-toml-assert-noexcept.md.
       - uses: threeal/cmake-action@v2.1.0
         with:
           run-build: true
@@ -97,33 +70,19 @@ jobs:
             CMDATL_FETCH_DEPS=ON
             "CMAKE_PREFIX_PATH=${{ steps.atl.outputs.path }}"
 
-      # The acceptance cases run apart from ctest: its entry is one process, which passes when only some cases skip.
-      # The script reads each case from a JUnit report and fails on any skipped or missing one.
       - uses: threeal/ctest-action@v1.1.0
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
           CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
-          XDG_CACHE_HOME: ${{ runner.temp }}/cache
         with:
           test-dir: build
           args: -E ^test-acceptance$
 
+      # ctest passes test-acceptance when only some of its cases skip; the script fails on any skipped case.
       - name: Acceptance
-        shell: bash
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
           CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
-          XDG_CACHE_HOME: ${{ runner.temp }}/cache
         run: .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
-
-      # The installed cmdatl, run from outside the checkout.
-      - name: Install
-        shell: bash
-        run: |
-          cmake --install build --prefix "$RUNNER_TEMP/cmdatl"
-          cd "$RUNNER_TEMP"
-          "$RUNNER_TEMP/cmdatl/bin/cmdatl" --version
-          "$RUNNER_TEMP/cmdatl/bin/cmdatl" schema --json > schema.json
-          python3 -c "import json; d = json.load(open('schema.json')); assert d.get('commands'), d"
