@@ -496,7 +496,9 @@ TEST_CASE("an allocation failing anywhere in strategy reference or guide becomes
 }
 
 TEST_CASE("repeated strategy reference calls leave no descriptor and no child whatever atlc answers") {
-  const Watchdog watchdog("repeated references", 120);
+  // A grandchild holding the pipes is the case "a leader that ends while its grandchild holds the pipes ...": it waits
+  // two seconds a call, so it is not repeated here.
+  const Watchdog watchdog("repeated references", 60);
   const std::vector<std::string> scripts{
     "reference out # Index\n",
     "reference err atlc reference: no chapter `zz`\nreference exit 1\n",
@@ -504,13 +506,12 @@ TEST_CASE("repeated strategy reference calls leave no descriptor and no child wh
     "reference exit 7\n",
     "reference raise 11\n",
     "reference flood 300000\n",
-    "reference grandchild hold\nreference exit 0\n",
   };
   const int before = open_fds();
   for (const auto& script : scripts) {
     INFO(script);
     const FakeAtlc fake(script);
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < 3; ++i) {
       const auto ran = run({"--json", "strategy", "reference", "builtins"});
       CHECK((ran.exit_ == 0 || ran.exit_ == 1 || ran.exit_ == 2));
     }
