@@ -1129,7 +1129,11 @@ TEST_CASE("run log --follow finishes incomplete when the driver is killed while 
   CHECK(WEXITSTATUS(status) == 4);
   const auto reply = reply_of(lines_of(follower.out()).back());
   CHECK(reply.at("incomplete").as_bool());
-  CHECK(reply.at("state").as_string() == "unknown");
+  // The follow ends once the driver's lock is free; the run is "lost" until its supervisor records the driver's exit,
+  // then "unknown", and either can come first. The outcome is the same: unknown, its end line missing.
+  const auto state = std::string(reply.at("state").as_string());
+  CHECK((state == "lost" || state == "unknown"));
+  CHECK(reply.at("error").as_object().at("code").as_string() == "unknown.run_ended");
   std::filesystem::remove(shared().barrier());
 }
 #endif
