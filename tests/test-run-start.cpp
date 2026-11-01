@@ -1253,7 +1253,6 @@ TEST_CASE(
   CHECK(running.at("state").as_string() == "running");
   CHECK(status_until_final(fixture, dir->filename().string()).at("state").as_string() == "ended");
 }
-#endif
 
 TEST_CASE(
   "the strategy guide's session runs as written from a starter and its TOML block to a run", "[acceptance][runs]"
@@ -1342,3 +1341,4 @@ TEST_CASE(
   CHECK(fixture.json({"account"}).out_ == account_before);
   CHECK(fixture.json({"order", "list"}).out_ == orders_before);
 }
+#endif
