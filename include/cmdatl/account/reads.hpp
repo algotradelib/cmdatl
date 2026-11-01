@@ -32,7 +32,7 @@ inline std::string owed_next(
   const std::string& symbol, const std::string& state, const std::optional<std::string>& status
 ) {
   if (state == "operator") {
-    return "only the operator settles it: cmdatl order release " + symbol + " with the approval file";
+    return "report to the operator, who settles it with cmdatl order release " + symbol + " and the approval file";
   }
   if (status && *status == "pending") {
     return "still working: cmdatl order cancel " + symbol +
@@ -44,8 +44,8 @@ inline std::string owed_next(
     return "cmdatl order reconcile " + symbol + " records it from holdings; sends nothing";
   }
   return "the broker never named it: cmdatl order reconcile " + symbol +
-    "; if it stays owed, the operator reads the "
-    "order list and holdings, then cmdatl order release " +
+    "; if it stays owed, report to the operator, who reads the order list and holdings and runs cmdatl order "
+    "release " +
     symbol;
 }
 

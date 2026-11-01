@@ -520,7 +520,8 @@ public:
     return error_reply(
       Exit::UNKNOWN, "unknown.journal_damaged",
       "the account's journal is damaged or not this account's (" + journal_.detail_ + "); what was sent is unknown",
-      "the operator reads the broker's order list and holdings, then restores the journal; nothing was written"
+      "stop and report to the operator, who reads the broker's order list and holdings, then restores the journal; "
+      "nothing was written"
     );
   }
 
@@ -745,7 +746,7 @@ private:
     if (!state_file_ok("journal.jsonl", why)) {
       return error_reply(
         Exit::UNKNOWN, "unknown.journal_damaged", "the account's journal is refused: " + why,
-        "the operator restores the journal as a regular file; nothing was written"
+        "stop and report to the operator, who restores the journal as a regular file; nothing was written"
       );
     }
     struct stat identity{};

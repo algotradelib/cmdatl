@@ -21,7 +21,7 @@ If `env` says anything else, stop and ask: this guide covers paper only.
 - A run's market: each `cmdatl run start` builds a fresh one from the run spec's data, gone when the run ends; the paper account's commands never see it.
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
-The operator's files are not yours: never set or change `CMDATL_CONFIG` or `XDG_STATE_HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed`, `<stem>.release` or `<stem>.stop` (`cmdatl run stop` writes a stop for you), or the account's state directory.
+The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed`, `<stem>.release` or `<stem>.stop` (`cmdatl run stop` writes a stop for you), or the account's state directory.
 A missing armed file (`refused.not_armed`) is the operator's decision: quote it and ask.
 
 ## Read first
@@ -33,7 +33,7 @@ A missing armed file (`refused.not_armed`) is the operator's decision: quote it 
 
 1. `cmdatl order plan SYMBOL --target N --limit P` sends nothing and gives a `plan_id`.
    `--target` is the position to hold, counting working orders: holding 10 and buying 20 more is `--target 30`, `--target 0` sells out, and a target already met sends nothing (`met`).
-   Turn the task's quantity into a target once, from the holding when the task was given; when resuming a task, or when `status` shows fills or owed orders you did not see, ask which position is meant.
+   Turn the task's quantity into a target once, from the holding when the task was given; when resuming a task, or when `status` shows positions or owed orders you did not expect, ask which position is meant.
 2. `cmdatl order place PLAN_ID`.
    A plan sends once and lapses after `limits.plan_ttl` simulated seconds or when anything moves (`refused.plan_used`, `refused.stale_plan`): plan again.
 3. The price: take `last_price` from the latest `cmdatl quote SYMBOL`, read after any `clock advance`.
@@ -45,8 +45,8 @@ A missing armed file (`refused.not_armed`) is the operator's decision: quote it 
 6. `cmdatl order cancel SYMBOL` withdraws every working order on the symbol; `withdrawal_sent` means sent, not confirmed (`cmdatl order list` shows when they are gone).
 7. Before you finish, read `cmdatl order list`; report every working order, and cancel only those the task no longer wants.
 
-Market closed, with `not_accepted` naming only `phase` and `market_closed`: `cmdatl clock advance --next-open`, then quote, then plan.
-If it also names `daily_orders_used`, `orders_left_unknown` or `not_armed`, stop and ask: the clock moves for the task, never past a limit.
+Whatever the phase, if `not_accepted` names `daily_orders_used`, `orders_left_unknown` or `not_armed`, stop and ask: the clock moves for the task, never past a limit.
+Market closed, with `not_accepted` naming nothing but `phase` or `market_closed`: `cmdatl clock advance --next-open`, then quote, then plan.
 
 ## Exit codes
 
@@ -58,7 +58,7 @@ A cap the operator set is not yours to get past: `refused.symbol_not_allowed`, `
 Stop, quote the refusal, and offer what the limits allow as a question.
 `refused.unjournaled_order`: an order cmdatl did not place rests there; stop and report.
 `refused.awaiting` or `refused.awaiting_confirmation`: something is still owed; place nothing until `order reconcile` shows the symbol clean, and after two advances and reconciles, ask.
-Any other 3: follow `error.next` when it names a cmdatl read or a new plan; when it names a limit, the armed file or the operator, stop and ask.
+Any other 3: follow `error.next` when it names a cmdatl read, a new plan or the same command once; when it names a limit, the armed file or the operator, stop and ask.
 `error.retry: true` means the same call may succeed later unchanged, not that you should repeat it now.
 A `run stop` refused (`refused.stop_file_full`) wrote no stop: the run still trades; tell the operator.
 
@@ -94,6 +94,8 @@ Neither is a broker's demo account or evidence of how one would answer.
 Money and quantities are decimal strings; `--fields a,b.c` keeps fields, `--value PATH` prints one.
 
 ## A session
+
+It opens on a closed market; when `orders_accepted_now` is already true, skip the advance.
 
 ```sh
 cmdatl status

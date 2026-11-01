@@ -548,7 +548,7 @@ TEST_CASE("the owed rows' next and by case") {
     cmdatl::owed_next("005930", "named", std::string("canceled")).find("records it from holdings") != std::string::npos
   );
   CHECK(cmdatl::owed_next("005930", "unnamed", std::nullopt).find("never named it") != std::string::npos);
-  CHECK(cmdatl::owed_next("005930", "operator", std::nullopt).find("only the operator") != std::string::npos);
+  CHECK(cmdatl::owed_next("005930", "operator", std::nullopt).find("report to the operator") != std::string::npos);
 }
 
 TEST_CASE("approval files: the grammar and line by line") {

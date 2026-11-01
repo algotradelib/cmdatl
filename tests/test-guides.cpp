@@ -276,8 +276,8 @@ TEST_CASE("the strategy guide states the README's parity rule word for word") {
 TEST_CASE("every next cmdatl gives leaves the operator's decisions with the operator") {
   // Words that ask the reader to act outside cmdatl's commands, or to start what the operator may have stopped.
   const std::vector<std::string> outside{
-    "aside", "remove", "creat", "delete", "rename", "edit", "restore", "write", "smaller", "start another run",
-    "CMDATL_CONFIG", "XDG_STATE_HOME", "order release"
+    "aside", "remov", "creat", "delete", "rename", "edit", "restore", "write", "smaller", "start another run",
+    "CMDATL_CONFIG", "XDG_STATE_HOME", " HOME", "order release"
   };
   // Phrases that hand such an act to the operator; a bare mention ("the operator's file") does not.
   const std::vector<std::string> handed{
@@ -293,6 +293,8 @@ TEST_CASE("every next cmdatl gives leaves the operator's decisions with the oper
   std::vector<cmdatl::Reply> replies{
     cmdatl::paper_state_reply("damaged"), cmdatl::journal_missing_reply("missing"), cmdatl::lock_lost_reply()
   };
+  texts.emplace_back("owed row: operator", cmdatl::owed_next("005930", "operator", std::nullopt));
+  texts.emplace_back("owed row: unnamed", cmdatl::owed_next("005930", "unnamed", std::nullopt));
   for (const auto* code : {"config.missing", "config.invalid", "unsupported.broker"}) {
     cmdatl::ConfigSnapshot snapshot;
     snapshot.error_.code_ = code;
@@ -314,6 +316,24 @@ TEST_CASE("every next cmdatl gives leaves the operator's decisions with the oper
         CHECK(hands);
       }
     }
+  }
+  // The codes whose next carries a rule the agent guide relies on keep it, word for word.
+  const std::vector<std::pair<std::string, std::string>> pinned{
+    {"unknown.journal_missing", "stop and report to the operator"},
+    {"unknown.journal_damaged", "stop and report to the operator"},
+    {"unknown.paper_state", "stop and report to the operator"},
+    {"unknown.lock_lost", "stop and report to the operator"},
+    {"refused.phase", "names nothing but phase or market_closed"},
+    {"refused.awaiting_confirmation", "place nothing"},
+    {"unknown.broker_refused", "do not place again"},
+    {"unknown.unaccounted", "report to the operator"},
+    {"refused.not_armed", "ask the operator"},
+    {"refused.daily_order_limit", "ask the operator"},
+    {"refused.order_value", "ask the operator"},
+  };
+  for (const auto& [code, words] : pinned) {
+    INFO(code);
+    CHECK(cmdatl::catalog_next(code).find(words) != std::string::npos);
   }
   // The caps only the operator lifts never invite a retry.
   const std::vector<std::string> caps{
