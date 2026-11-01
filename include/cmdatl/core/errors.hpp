@@ -82,7 +82,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"clock.backwards", Exit::FAILED, false, "the clock only moves forward: cmdatl clock shows where it stands"},
     {"clock.past_data", Exit::FAILED, false, "the paper data ends there: cmdatl clock shows where"},
     {"unknown.clock_advance", Exit::UNKNOWN, false,
-      "cmdatl clock shows where the clock stands; do not repeat the advance before reading it"},
+      "cmdatl clock shows where the clock stands: read it before any other command"},
     {"refused.symbol_not_allowed", Exit::REFUSED, false, "cmdatl env shows the operator's limits.symbols"},
     {"refused.position_limit", Exit::REFUSED, false, "cmdatl env shows the operator's limits.position"},
     {"refused.not_armed", Exit::REFUSED, false,

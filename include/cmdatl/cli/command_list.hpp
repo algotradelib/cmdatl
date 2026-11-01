@@ -430,7 +430,7 @@ inline std::vector<Command> command_list() {
     .error("clock.backwards")
     .error("clock.past_data")
     .error("unknown.clock_advance")
-    .mutates("cmdatl clock shows where the clock stands; do not repeat the advance before reading it")
+    .mutates("cmdatl clock shows where the clock stands: read it before any other command")
     .on_account(
       [](const Invocation& invocation, Account& account, Output& output) {
         return advance_reply(invocation, account, account.desk(), output);

@@ -1160,7 +1160,7 @@ TEST_CASE("a failing output: during the wait, in a read's reply, and after a com
     std::ostringstream out;
     out.setstate(std::ios::badbit);
     CHECK(cmdatl::run({"--json", "clock", "advance", "--minutes", "5"}, out, err, false) == 4);
-    CHECK(err.str().find("do not repeat the advance") != std::string::npos);
+    CHECK(err.str().find("read it before any other command") != std::string::npos);
     CHECK(lines_of(slurp(fixture.log())).size() == lines_of(log).size() + 1);
     CHECK(reply(fixture, {"clock"}).at("now").as_string() == "2024-03-25T16:05:00+09:00");
   }

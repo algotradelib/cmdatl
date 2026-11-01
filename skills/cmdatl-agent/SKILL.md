@@ -46,7 +46,7 @@ A missing armed file (`refused.not_armed`) is the operator's decision: quote it 
 7. Before you finish, read `cmdatl order list`; report every working order, and cancel only those the task no longer wants.
 
 Whatever the phase, if `not_accepted` names `daily_orders_used`, `orders_left_unknown` or `not_armed`, stop and ask: the clock moves for the task, never past a limit.
-Market closed, with `not_accepted` naming nothing but `phase` or `market_closed`: `cmdatl clock advance --next-open`, then quote, then plan.
+Market closed, with `not_accepted` naming nothing but `phase` or `market_closed`: `cmdatl clock advance --next-open`, then quote, then plan; if `phase` is still named after the advance, stop and ask.
 
 ## Exit codes
 

@@ -535,7 +535,7 @@ json::array events_json(Desk& desk) {
 inline Reply advance_unknown(const std::string& what) {
   return error_reply(
     Exit::UNKNOWN, "unknown.clock_advance", what + "; the clock may have moved",
-    "cmdatl clock shows where the clock stands; do not repeat the advance before reading it"
+    "cmdatl clock shows where the clock stands: read it before any other command"
   );
 }
 
