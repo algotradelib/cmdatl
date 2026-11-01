@@ -1,3 +1,4 @@
+#include "./paper-support.hpp"
 #include "./support.hpp"
 
 #include <cmdatl/cmdatl>
@@ -6,7 +7,10 @@
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <optional>
+#include <regex>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -308,5 +312,62 @@ TEST_CASE(
     CHECK(code_of(ran.out_) == "spec.invalid");
     CHECK(!reply_of(ran.out_).at("errors").as_array().empty());
   }
+}
+
+TEST_CASE("every strategy reference the docs and skills name answers from the real atlc", "[acceptance]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(
+      "CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the acceptance cases did not run"
+    );
+  }
+  const ScopedVariable atlc("CMDATL_ATLC", equip->atlc_);
+  const std::filesystem::path root(CMDATL_SOURCE_DIR);
+  std::vector<std::filesystem::path> files{root / "README.md"};
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(root / "skills")) {
+    if (entry.path().extension() == ".md") {
+      files.push_back(entry.path());
+    }
+  }
+  // Each `cmdatl strategy reference` with or without a topic, as written; a topic is atlc's file stem, known only to
+  // the atlc that runs, so only the real one can say each exists.
+  // In a code span, or a fenced line that is the command alone.
+  const std::regex named(
+    "`cmdatl strategy reference( ([a-z][a-z0-9-]*))?`|^cmdatl strategy reference( ([a-z][a-z0-9-]*))?$"
+  );
+  std::set<std::string> topics;
+  // The chapters a line offers beside it, as in "(or `run-spec`, `syntax`)".
+  const std::regex offered("`([a-z][a-z0-9-]*)`");
+  for (const auto& file : files) {
+    for (const auto& line : lines_of(slurp(file))) {
+      for (std::sregex_iterator it(line.begin(), line.end(), named), end; it != end; ++it) {
+        topics.insert((*it)[2].matched ? (*it)[2].str() : (*it)[4].str());
+      }
+      const auto open = line.find("(or `");
+      if (line.find("cmdatl strategy reference") == std::string::npos || open == std::string::npos) {
+        continue;
+      }
+      const auto inside = line.substr(open, line.find(')', open) - open);
+      for (std::sregex_iterator it(inside.begin(), inside.end(), offered), end; it != end; ++it) {
+        topics.insert((*it)[1].str());
+      }
+    }
+  }
+  REQUIRE(topics.count("run-spec") == 1);
+  REQUIRE(topics.count("") == 1);
+  REQUIRE(topics.count("builtins") == 1);
+  for (const auto& topic : topics) {
+    INFO(topic);
+    std::vector<std::string> line{"--json", "strategy", "reference"};
+    if (!topic.empty()) {
+      line.push_back(topic);
+    }
+    const auto ran = run(line);
+    CHECK(ran.exit_ == 0);
+    CHECK(!reply_of(ran.out_).at("text").as_string().empty());
+  }
+  const auto wrong = run({"--json", "strategy", "reference", "indicators"});
+  CHECK(wrong.exit_ == 2);
+  CHECK(code_of(wrong.out_) == "usage.bad_value");
 }
 #endif

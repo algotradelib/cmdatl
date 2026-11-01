@@ -1,3 +1,4 @@
+#include "./paper-support.hpp"
 #include "./support.hpp"
 
 #include <cmdatl/cmdatl>
@@ -606,5 +607,101 @@ TEST_CASE("strategy new stops before writing anything once interrupted") {
   CHECK(ran.exit_ == 130);
   CHECK(code_of(ran.out_) == "interrupted");
   CHECK(!std::filesystem::exists(dir.path() / "dip.atls"));
+}
+
+TEST_CASE("strategy reference returns atlc reference's text unchanged") {
+  {
+    const FakeAtlc fake("reference args\nreference out # The atls language reference\n");
+    const auto ran = run({"--json", "strategy", "reference"});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 0);
+    const auto reply = reply_of(ran.out_);
+    CHECK(reply.at("text").as_string() == "# The atls language reference\n");
+    CHECK(fake.args("reference").empty());
+  }
+  {
+    const FakeAtlc fake("reference args\nreference out # Built-in functions\n");
+    CHECK(run({"--format", "text", "strategy", "reference", "builtins"}).out_ == "# Built-in functions\n");
+    CHECK(fake.args("reference") == std::vector<std::string>{"builtins"});
+  }
+}
+
+TEST_CASE("strategy reference maps atlc's refusals: a wrong chapter and an old atlc and a crash and no atlc") {
+  {
+    const FakeAtlc fake(
+      "reference err atlc reference: no chapter `zz`; the chapters are builtins, syntax\nreference exit 1\n"
+    );
+    const auto ran = run({"--json", "strategy", "reference", "zz"});
+    CHECK(ran.exit_ == 2);
+    CHECK(code_of(ran.out_) == "usage.bad_value");
+    const auto reply = reply_of(ran.out_);
+    const auto& error = reply.at("error").as_object();
+    CHECK(error.at("message").as_string().find("no chapter `zz`") != std::string::npos);
+    CHECK(error.at("next").as_string() == "cmdatl strategy reference lists the chapters");
+  }
+  {
+    const FakeAtlc fake("reference err usage: atlc <command> [arguments]\nreference exit 2\n");
+    const auto ran = run({"--json", "strategy", "reference"});
+    CHECK(ran.exit_ == 1);
+    CHECK(code_of(ran.out_) == "atlc.unsupported");
+  }
+  {
+    // Exit 2 without atlc's usage is not taken for an old atlc.
+    const FakeAtlc fake("reference err something else\nreference exit 2\n");
+    const auto ran = run({"--json", "strategy", "reference"});
+    CHECK(ran.exit_ == 1);
+    CHECK(code_of(ran.out_) == "atlc.failed");
+  }
+  for (const auto* script : {"reference exit 7\n", "reference raise 11\n"}) {
+    INFO(script);
+    const FakeAtlc fake(script);
+    const auto ran = run({"--json", "strategy", "reference"});
+    CHECK(ran.exit_ == 1);
+    CHECK(code_of(ran.out_) == "atlc.failed");
+  }
+  {
+    const ScopedVariable atlc("CMDATL_ATLC", std::string("cmdatl-no-such-atlc"));
+    const auto ran = run({"--json", "strategy", "reference"});
+    CHECK(ran.exit_ == 1);
+    CHECK(code_of(ran.out_) == "atlc.missing");
+  }
+  CHECK(no_children());
+  CHECK(declares({"strategy", "reference"}, 2, "usage.bad_value"));
+  CHECK(declares({"strategy", "reference"}, 1, "atlc.unsupported"));
+  CHECK(declares({"strategy", "reference"}, 1, "atlc.failed"));
+  CHECK(declares({"strategy", "reference"}, 1, "atlc.missing"));
+  CHECK(declares({"strategy", "reference"}, 130, "interrupted"));
+}
+
+TEST_CASE("strategy reference refuses a topic atlc could not have before atlc runs") {
+  const FakeAtlc fake("reference args\n");
+  const std::vector<std::string> topics{
+    "", "-h", "--json", "Builtins", "1st", "a/b", "../README", "run spec", "\xed\x95\x9c", std::string(65, 'a')
+  };
+  for (const auto& topic : topics) {
+    INFO(topic);
+    const auto ran = run({"--json", "strategy", "reference", "--", topic});
+    CHECK(ran.exit_ == 2);
+    CHECK(code_of(ran.out_) == "usage.bad_value");
+  }
+  CHECK(!std::filesystem::exists(fake.dir() / "script.reference.args"));
+  CHECK(cmdatl::valid_topic(std::string(64, 'a')));
+  CHECK(cmdatl::valid_topic("types-and-definedness"));
+}
+
+TEST_CASE("SIGINT or SIGTERM while atlc reference runs stops it and answers 130 with no child left") {
+  const Watchdog watchdog("interrupted reference", 60);
+  for (const int sig : {SIGINT, SIGTERM}) {
+    INFO(sig);
+    const FakeAtlc fake("reference pid\nreference touch running\nreference block\n");
+    Spawned cmdatl({"--json", "strategy", "reference"});
+    REQUIRE(fake.wait_for("running"));
+    cmdatl.signal(sig);
+    const int status = cmdatl.wait(20);
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 130);
+    CHECK(code_of(lines_of(cmdatl.out()).back()) == "interrupted");
+    CHECK(all_gone(fake.pids()));
+  }
 }
 #endif

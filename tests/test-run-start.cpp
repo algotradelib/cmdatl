@@ -1265,6 +1265,7 @@ TEST_CASE(
   // The walkthrough this case checks, line for line: a changed walkthrough changes this case in the same commit.
   const std::vector<std::string> expected{
     "cmdatl strategy new dip --template mean-reversion",
+    "cmdatl strategy reference builtins",
     "atlc check dip.atls",
     "cmdatl strategy backtest dip.toml -P lookback=30",
     "cmdatl run start dip.toml --wait",
@@ -1288,6 +1289,9 @@ TEST_CASE(
   // last three tables.
   CHECK(spec.find("type = \"market\"") != std::string::npos);
   CHECK(spec.find("market = ") == std::string::npos);
+  const auto reference = fixture.json({"strategy", "reference", "builtins"});
+  CHECK(reference.exit_ == 0);
+  CHECK(reply_of(reference.out_).at("text").as_string().find("zscore") != std::string::npos);
   const auto checked = cmdatl::run_child({equipment->first, "check", "dip.atls"}, [](const std::string&) {});
   CHECK(checked.kind_ == cmdatl::ChildResult::Kind::FINISHED);
   CHECK(checked.code_ == 0);

@@ -17,7 +17,8 @@ Read both files before editing.
 ## The language
 
 atls is atlc's language: `atlc check NAME.atls` checks a program alone, with each error's line and code.
-Look a built-in up in atlc's reference (https://github.com/algotradelib/atlc/tree/main/docs/reference, `builtins.md`) rather than guess.
+`cmdatl strategy reference` prints the language reference's index, and `cmdatl strategy reference builtins` (or `run-spec`, `syntax`, `program-structure`) a chapter, as the installed atlc has them.
+Look a built-in up there rather than guess.
 
 ```
 params { int<lower=2> slow = 30; int<lower=0> quantity = 50; }
@@ -77,6 +78,7 @@ A run's fills are those of `cmdatl strategy backtest` on the same spec when the 
 
 ```sh
 cmdatl strategy new dip --template mean-reversion
+cmdatl strategy reference builtins
 atlc check dip.atls
 cmdatl strategy backtest dip.toml -P lookback=30
 cmdatl run start dip.toml --wait

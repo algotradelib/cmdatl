@@ -243,6 +243,56 @@ inline std::optional<Reply> spec_failure(const ChildResult& result) {
   return atlc_failure(Exit::FAILED, "atlc.failed", "atlc spec: " + why, result, "check atlc with cmdatl env");
 }
 
+/** @brief atlc as a strategy command finds it, or why it cannot run it. */
+struct LocatedAtlc {
+  /** @brief What was found. */
+  Atlc atlc_;
+  /** @brief The reply when atlc cannot be run: missing, too old, the operator's file invalid, or a signal. */
+  std::optional<Reply> refusal_;
+};
+
+/**
+ * @brief Finds atlc for a strategy command: `CMDATL_ATLC`, else the operator's file's `atlc` (read once, only then),
+ *   else `PATH`, with its version checked.
+ * @return What was found, or the refusal.
+ */
+inline LocatedAtlc locate_atlc() {
+  LocatedAtlc located;
+  std::optional<ConfigSnapshot> snapshot;
+  if (!variable("CMDATL_ATLC")) {
+    snapshot = load_operator_config();
+  }
+  located.atlc_ = find_atlc(snapshot ? &*snapshot : nullptr);
+  const auto& atlc = located.atlc_;
+  if (atlc.config_error_) {
+    auto reply = config_reply(*snapshot);
+    reply.body_["error"].as_object()["code"] = atlc.config_error_->code_;
+    located.refusal_ = std::move(reply);
+    return located;
+  }
+  if (interrupted()) {
+    located.refusal_ = interrupted_reply();
+    return located;
+  }
+  const std::string install = "install atlc, or name it with CMDATL_ATLC; cmdatl env shows what was found";
+  if (atlc.path_.empty()) {
+    const auto where = atlc.requested_.empty() ?
+      std::string("atlc was not found on PATH") :
+      "CMDATL_ATLC names " + atlc.requested_ + ", which was not found on PATH";
+    located.refusal_ = error_reply(Exit::FAILED, "atlc.missing", where, install);
+  } else if (atlc.version_.empty()) {
+    const auto from = atlc.source_ == "config" ? " (the operator's file's atlc)" : std::string();
+    located.refusal_ =
+      error_reply(Exit::FAILED, "atlc.missing", atlc.path_ + from + " did not answer --version", install);
+  } else if (!at_least(atlc.version_, MINIMUM_ATLC)) {
+    located.refusal_ = error_reply(
+      Exit::FAILED, "atlc.unsupported",
+      "atlc " + atlc.version_ + " is not a version cmdatl reads (at least " + MINIMUM_ATLC + ")", "install a newer atlc"
+    );
+  }
+  return located;
+}
+
 /**
  * @brief `strategy backtest SPEC [-P k=v]... [--fills FILE]`: `atlc spec` checks the spec without building, then
  *   `atlc run` replays it; the reply carries atlc's report unchanged.
@@ -268,37 +318,11 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   if (interrupted()) {
     return interrupted_reply();
   }
-  // The operator's file is read only when CMDATL_ATLC does not decide, and once.
-  std::optional<ConfigSnapshot> snapshot;
-  if (!variable("CMDATL_ATLC")) {
-    snapshot = load_operator_config();
+  const auto located = locate_atlc();
+  if (located.refusal_) {
+    return *located.refusal_;
   }
-  const auto atlc = find_atlc(snapshot ? &*snapshot : nullptr);
-  if (atlc.config_error_) {
-    auto reply = config_reply(*snapshot);
-    reply.body_["error"].as_object()["code"] = atlc.config_error_->code_;
-    return reply;
-  }
-  if (interrupted()) {
-    return interrupted_reply();
-  }
-  const std::string install = "install atlc, or name it with CMDATL_ATLC; cmdatl env shows what was found";
-  if (atlc.path_.empty()) {
-    const auto where = atlc.requested_.empty() ?
-      std::string("atlc was not found on PATH") :
-      "CMDATL_ATLC names " + atlc.requested_ + ", which was not found on PATH";
-    return error_reply(Exit::FAILED, "atlc.missing", where, install);
-  }
-  if (atlc.version_.empty()) {
-    const auto from = atlc.source_ == "config" ? " (the operator's file's atlc)" : std::string();
-    return error_reply(Exit::FAILED, "atlc.missing", atlc.path_ + from + " did not answer --version", install);
-  }
-  if (!at_least(atlc.version_, MINIMUM_ATLC)) {
-    return error_reply(
-      Exit::FAILED, "atlc.unsupported",
-      "atlc " + atlc.version_ + " is not a version cmdatl reads (at least " + MINIMUM_ATLC + ")", "install a newer atlc"
-    );
-  }
+  const auto& atlc = located.atlc_;
   // Absolute, so atlc never reads the path as an option and the reply names the file the report came from.
   const auto spec = std::filesystem::absolute(spec_given).string();
   const auto forward = [&output](const std::string& line) {
@@ -375,6 +399,91 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   if (!fills.empty()) {
     reply.body_["fills"] = fills;
   }
+  return reply;
+#endif
+}
+
+/** @brief The longest chapter name `strategy reference` passes to atlc. */
+inline constexpr std::size_t MAX_TOPIC = 64;
+
+/**
+ * @brief Whether a chapter name follows atlc's rule for them: a lowercase letter, then lowercase letters, digits and
+ *   `-`, at most `MAX_TOPIC`; anything else is refused before atlc runs, so atlc never reads it as an option.
+ * @param topic The name.
+ * @return Whether it may be passed.
+ */
+inline bool valid_topic(const std::string& topic) {
+  if (topic.empty() || topic.size() > MAX_TOPIC || topic.front() < 'a' || topic.front() > 'z') {
+    return false;
+  }
+  return std::all_of(topic.begin(), topic.end(), [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+  });
+}
+
+/**
+ * @brief `strategy reference [TOPIC]`: `atlc reference [TOPIC]`, its text unchanged; the language reference of the
+ *   atlc cmdatl runs, never a copy.
+ * @param invocation The arguments.
+ * @return The reply, atlc's text as `text` (printed bare in text format), or atlc's refusal.
+ */
+inline Reply reference_reply(const Invocation& invocation) {
+#if defined(_WIN32)
+  (void)invocation;
+  return error_reply(
+    Exit::FAILED, "unavailable.platform",
+    "strategy reference runs atlc as a child process, which this version does on macOS and Linux only",
+    "run atlc reference directly"
+  );
+#else
+  const auto topic = invocation.has("TOPIC") ? invocation.get("TOPIC") : std::string();
+  const std::string chapters = "cmdatl strategy reference lists the chapters";
+  if (invocation.has("TOPIC") && !valid_topic(topic)) {
+    return error_reply(
+      Exit::USAGE, "usage.bad_value", "TOPIC is a chapter's name: lowercase letters, digits and -", chapters
+    );
+  }
+  if (interrupted()) {
+    return interrupted_reply();
+  }
+  const auto located = locate_atlc();
+  if (located.refusal_) {
+    return *located.refusal_;
+  }
+  std::vector<std::string> argv{located.atlc_.path_, "reference"};
+  if (!topic.empty()) {
+    argv.push_back(topic);
+  }
+  const auto ran = run_child(argv, [](const std::string&) {});
+  if (ran.kind_ == ChildResult::Kind::INTERRUPTED) {
+    return interrupted_reply();
+  }
+  const std::string check = "check atlc with cmdatl env";
+  if (ran.kind_ != ChildResult::Kind::FINISHED || ran.signaled_) {
+    return atlc_failure(Exit::FAILED, "atlc.failed", "atlc reference: " + ending_of(ran), ran, check);
+  }
+  // An atlc without the command answers it as any unknown command: exit 2 and its usage.
+  const bool usage = std::any_of(ran.stderr_tail_.begin(), ran.stderr_tail_.end(), [](const std::string& line) {
+    return line.rfind("usage: atlc", 0) == 0;
+  });
+  switch (ran.code_) {
+    case 0:
+      break;
+    case 1:
+      return atlc_failure(Exit::USAGE, "usage.bad_value", last_line(ran), ran, chapters);
+    case 2:
+      if (usage) {
+        return atlc_failure(
+          Exit::FAILED, "atlc.unsupported", "this atlc has no atlc reference: it is older than the atlc cmdatl reads",
+          ran, "install a newer atlc"
+        );
+      }
+      return atlc_failure(Exit::FAILED, "atlc.failed", "atlc reference: " + ending_of(ran), ran, check);
+    default:
+      return atlc_failure(Exit::FAILED, "atlc.failed", "atlc reference: " + ending_of(ran), ran, check);
+  }
+  Reply reply;
+  reply.text_ = ran.stdout_;
   return reply;
 #endif
 }

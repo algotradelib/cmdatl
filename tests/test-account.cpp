@@ -1335,6 +1335,7 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
     "status",
     "strategy backtest",
     "strategy new",
+    "strategy reference",
   };
   CHECK(available == expected);
   CHECK(mutating == std::vector<std::string>{"clock advance", "order release"});

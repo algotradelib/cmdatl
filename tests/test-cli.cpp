@@ -240,7 +240,7 @@ TEST_CASE("arguments are checked against the command before anything runs") {
   CHECK(code_of(parsed.out_) == "atlc.missing");
 }
 
-TEST_CASE("tune and check are gone; new and backtest are the strategy commands that work") {
+TEST_CASE("tune and check are gone; new and backtest and reference are the strategy commands that work") {
   const cmdatl::Table table(cmdatl::command_list());
   const auto help = run({"--help"}).out_;
   const auto schema = reply_of(run({"schema"}).out_);
@@ -262,10 +262,7 @@ TEST_CASE("tune and check are gone; new and backtest are the strategy commands t
       available.push_back(cmdatl::join(command->path_));
     }
   }
-  CHECK(available == std::vector<std::string>{"strategy new", "strategy backtest"});
-  const auto reference = table.resolve({"strategy", "reference"});
-  REQUIRE(reference.command_ != nullptr);
-  CHECK(!reference.command_->available_);
+  CHECK(available == std::vector<std::string>{"strategy new", "strategy backtest", "strategy reference"});
   CHECK(cmdatl::SCHEMA_VERSION == 7);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
   CHECK(backtest.at("returns").as_object().contains("params_given"));
@@ -301,10 +298,20 @@ TEST_CASE("global options never take another option as their value and stop at -
 }
 
 TEST_CASE("a planned command answers that it is not built yet") {
-  const auto ran = run({"strategy", "reference"});
+  std::vector<cmdatl::Command> commands;
+  commands.push_back(
+    cmdatl::make_command({"later"}, "Help", "a planned command").example("cmdatl later").returns("text", "nothing yet")
+  );
+  const cmdatl::Table table(std::move(commands));
+  const auto ran = run_with({"later"}, table);
   CHECK(ran.exit_ == 1);
   CHECK(code_of(ran.out_) == "unavailable.not_yet");
   CHECK(reply_of(ran.out_).at("env").as_string() == "offline");
+  // Every command cmdatl lists answers.
+  for (const auto& command : cmdatl::command_list()) {
+    INFO(cmdatl::join(command.path_));
+    CHECK(command.available_);
+  }
 }
 
 TEST_CASE("fields and value select from a reply, nested selections included") {
