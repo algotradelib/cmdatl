@@ -249,7 +249,7 @@ TEST_CASE("the event cursor gives each complete line once, holds a split line, a
   CHECK(cursor.skipped() == 1);
   CHECK(lines.back() == "{\"event\":\"clock\"}");
   // Shrunk below the cursor, then replaced by another file.
-  ::truncate(path.c_str(), 10);
+  REQUIRE(::truncate(path.c_str(), 10) == 0);
   CHECK(cursor.read(take) == runs::CursorRead::REPLACED);
   runs::EventCursor second(path);
   CHECK(second.read(take) == runs::CursorRead::OK);

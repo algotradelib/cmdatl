@@ -748,11 +748,11 @@ TEST_CASE("run start --wait trades as strategy backtest does on the same spec, f
   const auto again = fixture.json({"run", "start", shared().spec("dip"), "--wait", "-P", "lookback=21"});
   CHECK(again.exit_ == 0);
   CHECK((std::filesystem::last_write_time(shape / "build" / "driver") == *before));
-  // The driver's include closure, from the compiler's own dependency files: no CLI11, nothing of cmdatl's cli/ or
-  // strategy/ (the layout check's driver row, seen in the real build).
+  // The driver's include closure, from the compiler's own dependency files: no CLI11, nothing of cmdatl's cli/ or strategy/ (the layout check's driver row, seen in the real build).
+  // Only `<source>.o.d`: on Linux the linker also writes `link.d`, which lists libraries.
   std::size_t read = 0;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(shape / "build")) {
-    if (entry.is_regular_file() && entry.path().extension() == ".d") {
+    if (entry.is_regular_file() && entry.path().extension() == ".d" && entry.path().stem().extension() == ".o") {
       const auto deps = slurp(entry.path());
       ++read;
       CHECK(deps.find("/CLI/") == std::string::npos);
