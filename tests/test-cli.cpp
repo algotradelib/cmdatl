@@ -240,7 +240,7 @@ TEST_CASE("arguments are checked against the command before anything runs") {
   CHECK(code_of(parsed.out_) == "atlc.missing");
 }
 
-TEST_CASE("tune and check are gone; new and backtest are the strategy commands that work") {
+TEST_CASE("tune and check are gone; new and backtest and reference are the strategy commands that work") {
   const cmdatl::Table table(cmdatl::command_list());
   const auto help = run({"--help"}).out_;
   const auto schema = reply_of(run({"schema"}).out_);

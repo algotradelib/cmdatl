@@ -39,7 +39,7 @@ cmake --build build
 ```
 
 Backtesting also needs `atlc`, the atls compiler, on `PATH` or named by `CMDATL_ATLC`, and CMake and a C++17 compiler at run time: `cmdatl strategy backtest` runs `atlc run`, which builds each strategy once against algotradelib and keeps the build.
-`cmdatl strategy new` needs neither.
+`cmdatl strategy reference` needs atlc only; `cmdatl strategy new` needs neither.
 
 ## Strategies
 

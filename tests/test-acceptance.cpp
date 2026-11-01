@@ -313,7 +313,6 @@ TEST_CASE(
     CHECK(!reply_of(ran.out_).at("errors").as_array().empty());
   }
 }
-#endif
 
 TEST_CASE("every strategy reference the docs and skills name answers from the real atlc", "[acceptance]") {
   const auto equip = equipment();
@@ -371,3 +370,4 @@ TEST_CASE("every strategy reference the docs and skills name answers from the re
   CHECK(wrong.exit_ == 2);
   CHECK(code_of(wrong.out_) == "usage.bad_value");
 }
+#endif
