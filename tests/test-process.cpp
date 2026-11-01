@@ -456,6 +456,70 @@ TEST_CASE("a failing or throwing output stream while atlc runs kills its group a
   CHECK(open_fds() == before);
 }
 
+TEST_CASE("an allocation failing anywhere in strategy reference or guide becomes a reply and never a leak") {
+  const Watchdog watchdog("the reference and guide sweep", 300);
+  const FakeAtlc fake("reference out # The atls language reference\n");
+  const std::vector<std::vector<std::string>> lines{
+    {"--format", "json", "strategy", "reference", "builtins"},
+    {"--format", "text", "guide", "agent"},
+    {"--format", "json", "guide", "strategy"},
+  };
+  for (const auto& line : lines) {
+    INFO(cmdatl::join(line));
+    const int before = open_fds();
+    long first_bad = 0;
+    long n = 1;
+    for (; n < 20000; ++n) {
+      std::ostringstream out;
+      std::ostringstream err;
+      fail_allocation(n);
+      int exit = -1;
+      try {
+        exit = cmdatl::run(line, out, err, false);
+      } catch (const std::bad_alloc&) {
+        // Before the command started (reading the line): main's last resort.
+      }
+      const bool consumed = fail_at.load() == 0;
+      fail_allocation(0);
+      if ((open_fds() != before || !no_children() || (exit != -1 && exit != 0 && exit != 1)) && first_bad == 0) {
+        first_bad = n;
+      }
+      if (!consumed) {
+        CHECK(exit == 0);
+        break;
+      }
+    }
+    INFO("allocations swept: " << n << ", first problem at " << first_bad);
+    CHECK(first_bad == 0);
+    CHECK(n < 20000);
+  }
+}
+
+TEST_CASE("repeated strategy reference calls leave no descriptor and no child whatever atlc answers") {
+  const Watchdog watchdog("repeated references", 120);
+  const std::vector<std::string> scripts{
+    "reference out # Index\n",
+    "reference err atlc reference: no chapter `zz`\nreference exit 1\n",
+    "reference err usage: atlc <command> [arguments]\nreference exit 2\n",
+    "reference exit 7\n",
+    "reference raise 11\n",
+    "reference flood 300000\n",
+    "reference grandchild hold\nreference exit 0\n",
+  };
+  const int before = open_fds();
+  for (const auto& script : scripts) {
+    INFO(script);
+    const FakeAtlc fake(script);
+    for (int i = 0; i < 10; ++i) {
+      const auto ran = run({"--json", "strategy", "reference", "builtins"});
+      CHECK((ran.exit_ == 0 || ran.exit_ == 1 || ran.exit_ == 2));
+    }
+    CHECK(open_fds() == before);
+    CHECK(no_children());
+    CHECK(all_gone(fake.pids()));
+  }
+}
+
 TEST_CASE("descriptors running out at either pipe or at the spawn leak nothing") {
   const Watchdog watchdog("descriptor exhaustion", 60);
   const FakeAtlc fake("run out ok\n");
