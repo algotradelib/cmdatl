@@ -185,6 +185,26 @@ cmdatl run stop --withdraw # stop placing and cancel what rests, then wait for t
 - On a terminal a failure is written to stderr; in JSON it is the reply, on stdout.
 - `cmdatl help COMMAND` (or `--help`) shows a command's usage and examples; `cmdatl schema` describes every command, its fields and its error codes for a program.
 
+## Your own replay
+
+cmdatl installs the replay its backtests run as headers, `include/cmdatl/replay/` under its prefix, for a program of your own around `atlc build`'s output:
+
+```cpp
+// atlc build dip.atls -o strategy.hpp --emit-runtime .
+#include "strategy.hpp"
+
+#include <cmdatl/replay/replay.hpp>
+
+int main(int argc, char** argv) {
+  return cmdatl::replay::main<atls::Dip>(argc, argv);
+}
+```
+
+- It reads the settings as `key=value` arguments, as a backtest passes them to its build: the run spec's keys, with `param.NAME` and `instrument.NAME` for `params.NAME` and `instruments.NAME`, numbers as plain decimals, dates as yyyymmdd, and `output.fills=FILE` for `--fills`.
+- It prints the report on stdout, or one `error:` line on stderr and exits 1.
+- It includes algotradelib and nothing else of cmdatl: compile with `-I<prefix>/include` beside algotradelib's own flags, and with `-ffp-contract=off` on GCC for cmdatl's numbers.
+- To read a Parquet store, define `CMDATL_DUCKDB` and link DuckDB's C library.
+
 ## Guides and skills
 
 Two guides teach cmdatl to an AI agent: the agent guide (reading the account, the order rails, exit codes, runs) and the strategy guide (atls, run specs, backtests, runs).
