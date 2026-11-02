@@ -287,7 +287,8 @@ void check_replay_includes(const std::filesystem::path& driver) {
       const auto deps = slurp(entry.path());
       ++read;
       CHECK(deps.find("cmdatl/replay/replay.hpp") != std::string::npos);
-      CHECK(deps.find("settings.hpp") != std::string::npos);
+      // replay.hpp includes "./settings.hpp", so the path reads cmdatl/replay/./settings.hpp.
+      CHECK(deps.find("cmdatl/replay/./settings.hpp") != std::string::npos);
       CHECK(deps.find("atls/run.hpp") == std::string::npos);
       CHECK(deps.find("atls/args.hpp") == std::string::npos);
       CHECK(deps.find("atls/ops.hpp") != std::string::npos);
