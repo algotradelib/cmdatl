@@ -485,7 +485,8 @@ TEST_CASE("one run spec serves two programs") {
   const auto dir = fake.dir().string();
   CHECK(fake.args("check") == std::vector<std::string>{dir + "/two.atls", "--info"});
   CHECK(
-    fake.args("driver") == std::vector<std::string>{"data.source=wide", "data.file=" + dir + "/bars.csv", "replay.cash=5"}
+    fake.args("driver") ==
+    std::vector<std::string>{"data.source=wide", "data.file=" + dir + "/bars.csv", "replay.cash=5"}
   );
   CHECK(reply_of(ran.out_).at("program").as_string() == dir + "/two.atls");
 }

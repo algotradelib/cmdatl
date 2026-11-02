@@ -158,9 +158,11 @@ inline std::optional<Reply> read_given(GivenSettings& given) {
     }
     if (errors.empty() && given.program_.empty()) {
       if (named.empty()) {
-        errors.push_back(spec::Error::file(
-          given.spec_, "no `strategy = \"FILE.atls\"`: a spec given without a program names the program it runs"
-        ));
+        errors.push_back(
+          spec::Error::file(
+            given.spec_, "no `strategy = \"FILE.atls\"`: a spec given without a program names the program it runs"
+          )
+        );
       } else {
         given.program_ = std::filesystem::path(named).lexically_normal().string();
       }
@@ -170,10 +172,11 @@ inline std::optional<Reply> read_given(GivenSettings& given) {
       });
       const auto message =
         "`strategy` names " + named + ", another program than " + given.program_ + ": remove it, or give that one";
-      errors.push_back(
-        strategy == given.file_.end() ? spec::Error::file(given.spec_, message) :
-                                        spec::Error::at(strategy->origin_, message)
-      );
+      if (strategy == given.file_.end()) {
+        errors.push_back(spec::Error::file(given.spec_, message));
+      } else {
+        errors.push_back(spec::Error::at(strategy->origin_, message));
+      }
     }
   }
   std::vector<std::string> keys;
