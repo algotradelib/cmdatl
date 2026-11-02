@@ -225,3 +225,4 @@ With `orders.type = "limit"`, the generated strategy gives each target it submit
 The backtester fills a limit when the next bar's range reaches it: a buy when the bar's low is at or below the limit, a sell when its high is at or above it.
 The fill is credited at the limit, bounded into the bar, before and after slippage, so slippage never takes it through the limit.
 A limit that does not fill is a `DAY` order: it is withdrawn when its session ends (on daily bars, after the next bar) and counted in `caveats.expired`; one still queued at the end is counted in `caveats.unfilled`.
+The replay supplies no daily price limits, so a limit is never clamped in a backtest; what a runner that knows the day's band does is in atlc's [generated code reference](https://github.com/algotradelib/atlc/blob/main/docs/reference/generated-code.md).
