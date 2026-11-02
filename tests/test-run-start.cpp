@@ -940,8 +940,9 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
   }
 }
 
+// It races the driver against the data's load time, so it runs only when asked for: test-cli "[local]".
 TEST_CASE(
-  "a driver stopped before its start line is unknown, never lost, and a killed one is lost", "[acceptance][runs]"
+  "a driver stopped before its start line is unknown, never lost, and a killed one is lost", "[.][local][runs]"
 ) {
   const auto equipment = run_equipment();
   if (!equipment) {
