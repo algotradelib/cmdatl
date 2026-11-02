@@ -5,21 +5,25 @@ cmdatl strategy backtest TARGET [KEY=VALUE]... [--fills FILE]
 cmdatl run start TARGET [KEY=VALUE]... [--wait]
 ```
 
-`TARGET` is a run spec (a TOML file) or a program (`.atls`) when no file is wanted.
+`TARGET` is a program (`.atls`), a run spec (a TOML file), or both: at most one of each, and at least one.
+A run spec given with a program applies to that program, so one spec can serve several programs.
+A run spec given alone names its program with `strategy`.
 Settings come from the run spec and from `KEY=VALUE` words on the command line, and the command line wins.
 Both are checked by the same rules, against the program's facts (its parameters, instruments and session legs).
 
 A word is a setting when the text before its first `=` is a dotted key: bare parts (letters, digits, `_`, `-`) joined by dots, such as `replay.cash`, `params.lookback` or `instruments.y`.
-Any other word is the target, and a command takes exactly one.
-Settings may come before or after the target.
+Of the other words, one ending in `.atls` is the program and any other the run spec.
+The words may come in any order.
 
 ```sh
 cmdatl strategy backtest dip.toml params.lookback=30 replay.cash=1e8
 cmdatl strategy backtest dip.atls data.file=bars.csv data.source=csv data.symbol=005930
+cmdatl strategy backtest dip.atls daily.toml instruments.stock=005930
 ```
 
 A relative path is read against the directory of the file that sets it, and against the working directory on the command line (as `--fills`).
 The program's path is made lexically normal (`a/../b.atls` is `b.atls`), while data paths keep their `..` for the system to resolve, through any link.
+A run spec given with a program may still name it with `strategy`, and then only the same file: the two paths are compared once both are lexically normal, so a link or a name in another case is another file.
 The shell does not expand a `~` inside a `KEY=VALUE` word: write `data.file=$HOME/bars.csv` or an absolute path.
 The operator's file is never a setting: no setting changes the operator's limits.
 
@@ -50,7 +54,7 @@ A value on the command line is typed by its key, never read as TOML:
 - a list key takes one item (`data.symbols=AAA`) or a one-line TOML array of strings (`data.symbols=["AAA","BBB"]`, quoted for the shell);
 - `params.NAME` takes a number, or `true` or `false`; then the program's type decides (`params.flag=1` is refused for a `bool`).
 
-`strategy` is not a setting on the command line: the program is the target, or the run spec's `strategy`.
+`strategy` is not a setting on the command line: the program is the `.atls` word, or else the run spec's `strategy`.
 A key given twice on the command line is an error.
 
 ## Keys
@@ -59,7 +63,7 @@ A key given twice on the command line is an error.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `strategy` | path | required in a run spec | the program |
+| `strategy` | path | required unless a program is given | the program |
 
 ### `[data]`: what is loaded
 

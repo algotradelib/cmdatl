@@ -47,7 +47,8 @@ A backtest that reads a Parquet store also needs DuckDB's C library, named by th
 
 - `cmdatl strategy new NAME` writes `NAME.atls`, a starter program (`--template` `mean-reversion`, `crossover`, `momentum` or `breakout`), and `NAME.toml`, a run spec that reads `bars.csv` beside it (the columns `symbol,date,open,high,low,close,volume`).
   It never replaces a file unless `--force` is given, and then only regular files.
-- `cmdatl strategy backtest TARGET [KEY=VALUE]...` replays a run spec, or a program (`.atls`) when no file is wanted; `KEY=VALUE` words are settings (`params.lookback=30`, `replay.cash=1e8`, `data.file=bars.csv`) and win over the spec's.
+- `cmdatl strategy backtest TARGET [KEY=VALUE]...` replays a program (`.atls`), a run spec, or both; `KEY=VALUE` words are settings (`params.lookback=30`, `replay.cash=1e8`, `data.file=bars.csv`) and win over the spec's.
+  A run spec given with a program applies to it, so one spec can serve several programs (`cmdatl strategy backtest dip.atls daily.toml`); given alone, it names its program with `strategy`.
   Every setting is checked against the program before anything is built; the reply carries the replay's report unchanged under `report`, with the settings given and atlc's version.
   `cmdatl strategy reference run-spec` lists every setting.
   The build's progress and atlc's warnings arrive as they happen: on stderr, or as `progress` events with `--format jsonl`.

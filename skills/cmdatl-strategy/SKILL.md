@@ -34,7 +34,7 @@ on_bar { if (close > m) { target(quantity); } else { target(0); } }
 
 The spec is TOML: `[data]` (the file and its columns), `[instruments]` (the symbol the program trades), `[replay]` (`cash`, `commission` and the other costs), `[params]`, `[orders]` (`type = "market"` or `"limit"`, and `offset` for a limit).
 On the command line, a `KEY=VALUE` word with a dotted key is a setting for this call and wins over the spec's: `params.lookback=30`, `replay.cash=1e8`, `instruments.stock=005930` (a string, as typed).
-Settings go before or after the spec; a program (`NAME.atls`) instead of a spec takes its settings from the command line alone.
+Give a program (`NAME.atls`), a spec, or both, with the settings in any order; a spec given with a program applies to it (one spec can serve several programs) and names no other with `strategy`.
 
 ## Backtests
 

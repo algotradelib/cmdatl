@@ -77,7 +77,7 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 ## Runs
 
 - Start a run only when the task asks for one, and never start again a run that a stop, the operator, a refusal or a limit ended, whatever its `run_exit`.
-- `cmdatl run start SPEC [KEY=VALUE]...` answers once the run trades; `--wait`, with its summary.
+- `cmdatl run start TARGET [KEY=VALUE]...` (a spec, a program, or both) answers once the run trades; `--wait`, with its summary.
 - `cmdatl run status` exits 0 whenever it read the run; the run's own outcome is `run_exit` and `run_error`.
 - `cmdatl run log --follow` prints events until the end; Ctrl-C stops the watching, never the run; `incomplete: true` (exit 4) means read `cmdatl run status`.
 - `cmdatl run stop --withdraw` stops placing and cancels what rests (plain `run stop` leaves resting orders: only when the task says so); neither sells.
