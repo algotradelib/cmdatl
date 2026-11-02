@@ -509,15 +509,18 @@ TEST_CASE("values are normalized: paths against the spec's directory, lists, dat
   CHECK(!sp::instant_text("2026-10-01T05:00+9"));
 }
 
-TEST_CASE("a spec file names its program, and an unreadable one is one error") {
+TEST_CASE("a spec file names its program or none, and an unreadable one is one error") {
   const ScratchDir dir;
   const auto path = (dir.path() / "s.toml").string();
   std::string program;
+  // Without `strategy`, the program is left as it was: whether one is needed is the command's to decide.
   spit(path, "[replay]\ncash = 1\n");
   auto read = sp::read_file(path, program);
-  REQUIRE(read.errors_.size() == 1);
-  CHECK(has(read.errors_.front().text(), "no `strategy"));
-  CHECK(read.errors_.front().to_json().at("line").is_null());
+  CHECK(read.errors_.empty());
+  CHECK(read.entries_.size() == 1);
+  CHECK(program.empty());
+  spit(path, "strategy = 3\n");
+  CHECK(sp::read_file(path, program).errors_.size() == 1);
   spit(path, "strategy = 'm.atls'\n");
   read = sp::read_file(path, program);
   CHECK(read.errors_.empty());

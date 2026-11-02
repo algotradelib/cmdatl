@@ -1784,9 +1784,10 @@ inline Read read_text(const std::string& text, const std::string& file) {
 }
 
 /**
- * @brief Reads a run spec file: its entries checked, and the program it names.
+ * @brief Reads a run spec file: its entries checked, and the program it names, if any (`strategy` is optional here:
+ *   whether a program must come from the spec is the caller's to decide).
  * @param path The file, absolute.
- * @param program Set to the program's path, absolute, when the spec names one.
+ * @param program Set to the program's path, absolute, when the spec names one; left as it is otherwise.
  * @return The entries and the errors.
  */
 inline Read read_file(const std::string& path, std::string& program) {
@@ -1816,11 +1817,9 @@ inline Read read_file(const std::string& path, std::string& program) {
   const auto strategy = std::find_if(read.entries_.begin(), read.entries_.end(), [](const Entry& e) {
     return e.key_ == "strategy";
   });
-  if (strategy == read.entries_.end()) {
-    read.errors_.push_back(Error::file(path, "no `strategy = \"FILE.atls\"`: a spec names the program it runs"));
-    return read;
+  if (strategy != read.entries_.end()) {
+    program = strategy->value_.text();
   }
-  program = strategy->value_.text();
   return read;
 #endif
 }

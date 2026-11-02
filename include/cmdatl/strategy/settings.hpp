@@ -1,8 +1,8 @@
 #pragma once
 
-// The settings `strategy backtest` and `run start` read, in the order both read them: the words sorted into the target
-// and the settings, the run spec and the command line's settings checked key by key, the program's facts from
-// `atlc check FILE --info`, and the settings checked against them.
+// The settings `strategy backtest` and `run start` read, in the order both read them: the words sorted into the
+// program, the run spec and the settings, the run spec and the command line's settings checked key by key, the
+// program's facts from `atlc check FILE --info`, and the settings checked against them.
 
 #include "../core/reply.hpp"
 #include "../core/runs.hpp"
@@ -37,13 +37,17 @@ inline std::vector<std::string> target_and_settings(const Invocation& invocation
   return words;
 }
 
-/** @brief What a command was given: its target, and the run spec's and the command line's settings. */
+/** @brief What a command was given: its program and run spec, and the run spec's and the command line's settings. */
 struct GivenSettings {
-  /** @brief The target as given. */
+  /** @brief What is run, as given, for the first progress line: the program, the run spec, or `PROGRAM with SPEC`. */
   std::string target_;
-  /** @brief The run spec, absolute, or empty when the target is a program. */
+  /** @brief The program (`.atls`) as given, or empty. */
+  std::string program_given_;
+  /** @brief The run spec as given, or empty. */
+  std::string spec_given_;
+  /** @brief The run spec, absolute, or empty when none is given. */
   std::string spec_;
-  /** @brief The program, absolute and lexically normal. */
+  /** @brief The program, absolute and lexically normal: the one given, else the run spec's `strategy`. */
   std::string program_;
   /** @brief The run spec's settings, checked key by key. */
   std::vector<spec::Entry> file_;
@@ -56,37 +60,50 @@ struct GivenSettings {
 };
 
 /**
- * @brief Sorts a command's words into one target and its settings: a word is a setting when the text before its first
- *   `=` is a dotted key (`spec::is_setting`); exactly one other word is the target.
+ * @brief Sorts a command's words into a program, a run spec and the settings: a word is a setting when the text before
+ *   its first `=` is a dotted key (`spec::is_setting`); of the other words, one ending in `.atls` is the program and any
+ *   other the run spec, at most one of each and at least one of the two.
  * @param words The words, in order.
- * @param given Set to the target and the settings' words.
- * @return A usage refusal naming the words when there is no target or more than one, or nothing.
+ * @param given Set to the program, the run spec, the target's text and the settings' words.
+ * @return A usage refusal naming the words when there is neither, two programs or two run specs, or nothing.
  */
 inline std::optional<Reply> sort_words(const std::vector<std::string>& words, GivenSettings& given) {
-  std::vector<std::string> targets;
+  std::vector<std::string> programs;
+  std::vector<std::string> specs;
   for (const auto& word : words) {
     if (spec::is_setting(word)) {
       given.words_.push_back(word);
+    } else if (word.size() > 5 && word.compare(word.size() - 5, 5, ".atls") == 0) {
+      programs.push_back(word);
     } else {
-      targets.push_back(word);
+      specs.push_back(word);
     }
   }
-  if (targets.empty()) {
+  const std::string next = "cmdatl COMMAND --help shows its arguments";
+  if (programs.empty() && specs.empty()) {
     return error_reply(
       Exit::USAGE, "usage.missing_argument",
-      "no target among " + join(words) + ": give a run spec or a program (.atls); KEY=VALUE words are settings",
-      "cmdatl COMMAND --help shows its arguments"
+      "no program or run spec among " + join(words) +
+        ": give a program (.atls), a run spec, or both; KEY=VALUE words are settings",
+      next
     );
   }
-  if (targets.size() > 1) {
-    return error_reply(
-      Exit::USAGE, "usage.bad_value",
-      "one target, a run spec or a program (.atls), and " + join(targets, ", ") + " are " +
-        std::to_string(targets.size()) + "; a setting is KEY=VALUE with a dotted key",
-      "cmdatl COMMAND --help shows its arguments"
-    );
+  for (const auto* list : {&programs, &specs}) {
+    if (list->size() > 1) {
+      return error_reply(
+        Exit::USAGE, "usage.bad_value",
+        std::string("at most one ") + (list == &programs ? "program (.atls)" : "run spec") + ", and " +
+          join(*list, ", ") + " are " + std::to_string(list->size()) + "; a setting is KEY=VALUE with a dotted key",
+        next
+      );
+    }
   }
-  given.target_ = targets.front();
+  given.program_given_ = programs.empty() ? std::string() : programs.front();
+  given.spec_given_ = specs.empty() ? std::string() : specs.front();
+  given.target_ = given.program_given_.empty() ? given.spec_given_ : given.program_given_;
+  if (!given.program_given_.empty() && !given.spec_given_.empty()) {
+    given.target_ += " with " + given.spec_given_;
+  }
   return std::nullopt;
 }
 
@@ -113,9 +130,10 @@ inline Reply settings_refusal(const std::vector<spec::Error>& errors, const std:
 }
 
 /**
- * @brief Reads the settings a command was given, key by key: the run spec (when the target is not a program) and the
- *   command line's, a key given twice on the command line refused; the program named by the target or the spec.
- * @param given The target and the settings' words, from `sort_words`; filled with the rest.
+ * @brief Reads the settings a command was given, key by key: the run spec (when one is given) and the command line's,
+ *   a key given twice on the command line refused; the program given, else the one the run spec's `strategy` names.
+ *   A run spec given with a program may name it too, and then only the same file (`spec::same_path`).
+ * @param given The program, the run spec and the settings' words, from `sort_words`; filled with the rest.
  * @return The refusal, or nothing.
  */
 inline std::optional<Reply> read_given(GivenSettings& given) {
@@ -125,18 +143,37 @@ inline std::optional<Reply> read_given(GivenSettings& given) {
     auto made = std::filesystem::absolute(path, ec);
     return (ec ? std::filesystem::path(path) : made).lexically_normal().string();
   };
-  const auto& target = given.target_;
-  const bool program = target.size() > 5 && target.compare(target.size() - 5, 5, ".atls") == 0;
-  if (program) {
-    given.program_ = absolute(target);
-  } else {
-    given.spec_ = absolute(target);
+  if (!given.program_given_.empty()) {
+    given.program_ = absolute(given.program_given_);
+  }
+  if (!given.spec_given_.empty()) {
+    given.spec_ = absolute(given.spec_given_);
     std::string named;
     auto read = spec::read_file(given.spec_, named);
     errors = std::move(read.errors_);
     given.file_ = std::move(read.entries_);
-    if (errors.empty()) {
-      given.program_ = std::filesystem::path(named).lexically_normal().string();
+    if (!errors.empty() && errors.front().code_ == "unreadable" && given.spec_given_.find('=') != std::string::npos) {
+      // A mistyped setting (`lookback=30`) is read as the run spec: say what a setting is.
+      errors.front().message_ += "; a setting is KEY=VALUE with a dotted key";
+    }
+    if (errors.empty() && given.program_.empty()) {
+      if (named.empty()) {
+        errors.push_back(spec::Error::file(
+          given.spec_, "no `strategy = \"FILE.atls\"`: a spec given without a program names the program it runs"
+        ));
+      } else {
+        given.program_ = std::filesystem::path(named).lexically_normal().string();
+      }
+    } else if (errors.empty() && !named.empty() && !spec::same_path(named, given.program_)) {
+      const auto strategy = std::find_if(given.file_.begin(), given.file_.end(), [](const spec::Entry& e) {
+        return e.key_ == "strategy";
+      });
+      const auto message =
+        "`strategy` names " + named + ", another program than " + given.program_ + ": remove it, or give that one";
+      errors.push_back(
+        strategy == given.file_.end() ? spec::Error::file(given.spec_, message) :
+                                        spec::Error::at(strategy->origin_, message)
+      );
     }
   }
   std::vector<std::string> keys;

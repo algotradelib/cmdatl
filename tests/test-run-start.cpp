@@ -781,6 +781,59 @@ TEST_CASE("run start --wait trades as strategy backtest does on the same spec, f
   CHECK(read >= 1);
 }
 
+TEST_CASE(
+  "run start takes a program with a run spec that names none, records both, and keeps the operator's limits",
+  "[acceptance][runs]"
+) {
+  const auto equipment = run_equipment();
+  if (!equipment) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const PaperFixture fixture(run_operator());
+  const RunEquipped equipped(equipment->first, equipment->second);
+  fixture.arm();
+  // dip.toml without its `strategy` line: a spec any single-instrument program could share.
+  const auto dip = slurp(shared().spec("dip"));
+  const auto settings = dip.substr(dip.find('\n') + 1);
+  const auto spec = (shared().dir_.path() / "shared.toml").string();
+  spit(spec, settings);
+  const auto program = (shared().dir_.path() / "dip.atls").string();
+  const auto backtest = fixture.json({"strategy", "backtest", program, spec});
+  INFO(backtest.out_);
+  REQUIRE(backtest.exit_ == 0);
+  CHECK(reply_of(backtest.out_).at("spec").as_string() == spec);
+  CHECK(reply_of(backtest.out_).at("program").as_string() == program);
+  const auto ran = fixture.json({"run", "start", spec, program, "--wait"});
+  INFO(ran.out_);
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  const auto reply = reply_of(ran.out_);
+  CHECK(
+    reply.at("summary").as_object().at("executions") ==
+    reply_of(backtest.out_).at("report").as_object().at("executions")
+  );
+  CHECK(ran.err_.find("cmdatl: starting a run of " + program + " with " + spec) != std::string::npos);
+  const auto record = reply_of(slurp(run_path(fixture, std::string(reply.at("run").as_string())) / "run.json"));
+  CHECK(record.at("spec").as_string() == spec);
+  CHECK(record.at("program").as_object().at("path").as_string() == program);
+  // A shared spec's [instruments] and [orders] meet the operator's limits as a spec naming its program does.
+  const auto replaced = [&settings](const std::string& from, const std::string& to) {
+    auto text = settings;
+    text.replace(text.find(from), from.size(), to);
+    return text;
+  };
+  const auto other = (shared().dir_.path() / "other-symbol.toml").string();
+  spit(other, replaced("stock = \"005930\"", "stock = \"000660\""));
+  const auto symbol = fixture.json({"run", "start", program, other});
+  CHECK(symbol.exit_ == 3);
+  CHECK(code_of(symbol.out_) == "refused.symbol_not_allowed");
+  const auto market = (shared().dir_.path() / "market-orders.toml").string();
+  spit(market, replaced("type = \"limit\"\noffset = 0.01\n", "type = \"market\"\n"));
+  const auto orders = fixture.json({"run", "start", program, market});
+  CHECK(orders.exit_ == 3);
+  CHECK(code_of(orders.out_) == "refused.order_type");
+}
+
 TEST_CASE("two runs started at once on one account build the program once and trade apart", "[acceptance][runs]") {
   const auto equipment = run_equipment();
   if (!equipment) {

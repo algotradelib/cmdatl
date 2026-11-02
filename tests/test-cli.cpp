@@ -230,12 +230,19 @@ TEST_CASE("arguments are checked against the command before anything runs") {
   const auto two = run({"order", "place", "p1", "p2"});
   CHECK(two.exit_ == 2);
   CHECK(code_of(two.out_) == "usage.bad_option");
-  // One target among the words: two are refused, naming them.
+  // At most one run spec and one program among the words: two of either are refused, naming them.
   const auto targets = run({"strategy", "backtest", "a.toml", "params.x=1", "b.toml"});
   CHECK(targets.exit_ == 2);
   CHECK(code_of(targets.out_) == "usage.bad_value");
   CHECK(
     reply_of(targets.out_).at("error").as_object().at("message").as_string().find("a.toml, b.toml") != std::string::npos
+  );
+  const auto programs = run({"strategy", "backtest", "a.atls", "b.atls"});
+  CHECK(programs.exit_ == 2);
+  CHECK(code_of(programs.out_) == "usage.bad_value");
+  CHECK(
+    reply_of(programs.out_).at("error").as_object().at("message").as_string().find("a.atls, b.atls") !=
+    std::string::npos
   );
   CHECK(code_of(run({"strategy", "backtest", "params.x=1"}).out_) == "usage.missing_argument");
   CHECK(code_of(run({"strategy", "backtest"}).out_) == "usage.missing_argument");

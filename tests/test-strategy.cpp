@@ -401,6 +401,95 @@ TEST_CASE("a program as the target: settings only, the spec null, paths against 
   CHECK(code_of(run({"strategy", "backtest", "../s.toml", "strategy.x=1"}).out_) == "spec.invalid");
 }
 
+TEST_CASE("a program with a run spec: the spec's settings apply to it, and the spec names that program or none") {
+  const Watchdog watchdog("a program with a spec", 60);
+  const FakeAtlc fake("check args\ncheck out " + INFO_OK + "\ndriver args\ndriver out " + REPORT + "\n");
+  const auto dir = fake.dir().string();
+  std::filesystem::create_directories("specs");
+  std::filesystem::create_directories("sub");
+  spit("specs/shared.toml", "[data]\nfile = 'bars.csv'\n[replay]\ncash = 5\n");
+  const auto message = [](const Ran& ran) {
+    return std::string(reply_of(ran.out_).at("error").as_object().at("message").as_string());
+  };
+  {
+    // The words in any order; the program's path against the working directory, the spec's paths against the spec.
+    const InDir sub("sub");
+    const auto ran = run({"strategy", "backtest", "replay.commission=0.001", "../specs/shared.toml", "../dip.atls"});
+    INFO(ran.out_ << ran.err_);
+    REQUIRE(ran.exit_ == 0);
+    CHECK(lines_of(ran.err_).front() == "cmdatl: replaying ../dip.atls with ../specs/shared.toml");
+    CHECK(fake.args("check") == std::vector<std::string>{dir + "/dip.atls", "--info"});
+    CHECK(
+      fake.args("driver") ==
+      std::vector<std::string>{
+        "data.source=wide", "data.file=" + dir + "/specs/bars.csv", "replay.cash=5", "replay.commission=0.001"
+      }
+    );
+    const auto reply = reply_of(ran.out_);
+    CHECK(reply.at("spec").as_string() == dir + "/specs/shared.toml");
+    CHECK(reply.at("program").as_string() == dir + "/dip.atls");
+  }
+  const auto checks = [&fake] {
+    return fake.args("check").size();
+  };
+  // A spec naming the same program, written with `..`, applies; the program's line comes from the command line.
+  spit("specs/same.toml", "strategy = '../a/../dip.atls'\n[data]\nfile = 'bars.csv'\n");
+  CHECK(run({"strategy", "backtest", "specs/same.toml", "./dip.atls"}).exit_ == 0);
+  // Another program, or the same one through a link, is refused at the spec's line before atlc runs.
+  const auto before = checks();
+  std::filesystem::create_symlink("dip.atls", "link.atls");
+  for (const auto* named : {"two.atls", "../link.atls"}) {
+    INFO(named);
+    spit("specs/other.toml", std::string("# shared\nstrategy = '") + named + "'\n[data]\nfile = 'bars.csv'\n");
+    const auto ran = run({"strategy", "backtest", "dip.atls", "specs/other.toml"});
+    CHECK(ran.exit_ == 2);
+    CHECK(code_of(ran.out_) == "spec.invalid");
+    CHECK(message(ran).find("another program than " + dir + "/dip.atls") != std::string::npos);
+    const auto reply = reply_of(ran.out_);
+    const auto& error = reply.at("errors").as_array().at(0).as_object();
+    CHECK(error.at("file").as_string() == dir + "/specs/other.toml");
+    CHECK(error.at("line").as_int64() == 2);
+  }
+  // `strategy` keeps its own type check when a program is given.
+  spit("specs/typed.toml", "strategy = 3\n[data]\nfile = 'bars.csv'\n");
+  CHECK(code_of(run({"strategy", "backtest", "dip.atls", "specs/typed.toml"}).out_) == "spec.invalid");
+  CHECK(checks() == before);
+  // Without a program, the spec must name one.
+  const auto alone = run({"strategy", "backtest", "specs/shared.toml"});
+  CHECK(alone.exit_ == 2);
+  CHECK(code_of(alone.out_) == "spec.invalid");
+  CHECK(message(alone).find("no `strategy") != std::string::npos);
+  // Two programs are refused, naming them; a mistyped setting read as the spec says what a setting is.
+  const auto two = run({"strategy", "backtest", "dip.atls", "params.lookback=3", "two.atls"});
+  CHECK(two.exit_ == 2);
+  CHECK(code_of(two.out_) == "usage.bad_value");
+  CHECK(message(two).find("dip.atls, two.atls") != std::string::npos);
+  const auto typo = run({"strategy", "backtest", "dip.atls", "lookback=30"});
+  CHECK(typo.exit_ == 2);
+  CHECK(code_of(typo.out_) == "spec.invalid");
+  CHECK(message(typo).find("a setting is KEY=VALUE with a dotted key") != std::string::npos);
+  CHECK(checks() == before);
+}
+
+TEST_CASE("one run spec serves two programs") {
+  const Watchdog watchdog("a shared spec", 60);
+  const FakeAtlc fake(
+    "check args\ncheck out " + info_with("@DIR@/dip.atls", "@DIR@/two.atls") + "\ndriver args\ndriver out " + REPORT +
+    "\n"
+  );
+  spit("two.atls", "");
+  spit("shared.toml", "[data]\nfile = 'bars.csv'\n[replay]\ncash = 5\n");
+  const auto ran = run({"strategy", "backtest", "two.atls", "shared.toml"});
+  INFO(ran.out_);
+  REQUIRE(ran.exit_ == 0);
+  const auto dir = fake.dir().string();
+  CHECK(fake.args("check") == std::vector<std::string>{dir + "/two.atls", "--info"});
+  CHECK(
+    fake.args("driver") == std::vector<std::string>{"data.source=wide", "data.file=" + dir + "/bars.csv", "replay.cash=5"}
+  );
+  CHECK(reply_of(ran.out_).at("program").as_string() == dir + "/two.atls");
+}
+
 TEST_CASE("the program's path atlc gives back matches the one passed once both are lexically normal") {
   const Watchdog watchdog("program paths", 60);
   const FakeAtlc fake("check args\ncheck out " + INFO_OK + "\ndriver out " + REPORT + "\n");

@@ -249,18 +249,20 @@ inline std::vector<Command> command_list() {
     }));
   add(make_command({"strategy", "backtest"}, "Strategy", "replay a program on its run settings and report")
     .describe(
-      "TARGET is a run spec (TOML) or a program (.atls); KEY=VALUE words are settings (a dotted key before the first "
-      "=), before or after it, and win over the spec's. cmdatl strategy reference run-spec lists the settings. "
+      "TARGET is a program (.atls), a run spec (TOML), or both, at most one of each; KEY=VALUE words are settings (a "
+      "dotted key before the first =), before or after them, and win over the spec's. A spec given with a program "
+      "applies to it and names no other. cmdatl strategy reference run-spec lists the settings. "
       "The program is built once per shape (CMake and a C++17 compiler are needed; builds are cached)."
     )
     .example("cmdatl strategy backtest dip.toml")
     .example("cmdatl strategy backtest dip.toml params.lookback=30 --fills fills.csv")
     .example("cmdatl strategy backtest dip.atls data.source=csv data.file=bars.csv data.symbol=005930")
-    .arg("TARGET", "a run spec or a program (.atls)")
+    .example("cmdatl strategy backtest dip.atls daily.toml instruments.stock=005930")
+    .arg("TARGET", "a program (.atls), a run spec, or both")
     .arg("SETTING", "KEY=VALUE with a dotted key (params.lookback=30), before or after TARGET", false, true)
     .option("fills", "FILE", "also write every fill")
     .returns("report", "the replay's report, unchanged")
-    .returns("spec", "the run spec, absolute, or null for a program")
+    .returns("spec", "the run spec, absolute, or null when no spec is given")
     .returns("program", "the program, absolute")
     .returns("settings_given", "the KEY=VALUE settings given (the spec's and the program's own values are not listed)")
     .returns("atlc", "atlc's version")
@@ -315,7 +317,8 @@ inline std::vector<Command> command_list() {
     .example("cmdatl run start dip.toml")
     .example("cmdatl run start dip.toml --wait")
     .example("cmdatl run start dip.toml params.lookback=21 --wait")
-    .arg("TARGET", "a run spec or a program (.atls); replay.market = \"kr\" and limit orders")
+    .example("cmdatl run start dip.atls daily.toml --wait")
+    .arg("TARGET", "a program (.atls), a run spec, or both; replay.market = \"kr\" and limit orders")
     .arg("SETTING", "KEY=VALUE with a dotted key (params.lookback=30), before or after TARGET", false, true)
     .flag("wait", "wait for the run's end and answer with its summary and exit")
     .returns("run", "the run id")
