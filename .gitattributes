@@ -1,2 +1,4 @@
 # The skills are embedded into cmdatl and their frontmatter split on LF lines: the same bytes on every OS.
 skills/** text eol=lf
+# The examples are copies of atlc's, the same bytes on every OS.
+examples/** text eol=lf

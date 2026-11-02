@@ -1,0 +1,13 @@
+# Every symbol of the file; EEE misses a bar each month, which the program's missing = skip leaves out.
+strategy = "universe.atls"
+
+[data]
+source = "csv"
+file = "data/daily.csv"          # synthetic daily bars written for these examples
+symbol_column = "symbol"
+time = "date"
+time_format = "iso"
+
+[replay]
+cash = 1000000
+fill = "legs"                     # each day as an open and a close, for on_open and on_close

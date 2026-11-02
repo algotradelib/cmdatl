@@ -1,0 +1,18 @@
+strategy = "trailing-stop.atls"
+
+[data]
+source = "csv"
+file = "data/daily.csv"          # synthetic daily bars written for these examples
+symbol_column = "symbol"
+time = "date"
+time_format = "iso"
+
+[instruments]
+stock = "CCC"
+
+[replay]
+cash = 100000
+commission = 0.0005
+
+[params]
+trail = 0.08
