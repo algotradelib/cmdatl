@@ -16,8 +16,8 @@
  * @brief The rules that turn a run's `key=value` arguments into a strategy: the settings, the symbols by the
  *   program's mode, the parameters and the order pricing.
  *
- * `cmdatl::replay::main` (`replay.hpp`) uses them; a project that drives a generated strategy itself includes this header
- * and passes the same arguments, which `atlc spec --json` lists as `args`. Nothing here loads data or replays.
+ * `cmdatl::replay::main` (`replay.hpp`) uses them; a project that drives a generated strategy itself includes this
+ * header and passes the same arguments. Nothing here loads data or replays.
  */
 
 namespace cmdatl {

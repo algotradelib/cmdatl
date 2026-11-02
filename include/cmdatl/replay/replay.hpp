@@ -28,11 +28,13 @@
 
 /**
  * @file
- * @brief The replay driver of `atlc run`: the run settings as `key=value` arguments, the bars (wide tables, CSV
- *   files or a Parquet store), the library's backtester, its report as JSON and, optionally, every fill as CSV.
+ * @brief The replay of a strategy `atlc build` generated: the run settings as `key=value` arguments, the bars (wide
+ *   tables, CSV files or a Parquet store), the library's backtester, its report as JSON and, optionally, every fill
+ *   as CSV.
  *
- * Nothing here depends on a strategy's shape, so a change of settings or parameters never rebuilds. `atlc` checks
- * the settings before it passes them; the checks here repeat what a reader needs.
+ * Nothing here depends on a strategy's shape, so a change of settings or parameters never rebuilds. cmdatl checks
+ * the settings before it passes them; the checks here repeat what a reader needs. Nothing here includes the rest of
+ * cmdatl, so a project's own `main` can include it beside `atlc build`'s header.
  *
  * Fills (`replay.fill`):
  * - `next-open`: a market order fills at the next bar's open; a wide table's row is a bar with open = high =
@@ -609,7 +611,7 @@ inline atl::Decimal64 price_of(const std::string& cell, const std::string& where
 
 /**
  * @brief The items of a list setting.
- * @param text `a,b,c`, as `atlc` passes an array.
+ * @param text `a,b,c`, as cmdatl passes an array.
  * @return The items.
  */
 inline std::vector<std::string> list_of(const std::string& text) {
@@ -939,7 +941,7 @@ inline std::vector<BarSeries> load_store_source(const Settings& s) {
   return out;
 #else
   (void)s;
-  throw std::invalid_argument("this binary was built without DuckDB (atlc builds with it when a spec reads a store)");
+  throw std::invalid_argument("this binary was built without DuckDB (cmdatl builds with it when a spec reads a store)");
 #endif
 }
 
