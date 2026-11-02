@@ -172,7 +172,7 @@ TEST_CASE("the driver's sources are carried inside cmdatl, and only the modules 
   CHECK(paths.count("main.cpp") == 1);
   CHECK(paths.count("CMakeLists.txt") == 1);
   CHECK(paths.count("cmdatl/driver/run.hpp") == 1);
-  // The replay module, which both drivers include; nothing of atlc's own runtime is carried.
+  // The replay module, which both drivers include; nothing of atlc's runtime is carried.
   CHECK(paths.count("cmdatl/replay/replay.hpp") == 1);
   CHECK(paths.count("cmdatl/replay/settings.hpp") == 1);
   CHECK(paths.count("third_party/toml++/toml.hpp") == 1);
