@@ -19,6 +19,8 @@ cmdatl strategy backtest dip.atls data.file=bars.csv data.source=csv data.symbol
 ```
 
 A relative path is read against the directory of the file that sets it, and against the working directory on the command line (as `--fills`).
+The program's path is made lexically normal (`a/../b.atls` is `b.atls`), while data paths keep their `..` for the system to resolve, through any link.
+The shell does not expand a `~` inside a `KEY=VALUE` word: write `data.file=$HOME/bars.csv` or an absolute path.
 The operator's file is never a setting: no setting changes the operator's limits.
 
 ## The format
@@ -180,6 +182,7 @@ A store backtest also links DuckDB's prebuilt C library (`duckdb.h` and the shar
 Builds are cached under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`), and CMake decides what to rebuild.
 Parameters, data and replay settings are arguments of the executable, so changing them never rebuilds.
 Two backtests of one program at once share one build and do not wait on each other's replays.
+Each backtest runs a copy of the build from `$XDG_CACHE_HOME/cmdatl/backtests/` and removes it; a killed backtest leaves its copy there, and the directory is safe to delete while no backtest runs.
 
 ## The report
 
