@@ -1,0 +1,31 @@
+// Mean reversion on a band written as a user indicator, with a function that caps the position.
+functions {
+  real capped(real shares, real cap) {
+    return min(max(shares, -cap), cap);
+  }
+}
+indicator band(real x, int n) {
+  window w[n];
+  state real s = 0;
+  state real q = 0;
+  enter(v) { s = s + v; q = q + v * v; }
+  leave(v) { s = s - v; q = q - v * v; }
+  value real mean = s / w.count;
+  value real sd = sqrt((q - s * s / w.count) / (w.count - 1));
+}
+params {
+  int<lower=2> lookback = 20;
+  real<lower=0> width = 2;
+  real<lower=0> cap = 500;
+}
+series {
+  real middle = band(close, lookback).mean;
+  real spread = band(close, lookback).sd;
+}
+on_bar {
+  if (close < middle - width * spread) {
+    target(capped(100 * (middle - close) / spread, cap));
+  } else if (close > middle) {
+    target(0);
+  }
+}

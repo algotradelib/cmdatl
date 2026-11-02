@@ -972,12 +972,14 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
     const auto plain_message = std::string(reply_of(plain.out_).at("error").as_object().at("message").as_string());
     CHECK(plain_message.find("replay.fill") != std::string::npos);
   }
-  if (const auto examples = cmdatl::variable("CMDATL_TEST_ATLC_EXAMPLES")) {
+  {
     // A program with on_fill: the build succeeds and the driver refuses it, exit 5, relayed.
     const PaperFixture fixture(run_operator());
     const RunEquipped equipped(equipment->first, equipment->second);
     fixture.arm();
-    spit(fixture.dir() / "trail.atls", slurp(std::filesystem::path(*examples) / "trailing-stop.atls"));
+    spit(
+      fixture.dir() / "trail.atls", slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "examples" / "trailing-stop.atls")
+    );
     spit(fixture.dir() / "bars.csv", dip_bars(60));
     spit(
       fixture.dir() / "trail.toml",

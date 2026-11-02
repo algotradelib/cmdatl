@@ -1,0 +1,25 @@
+// Trade the spread of two instruments around its hedge ratio: buy it when it is low, sell it when it is high.
+instruments { y; x; }
+params {
+  int<lower=2> lookback = 60;
+  real<lower=0> entry = 2;
+  real<lower=0> exit = 0.5;
+  int<lower=0> quantity = 100;
+}
+series {
+  real hedge = ols_slope(y.close, x.close, lookback);
+  real spread = y.close - hedge * x.close;
+  real z = zscore(spread, lookback);
+}
+on_bar {
+  if (z < -entry) {
+    target(y, quantity);
+    target(x, -quantity * hedge);
+  } else if (z > entry) {
+    target(y, -quantity);
+    target(x, quantity * hedge);
+  } else if (abs(z) < exit) {
+    target(y, 0);
+    target(x, 0);
+  }
+}

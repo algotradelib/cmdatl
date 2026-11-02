@@ -1,0 +1,17 @@
+strategy = "user-indicator.atls"
+
+[data]
+source = "csv"
+file = "data/daily.csv"          # synthetic daily bars written for these examples
+symbol_column = "symbol"
+time = "date"
+time_format = "iso"
+
+[instruments]
+stock = "DDD"
+
+[replay]
+cash = 100000
+
+[params]
+width = 1.5

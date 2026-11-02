@@ -1,0 +1,32 @@
+// Buy a breakout above the highest high of the last bars; sell when the price falls a fraction below the
+// highest price since the fill.
+params {
+  int<lower=1> lookback = 20;
+  real<lower=0, upper=1> trail = 0.05;
+  int<lower=0> quantity = 100;
+}
+series {
+  real breakout = ts_max(high, lookback)[1];
+}
+state {
+  bool in_trade = false;
+  real peak = 0;
+}
+on_fill {
+  if (fill.buy) {
+    in_trade = true;
+    peak = fill.price;
+  } else {
+    in_trade = false;
+  }
+}
+on_bar {
+  if (in_trade) {
+    peak = max(peak, close);
+    if (close < peak * (1 - trail)) {
+      target(0);
+    }
+  } else if (close > breakout) {
+    target(quantity);
+  }
+}

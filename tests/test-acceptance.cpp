@@ -461,27 +461,26 @@ TEST_CASE("each starter written by strategy new backtests and trades from anothe
 }
 
 TEST_CASE(
-  "strategy backtest's reports and arguments for atlc's examples are the recorded ones, byte for byte", "[acceptance]"
+  "strategy backtest's reports and arguments for the examples are the recorded ones, byte for byte", "[acceptance]"
 ) {
   const auto equip = equipment();
-  const auto examples = cmdatl::variable("CMDATL_TEST_ATLC_EXAMPLES");
-  if (!equip || !examples) {
-    SKIP(std::string(UNEQUIPPED) + ", or CMDATL_TEST_ATLC_EXAMPLES names no atlc examples directory");
+  if (!equip) {
+    SKIP(UNEQUIPPED);
   }
   const Equipped equipped(*equip);
   const ScratchDir dir;
+  const auto examples = std::filesystem::path(CMDATL_SOURCE_DIR) / "examples";
   // Recorded once from atlc 3f9ce62's `atlc run` (tests/fixtures/examples/how-made.txt).
   const auto fixtures = std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "fixtures" / "examples";
   int compared = 0;
   for (const auto* name : {"mean-reversion", "pairs", "trailing-stop", "universe", "user-indicator"}) {
     INFO(name);
-    const auto spec = (std::filesystem::path(*examples) / (std::string(name) + ".toml")).string();
+    const auto spec = (examples / (std::string(name) + ".toml")).string();
     const auto expected = slurp(fixtures / (std::string(name) + ".json"));
     REQUIRE(!expected.empty());
     CHECK(report_of({spec}) == boost::json::parse(expected));
     // The driver's own bytes and arguments: a stand-in records both, then runs the driver cmdatl built.
-    const auto structure =
-      struct_of(equip->atlc_, (std::filesystem::path(*examples) / (std::string(name) + ".atls")).string());
+    const auto structure = struct_of(equip->atlc_, (examples / (std::string(name) + ".atls")).string());
     REQUIRE(!structure.empty());
     const auto driver = backtest_driver(structure);
     REQUIRE(!driver.empty());
@@ -500,7 +499,7 @@ TEST_CASE(
     for (auto line : lines_of(slurp(fixtures / (std::string(name) + ".args")))) {
       const std::string placeholder = "@EXAMPLES@";
       if (const auto at = line.find(placeholder); at != std::string::npos) {
-        line.replace(at, placeholder.size(), *examples);
+        line.replace(at, placeholder.size(), examples.string());
       }
       args.push_back(line);
     }

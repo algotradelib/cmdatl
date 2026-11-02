@@ -7,7 +7,7 @@ set -euo pipefail
 bin="$1"
 report="$2"
 
-for name in CMDATL_TEST_ATLC CMDATL_TEST_PREFIX CMDATL_TEST_ATLC_EXAMPLES; do
+for name in CMDATL_TEST_ATLC CMDATL_TEST_PREFIX; do
   value="${!name:-}"
   if [ -z "$value" ]; then
     echo "::error::$name is not set"

@@ -1,0 +1,19 @@
+strategy = "pairs.atls"
+
+[data]
+source = "csv"
+file = "data/daily.csv"          # synthetic daily bars written for these examples
+symbol_column = "symbol"
+time = "date"
+time_format = "iso"
+
+[instruments]                     # the program's instruments { y; x; }, mapped to symbols
+y = "BBB"
+x = "AAA"
+
+[replay]
+cash = 100000
+shorts = true                     # the program sells the spread short
+
+[params]
+lookback = 40

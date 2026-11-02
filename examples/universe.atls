@@ -1,0 +1,22 @@
+// At the open, buy the instruments in an uptrend that opened further below yesterday's close than the
+// average instrument; sell everything at the close. A missing bar is left out of the windows.
+universe {}
+options { missing = skip; }
+params {
+  int<lower=1> lookback = 20;
+  int<lower=0> quantity = 100;
+}
+series {
+  real last_close = close;
+  real trend = sma(close, lookback);
+}
+on_open {
+  real gap = open / last_close - 1;
+  real market = xs_mean(gap);
+  if (gap < market and last_close > trend) {
+    target(quantity);
+  }
+}
+on_close {
+  target(0);
+}

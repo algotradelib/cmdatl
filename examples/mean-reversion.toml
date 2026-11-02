@@ -1,0 +1,16 @@
+# cmdatl strategy backtest mean-reversion.toml params.lookback=30
+strategy = "mean-reversion.atls"
+
+[data]
+source = "csv"
+file = "data/daily.csv"          # synthetic daily bars written for these examples
+symbol_column = "symbol"
+time = "date"
+time_format = "iso"
+
+[instruments]
+stock = "AAA"                     # the one symbol a single-instrument program trades
+
+[replay]
+cash = 100000
+commission = 0.0005
