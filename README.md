@@ -53,6 +53,20 @@ A backtest that reads a Parquet store also needs DuckDB's C library, named by th
   The build's progress and atlc's warnings arrive as they happen: on stderr, or as `progress` events with `--format jsonl`.
 - `atlc check NAME.atls` checks a program alone; the language is atlc's: `cmdatl strategy reference` prints its reference's index and `cmdatl strategy reference builtins` (or another chapter) a chapter, from the atlc cmdatl runs ([online](https://github.com/algotradelib/atlc/tree/main/docs/reference)).
 
+## Examples
+
+`examples/` holds five atls programs, each with a run spec over the synthetic daily bars in `examples/data/daily.csv`.
+
+```sh
+cmdatl strategy backtest examples/mean-reversion.toml params.lookback=30
+```
+
+- `mean-reversion` buys when the price falls well below its recent mean and sells when it comes back.
+- `pairs` trades the spread of two instruments around its hedge ratio, short sales included.
+- `trailing-stop` buys a breakout and sells a fraction below the highest price since the fill; it uses `on_fill`, so `cmdatl run start` refuses it.
+- `universe` trades every symbol of the file at the open and the close, and leaves a missing bar out.
+- `user-indicator` is mean reversion on a band written as a user indicator, with a function that caps the position.
+
 ## The paper account
 
 A paper account trades stored daily bars, not a broker: nothing reaches a network or a real account.
