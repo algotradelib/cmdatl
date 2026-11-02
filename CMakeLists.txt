@@ -209,6 +209,24 @@ if(CMDATL_BUILD_TESTS)
     CMDATL_HOLD_LOCK="$<TARGET_FILE:hold-lock>"
   )
   add_test(NAME test-cli COMMAND test-cli "~[acceptance]")
+  # The store backtest's acceptance case: DuckDB's C library, whose directory CMDATL_TEST_DUCKDB names (a cache
+  # variable or the environment), writes its store; without it the case is skipped, and says so.
+  if(NOT CMDATL_TEST_DUCKDB AND DEFINED ENV{CMDATL_TEST_DUCKDB})
+    set(CMDATL_TEST_DUCKDB "$ENV{CMDATL_TEST_DUCKDB}")
+  endif()
+  if(CMDATL_TEST_DUCKDB)
+    add_executable(make-store tests/make-store.cpp)
+    target_compile_features(make-store PRIVATE cxx_std_17)
+    target_include_directories(make-store PRIVATE ${CMDATL_TEST_DUCKDB})
+    find_library(CMDATL_TEST_DUCKDB_LIBRARY duckdb PATHS ${CMDATL_TEST_DUCKDB} NO_DEFAULT_PATH REQUIRED)
+    target_link_libraries(make-store PRIVATE ${CMDATL_TEST_DUCKDB_LIBRARY})
+    set_target_properties(make-store PROPERTIES BUILD_RPATH ${CMDATL_TEST_DUCKDB})
+    add_dependencies(test-cli make-store)
+    target_compile_definitions(test-cli PRIVATE
+      CMDATL_TEST_DUCKDB="${CMDATL_TEST_DUCKDB}"
+      CMDATL_MAKE_STORE="$<TARGET_FILE:make-store>"
+    )
+  endif()
   # The fault tests: their own executable, whose one translation unit defines CMDATL_FAULT_HOOKS and gives the
   # system calls of the account's state files their stand-ins, so no inline definition is mixed with them.
   add_executable(test-faults tests/test-faults.cpp)

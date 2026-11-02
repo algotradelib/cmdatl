@@ -424,6 +424,56 @@ TEST_CASE(
   }
 }
 
+TEST_CASE("a store backtest links DuckDB from build.duckdb or DUCKDB_ROOT alone, as atlc run does", "[acceptance]") {
+  const auto equip = equipment();
+#if defined(CMDATL_TEST_DUCKDB)
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const std::string duckdb = CMDATL_TEST_DUCKDB;
+  const Equipped equipped(*equip);
+  const ScratchDir dir;
+  const auto store = dir.path() / "store";
+  REQUIRE(cmdatl::run_child({CMDATL_MAKE_STORE, store.string()}, [](const std::string&) {}).code_ == 0);
+  REQUIRE(run({"strategy", "new", "dip", "--dir", dir.path().string()}).exit_ == 0);
+  const auto at = [&dir](const std::string& file) {
+    return (dir.path() / file).string();
+  };
+  const std::string data = "strategy = 'dip.atls'\n[data]\nstore = \"test/1d/AAA\"\nstore_root = 'store'\n";
+  spit(at("store.toml"), data + "[build]\nduckdb = '" + duckdb + "'\n");
+  spit(at("plain.toml"), data);
+  const auto expected = atlc_report(equip->atlc_, {at("store.toml")});
+  REQUIRE(expected.is_object());
+  CHECK(expected.as_object().at("executions").as_int64() > 0);
+  {
+    const ScopedVariable root("DUCKDB_ROOT", std::nullopt);
+    const auto ran = backtest({at("store.toml")});
+    INFO(ran.out_ << "\n" << ran.err_);
+    REQUIRE(ran.exit_ == 0);
+    CHECK(reply_of(ran.out_).at("report") == expected);
+    // Without build.duckdb or DUCKDB_ROOT, and none on the system's paths: the build fails and says where it looked.
+    const auto none = backtest({at("plain.toml")});
+    if (none.exit_ != 0) {
+      CHECK(code_of(none.out_) == "build.failed");
+      CHECK(none.out_.find("DUCKDB_ROOT") != std::string::npos);
+    }
+    const auto wrong = backtest({at("plain.toml"), "build.duckdb=" + at("no-duckdb")});
+    CHECK(code_of(wrong.out_) == "build.failed");
+    CHECK(wrong.out_.find("no-duckdb") != std::string::npos);
+  }
+  {
+    const ScopedVariable root("DUCKDB_ROOT", duckdb);
+    const auto ran = backtest({at("plain.toml")});
+    INFO(ran.out_ << "\n" << ran.err_);
+    REQUIRE(ran.exit_ == 0);
+    CHECK(reply_of(ran.out_).at("report") == expected);
+  }
+#else
+  (void)equip;
+  SKIP("CMDATL_TEST_DUCKDB named no DuckDB C library when cmdatl was configured: the store case did not run");
+#endif
+}
+
 TEST_CASE("every strategy reference the docs and skills name answers from the real atlc", "[acceptance]") {
   const auto equip = equipment();
   if (!equip) {

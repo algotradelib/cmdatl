@@ -169,6 +169,8 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
       checked.resolved_.indicators_,
     };
     request.kind_ = build::DriverKind::BACKTEST;
+    request.store_ = checked.resolved_.store_;
+    request.duckdb_ = checked.resolved_.duckdb_;
     const auto progress = [&output](const std::string& line) {
       output.progress(line);
     };

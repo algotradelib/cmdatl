@@ -429,6 +429,10 @@ struct Request {
   std::string package_{CMDATL_ALGOTRADELIB_DIR};
   /** @brief Which driver. */
   DriverKind kind_{DriverKind::RUN};
+  /** @brief Whether a backtest reads a store, so links DuckDB's C library. */
+  bool store_{false};
+  /** @brief DuckDB's directory (`build.duckdb`), absolute, or empty for `DUCKDB_ROOT`, then the system's paths. */
+  std::string duckdb_;
 };
 
 /**
@@ -517,9 +521,22 @@ inline std::optional<Reply> build_driver(
     );
   }
   const bool backtest = request.kind_ == DriverKind::BACKTEST;
+  // A store backtest's CMake project links DuckDB, found where the key says: `build.duckdb`, or `DUCKDB_ROOT`, which
+  // then joins the key and the build's environment.
+  const bool store = backtest && request.store_;
+  const bool duckdb_root = store && request.duckdb_.empty();
   std::vector<std::string> extra;
   if (backtest) {
     extra.push_back("backtest");
+  }
+  if (store) {
+    extra.push_back("store");
+    if (duckdb_root) {
+      const auto root = variable("DUCKDB_ROOT");
+      extra.push_back(root ? "DUCKDB_ROOT=" + *root : "DUCKDB_ROOT-");
+    } else {
+      extra.push_back("duckdb=" + request.duckdb_);
+    }
   }
   const auto name = shape_name(
     request.program_, request.struct_, request.indicators_,
@@ -541,7 +558,9 @@ inline std::optional<Reply> build_driver(
       Exit::FAILED, "cache.unavailable", "the build cache's lock " + (shape / "lock").string() + " cannot be taken"
     );
   }
-  const auto environment = child_environment(own_environment());
+  const auto environment = child_environment(
+    own_environment(), duckdb_root ? std::vector<std::string>{"DUCKDB_ROOT"} : std::vector<std::string>{}
+  );
   const auto src = shape / "src";
   const auto next = shape / "next";
   remove_stale_temporaries(src);
@@ -644,6 +663,12 @@ inline std::optional<Reply> build_driver(
       "-DCMAKE_BUILD_TYPE=Release",
       "-DCMDATL_ALGOTRADELIB_DIR=" + package,
     };
+    if (store) {
+      configure.push_back("-DCMDATL_STORE=ON");
+      if (!duckdb_root) {
+        configure.push_back("-DCMDATL_DUCKDB_DIR=" + request.duckdb_);
+      }
+    }
     const auto configured = run_child(configure, progress, &environment);
     if (configured.kind_ == ChildResult::Kind::INTERRUPTED) {
       return interrupted_reply();
@@ -652,7 +677,7 @@ inline std::optional<Reply> build_driver(
       std::filesystem::remove(build_dir / "CMakeCache.txt", ec);
       return atlc_failure(
         Exit::FAILED, "build.failed", "configuring the driver failed: " + tail_of(configured), configured,
-        "check CMake, the compiler and the algotradelib package " + package
+        "check CMake, the compiler" + std::string(store ? ", DuckDB" : "") + " and the algotradelib package " + package
       );
     }
   }
