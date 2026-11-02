@@ -117,10 +117,7 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   );
 #else
   GivenSettings given;
-  const auto found = invocation.values_.find("TARGET");
-  if (
-    auto refused = sort_words(found == invocation.values_.end() ? std::vector<std::string>{} : found->second, given)
-  ) {
+  if (auto refused = sort_words(target_and_settings(invocation), given)) {
     return std::move(*refused);
   }
   output.progress("cmdatl: replaying " + given.target_);

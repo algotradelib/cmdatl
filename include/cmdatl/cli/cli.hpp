@@ -112,7 +112,8 @@ inline std::optional<Reply> parse_command(
     if (arg.variadic_) {
       added->expected(arg.required_ ? 1 : 0, -1);
     } else {
-      added->expected(1);
+      // One word, never the next: those are a following variadic argument's (`TARGET SETTING...`).
+      added->expected(1)->allow_extra_args(false);
     }
     if (arg.required_) {
       added->required();

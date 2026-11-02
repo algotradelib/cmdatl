@@ -256,7 +256,8 @@ inline std::vector<Command> command_list() {
     .example("cmdatl strategy backtest dip.toml")
     .example("cmdatl strategy backtest dip.toml params.lookback=30 --fills fills.csv")
     .example("cmdatl strategy backtest dip.atls data.source=csv data.file=bars.csv data.symbol=005930")
-    .arg("TARGET", "a run spec or a program (.atls), and KEY=VALUE settings in any order", true, true)
+    .arg("TARGET", "a run spec or a program (.atls)")
+    .arg("SETTING", "KEY=VALUE with a dotted key (params.lookback=30), before or after TARGET", false, true)
     .option("fills", "FILE", "also write every fill")
     .returns("report", "the replay's report, unchanged")
     .returns("spec", "the run spec, absolute, or null for a program")
@@ -314,10 +315,8 @@ inline std::vector<Command> command_list() {
     .example("cmdatl run start dip.toml")
     .example("cmdatl run start dip.toml --wait")
     .example("cmdatl run start dip.toml params.lookback=21 --wait")
-    .arg(
-      "TARGET", "a run spec or a program (.atls), and KEY=VALUE settings; replay.market = \"kr\" and limit orders", true,
-      true
-    )
+    .arg("TARGET", "a run spec or a program (.atls); replay.market = \"kr\" and limit orders")
+    .arg("SETTING", "KEY=VALUE with a dotted key (params.lookback=30), before or after TARGET", false, true)
     .flag("wait", "wait for the run's end and answer with its summary and exit")
     .returns("run", "the run id")
     .returns("state", "running; with --wait or an early end: ended, refused, failed, lost or unknown")

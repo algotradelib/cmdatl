@@ -415,9 +415,14 @@ TEST_CASE("the table's run commands: options, codes, kinds of code and the schem
     names.push_back(option.name_);
   }
   CHECK(names == std::vector<std::string>{"wait"});
-  REQUIRE(start->args_.size() == 1);
+  REQUIRE(start->args_.size() == 2);
   CHECK(start->args_[0].name_ == "TARGET");
-  CHECK(start->args_[0].variadic_);
+  CHECK(start->args_[0].required_);
+  CHECK(!start->args_[0].variadic_);
+  CHECK(start->args_[1].name_ == "SETTING");
+  CHECK(!start->args_[1].required_);
+  CHECK(start->args_[1].variadic_);
+  CHECK(cmdatl::usage(*start).rfind("TARGET [SETTING...]", 0) == 0);
   CHECK(start->may_send_);
   CHECK(static_cast<bool>(start->run_config_));
   CHECK(static_cast<bool>(status->run_config_));

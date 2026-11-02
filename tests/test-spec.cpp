@@ -273,6 +273,12 @@ TEST_CASE("values are checked key by key, each error at its file and line") {
     CHECK(has(e, says));
     CHECK(e.rfind(FILE_PATH + ":", 0) == 0);
   }
+  // Every key's error, past one only the file's reading finds, in line order.
+  const auto mixed = spec("[replay]\ncash = 0\nfrom = 2024-01-02\nfill = \"close\"\n");
+  REQUIRE(mixed.errors_.size() == 3);
+  CHECK(mixed.errors_[0].rfind(FILE_PATH + ":2: ", 0) == 0);
+  CHECK(has(mixed.errors_[1], FILE_PATH + ":3: `replay.from`: write a date"));
+  CHECK(mixed.errors_[2].rfind(FILE_PATH + ":4: ", 0) == 0);
   // Every key's error, not only the first, each at its line.
   const auto parsed = spec("strategy = \"m.atls\"\nfoo = 1\n[replay]\ncash = 0\nfill = \"close\"\n");
   REQUIRE(parsed.errors_.size() == 3);
@@ -404,6 +410,15 @@ TEST_CASE("decoded control characters are refused, with the advice for a Windows
   }
   CHECK(spec("[data]\nfile = 'C:\\temp\\new.csv'\n").errors_.empty());
   CHECK(has(cli_error(std::string("data.symbol=A\x01")), "control character (U+0001)"));
+  // A word on the command line need not be UTF-8; a setting must be, as run.json holds it.
+  CHECK(has(cli_error("data.file=/data/caf\xe9.csv"), "`data.file` holds bytes that are not UTF-8"));
+  CHECK(has(cli_error("data.symbols=A\xc3"), "not UTF-8"));
+  CHECK(has(cli_error("data.symbol=\xed\xa0\x80"), "not UTF-8"));
+  CHECK(has(cli_error("data.symbol=\xc0\xaf"), "not UTF-8"));
+  CHECK(cli_error("data.symbol=caf\xc3\xa9 \xf0\x9f\x98\x80").empty());
+  CHECK(sp::valid_utf8("\xe2\x82\xac\xf4\x8f\xbf\xbf"));
+  CHECK(!sp::valid_utf8("\xf4\x90\x80\x80"));
+  CHECK(!sp::valid_utf8("\x80"));
   CHECK(has(cli_error("data.files=[\"a\\tb\"]"), "control character (U+0009)"));
 }
 

@@ -20,6 +20,23 @@
 
 namespace cmdatl {
 
+/**
+ * @brief A command's words, `TARGET` and `SETTING` together, in order: the parser fills `TARGET` with the first word,
+ *   which may be a setting, so the words are sorted again by `sort_words`.
+ * @param invocation The arguments.
+ * @return The words.
+ */
+inline std::vector<std::string> target_and_settings(const Invocation& invocation) {
+  std::vector<std::string> words;
+  for (const auto* name : {"TARGET", "SETTING"}) {
+    const auto found = invocation.values_.find(name);
+    if (found != invocation.values_.end()) {
+      words.insert(words.end(), found->second.begin(), found->second.end());
+    }
+  }
+  return words;
+}
+
 /** @brief What a command was given: its target, and the run spec's and the command line's settings. */
 struct GivenSettings {
   /** @brief The target as given. */

@@ -486,6 +486,52 @@ inline std::optional<unsigned> control_character(std::string_view text) {
 }
 
 /**
+ * @brief Whether a text is valid UTF-8: no stray continuation byte, no truncated or overlong sequence, no surrogate,
+ *   nothing past U+10FFFF.
+ * @param text The text.
+ * @return Whether it is.
+ */
+inline bool valid_utf8(std::string_view text) {
+  std::size_t i = 0;
+  while (i < text.size()) {
+    const auto byte = static_cast<unsigned char>(text[i]);
+    std::size_t length = 0;
+    std::uint32_t code = 0;
+    if (byte < 0x80) {
+      ++i;
+      continue;
+    } else if ((byte & 0xE0u) == 0xC0u) {
+      length = 2;
+      code = byte & 0x1Fu;
+    } else if ((byte & 0xF0u) == 0xE0u) {
+      length = 3;
+      code = byte & 0x0Fu;
+    } else if ((byte & 0xF8u) == 0xF0u) {
+      length = 4;
+      code = byte & 0x07u;
+    } else {
+      return false;
+    }
+    if (i + length > text.size()) {
+      return false;
+    }
+    for (std::size_t k = 1; k < length; ++k) {
+      const auto next = static_cast<unsigned char>(text[i + k]);
+      if ((next & 0xC0u) != 0x80u) {
+        return false;
+      }
+      code = (code << 6) | (next & 0x3Fu);
+    }
+    const std::uint32_t least = length == 2 ? 0x80u : length == 3 ? 0x800u : 0x10000u;
+    if (code < least || code > 0x10FFFFu || (code >= 0xD800u && code <= 0xDFFFu)) {
+      return false;
+    }
+    i += length;
+  }
+  return true;
+}
+
+/**
  * @brief The refusal of a string holding a control character.
  * @param key The setting.
  * @param code The character.
@@ -772,17 +818,27 @@ inline std::optional<Error> check(Entry& e) {
   const auto bad = [&e](const std::string& what) {
     return Error::at(e.origin_, "`" + e.key_ + "` is " + what + ", not " + e.value_.describe());
   };
-  const auto controlled = [&e](const Value& v) -> std::optional<Error> {
-    if (v.type_ == Value::Type::STR) {
-      if (const auto code = control_character(v.text_)) {
-        return Error::at(e.origin_, control_message(e.key_, *code));
-      }
+  // A string must be UTF-8 (a command-line word need not be, and it is written into run.json) and hold no control
+  // character.
+  const auto refusal = [&e](const Value& v) -> std::optional<Error> {
+    if (v.type_ != Value::Type::STR) {
+      return std::nullopt;
+    }
+    if (!valid_utf8(v.text_)) {
+      return Error::at(e.origin_, "`" + e.key_ + "` holds bytes that are not UTF-8");
+    }
+    if (const auto code = control_character(v.text_)) {
+      return Error::at(e.origin_, control_message(e.key_, *code));
+    }
+    return std::nullopt;
+  };
+  const auto controlled = [&refusal](const Value& v) -> std::optional<Error> {
+    if (auto refused = refusal(v)) {
+      return refused;
     }
     for (const auto& item : v.items_) {
-      if (item.type_ == Value::Type::STR) {
-        if (const auto code = control_character(item.text_)) {
-          return Error::at(e.origin_, control_message(e.key_, *code));
-        }
+      if (auto refused = refusal(item)) {
+        return refused;
       }
     }
     return std::nullopt;
@@ -1593,7 +1649,7 @@ inline Read flatten(const toml::table& root, const std::string& text, const std:
     }
     const double expected =
       node.is_integer() ? static_cast<double>(node.as_integer()->get()) : node.as_floating_point()->get();
-    if (!(std::abs(value->number_ - expected) <= 1e-12 * std::max(std::abs(expected), 1.0))) {
+    if (value->number_ != expected) {
       refuse(node.source(), "`" + key + "`: the number's text could not be read back");
       return std::nullopt;
     }
@@ -1715,14 +1771,15 @@ inline Read read_text(const std::string& text, const std::string& file) {
     return read;
   }
   read = flatten(root, text, file);
-  if (!read.errors_.empty()) {
-    return read;
-  }
+  // Every key's error, the entries flatten read included, in the file's order.
   for (auto& e : read.entries_) {
     if (auto error = check(e)) {
       read.errors_.push_back(std::move(*error));
     }
   }
+  std::stable_sort(read.errors_.begin(), read.errors_.end(), [](const Error& a, const Error& b) {
+    return a.line_ < b.line_;
+  });
   return read;
 }
 
