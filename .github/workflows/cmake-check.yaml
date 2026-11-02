@@ -11,6 +11,7 @@ on:
       - 'templates/**'
       - 'tools/**'
       - 'driver/**'
+      - 'examples/**'
       - '.github/scripts/**'
       - '.github/workflows/cmake-check.yaml'
   pull_request:
@@ -23,6 +24,7 @@ on:
       - 'templates/**'
       - 'tools/**'
       - 'driver/**'
+      - 'examples/**'
       - '.github/scripts/**'
       - '.github/workflows/cmake-check.yaml'
 
@@ -49,12 +51,6 @@ jobs:
 
       - id: atlc
         uses: algotradelib/.github/actions/setup-atlc@main
-
-      # atlc's examples, for the acceptance cases.
-      - uses: actions/checkout@v7
-        with:
-          repository: algotradelib/atlc
-          path: atlc-src
 
       - name: OpenSSL (macOS)
         if: runner.os == 'macOS'
@@ -84,7 +80,6 @@ jobs:
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
-          CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
         with:
           test-dir: build
           args: -E ^test-acceptance$
@@ -94,5 +89,4 @@ jobs:
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
-          CMDATL_TEST_ATLC_EXAMPLES: ${{ github.workspace }}/atlc-src/examples
         run: .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
