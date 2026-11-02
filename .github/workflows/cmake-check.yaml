@@ -60,6 +60,16 @@ jobs:
         if: runner.os == 'macOS'
         run: echo "OPENSSL_ROOT_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
+      # DuckDB's prebuilt C library, for the replay's store loader (test-replay-store) and the store backtests.
+      - name: DuckDB
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in Linux) z=libduckdb-linux-amd64.zip ;; macOS) z=libduckdb-osx-universal.zip ;; esac
+          mkdir -p "$RUNNER_TEMP/duckdb"
+          curl -fsSL -o "$RUNNER_TEMP/duckdb.zip" "https://github.com/duckdb/duckdb/releases/download/v1.5.6/$z"
+          (cd "$RUNNER_TEMP/duckdb" && cmake -E tar xf ../duckdb.zip)
+          echo "CMDATL_TEST_DUCKDB=$RUNNER_TEMP/duckdb" >> "$GITHUB_ENV"
+
       # -Wterminate stays a warning: plan/todo/cmdatl-toml-assert-noexcept.md.
       - uses: threeal/cmake-action@v2.1.0
         with:
