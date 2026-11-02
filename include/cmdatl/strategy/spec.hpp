@@ -2,7 +2,7 @@
 
 // Run settings: what a program is replayed or run on, read from an optional TOML file (the run spec) and from
 // `KEY=VALUE` words on the command line, checked key by key and then as a whole against the program's facts
-// (`atlc check FILE --info`), and flattened to the `key=value` arguments atlc's `atls::run` reads.
+// (`atlc check FILE --info`), and flattened to the `key=value` arguments the replay module (`replay/`) reads.
 //
 // The file is read by toml++; every number keeps the text it was written with (re-read from the file at the value's
 // position), so a rate such as 0.00015 reaches the replay as an exact decimal. A command-line value is typed by its

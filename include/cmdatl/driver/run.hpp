@@ -2,7 +2,7 @@
 
 // A run: the driver `run start` builds for one program shape and runs detached.
 //
-// The run's market is the library's mock broker, built in this process from the run's data as atlc's replay runtime
+// The run's market is the library's mock broker, built in this process from the run's data as cmdatl's replay module
 // reads it, and gone when the process ends: each run is its own market, with its own journal and its own lock, and shares
 // nothing with the agent commands' paper account or with another run. The operator's file decides what may be placed.
 //
@@ -11,8 +11,9 @@
 // `events.jsonl` in the run's directory (the start line first), and writes one JSON reply on stdout before it releases
 // its lock.
 //
-// Nothing on its command line names a limit, a phase, a path or a clock: `run.id`, then atlc's own `args`, which the
-// generated `main.cpp` turns into the market's inputs (`load`) and the strategy (`make`) through atlc's own code.
+// Nothing on its command line names a limit, a phase, a path or a clock: `run.id`, then the replay's `key=value`
+// arguments, which `main.cpp` turns into the market's inputs (`load`) and the strategy (`make`) through the replay
+// module (`replay/`).
 
 #include "../account/account.hpp"
 #include "../account/operator.hpp"
@@ -113,13 +114,13 @@ inline std::function<void(atl::mock::MockClient&)>& closed_hook() {
 }
 #endif
 
-/** @brief What `load` gives: the market's inputs, read by atlc's own code. */
+/** @brief What `load` gives: the market's inputs, read by the replay module. */
 struct Loaded {
   /** @brief The symbols traded, in feed order. */
   std::vector<std::string> symbols_;
-  /** @brief One series per symbol, with atlc's interval, stamp and instrument id. */
+  /** @brief One series per symbol, with the replay's interval, stamp and instrument id. */
   std::vector<atl::BarSeries> series_;
-  /** @brief The instruments, as atlc's replay has them. */
+  /** @brief The instruments, as the replay has them. */
   std::vector<atl::Instrument> instruments_;
   /** @brief The fill model and its costs. */
   atl::backtest::NextBarFillModel fills_;
@@ -127,16 +128,16 @@ struct Loaded {
   atl::Decimal64 cash_;
 };
 
-/** @brief The driver's own argument, and atlc's, as given. */
+/** @brief The driver's own argument, and the replay's, as given. */
 struct RunArgs {
   /** @brief The run's id. */
   std::string id_;
-  /** @brief atlc's `key=value` arguments, in order. */
+  /** @brief The replay's `key=value` arguments, in order. */
   std::vector<std::string> atlc_;
 };
 
 /**
- * @brief Reads the command line: `run.id=ID` exactly once, then atlc's arguments; a `paper.*` key, another `run.*`
+ * @brief Reads the command line: `run.id=ID` exactly once, then the replay's arguments; a `paper.*` key, another `run.*`
  *   key, a missing id, or an argument without `=` is refused.
  * @param argc The count.
  * @param argv The arguments.
@@ -335,9 +336,9 @@ void scan_orders(
  * @brief Runs a program on its own mock market; see the file comment.
  * @tparam Program The generated strategy.
  * @tparam Load A callable `(const std::vector<std::string>& args) -> Loaded`, throwing `std::invalid_argument` or
- *   `std::out_of_range` for data it refuses; in the generated `main.cpp` it is atlc's own loader and replay settings.
+ *   `std::out_of_range` for data it refuses; in `main.cpp` it is the replay module's loader and replay settings.
  * @tparam Make A callable `(const std::vector<std::string>& args, const std::vector<atl::InstrumentId>& ids) -> Program`,
- *   throwing for a parameter, bound or pricing it refuses; in the generated `main.cpp` it applies atlc's rules.
+ *   throwing for a parameter, bound or pricing it refuses; in `main.cpp` it applies the replay module's rules.
  * @param argc The count.
  * @param argv The arguments.
  * @param load Reads the market's inputs.
@@ -373,7 +374,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
   if (const auto refusal = spec_refusal(args.atlc_)) {
     return run_error(base, Exit::USAGE, "spec.invalid", refusal->second, "", {{"key", refusal->first}});
   }
-  // Rows 4 and 7: the data, through atlc's own loader.
+  // Rows 4 and 7: the data, through the replay module's loader.
   Loaded loaded;
   try {
     loaded = load(args.atlc_);
@@ -409,7 +410,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
   if (!first_end) {
     return run_error(base, Exit::USAGE, "spec.invalid", "the run's data holds no bar");
   }
-  // Row 5: the strategy, through atlc's rules.
+  // Row 5: the strategy, through the replay module's rules.
   std::vector<atl::InstrumentId> ids;
   for (const auto& instrument : loaded.instruments_) {
     ids.push_back(instrument.id_);

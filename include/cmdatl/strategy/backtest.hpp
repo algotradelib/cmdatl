@@ -1,7 +1,7 @@
 #pragma once
 
 // `strategy backtest`: the settings read and checked against the program (`settings.hpp`), the backtest driver built
-// once per program shape (`build.hpp`, a driver whose main is atlc's `atls::run::main`), a copy of it run with the
+// once per program shape (`build.hpp`, a driver whose main is `cmdatl::replay::main`), a copy of it run with the
 // settings as its arguments, and its report returned unchanged.
 
 #include "../core/reply.hpp"

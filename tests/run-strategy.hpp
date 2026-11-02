@@ -1,7 +1,7 @@
 #pragma once
 
-// A hand-written program with the interface of an atlc-generated strategy, and a loader standing in for atlc's, for
-// the run's in-process tests: the driver never needs atlc's runtime for them.
+// A hand-written program with the interface of an atlc-generated strategy, and a loader standing in for the replay
+// module's, for the run's in-process tests: the driver never needs atlc for them.
 
 #include <cmdatl/driver/run.hpp>
 
