@@ -1,0 +1,10 @@
+strategy = "dip.atls"
+
+[data]
+store = "test/1d/AAA"
+store_root = "store"
+as_of = "2026-06-01T00:00:00Z"
+
+[params]
+lookback = 10
+entry = 1

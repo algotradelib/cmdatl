@@ -1,0 +1,22 @@
+strategy = "dip.atls"
+
+[data]
+source = "wide"
+file = "wide-close.csv"
+
+[instruments]
+stock = "BBB"
+
+[replay]
+fill = "open-prev-close"
+from = "2021-02-01"
+to = "2021-11-30"
+cash = 50000
+commission = 0.001
+min_commission = 1
+sell_tax = 0.0005
+periods_per_year = 250
+
+[params]
+lookback = 10
+entry = 1

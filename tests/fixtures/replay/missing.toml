@@ -1,0 +1,5 @@
+strategy = "dip.atls"
+
+[data]
+store = "test/1d/ZZZ"
+store_root = "store"

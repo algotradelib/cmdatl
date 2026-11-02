@@ -1,0 +1,8 @@
+strategy = "dip.atls"
+
+[data]
+source = "csv"
+file = "bad-date.csv"
+symbol = "AAA"
+time = "date"
+time_format = "yyyymmdd"

@@ -1,0 +1,4 @@
+bad-date	error: @DIR@/bad-date.csv:3: not a date (yyyymmdd or YYYY-MM-DD): '20230230'
+wide-order	error: @DIR@/wide-order.csv:3: dates must increase
+bound	error: lookback = 1 is below its lower bound 2 = 2
+missing	error: the store has no test/1d/ZZZ (@DIR@/store/bars/source=test/interval=1d/symbol=ZZZ/bars.parquet)

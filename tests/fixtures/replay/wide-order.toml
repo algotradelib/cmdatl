@@ -1,0 +1,5 @@
+strategy = "dip.atls"
+
+[data]
+source = "wide"
+file = "wide-order.csv"

@@ -1,0 +1,15 @@
+data.source=csv
+data.file=@DIR@/kr-daily.csv
+data.symbol=005930
+data.time=date
+data.time_format=yyyymmdd
+data.timezone=+09:00
+replay.market=kr
+replay.commission=0.00015
+replay.sell_tax=0.0018
+replay.slippage_ticks=1
+orders.type=limit
+orders.offset=0.002
+param.lookback=10
+param.entry=1
+param.quantity=10

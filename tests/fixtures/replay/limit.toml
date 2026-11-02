@@ -1,0 +1,24 @@
+strategy = "dip.atls"
+
+[data]
+source = "csv"
+file = "kr-daily.csv"
+symbol = "005930"
+time = "date"
+time_format = "yyyymmdd"
+timezone = "+09:00"
+
+[replay]
+market = "kr"
+commission = 0.00015
+sell_tax = 0.0018
+slippage_ticks = 1
+
+[orders]
+type = "limit"
+offset = 0.002
+
+[params]
+lookback = 10
+entry = 1
+quantity = 10

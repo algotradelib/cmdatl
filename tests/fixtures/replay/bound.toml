@@ -1,0 +1,11 @@
+strategy = "dip.atls"
+
+[data]
+source = "csv"
+file = "kr-daily.csv"
+symbol = "005930"
+time = "date"
+time_format = "yyyymmdd"
+
+[params]
+lookback = 1
