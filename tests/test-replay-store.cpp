@@ -77,11 +77,11 @@ std::string make_store(const std::filesystem::path& root) {
   }
   const auto version =
     [](const std::string& up, const std::string& fetched, const std::string& from, const std::string& to) {
-      return "SELECT TIMESTAMPTZ '2020-01-01 00:00:00+00' + to_days(d::INTEGER) AS ts, 'close' AS stamp, "
-             "(100 + d)::DECIMAL(18,4) AS open, (103 + d)::DECIMAL(18,4) AS high, (99 + d)::DECIMAL(18,4) AS low, "
-             "(100 + d + " +
-        up + ")::DECIMAL(18,4) AS close, 1000::DECIMAL(24,4) AS volume, TIMESTAMPTZ '" + fetched +
-        " 00:00:00+00' AS fetched_at FROM range(" + from + ", " + to + ") t(d)";
+      std::string sql = "SELECT TIMESTAMPTZ '2020-01-01 00:00:00+00' + to_days(d::INTEGER) AS ts, 'close' AS stamp, ";
+      sql += "(100 + d)::DECIMAL(18,4) AS open, (103 + d)::DECIMAL(18,4) AS high, (99 + d)::DECIMAL(18,4) AS low, ";
+      sql += "(100 + d + " + up + ")::DECIMAL(18,4) AS close, 1000::DECIMAL(24,4) AS volume, ";
+      sql += "TIMESTAMPTZ '" + fetched + " 00:00:00+00' AS fetched_at FROM range(" + from + ", " + to + ") t(d)";
+      return sql;
     };
   const auto path = (dir / "bars.parquet").generic_string();
   std::string error = exec(con, "SET TimeZone = 'UTC'");
