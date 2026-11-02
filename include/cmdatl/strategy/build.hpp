@@ -432,7 +432,7 @@ struct Request {
   /** @brief Whether a backtest reads a store, so links DuckDB's C library. */
   bool store_{false};
   /** @brief DuckDB's directory (`build.duckdb`), absolute, or empty for `DUCKDB_ROOT`, then the system's paths. */
-  std::string duckdb_;
+  std::string duckdb_{};
 };
 
 /**
