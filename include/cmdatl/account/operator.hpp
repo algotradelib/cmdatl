@@ -703,6 +703,83 @@ inline constexpr int MAX_KEY_SEGMENTS = 8;
 inline constexpr int MAX_VALUE_NESTING = 8;
 
 /**
+ * @brief Refuses a character outside ASCII where TOML allows only ASCII, outside strings and comments, before toml++
+ *   parses the text: toml++ 3.4 classifies some such characters (U+3001, U+FE70, ...) by a path it marks unreachable,
+ *   which is undefined behaviour in an optimized build.
+ * @param text The whole file.
+ * @return A refusal at the character's line and column, or nothing.
+ */
+inline std::optional<Refusal> non_ascii_refusal(std::string_view text) {
+  std::uint32_t line = 1;
+  std::uint32_t column = 1;
+  std::size_t i = 0;
+  const auto at = [&text, &i](std::string_view token) {
+    return text.compare(i, token.size(), token) == 0;
+  };
+  const auto step = [&]() {
+    const auto byte = static_cast<unsigned char>(text[i]);
+    if (byte == '\n') {
+      ++line;
+      column = 1;
+    } else if ((byte & 0xC0u) != 0x80u) {
+      ++column;
+    }
+    ++i;
+  };
+  // Skips a string opened at `i`; a single-line one ends at its quote or at a new line, where toml++ refuses it.
+  const auto skip_string = [&](char quote) {
+    const bool escapes = quote == '"';
+    const std::string_view triple = escapes ? std::string_view("\"\"\"") : std::string_view("'''");
+    const bool multi = at(triple);
+    for (std::size_t k = 0; k < (multi ? 3u : 1u); ++k) {
+      step();
+    }
+    while (i < text.size()) {
+      if (escapes && text[i] == '\\') {
+        step();
+        if (i < text.size()) {
+          step();
+        }
+      } else if (multi && at(triple)) {
+        for (int k = 0; k < 3; ++k) {
+          step();
+        }
+        return;
+      } else if (!multi && (text[i] == quote || text[i] == '\n')) {
+        if (text[i] == quote) {
+          step();
+        }
+        return;
+      } else {
+        step();
+      }
+    }
+  };
+  // A byte-order mark that opens the file is toml++'s to skip.
+  if (at("\xEF\xBB\xBF")) {
+    i = 3;
+  }
+  while (i < text.size()) {
+    const char c = text[i];
+    if (c == '"' || c == '\'') {
+      skip_string(c);
+    } else if (c == '#') {
+      while (i < text.size() && text[i] != '\n') {
+        step();
+      }
+    } else if ((static_cast<unsigned char>(c) & 0x80u) != 0) {
+      return Refusal{
+        "config.invalid", "a character outside ASCII outside a string or a comment, which TOML does not allow there",
+        {line, column}
+      };
+    } else {
+      step();
+    }
+  }
+  return std::nullopt;
+}
+
+/**
  * @brief Bounds how deep the text can nest tables before toml++ parses it: toml++ recurses once per level, and a
  *   dotted key or header 16,000 segments deep, well under 64 KiB, exhausts the stack.
  * @details Scans outside strings and comments: a run of dots not broken by `=`, `,`, a bracket, a brace or a new line
@@ -870,6 +947,12 @@ inline ConfigSnapshot load_operator_config() {
     return invalid(
       "the operator's file " + snapshot.path_ + " is not TOML this version reads: " + deep->message_, deep->at_.line,
       deep->at_.column
+    );
+  }
+  if (auto foreign = config_detail::non_ascii_refusal(text)) {
+    return invalid(
+      "the operator's file " + snapshot.path_ + " is not valid TOML: " + foreign->message_, foreign->at_.line,
+      foreign->at_.column
     );
   }
   toml::table root;

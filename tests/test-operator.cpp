@@ -333,6 +333,21 @@ TEST_CASE("CMDATL_CONFIG unset, empty, missing, a directory, a FIFO, a dangling 
   }
 }
 
+TEST_CASE("an operator's file with a character outside ASCII outside a string is refused before toml++ reads it") {
+  const PaperFixture fixture;
+  // U+3001 after a value: toml++ 3.4 reaches a path it marks unreachable there.
+  fixture.write_config(ConfigParts{}.text() + "x = 1\xe3\x80\x81\n");
+  const auto ran = fixture.json({"status"});
+  CHECK(ran.exit_ == 1);
+  CHECK(code_of(ran.out_) == "config.invalid");
+  CHECK(
+    reply_of(ran.out_).at("error").as_object().at("message").as_string().find("outside ASCII") != std::string::npos
+  );
+  // In a comment it is read, as before.
+  fixture.write_config(ConfigParts{}.text() + "# \xe3\x80\x81\n");
+  CHECK(fixture.json({"status"}).exit_ == 0);
+}
+
 TEST_CASE("an operator's file nesting tables past the bound is refused before toml++ recurses into it") {
   const PaperFixture fixture;
   REQUIRE(fixture.json({"status"}).exit_ == 0);

@@ -1457,7 +1457,7 @@ inline std::optional<Error> from_command_line(const std::string& word, Entry& en
         return Error::at(entry.origin_, "`" + entry.key_ + "`: an array is written on one line");
       }
       const std::string document = "v = " + text;
-      if (config_detail::nesting_refusal(document)) {
+      if (config_detail::nesting_refusal(document) || config_detail::non_ascii_refusal(document)) {
         return Error::at(entry.origin_, "`" + entry.key_ + "`: " + text + " is not a TOML array of strings");
       }
       toml::table parsed;
@@ -1694,6 +1694,10 @@ inline Read read_text(const std::string& text, const std::string& file) {
   Read read;
   if (const auto deep = config_detail::nesting_refusal(text)) {
     read.errors_.push_back(Error::at(Origin{file, deep->at_.line}, "not TOML this version reads: " + deep->message_));
+    return read;
+  }
+  if (const auto foreign = config_detail::non_ascii_refusal(text)) {
+    read.errors_.push_back(Error::at(Origin{file, foreign->at_.line}, "not valid TOML: " + foreign->message_));
     return read;
   }
   toml::table root;

@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -446,6 +447,31 @@ TEST_CASE("toml++ refuses what TOML forbids: keys and tables twice, a value and 
   // Nesting is bounded before toml++ parses.
   CHECK(has(one_error("a = " + std::string(40, '[') + std::string(40, ']') + "\n"), "not TOML this version reads"));
   CHECK(has(one_error("a" + std::string(30, '.') + " = 1\n"), "not"));
+}
+
+TEST_CASE("outside ASCII outside strings and comments is refused before toml++ reads it") {
+  // toml++ 3.4 reaches a path it marks unreachable on U+3001 and U+FE70 there; TOML allows neither there anyway.
+  for (
+    const auto* src :
+    {"[replay]\ncash = 1\xe3\x80\x81\n", "[data]\nsymbol\xe3\x80\x81 = 'A'\n",
+      "[data]\nsymbols = ['A', \xe3\x80\x81]\n", "[replay]\ncash = 1 \xef\xb9\xb0\n", "a\xc3\xa9 = 1\n"}
+  ) {
+    INFO(src);
+    const auto e = one_error(src);
+    CHECK(has(e, "outside ASCII outside a string or a comment"));
+  }
+  // In strings of every kind and in comments, with escaped quotes, it is read.
+  const auto inside = spec(
+    "[data] # \xe3\x80\x81\nsymbol = \"\xe3\x80\x81\\\"\xef\xb9\xb0\"\nnames = '''\xe3\x80\x81'''\n"
+    "time = \"\"\"\xef\xb9\xb0\"\"\"\nstamp = '\xe3\x80\x81'\n"
+  );
+  CHECK(inside.errors_.empty());
+  CHECK(has(cli_error("data.symbols=[\xe3\x80\x81]"), "is not a TOML array"));
+  CHECK(cli_value("data.symbols=[\"\xe3\x80\x81\"]") == "\xe3\x80\x81");
+  const auto refusal = cmdatl::config_detail::non_ascii_refusal("a = 1\nb = 2 \xe3\x80\x81\n");
+  REQUIRE(refusal);
+  CHECK(refusal->at_.line == 2);
+  CHECK(refusal->at_.column == 7);
 }
 
 TEST_CASE("values are normalized: paths against the spec's directory, lists, dates and counts") {
@@ -999,5 +1025,191 @@ TEST_CASE("atlc check --info's object is read only when every field cmdatl uses 
     INFO(text);
     CHECK(!sp::read_info(text, path));
   }
+}
+namespace {
+
+/** @brief A small deterministic generator, so a failing input can be found again by its index. */
+class Mutator {
+public:
+  /**
+   * @brief Seeds it.
+   * @param seed The seed.
+   */
+  explicit Mutator(std::uint64_t seed) : state_(seed * 2654435761u + 1) {}
+
+  /**
+   * @brief The next number below a bound.
+   * @param bound The bound, above 0.
+   * @return The number.
+   */
+  std::size_t below(std::size_t bound) {
+    state_ ^= state_ << 13;
+    state_ ^= state_ >> 7;
+    state_ ^= state_ << 17;
+    return static_cast<std::size_t>(state_ % bound);
+  }
+
+  /**
+   * @brief A text changed in one of the ways a hostile or careless writer would: a byte replaced, a token inserted
+   *   (control characters, escapes, brackets, quotes, numbers TOML reads differently), a span repeated or cut, a long
+   *   run, deep nesting.
+   * @param text The text.
+   * @return The changed text.
+   */
+  std::string mutate(std::string text) {
+    static const std::vector<std::string> tokens{
+      "\x01",
+      "\x7f",
+      "\\u0000",
+      "\\t",
+      "\"",
+      "'",
+      "[",
+      "]",
+      "{",
+      "}",
+      "=",
+      ".",
+      ",",
+      "#",
+      "\n",
+      "\r\n",
+      "\t",
+      "0x10",
+      "inf",
+      "nan",
+      "-0",
+      "1e400",
+      "1e-400",
+      "99999999999999999999",
+      "1_000",
+      "2024-01-02",
+      "09:00:00",
+      "true",
+      "\xc3\xa9",
+      "\xff",
+      "\xef\xbb\xbf",
+      "[[a]]",
+      "a.b.c.d.e.f.g.h.i = 1",
+      "\"\"\"",
+      "'''",
+      "params.",
+      "instruments.",
+      "build.algotradelib = 'x'",
+      "replay.fill = \"legs\"",
+      "orders.offset = 0.29999999999999999999",
+    };
+    const auto at = text.empty() ? 0 : below(text.size() + 1);
+    switch (below(7)) {
+      case 0:
+        if (!text.empty()) {
+          text[std::min(at, text.size() - 1)] = static_cast<char>(below(256));
+        }
+        break;
+      case 1:
+      case 2:
+        text.insert(at, tokens[below(tokens.size())]);
+        break;
+      case 3: {
+        const auto length = below(40);
+        text.insert(at, text.substr(at, length));
+        break;
+      }
+      case 4:
+        text.erase(at, below(20));
+        break;
+      case 5:
+        text.insert(at, std::string(below(5000) + 1, "a1[{\"'.=_ "[below(10)]));
+        break;
+      default: {
+        const auto depth = below(300);
+        text.insert(at, "a = " + std::string(depth, '[') + std::string(depth, ']') + "\n");
+        break;
+      }
+    }
+    return text;
+  }
+
+private:
+  std::uint64_t state_;
+};
+
+/** @brief Run specs to start the sweep from. */
+const std::vector<std::string> SEEDS{
+  FAKE_SPEC,
+  FAKE_SPEC + "[replay]\ncash = 1_000_000\ncommission = 1.5e-4\nfrom = \"2020-01-02\"\n[params]\nlookback = 10\n",
+  "strategy = 'dip.atls'\n[data]\nsource = \"csv\"\nfiles = [\"a.csv\", \"b.csv\"]\nsymbols = [\"A\", \"B\"]\n"
+  "[orders]\ntype = \"limit\"\noffset = 0.002\n",
+  "strategy = 'dip.atls'\ndata = { store = [\"k/1d/A\"], store_root = 's', as_of = \"2026-01-01T09:00+09:00\" }\n"
+  "build = { duckdb = 'd', indicators = \"exact\" }\n",
+};
+
+/** @brief Settings to start the argument sweep from. */
+const std::vector<std::string> SEED_WORDS{
+  "replay.cash=1e8",
+  "params.lookback=30",
+  "instruments.stock=005930",
+  "data.symbols=[\"A\",\"B\"]",
+  "replay.from=2020-01-02",
+  "orders.offset=0.01",
+  "data.file=bars.csv",
+  "replay.shorts=true",
+};
+
+} // namespace
+
+TEST_CASE("hostile settings: mutated files and words are each read into entries or errors, never a crash") {
+  std::size_t errors = 0;
+  std::size_t read = 0;
+  for (std::uint64_t k = 0; k < 20000; ++k) {
+    Mutator m(k);
+    auto text = SEEDS[m.below(SEEDS.size())];
+    for (std::size_t n = m.below(4) + 1; n > 0; --n) {
+      text = m.mutate(text);
+    }
+    const auto result = sp::read_text(text, FILE_PATH);
+    errors += result.errors_.empty() ? 0 : 1;
+    read += result.errors_.empty() ? 1 : 0;
+    const auto word = m.mutate(SEED_WORDS[m.below(SEED_WORDS.size())]);
+    if (sp::is_setting(word)) {
+      sp::Entry e;
+      if (!sp::from_command_line(word, e)) {
+        (void)sp::check(e);
+      }
+    }
+    for (const auto& error : result.errors_) {
+      // Every error names a place a reader can find: a line of the file, the file, or none.
+      CHECK((error.at_ != sp::Error::At::LINE || error.line_ >= 1));
+    }
+  }
+  CHECK(errors > 1000);
+  CHECK(read > 500);
+}
+
+TEST_CASE("hostile settings through the command: every input answers with exactly one reply") {
+  const Watchdog watchdog("the hostile sweep", 900);
+  const FakeAtlc fake("check out " + INFO_OK + "\ndriver out " + REPORT + "\n");
+  std::size_t answered = 0;
+  for (std::uint64_t k = 0; k < 600; ++k) {
+    Mutator m(k + 100000);
+    auto text = SEEDS[m.below(2)];
+    for (std::size_t n = m.below(3) + 1; n > 0; --n) {
+      text = m.mutate(text);
+    }
+    spit("h.toml", text);
+    std::vector<std::string> line{"--json", "strategy", "backtest", "h.toml"};
+    for (std::size_t n = m.below(3); n > 0; --n) {
+      line.push_back(m.mutate(SEED_WORDS[m.below(SEED_WORDS.size())]));
+    }
+    const auto ran = run(line);
+    INFO(k << ": " << text << "\n" << cmdatl::join(line) << "\n" << ran.out_);
+    const auto lines = lines_of(ran.out_);
+    REQUIRE(lines.size() == 1);
+    const auto reply = reply_of(lines.front());
+    CHECK((ran.exit_ == 0 || ran.exit_ == 1 || ran.exit_ == 2 || ran.exit_ == 5));
+    CHECK(reply.contains("error") == (ran.exit_ != 0));
+    ++answered;
+  }
+  CHECK(answered == 600);
 }
 #endif
