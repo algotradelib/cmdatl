@@ -1764,5 +1764,162 @@ inline Read read_file(const std::string& path, std::string& program) {
 #endif
 }
 
+/** @brief What `atlc check FILE --info` answered, checked. */
+struct Info {
+  /** @brief Whether the program is valid (`status` `ok`). */
+  bool ok_{false};
+  /** @brief atlc's version. */
+  std::string atlc_;
+  /** @brief The program's facts, when valid. */
+  Program program_;
+  /** @brief The diagnostics, each `severity`, `code`, `message`, `file`, `line`, `origin`. */
+  json::array diagnostics_;
+};
+
+/**
+ * @brief Whether two absolute paths name one file as written: equal once each is made lexically normal (atlc drops
+ *   `.` components and repeated slashes but keeps `..`).
+ * @param a One path.
+ * @param b The other.
+ * @return Whether they are equal.
+ */
+inline bool same_path(const std::string& a, const std::string& b) {
+  return std::filesystem::path(a).lexically_normal() == std::filesystem::path(b).lexically_normal();
+}
+
+/**
+ * @brief Whether a value is one of atlc's diagnostics: `severity` `error` or `warning`, `code`, `message` and
+ *   `origin` strings, `file` a string or null, `line` a positive integer or null.
+ * @param value The value.
+ * @return Whether it is.
+ */
+inline bool info_diagnostic(const json::value& value) {
+  const auto* object = value.if_object();
+  if (object == nullptr) {
+    return false;
+  }
+  for (const auto* key : {"severity", "code", "message", "origin"}) {
+    const auto* field = object->if_contains(key);
+    if (field == nullptr || !field->is_string()) {
+      return false;
+    }
+  }
+  const auto& severity = object->at("severity").as_string();
+  const auto* file = object->if_contains("file");
+  const auto* line = object->if_contains("line");
+  return (severity == "error" || severity == "warning") && file != nullptr && (file->is_null() || file->is_string()) &&
+    line != nullptr && (line->is_null() || (line->is_int64() && line->as_int64() >= 1));
+}
+
+/**
+ * @brief Reads `atlc check FILE --info`'s one JSON object and checks every field cmdatl uses: `atlc_info` 1; `status`
+ *   `error` exactly when a diagnostic is an error, and `program` null exactly then; the program's path absolute and the
+ *   one cmdatl passed; its struct one cmdatl may paste into C++; its mode one of three, with instruments only when
+ *   named; parameters and instruments named by bare keys; `legs` a boolean.
+ * @param text atlc's standard output.
+ * @param passed The program's path as cmdatl passed it.
+ * @return The answer, or nothing when it is not one.
+ */
+inline std::optional<Info> read_info(const std::string& text, const std::string& passed) {
+  boost::system::error_code error;
+  auto parsed = json::parse(text, error);
+  if (error || !parsed.is_object()) {
+    return std::nullopt;
+  }
+  const auto& object = parsed.as_object();
+  const auto* format = object.if_contains("atlc_info");
+  const auto* status = object.if_contains("status");
+  const auto* version = object.if_contains("atlc");
+  const auto* diagnostics = object.if_contains("diagnostics");
+  const auto* program = object.if_contains("program");
+  if (
+    format == nullptr || !format->is_int64() || format->as_int64() != 1 || status == nullptr || !status->is_string() ||
+    version == nullptr || !version->is_string() || diagnostics == nullptr || !diagnostics->is_array() ||
+    program == nullptr
+  ) {
+    return std::nullopt;
+  }
+  Info info;
+  info.atlc_ = std::string(version->as_string());
+  bool failed = false;
+  for (const auto& d : diagnostics->as_array()) {
+    if (!info_diagnostic(d)) {
+      return std::nullopt;
+    }
+    failed = failed || d.as_object().at("severity").as_string() == "error";
+  }
+  info.diagnostics_ = diagnostics->as_array();
+  if (status->as_string() != (failed ? "error" : "ok") || program->is_null() != failed) {
+    return std::nullopt;
+  }
+  info.ok_ = !failed;
+  if (failed) {
+    return info;
+  }
+  if (!program->is_object()) {
+    return std::nullopt;
+  }
+  const auto& facts = program->as_object();
+  const auto string_of = [&facts](const char* key) -> std::optional<std::string> {
+    const auto* field = facts.if_contains(key);
+    if (field == nullptr || !field->is_string()) {
+      return std::nullopt;
+    }
+    return std::string(field->as_string());
+  };
+  const auto path = string_of("path");
+  const auto name = string_of("struct");
+  const auto mode = string_of("mode");
+  const auto* instruments = facts.if_contains("instruments");
+  const auto* legs = facts.if_contains("legs");
+  const auto* params = facts.if_contains("params");
+  if (
+    !path || path->empty() || path->front() != '/' || !same_path(*path, passed) || !name || !valid_struct(*name) ||
+    !mode || (*mode != "single" && *mode != "named" && *mode != "universe") || instruments == nullptr ||
+    !instruments->is_array() || legs == nullptr || !legs->is_bool() || params == nullptr || !params->is_array() ||
+    instruments->as_array().size() > MAX_ARGS || params->as_array().size() > MAX_ARGS
+  ) {
+    return std::nullopt;
+  }
+  auto& p = info.program_;
+  p.path_ = *path;
+  p.struct_ = *name;
+  p.mode_ = *mode;
+  p.legs_ = legs->as_bool();
+  for (const auto& instrument : instruments->as_array()) {
+    if (!instrument.is_string() || !bare(instrument.as_string()) || instrument.as_string().size() > 64) {
+      return std::nullopt;
+    }
+    p.instruments_.emplace_back(instrument.as_string());
+  }
+  if ((p.mode_ == "named") == p.instruments_.empty()) {
+    return std::nullopt;
+  }
+  for (const auto& param : params->as_array()) {
+    const auto* entry = param.if_object();
+    const auto* param_name = entry == nullptr ? nullptr : entry->if_contains("name");
+    const auto* type = entry == nullptr ? nullptr : entry->if_contains("type");
+    if (
+      param_name == nullptr || !param_name->is_string() || !bare(param_name->as_string()) ||
+      param_name->as_string().size() > 64 || type == nullptr || !type->is_string()
+    ) {
+      return std::nullopt;
+    }
+    const auto& t = type->as_string();
+    if (t != "int" && t != "real" && t != "bool") {
+      return std::nullopt;
+    }
+    p.params_.emplace_back(
+      std::string(param_name->as_string()),
+      t == "int" ?
+        ParamType::INT :
+        t == "real" ?
+        ParamType::REAL :
+        ParamType::BOOL
+    );
+  }
+  return info;
+}
+
 } // namespace spec
 } // namespace cmdatl

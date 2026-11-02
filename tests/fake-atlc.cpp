@@ -1,6 +1,7 @@
-// A stand-in for atlc in cmdatl's tests. What it does is read from the file FAKE_ATLC_SCRIPT names: one step per
-// line, `WHEN ACTION [TEXT]`, where WHEN is the command it was called as (`version` for `--version`, `spec`, `run`)
-// or `any`; the steps of other commands are skipped. It exits 0 after the last step.
+// A stand-in for atlc in cmdatl's tests, and for a backtest driver in the test builds that name it so. What it does is
+// read from the file FAKE_ATLC_SCRIPT names: one step per line, `WHEN ACTION [TEXT]`, where WHEN is the command it was
+// called as (`version` for `--version`, `check`, `build`, `reference`, or `driver` when its first argument is a
+// `key=value` setting) or `any`; the steps of other commands are skipped. It exits 0 after the last step.
 
 #include <fcntl.h>
 #include <signal.h>
@@ -100,7 +101,11 @@ int main(int argc, char** argv) {
   }
   const std::string base(script);
   const std::string called = argc < 2 ? "" : argv[1];
-  const std::string mode = called == "--version" ? "version" : called;
+  const std::string mode = called == "--version" ?
+    "version" :
+    called.find('=') != std::string::npos ?
+    "driver" :
+    called;
   std::ifstream in(base);
   std::string line;
   std::vector<std::string> steps;
@@ -175,7 +180,7 @@ int main(int argc, char** argv) {
       // A line no TOML reader takes, appended to a file beside the script (an operator's file rewritten meanwhile).
       append(base + "." + text, "!!! not toml");
     } else if (action == "args") {
-      for (int i = 2; i < argc; ++i) {
+      for (int i = mode == "driver" ? 1 : 2; i < argc; ++i) {
         append(base + "." + mode + ".args", argv[i]);
       }
     } else if (action == "close") {

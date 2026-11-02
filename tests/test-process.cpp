@@ -298,14 +298,16 @@ TEST_CASE("run_child works with stdin or stdout or stderr closed") {
 
 TEST_CASE("cmdatl started with stdin or stdout or stderr closed") {
   const Watchdog watchdog("cmdatl without its descriptors", 60);
-  const auto script = "spec out " + SPEC_OK + "\nrun args\nrun out " + REPORT + "\n";
+  // The shipped cmdatl builds the driver itself: atlc build, its second child, answers as a program with errors.
+  const auto script = "check args\ncheck out " + INFO_OK + "\nbuild args\nbuild err error[x]: no\nbuild exit 1\n";
   {
     const FakeAtlc fake(script);
     Spawned cmdatl({"--json", "strategy", "backtest", "s.toml"}, {true, false, false});
     const int status = cmdatl.wait();
     REQUIRE(WIFEXITED(status));
-    CHECK(WEXITSTATUS(status) == 0);
-    CHECK(reply_of(cmdatl.out()).at("report").as_object().at("executions").as_int64() == 4);
+    CHECK(WEXITSTATUS(status) == 5);
+    CHECK(code_of(cmdatl.out()) == "program.invalid");
+    CHECK(!fake.args("build").empty());
   }
   {
     // The reply cannot be written, but atlc ran: the pipes cmdatl opened were moved off the closed descriptor.
@@ -314,7 +316,7 @@ TEST_CASE("cmdatl started with stdin or stdout or stderr closed") {
     const int status = cmdatl.wait();
     REQUIRE(WIFEXITED(status));
     CHECK(WEXITSTATUS(status) == 1);
-    CHECK(!fake.args("run").empty());
+    CHECK(!fake.args("build").empty());
     CHECK(cmdatl.err().find("its reply could not be written") != std::string::npos);
   }
   {
@@ -324,7 +326,7 @@ TEST_CASE("cmdatl started with stdin or stdout or stderr closed") {
     const int status = cmdatl.wait();
     REQUIRE(WIFEXITED(status));
     CHECK(WEXITSTATUS(status) == 1);
-    CHECK(fake.args("run").empty());
+    CHECK(fake.args("check").empty());
     CHECK(code_of(cmdatl.out()) == "internal.error");
   }
 }
@@ -398,7 +400,7 @@ TEST_CASE("an allocation failing anywhere in run_child or its lines or its tail 
 
 TEST_CASE("an allocation failing anywhere in a backtest becomes a reply or a lost-reply exit and never a leak") {
   const Watchdog watchdog("the backtest sweep", 300);
-  const FakeAtlc fake("spec out " + SPEC_OK + "\nrun err building\nrun out " + REPORT + "\n");
+  const FakeAtlc fake("check out " + INFO_OK + "\ndriver err building\ndriver out " + REPORT + "\n");
   const int before = open_fds();
   long first_bad = 0;
   long n = 1;
@@ -429,7 +431,8 @@ TEST_CASE("an allocation failing anywhere in a backtest becomes a reply or a los
 
 TEST_CASE("a failing or throwing output stream while atlc runs kills its group and leaks nothing") {
   const Watchdog watchdog("the broken output", 60);
-  const auto script = "spec out " + SPEC_OK + "\nrun grandchild hold\nrun pid\nrun err building\nrun block\n";
+  const auto script =
+    "check out " + INFO_OK + "\ndriver grandchild hold\ndriver pid\ndriver err building\ndriver block\n";
   const int before = open_fds();
   {
     // Text: progress on stderr, which takes cmdatl's first line and refuses atlc's.
@@ -582,18 +585,21 @@ TEST_CASE("SIGINT or SIGTERM while cmdatl probes atlc is interrupted and never a
 
 TEST_CASE("SIGINT or SIGTERM while atlc runs stops its group whatever it is doing") {
   const Watchdog watchdog("interrupted runs", 120);
-  const std::string spec = "spec out " + SPEC_OK + "\n";
+  // While atlc check runs, and while atlc build runs (the shipped cmdatl's own build).
+  const std::string info = "check out " + INFO_OK + "\n";
   const std::vector<std::pair<std::string, std::string>> scenarios{
-    {"draining a long reply", "run pid\nrun touch running\nrun forever\n"},
-    {"waiting on a child with a grandchild", "run grandchild hold\nrun pid\nrun touch running\nrun block\n"},
-    {"just before a wait: both pipes closed", "run pid\nrun close\nrun touch running\nrun block\n"},
+    {"checking, draining a long reply", "check pid\ncheck touch running\ncheck forever\n"},
+    {"building, draining a long reply", info + "build pid\nbuild touch running\nbuild forever\n"},
+    {"waiting on a child with a grandchild",
+      info + "build grandchild hold\nbuild pid\nbuild touch running\nbuild block\n"},
+    {"just before a wait: both pipes closed", info + "build pid\nbuild close\nbuild touch running\nbuild block\n"},
     {"a grandchild that ignores SIGTERM, pipes closed",
-      "run grandchild ignore-term-closed\nrun pid\nrun touch running\nrun block\n"},
+      info + "build grandchild ignore-term-closed\nbuild pid\nbuild touch running\nbuild block\n"},
   };
   for (const auto& scenario : scenarios) {
     for (const int sig : {SIGINT, SIGTERM}) {
       INFO(scenario.first << ", signal " << sig);
-      const FakeAtlc fake(spec + scenario.second);
+      const FakeAtlc fake(scenario.second);
       const auto stopped = stop_backtest(fake, "running", sig);
       check_interrupted(stopped);
       CHECK(all_gone(fake.pids()));
@@ -603,11 +609,11 @@ TEST_CASE("SIGINT or SIGTERM while atlc runs stops its group whatever it is doin
 
 TEST_CASE("what ignores SIGTERM is killed two seconds later") {
   const Watchdog watchdog("the grace period", 120);
-  const std::string spec = "spec out " + SPEC_OK + "\n";
+  const std::string spec = "check out " + INFO_OK + "\n";
   const std::vector<std::pair<std::string, std::string>> scenarios{
     {"a grandchild that ignores SIGTERM, pipes kept open",
-      "run grandchild ignore-term\nrun pid\nrun touch running\nrun block\n"},
-    {"atlc itself ignoring SIGTERM", "run ignore-term\nrun pid\nrun touch running\nrun block\n"},
+      "build grandchild ignore-term\nbuild pid\nbuild touch running\nbuild block\n"},
+    {"atlc itself ignoring SIGTERM", "build ignore-term\nbuild pid\nbuild touch running\nbuild block\n"},
   };
   for (const auto& scenario : scenarios) {
     for (const int sig : {SIGINT, SIGTERM}) {
@@ -628,8 +634,8 @@ TEST_CASE("Ctrl-C on a terminal reaches cmdatl only and it stops atlc's group an
   const std::vector<std::pair<std::string, std::string>> scenarios{
     {"while probing", "version pid\nversion touch waiting\nversion block\n"},
     {"while running",
-      "version out atlc 0.0.0-9000\nspec out " + SPEC_OK +
-        "\nrun grandchild hold\nrun pid\nrun touch waiting\nrun block\n"},
+      "version out atlc 0.0.0-9000\ncheck out " + INFO_OK +
+        "\nbuild grandchild hold\nbuild pid\nbuild touch waiting\nbuild block\n"},
   };
   for (const auto& scenario : scenarios) {
     INFO(scenario.first);
@@ -717,7 +723,9 @@ TEST_CASE("Ctrl-C on a terminal reaches cmdatl only and it stops atlc's group an
 
 TEST_CASE("a reader closing cmdatl's stdout mid-run ends cmdatl without SIGPIPE and its group with it") {
   const Watchdog watchdog("the closed pipe", 60);
-  const FakeAtlc fake("spec out " + SPEC_OK + "\nrun grandchild hold\nrun pid\nrun touch running\nrun forever\n");
+  const FakeAtlc fake(
+    "check out " + INFO_OK + "\nbuild grandchild hold\nbuild pid\nbuild touch running\nbuild forever\n"
+  );
   Spawned cmdatl({"--format", "jsonl", "strategy", "backtest", "s.toml"});
   const auto first = cmdatl.line(false);
   REQUIRE(first);

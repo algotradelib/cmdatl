@@ -5,6 +5,7 @@
 #include "../system/process.hpp"
 #include "./atlc.hpp"
 
+#include <cmdatl/guides.hpp>
 #include <cmdatl/templates.hpp>
 
 #include <algorithm>
@@ -28,12 +29,13 @@
 namespace cmdatl {
 
 /**
- * @brief The reply after SIGINT or SIGTERM: atlc's group was stopped and nothing more was run.
+ * @brief The reply after SIGINT or SIGTERM: the child's group was stopped and nothing more was run.
+ * @param who The child that was stopped.
  * @return The reply.
  */
-inline Reply interrupted_reply() {
+inline Reply interrupted_reply(const std::string& who = "atlc") {
   return error_reply(
-    Exit::INTERRUPTED, "interrupted", "interrupted by a signal: atlc was stopped and nothing more was run",
+    Exit::INTERRUPTED, "interrupted", "interrupted by a signal: " + who + " was stopped and nothing more was run",
     "run the command again", true
   );
 }
@@ -41,16 +43,17 @@ inline Reply interrupted_reply() {
 /**
  * @brief How a child ended, for a person.
  * @param result The child's end.
+ * @param who The child, as the text names it.
  * @return The text, such as `atlc exited with 101`.
  */
-inline std::string ending_of(const ChildResult& result) {
+inline std::string ending_of(const ChildResult& result, const std::string& who = "atlc") {
   switch (result.kind_) {
     case ChildResult::Kind::NOT_STARTED:
-      return "atlc could not be started: " + result.error_;
+      return who + " could not be started: " + result.error_;
     case ChildResult::Kind::IO_FAILED:
-      return "atlc's output was lost: " + result.error_;
+      return who + "'s output was lost: " + result.error_;
     case ChildResult::Kind::INTERRUPTED:
-      return "atlc was interrupted";
+      return who + " was interrupted";
     case ChildResult::Kind::FINISHED:
       break;
   }
@@ -60,10 +63,10 @@ inline std::string ending_of(const ChildResult& result) {
 #else
     const char* name = ::strsignal(result.code_);
 #endif
-    return "atlc was ended by signal " + std::to_string(result.code_) +
+    return who + " was ended by signal " + std::to_string(result.code_) +
       (name == nullptr ? "" : std::string(" (") + name + ")");
   }
-  return "atlc exited with " + std::to_string(result.code_);
+  return who + " exited with " + std::to_string(result.code_);
 }
 
 /**
@@ -99,63 +102,6 @@ inline std::optional<json::object> one_object(const std::string& text) {
     return std::nullopt;
   }
   return std::move(value.as_object());
-}
-
-/**
- * @brief Whether a value is one of atlc's diagnostics as far as cmdatl reads it: an object with a `severity` of
- *   `error` or `warning`, and a `code` and a `message` that are strings.
- * @param value The value.
- * @return Whether it is.
- */
-inline bool is_diagnostic(const json::value& value) {
-  const auto* object = value.if_object();
-  if (object == nullptr) {
-    return false;
-  }
-  for (const auto* key : {"severity", "code", "message"}) {
-    const auto* field = object->if_contains(key);
-    if (field == nullptr || !field->is_string()) {
-      return false;
-    }
-  }
-  const auto& severity = object->at("severity").as_string();
-  return severity == "error" || severity == "warning";
-}
-
-/**
- * @brief `atlc spec --json`'s reply, checked for what cmdatl reads: `atlc_spec` 1, `warnings` and `errors` arrays of
- *   diagnostics, and `status` `ok` exactly when `errors` is empty. The program, build and order fields are not read.
- * @param text atlc's stdout.
- * @return The reply, or nothing when it is not one.
- */
-inline std::optional<json::object> spec_envelope(const std::string& text) {
-  auto object = one_object(text);
-  if (!object) {
-    return std::nullopt;
-  }
-  const auto* format = object->if_contains("atlc_spec");
-  if (format == nullptr || !format->is_int64() || format->as_int64() != 1) {
-    return std::nullopt;
-  }
-  for (const auto* key : {"warnings", "errors"}) {
-    const auto* list = object->if_contains(key);
-    if (list == nullptr || !list->is_array()) {
-      return std::nullopt;
-    }
-    const auto& items = list->as_array();
-    if (!std::all_of(items.begin(), items.end(), is_diagnostic)) {
-      return std::nullopt;
-    }
-  }
-  const auto* status = object->if_contains("status");
-  if (status == nullptr || !status->is_string()) {
-    return std::nullopt;
-  }
-  const bool ok = status->as_string() == "ok";
-  if ((!ok && status->as_string() != "error") || ok != object->at("errors").as_array().empty()) {
-    return std::nullopt;
-  }
-  return object;
 }
 
 /**
@@ -196,51 +142,6 @@ inline std::string stderr_text(const ChildResult& result, const std::string& fal
  */
 inline std::string last_line(const ChildResult& result) {
   return result.stderr_tail_.empty() ? std::string("no message") : result.stderr_tail_.back();
-}
-
-/**
- * @brief What `atlc spec SPEC --json` answered, when it does not let the backtest go on.
- * @param result The child's end.
- * @return The failure reply, or nothing when the spec is valid.
- */
-inline std::optional<Reply> spec_failure(const ChildResult& result) {
-  if (result.kind_ == ChildResult::Kind::INTERRUPTED) {
-    return interrupted_reply();
-  }
-  if (result.kind_ != ChildResult::Kind::FINISHED) {
-    return atlc_failure(Exit::FAILED, "atlc.failed", ending_of(result), result, "check atlc with cmdatl env");
-  }
-  const auto envelope = result.signaled_ ? std::nullopt : spec_envelope(result.stdout_);
-  if (envelope) {
-    const auto& errors = envelope->at("errors").as_array();
-    const bool ok = errors.empty();
-    if (result.code_ == 0 && ok) {
-      return std::nullopt;
-    }
-    if ((result.code_ == 1 || result.code_ == 2) && !ok) {
-      const bool program = result.code_ == 1;
-      auto reply = error_reply(
-        program ? Exit::PROGRAM : Exit::USAGE, program ? "program.invalid" : "spec.invalid",
-        first_error(errors, program ? "the program has errors" : "the run spec has errors"),
-        program ? "fix the program; atlc check FILE.atls checks it alone" : "fix the run spec"
-      );
-      reply.body_["errors"] = errors;
-      return reply;
-    }
-  }
-  const bool usage = std::any_of(result.stderr_tail_.begin(), result.stderr_tail_.end(), [](const std::string& line) {
-    return line.rfind("usage: atlc", 0) == 0;
-  });
-  if (!result.signaled_ && result.code_ == 2 && result.stdout_.find('{') == std::string::npos && usage) {
-    return atlc_failure(
-      Exit::FAILED, "atlc.unsupported", "this atlc has no atlc spec: it is older than the atlc cmdatl reads", result,
-      "install a newer atlc"
-    );
-  }
-  const auto why = envelope ?
-    ending_of(result) + " with a contradictory reply" :
-    ending_of(result) + " without a valid atlc spec --json reply";
-  return atlc_failure(Exit::FAILED, "atlc.failed", "atlc spec: " + why, result, "check atlc with cmdatl env");
 }
 
 /** @brief atlc as a strategy command finds it, or why it cannot run it. */
@@ -293,116 +194,6 @@ inline LocatedAtlc locate_atlc() {
   return located;
 }
 
-/**
- * @brief `strategy backtest SPEC [-P k=v]... [--fills FILE]`: `atlc spec` checks the spec without building, then
- *   `atlc run` replays it; the reply carries atlc's report unchanged.
- * @param invocation The arguments.
- * @param output Where progress goes: cmdatl's first line, then atlc's stderr lines as they arrive.
- * @return The reply.
- */
-inline Reply backtest_reply(const Invocation& invocation, Output& output) {
-#if defined(_WIN32)
-  (void)invocation;
-  (void)output;
-  return error_reply(
-    Exit::FAILED, "unavailable.platform",
-    "strategy backtest runs atlc as a child process, which this version does on macOS and Linux only",
-    "run atlc run SPEC directly"
-  );
-#else
-  const auto spec_given = invocation.get("SPEC");
-  const auto found = invocation.values_.find("param");
-  const auto params = found == invocation.values_.end() ? std::vector<std::string>{} : found->second;
-  // Before atlc is looked for: finding it runs `atlc --version`, which may take a while.
-  output.progress("cmdatl: replaying " + spec_given);
-  if (interrupted()) {
-    return interrupted_reply();
-  }
-  const auto located = locate_atlc();
-  if (located.refusal_) {
-    return *located.refusal_;
-  }
-  const auto& atlc = located.atlc_;
-  // Absolute, so atlc never reads the path as an option and the reply names the file the report came from.
-  const auto spec = std::filesystem::absolute(spec_given).string();
-  const auto forward = [&output](const std::string& line) {
-    output.progress(line);
-  };
-  std::vector<std::string> argv{atlc.path_, "spec", spec};
-  for (const auto& param : params) {
-    argv.push_back("-P");
-    argv.push_back(param);
-  }
-  argv.push_back("--json");
-  if (auto failure = spec_failure(run_child(argv, forward))) {
-    return std::move(*failure);
-  }
-  if (interrupted()) {
-    return interrupted_reply();
-  }
-  argv = {atlc.path_, "run", spec};
-  for (const auto& param : params) {
-    argv.push_back("-P");
-    argv.push_back(param);
-  }
-  std::string fills;
-  if (invocation.has("fills")) {
-    fills = std::filesystem::absolute(invocation.get("fills")).string();
-    argv.push_back("--fills");
-    argv.push_back(fills);
-  }
-  const auto ran = run_child(argv, forward);
-  if (ran.kind_ == ChildResult::Kind::INTERRUPTED) {
-    return interrupted_reply();
-  }
-  const std::string check = "check atlc with cmdatl env";
-  if (ran.kind_ != ChildResult::Kind::FINISHED || ran.signaled_) {
-    return atlc_failure(Exit::FAILED, "atlc.failed", "atlc run: " + ending_of(ran), ran, check);
-  }
-  switch (ran.code_) {
-    case 0:
-      break;
-    case 1:
-      return atlc_failure(
-        Exit::PROGRAM, "program.invalid", stderr_text(ran, "the program has errors"), ran, "fix the program"
-      );
-    case 2:
-      return atlc_failure(
-        Exit::USAGE, "spec.invalid", stderr_text(ran, "the run spec has errors"), ran, "fix the run spec"
-      );
-    case 3:
-      return atlc_failure(
-        Exit::FAILED, "build.failed", "atlc could not build the strategy: " + last_line(ran), ran,
-        "read atlc's build log named in stderr"
-      );
-    case 4:
-      return atlc_failure(
-        Exit::FAILED, "replay.failed", "the replay failed: " + last_line(ran), ran,
-        "check the data and the parameters' bounds"
-      );
-    default:
-      return atlc_failure(Exit::FAILED, "atlc.failed", "atlc run: " + ending_of(ran), ran, check);
-  }
-  auto report = one_object(ran.stdout_);
-  if (!report) {
-    return atlc_failure(Exit::FAILED, "atlc.failed", "atlc run exited 0 without exactly one JSON report", ran, check);
-  }
-  Reply reply;
-  reply.body_["report"] = std::move(*report);
-  reply.body_["spec"] = spec;
-  json::array given;
-  for (const auto& param : params) {
-    given.push_back(json::value(param));
-  }
-  reply.body_["params_given"] = std::move(given);
-  reply.body_["atlc"] = atlc.version_;
-  if (!fills.empty()) {
-    reply.body_["fills"] = fills;
-  }
-  return reply;
-#endif
-}
-
 /** @brief The longest chapter name `strategy reference` passes to atlc. */
 inline constexpr std::size_t MAX_TOPIC = 64;
 
@@ -422,8 +213,8 @@ inline bool valid_topic(const std::string& topic) {
 }
 
 /**
- * @brief `strategy reference [TOPIC]`: `atlc reference [TOPIC]`, its text unchanged; the language reference of the
- *   atlc cmdatl runs, never a copy.
+ * @brief `strategy reference [TOPIC]`: `atlc reference [TOPIC]`, its text unchanged, the language reference of the
+ *   atlc cmdatl runs, never a copy; but `run-spec`, the run settings, which are cmdatl's own, from cmdatl.
  * @param invocation The arguments.
  * @return The reply, atlc's text as `text` (printed bare in text format), or atlc's refusal.
  */
@@ -442,6 +233,11 @@ inline Reply reference_reply(const Invocation& invocation) {
     return error_reply(
       Exit::USAGE, "usage.bad_value", "TOPIC is a chapter's name: lowercase letters, digits and -", chapters
     );
+  }
+  if (topic == "run-spec") {
+    Reply reply;
+    reply.text_ = RUN_SPEC_REFERENCE;
+    return reply;
   }
   if (interrupted()) {
     return interrupted_reply();

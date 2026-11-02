@@ -230,11 +230,23 @@ TEST_CASE("arguments are checked against the command before anything runs") {
   const auto two = run({"order", "place", "p1", "p2"});
   CHECK(two.exit_ == 2);
   CHECK(code_of(two.out_) == "usage.bad_option");
-  CHECK(run({"strategy", "backtest", "a.toml", "b.toml"}).exit_ == 2);
-  // A repeated option takes one value per occurrence; the line that parses runs, and finds no atlc here.
-  CHECK(run({"strategy", "backtest", "s.toml", "-P", "a=1", "stray"}).exit_ == 2);
+  // One target among the words: two are refused, naming them.
+  const auto targets = run({"strategy", "backtest", "a.toml", "params.x=1", "b.toml"});
+  CHECK(targets.exit_ == 2);
+  CHECK(code_of(targets.out_) == "usage.bad_value");
+  CHECK(
+    reply_of(targets.out_).at("error").as_object().at("message").as_string().find("a.toml, b.toml") != std::string::npos
+  );
+  CHECK(code_of(run({"strategy", "backtest", "params.x=1"}).out_) == "usage.missing_argument");
+  CHECK(code_of(run({"strategy", "backtest"}).out_) == "usage.missing_argument");
+  // -P is gone: params.NAME=VALUE replaces it.
+  CHECK(code_of(run({"strategy", "backtest", "s.toml", "-P", "a=1"}).out_) == "usage.bad_option");
+  // The line that parses runs, reads its settings, and finds no atlc here.
+  const ScratchDir dir;
+  const InDir here(dir.path());
+  spit("s.toml", "strategy = 'dip.atls'\n[data]\nfile = 'bars.csv'\n");
   ::setenv("CMDATL_ATLC", "/nonexistent/atlc", 1);
-  const auto parsed = run({"strategy", "backtest", "s.toml", "-P", "a=1", "-P", "b=2"});
+  const auto parsed = run({"strategy", "backtest", "params.a=1", "s.toml", "params.b=2"});
   ::unsetenv("CMDATL_ATLC");
   CHECK(parsed.exit_ == 1);
   CHECK(code_of(parsed.out_) == "atlc.missing");
@@ -263,9 +275,11 @@ TEST_CASE("tune and check are gone; new and backtest and reference are the strat
     }
   }
   CHECK(available == std::vector<std::string>{"strategy new", "strategy backtest", "strategy reference"});
-  CHECK(cmdatl::SCHEMA_VERSION == 7);
+  CHECK(cmdatl::SCHEMA_VERSION == 8);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
-  CHECK(backtest.at("returns").as_object().contains("params_given"));
+  CHECK(backtest.at("returns").as_object().contains("settings_given"));
+  CHECK(backtest.at("returns").as_object().contains("program"));
+  CHECK(!backtest.at("returns").as_object().contains("params_given"));
   CHECK(!backtest.at("returns").as_object().contains("params"));
   const auto& exits = backtest.at("exits").as_array();
   CHECK(std::find(exits.begin(), exits.end(), boost::json::value(130)) != exits.end());
@@ -472,7 +486,8 @@ TEST_CASE("the schema declares the errors its commands return") {
   CHECK(declares("unknown.broker_refused"));
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_);
   const auto& options = backtest.at("commands").as_array()[0].as_object().at("options").as_array();
-  CHECK(options[0].as_object().at("short").as_string() == "-P");
+  REQUIRE(options.size() == 1);
+  CHECK(options[0].as_object().at("name").as_string() == "--fills");
   std::vector<cmdatl::Command> bad;
   bad.push_back(cmdatl::make_command({"x"}, "Read", "x").example("cmdatl x").returns("x", "x").error("bogus.code"));
   const auto problems = cmdatl::check_table(cmdatl::Table(std::move(bad)));
@@ -576,7 +591,9 @@ TEST_CASE("the documentation scanner reads what a shell would, and names only wh
   CHECK(!names_command("cmdatl clock nonexistent-subcommand", table));
   CHECK(names_command("cmdatl run start --wait", table));
   CHECK(names_command("cmdatl account --fields cash,positions", table));
-  CHECK(names_command("cmdatl strategy backtest -P k=v", table));
+  CHECK(names_command("cmdatl strategy backtest --fills f.csv", table));
+  CHECK(!names_command("cmdatl strategy backtest -P k=v", table));
+  CHECK(accepts_invocation("cmdatl strategy backtest params.k=1 dip.toml --fills f.csv replay.cash=1e8", table));
   CHECK(!names_command("cmdatl run start dip.toml --until", table));
   CHECK(!names_command("cmdatl order --target", table));
   // Through extraction, as the documentation test reads a Markdown line.

@@ -437,6 +437,9 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
   const ScopedVariable on_path("PATH", bin.string() + ":" + (path == nullptr ? "/usr/bin:/bin" : path));
   spit(fixture.dir() / "script", "version out atlc 0.0.0-9000\n");
   const ScopedVariable script("FAKE_ATLC_SCRIPT", (fixture.dir() / "script").string());
+  // A run spec whose settings read, so a backtest gets as far as finding atlc.
+  spit(fixture.dir() / "s.toml", FAKE_SPEC);
+  const InDir here(fixture.dir());
   const auto env = [&fixture] {
     return reply_of(fixture.json({"env"}).out_);
   };
@@ -519,7 +522,7 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
   {
     // CMDATL_ATLC over an invalid config: backtest reaches atlc; env reports the config's error beside it.
     fixture.write_config("[account\n");
-    const FakeAtlc fake("spec out " + SPEC_OK + "\nrun out " + REPORT + "\n");
+    const FakeAtlc fake("check out " + INFO_OK + "\ndriver out " + REPORT + "\n");
     const auto backtest = fixture.json({"strategy", "backtest", "s.toml"});
     CHECK(backtest.exit_ == 0);
     const auto body = env();

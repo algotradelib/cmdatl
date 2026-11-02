@@ -14,7 +14,7 @@
 namespace cmdatl {
 
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
-inline constexpr int SCHEMA_VERSION = 7;
+inline constexpr int SCHEMA_VERSION = 8;
 
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
@@ -27,7 +27,7 @@ inline constexpr const char* EXIT_UNKNOWN_TEXT = "4 unknown (follow error.next b
 /** @brief The examples `cmdatl --help` opens with: the most common uses (each parsed by the tests). */
 inline const std::vector<std::string> TOP_EXAMPLES{
   "cmdatl status",
-  "cmdatl strategy backtest mean-reversion.toml -P lookback=30",
+  "cmdatl strategy backtest mean-reversion.toml params.lookback=30",
   "cmdatl run start mean-reversion.toml --wait",
   "cmdatl order plan 005930 --target 10 --limit 78200",
 };

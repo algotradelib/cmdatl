@@ -1,6 +1,7 @@
 // Run settings (`strategy/spec.hpp`): the file read by toml++, command-line settings typed by key, each key's rule,
 // and the rules against the program's facts, ported from atlc's run-spec tests.
 
+#include "./paper-support.hpp"
 #include "./support.hpp"
 
 #include <cmdatl/strategy/spec.hpp>
@@ -9,6 +10,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -213,6 +215,20 @@ TEST_CASE("the run-spec reference lists every key") {
   CHECK(has(doc, "`instruments.NAME`"));
   CHECK(has(doc, "`params.NAME`"));
   CHECK(has(doc, "`build.algotradelib`"));
+}
+
+TEST_CASE("strategy reference run-spec serves cmdatl's own reference, which lists every key, without atlc") {
+  const ScopedVariable none("CMDATL_ATLC", "/nonexistent/atlc");
+  const auto ran = run({"--json", "strategy", "reference", "run-spec"});
+  REQUIRE(ran.exit_ == 0);
+  const std::string text(reply_of(ran.out_).at("text").as_string());
+  CHECK(text == slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "docs" / "run-spec.md"));
+  for (const auto& key : sp::keys()) {
+    INFO(key.name_);
+    CHECK(has(text, "`" + key.name_ + "`"));
+  }
+  // Another chapter still goes to atlc, which is not there.
+  CHECK(code_of(run({"--json", "strategy", "reference", "builtins"}).out_) == "atlc.missing");
 }
 
 TEST_CASE("values are checked key by key, each error at its file and line") {
@@ -836,6 +852,152 @@ TEST_CASE("the driver's arguments are bounded and only ever settings' keys") {
     CHECK(k != "run.id");
     CHECK(k != "output.fills");
     CHECK((sp::known(k) != nullptr || k.rfind("instrument.", 0) == 0 || k.rfind("param.", 0) == 0));
+  }
+}
+TEST_CASE("atlc check --info's object is read only when every field cmdatl uses is what the format says") {
+  const std::string path = "/p/pairs.atls";
+  const auto object = [&path]() {
+    return boost::json::object{
+      {"atlc_info", 1},
+      {"status", "ok"},
+      {"atlc", "0.0.0-9000"},
+      {"program",
+        boost::json::object{
+          {"path", path},
+          {"struct", "Pairs"},
+          {"mode", "named"},
+          {"instruments", boost::json::array{"y", "x"}},
+          {"legs", false},
+          {"params",
+            boost::json::array{
+              boost::json::object{{"name", "lookback"}, {"type", "int"}},
+              boost::json::object{{"name", "entry"}, {"type", "real"}},
+              boost::json::object{{"name", "short"}, {"type", "bool"}},
+            }},
+        }},
+      {"diagnostics", boost::json::array{}},
+    };
+  };
+  const auto read = [&path](const boost::json::object& o, const std::string& passed = "") {
+    return sp::read_info(boost::json::serialize(o), passed.empty() ? path : passed);
+  };
+  const auto ok = read(object());
+  REQUIRE(ok);
+  CHECK(ok->ok_);
+  CHECK(ok->atlc_ == "0.0.0-9000");
+  CHECK(ok->program_.struct_ == "Pairs");
+  CHECK(ok->program_.mode_ == "named");
+  CHECK(ok->program_.instruments_ == std::vector<std::string>{"y", "x"});
+  REQUIRE(ok->program_.params_.size() == 3);
+  CHECK(ok->program_.params_[2].second == sp::ParamType::BOOL);
+  // The path as atlc writes it: `.` and repeated slashes dropped, `..` kept.
+  CHECK(read(object(), "/p/./pairs.atls"));
+  CHECK(read(object(), "/p//pairs.atls"));
+  auto dotted = object();
+  dotted["program"].as_object()["path"] = "/q/../p/pairs.atls";
+  CHECK(read(dotted, "/q/../p/./pairs.atls"));
+  CHECK(!read(object(), "/p/other.atls"));
+  // A warning keeps the status ok; an error makes it error, with no program.
+  auto warned = object();
+  warned["diagnostics"] = boost::json::array{boost::json::object{
+    {"severity", "warning"}, {"code", "unused-series"}, {"message", "m"}, {"file", path}, {"line", 3},
+    {"origin", "program"}
+  }};
+  CHECK(read(warned));
+  auto failed = object();
+  failed["status"] = "error";
+  failed["program"] = nullptr;
+  failed["diagnostics"] = boost::json::array{boost::json::object{
+    {"severity", "error"}, {"code", "unknown-name"}, {"message", "m"}, {"file", path}, {"line", 3},
+    {"origin", "program"}
+  }};
+  const auto error = read(failed);
+  REQUIRE(error);
+  CHECK(!error->ok_);
+  // Each field broken in turn, hostile values included.
+  std::vector<std::pair<std::string, boost::json::object>> broken;
+  const auto with = [&broken, &object](const std::string& name, const std::function<void(boost::json::object&)>& f) {
+    auto o = object();
+    f(o);
+    broken.emplace_back(name, o);
+  };
+  const auto program = [](boost::json::object& o) -> boost::json::object& {
+    return o["program"].as_object();
+  };
+  with("another format", [](auto& o) {
+    o["atlc_info"] = 2;
+  });
+  with("no format", [](auto& o) {
+    o.erase("atlc_info");
+  });
+  with("a status that is not a string", [](auto& o) {
+    o["status"] = true;
+  });
+  with("error with a program", [](auto& o) {
+    o["status"] = "error";
+  });
+  with("ok without a program", [](auto& o) {
+    o["program"] = nullptr;
+  });
+  with("ok with an error", [&failed](auto& o) {
+    o["diagnostics"] = failed["diagnostics"];
+  });
+  with("a diagnostic without a code", [](auto& o) {
+    o["diagnostics"] = boost::json::array{boost::json::object{{"severity", "warning"}, {"message", "m"}}};
+  });
+  with("a line of 0", [&warned](auto& o) {
+    o["diagnostics"] = warned["diagnostics"];
+    o["diagnostics"].as_array()[0].as_object()["line"] = 0;
+  });
+  with("a relative path", [&program](auto& o) {
+    program(o)["path"] = "pairs.atls";
+  });
+  with("a struct that is code", [&program](auto& o) {
+    program(o)["struct"] = "X; int y";
+  });
+  with("a struct atlc reserves", [&program](auto& o) {
+    program(o)["struct"] = "Params";
+  });
+  with("a lowercase struct", [&program](auto& o) {
+    program(o)["struct"] = "pairs";
+  });
+  with("a struct too long", [&program](auto& o) {
+    program(o)["struct"] = "P" + std::string(64, 'a');
+  });
+  with("another mode", [&program](auto& o) {
+    program(o)["mode"] = "pair";
+  });
+  with("named without instruments", [&program](auto& o) {
+    program(o)["instruments"] = boost::json::array{};
+  });
+  with("single with instruments", [&program](auto& o) {
+    program(o)["mode"] = "single";
+  });
+  with("an instrument that is not a key", [&program](auto& o) {
+    program(o)["instruments"] = boost::json::array{"y", "a.b"};
+  });
+  with("an instrument that is a number", [&program](auto& o) {
+    program(o)["instruments"] = boost::json::array{1};
+  });
+  with("legs not a boolean", [&program](auto& o) {
+    program(o)["legs"] = "no";
+  });
+  with("a parameter's type", [&program](auto& o) {
+    program(o)["params"] = boost::json::array{boost::json::object{{"name", "x"}, {"type", "float"}}};
+  });
+  with("a parameter's name", [&program](auto& o) {
+    program(o)["params"] = boost::json::array{boost::json::object{{"name", "x=1 y"}, {"type", "int"}}};
+  });
+  with("a parameter without a name", [&program](auto& o) {
+    program(o)["params"] = boost::json::array{boost::json::object{{"type", "int"}}};
+  });
+  for (const auto& [name, o] : broken) {
+    INFO(name);
+    CHECK(!read(o));
+  }
+  for (const auto* text : {"", "{", "[]", "{} {}", "{\"atlc_info\":1", "null"}) {
+    INFO(text);
+    CHECK(!sp::read_info(text, path));
   }
 }
 #endif

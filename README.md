@@ -11,7 +11,7 @@ The same commands let an AI agent read an account and place orders one at a time
 
 ```sh
 cmdatl strategy new dip --template mean-reversion # dip.atls and dip.toml to start from
-cmdatl strategy backtest dip.toml -P lookback=30 # atlc builds and replays it; the report as JSON
+cmdatl strategy backtest dip.toml params.lookback=30 # builds and replays it; the report as JSON
 cmdatl status # the account in one read
 cmdatl run start dip.toml # a run on its own mock market, in the background
 cmdatl run status # its state, and its summary once it ended
@@ -38,15 +38,19 @@ cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/algotradelib/prefix
 cmake --build build
 ```
 
-Backtesting also needs `atlc`, the atls compiler, on `PATH` or named by `CMDATL_ATLC`, and CMake and a C++17 compiler at run time: `cmdatl strategy backtest` runs `atlc run`, which builds each strategy once against algotradelib and keeps the build.
+Backtests and runs compile each strategy at run time, so they also need CMake and a C++17 compiler, the algotradelib cmdatl was built against, and `atlc`, the atls compiler, on `PATH` or named by `CMDATL_ATLC`.
+atlc only translates a program to C++; cmdatl builds that once per program, keeps the build, and replays it.
+A backtest that reads a Parquet store also needs DuckDB's C library, named by the `[build]` table's `duckdb` or by `DUCKDB_ROOT`.
 `cmdatl strategy reference` needs atlc only; `cmdatl strategy new` needs neither.
 
 ## Strategies
 
 - `cmdatl strategy new NAME` writes `NAME.atls`, a starter program (`--template` `mean-reversion`, `crossover`, `momentum` or `breakout`), and `NAME.toml`, a run spec that reads `bars.csv` beside it (the columns `symbol,date,open,high,low,close,volume`).
   It never replaces a file unless `--force` is given, and then only regular files.
-- `cmdatl strategy backtest SPEC` checks the spec with `atlc spec` before anything is built, then runs `atlc run`; the reply carries atlc's report unchanged under `report`, with the `-P` given and atlc's version.
-  atlc's build progress and warnings arrive as they happen: on stderr, or as `progress` events with `--format jsonl`.
+- `cmdatl strategy backtest TARGET [KEY=VALUE]...` replays a run spec, or a program (`.atls`) when no file is wanted; `KEY=VALUE` words are settings (`params.lookback=30`, `replay.cash=1e8`, `data.file=bars.csv`) and win over the spec's.
+  Every setting is checked against the program before anything is built; the reply carries the replay's report unchanged under `report`, with the settings given and atlc's version.
+  `cmdatl strategy reference run-spec` lists every setting.
+  The build's progress and atlc's warnings arrive as they happen: on stderr, or as `progress` events with `--format jsonl`.
 - `atlc check NAME.atls` checks a program alone; the language is atlc's: `cmdatl strategy reference` prints its reference's index and `cmdatl strategy reference builtins` (or another chapter) a chapter, from the atlc cmdatl runs ([online](https://github.com/algotradelib/atlc/tree/main/docs/reference)).
 
 ## The paper account
@@ -137,7 +141,7 @@ A run trades a strategy through algotradelib's live runner, the code that would 
 
 ```sh
 cmdatl run start dip.toml # builds the program once, starts the run, answers when it trades
-cmdatl run start dip.toml -P lookback=30 --wait # waits for the end and answers with the summary
+cmdatl run start dip.toml params.lookback=30 --wait # waits for the end and answers with the summary
 cmdatl run status # the latest run's state, and its summary once it ended
 cmdatl run status r3f9c0e12ab45
 cmdatl run log --follow # each event as the run writes it, until its end
@@ -146,8 +150,8 @@ cmdatl run stop --withdraw # stop placing and cancel what rests, then wait for t
 
 - A run's market is the library's mock broker, inside the run's own process: each run is a fresh market with its own journal, and nothing is shared with the paper account above or with another run.
   The agent commands do not see a run's orders, and a run's holdings at its end are a result, not an account anything can trade.
-- The run spec describes the market, exactly as `cmdatl strategy backtest` replays it: the bars, `[replay] cash`, the costs, the instruments.
-  The operator's file describes what may be placed: `limits.symbols`, the position caps (a run with several symbols gets the smallest of their caps), `order_value`, `daily_orders` (per run, per 24 hours of market time), `order_type`, `collar` and `phases`; nothing in a spec loosens them.
+- The run's settings describe the market, read exactly as `cmdatl strategy backtest` reads them: the bars, `[replay] cash`, the costs, the instruments.
+  The operator's file describes what may be placed: `limits.symbols`, the position caps (a run with several symbols gets the smallest of their caps), `order_value`, `daily_orders` (per run, per 24 hours of market time), `order_type`, `collar` and `phases`; no setting loosens them.
 - A run needs `[replay] market = "kr"`, daily bars from a file (not a store), `[orders] type = "limit"` with an `offset` within `limits.collar`, symbols in `limits.symbols`, and the armed file: each missing one is refused before anything is built.
   It also needs a program without `on_fill`, a warm-up of at most 10,000 bars, and daily bars: those are refused by the run itself, after the program is built and before anything is placed.
   A program with session legs (`on_open`, `on_close`) is refused too: atlc asks for `replay.fill = "legs"`, and with it `run start` answers `program.live_unsupported` before anything is built.

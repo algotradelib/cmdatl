@@ -477,7 +477,7 @@ inline std::string tail_of(const ChildResult& result) {
   for (const auto& line : result.stderr_tail_) {
     out += (out.empty() ? "" : "\n") + line;
   }
-  return out.empty() ? ending_of(result) : out;
+  return out.empty() ? ending_of(result, "the build") : out;
 }
 
 /**

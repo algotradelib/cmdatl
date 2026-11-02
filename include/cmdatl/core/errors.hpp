@@ -53,8 +53,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"atlc.unsupported", Exit::FAILED, false, "install a newer atlc"},
     {"atlc.failed", Exit::FAILED, false, "atlc ended unexpectedly: read stderr, and check atlc with cmdatl env"},
     {"program.invalid", Exit::PROGRAM, false, "fix the program (atlc check FILE.atls checks it alone)"},
-    {"spec.invalid", Exit::USAGE, false, "fix the run spec"},
-    {"build.failed", Exit::FAILED, false, "atlc could not build the strategy: read the build log stderr names"},
+    {"spec.invalid", Exit::USAGE, false, "fix the run spec or the settings given on the command line"},
+    {"build.failed", Exit::FAILED, false, "the strategy could not be built: read the build's messages in stderr"},
     {"replay.failed", Exit::FAILED, false, "the replay failed: check the data and the parameters' bounds"},
     {"strategy.name", Exit::USAGE, false, "a name is a letter, then letters, digits, - or _ (at most 64)"},
     {"strategy.template", Exit::USAGE, false, "cmdatl strategy new --help lists the templates"},
@@ -192,6 +192,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
  */
 inline const std::vector<std::string> RUN_CODES{
   "usage.bad_value",
+  "usage.missing_argument",
   "spec.invalid",
   "spec.no_instruments",
   "program.invalid",

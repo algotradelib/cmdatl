@@ -35,7 +35,7 @@ struct OptionSpec {
   std::string help_;
   /** @brief Whether it must be given. */
   bool required_{false};
-  /** @brief Whether it may be given more than once (`-P k=v`). */
+  /** @brief Whether it may be given more than once (`--name a --name b`). */
   bool repeated_{false};
   /** @brief A one-letter short name, or empty. */
   std::string short_name_;

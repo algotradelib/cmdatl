@@ -404,35 +404,48 @@ inline void spit(const std::filesystem::path& path, const std::string& text) {
   out << text;
 }
 
-/** @brief A valid `atlc spec --json` reply. */
-inline const std::string SPEC_OK =
-  R"({"atlc_spec":1,"status":"ok","atlc":"0.0.0-9000","program":{"path":"/x/dip.atls","struct":"Dip"},)"
-  R"("build":{"algotradelib":null,"duckdb":null,"indicators":"incremental"},"store":false,)"
-  R"("orders":{"type":"market","offset":"0"},"args":[],"warnings":[],"errors":[]})";
+/** @brief A valid `atlc check --info` reply for the fake's `dip.atls` (`@DIR@` is the fake's directory). */
+inline const std::string INFO_OK =
+  R"({"atlc_info":1,"status":"ok","atlc":"0.0.0-9000","program":{"path":"@DIR@/dip.atls","struct":"Dip",)"
+  R"("mode":"single","instruments":[],"legs":false,"params":[{"name":"lookback","type":"int"}]},"diagnostics":[]})";
 
-/** @brief A report as `atlc run` prints it, shortened. */
+/** @brief The run spec the fake writes beside its script, `s.toml`: wide closes for `dip.atls`. */
+inline const std::string FAKE_SPEC = "strategy = 'dip.atls'\n\n[data]\nfile = 'bars.csv'\n";
+
+/** @brief A report as the backtest driver prints it, shortened. */
 inline const std::string REPORT =
   R"({"bars":250,"executions":4,"opening_equity":"100000","closing_equity":"101234.5",)"
   R"("total_return":0.012345,"halted":null,"rejected":0,"pricing_refused":0,"caveats":{"gaps":0}})";
 
 /**
- * @brief The fake atlc, named by `CMDATL_ATLC` while its owner lives, doing what its script says.
+ * @brief The fake atlc, named by `CMDATL_ATLC` while its owner lives, doing what its script says; in the test builds
+ *   it also stands in for the backtest driver (`CMDATL_TEST_BACKTEST_DRIVER`, its steps under `driver`).
  *
- * The script's steps are `WHEN ACTION [TEXT]` lines (`tests/fake-atlc.cpp`); it answers `--version` unless the
- * script says otherwise.
+ * The script's steps are `WHEN ACTION [TEXT]` lines (`tests/fake-atlc.cpp`), `@DIR@` standing for the fake's
+ * directory; it answers `--version` unless the script says otherwise. The working directory is the fake's while it
+ * lives, which holds `s.toml` (`FAKE_SPEC`) and `dip.atls`.
  */
 class FakeAtlc {
 public:
   /**
-   * @brief Writes the script and points `CMDATL_ATLC` at the fake.
+   * @brief Writes the script, the spec and the program, points `CMDATL_ATLC` at the fake and moves into its directory.
    * @param script The steps.
    * @param answer_version Whether to answer `--version` with `atlc 0.0.0-9000` first.
    */
   explicit FakeAtlc(const std::string& script, bool answer_version = true) {
     script_ = dir_.path() / "script";
-    spit(script_, (answer_version ? "version out atlc 0.0.0-9000\n" : "") + script);
+    std::string text = (answer_version ? "version out atlc 0.0.0-9000\n" : "") + script;
+    const std::string placeholder = "@DIR@";
+    for (auto at = text.find(placeholder); at != std::string::npos; at = text.find(placeholder, at)) {
+      text.replace(at, placeholder.size(), dir_.path().string());
+    }
+    spit(script_, text);
+    spit(dir_.path() / "s.toml", FAKE_SPEC);
+    spit(dir_.path() / "dip.atls", "");
     ::setenv("CMDATL_ATLC", CMDATL_FAKE_ATLC, 1);
     ::setenv("FAKE_ATLC_SCRIPT", script_.c_str(), 1);
+    ::setenv("CMDATL_TEST_BACKTEST_DRIVER", CMDATL_FAKE_ATLC, 1);
+    here_ = std::make_unique<InDir>(dir_.path());
   }
 
   FakeAtlc(const FakeAtlc&) = delete;
@@ -440,8 +453,10 @@ public:
 
   /** @brief Unsets the variables. */
   ~FakeAtlc() {
+    here_.reset();
     ::unsetenv("CMDATL_ATLC");
     ::unsetenv("FAKE_ATLC_SCRIPT");
+    ::unsetenv("CMDATL_TEST_BACKTEST_DRIVER");
   }
 
   /**
@@ -466,7 +481,7 @@ public:
 
   /**
    * @brief The arguments a command was called with (`args`).
-   * @param mode `spec` or `run`.
+   * @param mode `check`, `build` or `driver`.
    * @return The arguments after the program's name.
    */
   std::vector<std::string> args(const std::string& mode) const {
@@ -502,6 +517,7 @@ public:
 private:
   ScratchDir dir_;
   std::filesystem::path script_;
+  std::unique_ptr<InDir> here_;
 };
 
 /** @brief Which of cmdatl's standard descriptors to close before it starts. */

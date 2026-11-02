@@ -1,5 +1,5 @@
 # Hold while a fast moving average is above a slow one; flat otherwise.
-# Nothing states slow > fast: give them so (-P fast=10 -P slow=30).
+# Nothing states slow > fast: give them so (params.fast=10 params.slow=30).
 params {
   int<lower=1> fast = 10;
   int<lower=2> slow = 30;

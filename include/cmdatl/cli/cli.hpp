@@ -127,10 +127,11 @@ inline std::optional<Reply> parse_command(
     auto* added = app.add_option(names, values[option.name_], option.help_);
     added->type_name(option.value_name_);
     if (option.repeated_) {
-      // One value per occurrence: `-P a=1 -P b=2`, never `-P a=1 b=2`.
+      // One value per occurrence: `--name a --name b`, never `--name a b`.
       added->expected(1, -1)->allow_extra_args(false);
     } else {
-      added->expected(1);
+      // One value, never the words after it: those are a variadic positional's (`TARGET --fills F KEY=VALUE`).
+      added->expected(1)->allow_extra_args(false);
     }
     if (option.required_) {
       added->required();

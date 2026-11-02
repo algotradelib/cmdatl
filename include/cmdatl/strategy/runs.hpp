@@ -2,7 +2,7 @@
 
 // `run start` and `run status`.
 //
-// `run start` checks the spec through `atlc spec`, builds the program's driver (`build.hpp`), writes the run's
+// `run start` reads and checks its settings (`settings.hpp`), builds the program's driver (`build.hpp`), writes the run's
 // description, and starts the driver detached under a small supervisor, then waits for its start line. A run trades on
 // its own mock market inside the driver's process and opens no account; the run's directory
 // (`<state root>/runs/<account>/<run id>`) holds everything about it: `run.json`, the driver's copy, `pid`,
@@ -21,6 +21,8 @@
 #include "../system/process.hpp"
 #include "./atlc.hpp"
 #include "./build.hpp"
+#include "./settings.hpp"
+#include "./spec.hpp"
 #include "./strategy.hpp"
 
 #include <boost/json.hpp>
@@ -82,10 +84,6 @@ inline constexpr std::size_t FIRST_LINE = 4096;
 inline constexpr std::size_t EVENTS_TAIL = 64u << 10;
 /** @brief The largest event log whose events are counted. */
 inline constexpr std::uint64_t COUNT_LIMIT = 64ull << 20;
-/** @brief The most `[key, value]` pairs a run takes from `atlc spec`. */
-inline constexpr std::size_t MAX_ARGS = 1000;
-/** @brief The longest argument value. */
-inline constexpr std::size_t MAX_VALUE = 4096;
 
 /**
  * @brief The catalog's `next` for a code.
@@ -119,7 +117,7 @@ inline std::string utc_text(std::chrono::system_clock::time_point at) {
   return text;
 }
 
-/** @brief What `atlc spec --json` gave that a run consumes, checked. */
+/** @brief What a run consumes of its checked settings. */
 struct SpecFields {
   /** @brief The program, absolute. */
   std::string program_;
@@ -129,42 +127,13 @@ struct SpecFields {
   std::string indicators_;
   /** @brief The order type. */
   std::string order_type_;
-  /** @brief The limit offset, as written. */
+  /** @brief The limit offset, as written, or empty. */
   std::string offset_;
-  /** @brief atlc's arguments, each `key=value`. */
+  /** @brief The driver's arguments, each `key=value`. */
   std::vector<std::string> args_;
   /** @brief The same, as `[key, value]` pairs. */
   json::array pairs_;
 };
-
-/**
- * @brief Whether a text is an argument key: 1 to 128 of `A-Z a-z 0-9 _ . -`.
- * @param key The text.
- * @return Whether it is.
- */
-inline bool valid_key(const std::string& key) {
-  if (key.empty() || key.size() > 128) {
-    return false;
-  }
-  return std::all_of(key.begin(), key.end(), [](char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' ||
-      c == '-';
-  });
-}
-
-/**
- * @brief Whether a text is a struct atlc can have named a program: `[A-Z][A-Za-z0-9]{0,63}`, neither `Params` nor `Lane`.
- * @param name The text.
- * @return Whether it is.
- */
-inline bool valid_struct(const std::string& name) {
-  if (name.empty() || name.size() > 64 || name[0] < 'A' || name[0] > 'Z' || name == "Params" || name == "Lane") {
-    return false;
-  }
-  return std::all_of(name.begin(), name.end(), [](char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
-  });
-}
 
 /**
  * @brief Whether a text is an offset as a run takes it: digits, a point, digits, below 1 (such as `0.01`).
@@ -174,104 +143,6 @@ inline bool valid_struct(const std::string& name) {
 inline bool valid_offset(const std::string& text) {
   static const std::regex grammar("0(\\.[0-9]{1,8})?|\\.[0-9]{1,8}");
   return text.size() <= 10 && std::regex_match(text, grammar);
-}
-
-/**
- * @brief Reads and checks every field of `atlc spec --json` a run consumes; a failure names the field (exit 1
- *   `atlc.failed`, or exit 2 `spec.invalid` for a store run).
- * @param envelope The reply.
- * @param fields Set to the fields.
- * @return The refusal, or nothing.
- */
-inline std::optional<Reply> spec_fields(const json::object& envelope, SpecFields& fields) {
-  const auto bad = [](const std::string& field, const std::string& why) {
-    return error_reply(
-      Exit::FAILED, "atlc.failed", "atlc spec gave a " + field + " a run cannot use: " + why,
-      "check atlc with cmdatl env"
-    );
-  };
-  const auto* program = envelope.if_contains("program");
-  if (program == nullptr || !program->is_object()) {
-    return bad("program", "missing");
-  }
-  const auto* path = program->as_object().if_contains("path");
-  const auto* name = program->as_object().if_contains("struct");
-  if (path == nullptr || !path->is_string() || name == nullptr || !name->is_string()) {
-    return bad("program", "no path or struct");
-  }
-  fields.program_ = std::string(path->as_string());
-  fields.struct_ = std::string(name->as_string());
-  std::error_code ec;
-  if (
-    fields.program_.empty() || fields.program_.front() != '/' || !std::filesystem::is_regular_file(fields.program_, ec)
-  ) {
-    return bad("program.path", "not an absolute path to a file");
-  }
-  if (!valid_struct(fields.struct_)) {
-    return bad("program.struct", fields.struct_);
-  }
-  const auto* build = envelope.if_contains("build");
-  const auto* indicators =
-    build != nullptr && build->is_object() ? build->as_object().if_contains("indicators") : nullptr;
-  if (indicators == nullptr || !indicators->is_string()) {
-    return bad("build.indicators", "missing");
-  }
-  fields.indicators_ = std::string(indicators->as_string());
-  if (fields.indicators_ != "incremental" && fields.indicators_ != "naive" && fields.indicators_ != "exact") {
-    return bad("build.indicators", fields.indicators_);
-  }
-  const auto* store = envelope.if_contains("store");
-  if (store != nullptr && store->is_bool() && store->as_bool()) {
-    return error_reply(
-      Exit::USAGE, "spec.invalid", "a run reads files, not a store: give [data] a file", "fix the run spec"
-    );
-  }
-  const auto* orders = envelope.if_contains("orders");
-  if (orders == nullptr || !orders->is_object()) {
-    return bad("orders", "missing");
-  }
-  const auto* type = orders->as_object().if_contains("type");
-  const auto* offset = orders->as_object().if_contains("offset");
-  if (type == nullptr || !type->is_string() || (type->as_string() != "market" && type->as_string() != "limit")) {
-    return bad("orders.type", "not market or limit");
-  }
-  fields.order_type_ = std::string(type->as_string());
-  if (offset != nullptr && !offset->is_null()) {
-    if (!offset->is_string() || !valid_offset(std::string(offset->as_string()))) {
-      return bad("orders.offset", "not a decimal below 1");
-    }
-    fields.offset_ = std::string(offset->as_string());
-  }
-  const auto* args = envelope.if_contains("args");
-  if (args == nullptr || !args->is_array()) {
-    return bad("args", "missing");
-  }
-  if (args->as_array().size() > MAX_ARGS) {
-    return bad("args", "more than " + std::to_string(MAX_ARGS) + " pairs");
-  }
-  std::set<std::string> seen;
-  for (const auto& pair : args->as_array()) {
-    if (
-      !pair.is_array() || pair.as_array().size() != 2 || !pair.as_array()[0].is_string() ||
-      !pair.as_array()[1].is_string()
-    ) {
-      return bad("args", "a pair that is not two strings");
-    }
-    const std::string key(pair.as_array()[0].as_string());
-    const std::string value(pair.as_array()[1].as_string());
-    if (!valid_key(key)) {
-      return bad("args", "the key '" + key.substr(0, 140) + "'");
-    }
-    if (value.size() > MAX_VALUE || value.find('\0') != std::string::npos) {
-      return bad("args", "the value of " + key + " is longer than 4096 bytes or holds a NUL");
-    }
-    if (!seen.insert(key).second) {
-      return bad("args", "the key " + key + " twice");
-    }
-    fields.args_.push_back(key + "=" + value);
-    fields.pairs_.push_back(pair);
-  }
-  return std::nullopt;
 }
 
 /** @brief How a file of the run's directory read. */
@@ -1262,7 +1133,7 @@ inline Reply unknown_start(const std::string& run, const std::string& message, c
 }
 
 /**
- * @brief `run start SPEC [-P k=v]... [--wait]`; see the file comment.
+ * @brief `run start TARGET [KEY=VALUE]... [--wait]`; see the file comment.
  * @param invocation The arguments.
  * @param snapshot The operator's file, read and `OK`.
  * @param output Where progress goes.
@@ -1276,11 +1147,15 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
   return error_reply(Exit::FAILED, "unavailable.platform", "runs run on macOS and Linux only in this version");
 #else
   const auto& config = *snapshot.config_;
-  const auto spec_given = invocation.get("SPEC");
-  const auto found = invocation.values_.find("param");
-  const auto params = found == invocation.values_.end() ? std::vector<std::string>{} : found->second;
+  GivenSettings given;
+  const auto found = invocation.values_.find("TARGET");
+  if (
+    auto refused = sort_words(found == invocation.values_.end() ? std::vector<std::string>{} : found->second, given)
+  ) {
+    return std::move(*refused);
+  }
   const bool wait = invocation.has("wait");
-  output.progress("cmdatl: starting a run of " + spec_given);
+  output.progress("cmdatl: starting a run of " + given.target_);
   if (interrupted()) {
     return interrupted_reply();
   }
@@ -1293,6 +1168,9 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
   std::vector<std::string> envp_owned;
   pid_t supervisor = -1;
   try {
+    if (auto refused = read_given(given)) {
+      return std::move(*refused);
+    }
     const auto atlc = find_atlc(&snapshot);
     const std::string install = "install atlc, or name it with CMDATL_ATLC; cmdatl env shows what was found";
     if (atlc.path_.empty() || atlc.version_.empty()) {
@@ -1307,29 +1185,33 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
         "install a newer atlc"
       );
     }
-    const auto spec = std::filesystem::absolute(spec_given).string();
-    std::vector<std::string> argv{atlc.path_, "spec", spec};
-    for (const auto& param : params) {
-      argv.push_back("-P");
-      argv.push_back(param);
-    }
-    argv.push_back("--json");
-    const auto checked = run_child(argv, [&output](const std::string& line) {
-      output.progress(line);
-    });
-    if (auto failure = spec_failure(checked)) {
-      return std::move(*failure);
-    }
-    SpecFields fields;
-    if (auto refused = spec_fields(*spec_envelope(checked.stdout_), fields)) {
+    CheckedSettings checked;
+    if (auto refused = check_given(given, atlc.path_, output, true, checked)) {
       return std::move(*refused);
     }
-    // atlc takes replay.fill = "legs" only for a program with on_open or on_close, which no run trades: the driver's
-    // own refusal, given before anything is built, instead of a spec refusal that sends the agent back to atlc's.
-    if (atlc_value(fields.args_, "replay.fill").value_or("") == "legs") {
-      auto reply = error_reply(Exit::PROGRAM, "program.live_unsupported", LEGS_UNSUPPORTED, LEGS_UNSUPPORTED_NEXT);
-      reply.body_["unsupported"] = "legs";
-      return reply;
+    const auto& resolved = checked.resolved_;
+    if (resolved.store_) {
+      return error_reply(
+        Exit::USAGE, "spec.invalid", "a run reads files, not a store: give [data] a file", "fix the run spec"
+      );
+    }
+    // A run keeps the offset grammar its collar pre-check compares (at most 8 decimals).
+    if (!resolved.offset_.empty() && !valid_offset(resolved.offset_)) {
+      return error_reply(
+        Exit::USAGE, "spec.invalid",
+        "orders.offset = " + resolved.offset_ + ": a run takes an offset of at most 8 decimals below 1",
+        "fix the run spec or the settings given on the command line"
+      );
+    }
+    SpecFields fields;
+    fields.program_ = given.program_;
+    fields.struct_ = checked.info_.program_.struct_;
+    fields.indicators_ = resolved.indicators_;
+    fields.order_type_ = resolved.order_type_;
+    fields.offset_ = resolved.offset_;
+    for (const auto& [key, value] : resolved.args_) {
+      fields.args_.push_back(key + "=" + value);
+      fields.pairs_.push_back(json::array{json::value(key), json::value(value)});
     }
     // The other early refusals, with nothing built; the driver checks each again, and its checks are what count.
     if (const auto refusal = spec_refusal(fields.args_)) {
@@ -1381,25 +1263,21 @@ inline Reply start_reply(const Invocation& invocation, const ConfigSnapshot& sna
       {"run", run},
       {"account", json::object{{"broker", config.broker_}, {"env", config.env_}, {"number", config.number_}}},
       {"config", config.path_},
-      {"spec", spec},
+      {"spec", given.spec_.empty() ? json::value(nullptr) : json::value(given.spec_)},
       {"program", json::object{{"path", fields.program_}, {"struct", fields.struct_}}},
       {"args", fields.pairs_},
       {"atlc", atlc.version_},
       {"cmdatl", CMDATL_VERSION},
       {"started", utc_text(std::chrono::system_clock::now())},
     };
-    json::array given;
-    for (const auto& param : params) {
-      given.push_back(json::value(param));
-    }
-    described["params_given"] = given;
+    described["settings_given"] = settings_given(given);
     const auto record = json::serialize(described) + "\n";
     if (record.size() > RUN_RECORD_MAX) {
       return error_reply(
         Exit::USAGE, "spec.invalid",
         "the run's description would be " + std::to_string(record.size()) +
-          " bytes, above 64 KiB; fewer or shorter parameters",
-        "fix the run spec"
+          " bytes, above 64 KiB; fewer or shorter settings",
+        "fix the run spec or the settings given on the command line"
       );
     }
     const auto where = run_dir(config, run);

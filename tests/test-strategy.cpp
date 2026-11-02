@@ -23,28 +23,42 @@ using namespace support;
 namespace {
 
 /**
- * @brief An `atlc spec --json` reply.
- * @param status `ok` or `error`.
- * @param errors The errors, a JSON array.
- * @param warnings The warnings, a JSON array.
+ * @brief An `atlc check --info` reply without a program.
+ * @param diagnostics The diagnostics, a JSON array.
  * @return The reply.
  */
-std::string envelope(const std::string& status, const std::string& errors, const std::string& warnings = "[]") {
-  return R"({"atlc_spec":1,"status":")" + status +
-    R"(","atlc":"0.0.0-9000","program":null,"build":null,"store":null,"orders":null,"args":null,"warnings":)" +
-    warnings + R"(,"errors":)" + errors + "}";
+std::string failed_info(const std::string& diagnostics) {
+  return R"({"atlc_info":1,"status":"error","atlc":"0.0.0-9000","program":null,"diagnostics":)" + diagnostics + "}";
 }
 
-/** @brief A program error as `atlc spec --json` gives it. */
+/** @brief A program error as `atlc check --info` gives it. */
 const std::string PROGRAM_ERROR =
-  R"([{"severity":"error","code":"undefined-name","message":"`lookbak` is not defined","file":"/x/dip.atls",)"
+  R"([{"severity":"error","code":"undefined-name","message":"`lookbak` is not defined","file":"@DIR@/dip.atls",)"
   R"("line":9,"origin":"program"}])";
 
-/** @brief A spec error as `atlc spec --json` gives it. */
-const std::string SPEC_ERROR =
-  R"([{"severity":"error","code":"spec","message":"unknown key `dta`","file":"/x/dip.toml","line":3,"origin":"file"}])";
+/** @brief A file atlc could not read, as `atlc check --info` gives it. */
+const std::string UNREADABLE =
+  R"([{"severity":"error","code":"unreadable","message":"cannot read @DIR@/dip.atls","file":"@DIR@/dip.atls",)"
+  R"("line":null,"origin":"program"}])";
 
-/** @brief One backtest against the fake: what atlc does, and what cmdatl must answer. */
+/** @brief A usage error as `atlc check --info` gives it. */
+const std::string USAGE_ERROR =
+  R"([{"severity":"error","code":"usage","message":"unknown option `--x`","file":null,"line":null,)"
+  R"("origin":"command_line"}])";
+
+/**
+ * @brief The fake's `--info` reply with one text replaced.
+ * @param from The text.
+ * @param to Its replacement.
+ * @return The reply.
+ */
+std::string info_with(const std::string& from, const std::string& to) {
+  auto text = INFO_OK;
+  text.replace(text.find(from), from.size(), to);
+  return text;
+}
+
+/** @brief One backtest against the fake: what atlc and the driver do, and what cmdatl must answer. */
 struct Case {
   /** @brief What it is. */
   std::string name_;
@@ -56,6 +70,8 @@ struct Case {
   std::string code_;
   /** @brief Whether the fake answers `--version` first. */
   bool version_{true};
+  /** @brief Settings after the target. */
+  std::vector<std::string> settings_{};
 };
 
 /**
@@ -63,52 +79,47 @@ struct Case {
  * @return The cases.
  */
 std::vector<Case> cases() {
-  const auto spec_ok = "spec out " + SPEC_OK + "\n";
+  const auto info_ok = "check out " + INFO_OK + "\n";
   return {
-    {"a report", spec_ok + "run err atlc: building\nrun out " + REPORT + "\n", 0, ""},
-    {"program errors", "spec out " + envelope("error", PROGRAM_ERROR) + "\nspec exit 1\n", 5, "program.invalid"},
-    {"spec errors", "spec out " + envelope("error", SPEC_ERROR) + "\nspec exit 2\n", 2, "spec.invalid"},
-    {"an atlc without spec", "spec err usage: atlc <command> [arguments]\nspec err \nspec err commands:\nspec exit 2\n",
-      1, "atlc.unsupported"},
-    {"exit 2 without JSON or usage", "spec err atlc spec: something else\nspec exit 2\n", 1, "atlc.failed"},
-    {"exit 2, usage, and a broken object", "spec out {\"atlc_spec\":1\nspec err usage: atlc\nspec exit 2\n", 1,
+    {"a report", info_ok + "driver err building\ndriver out " + REPORT + "\n", 0, ""},
+    {"program errors", "check out " + failed_info(PROGRAM_ERROR) + "\ncheck exit 1\n", 5, "program.invalid"},
+    {"a program atlc cannot read", "check out " + failed_info(UNREADABLE) + "\ncheck exit 2\n", 5, "program.invalid"},
+    {"atlc refuses cmdatl's arguments", "check out " + failed_info(USAGE_ERROR) + "\ncheck exit 2\n", 1, "atlc.failed"},
+    {"a setting the spec cannot take", info_ok, 2, "spec.invalid", true, {"replay.cash=0"}},
+    {"a setting the program cannot take", info_ok, 2, "spec.invalid", true, {"params.nope=1"}},
+    {"an unknown setting", info_ok, 2, "spec.invalid", true, {"replay.cahs=1"}},
+    {"a setting given twice", info_ok, 2, "spec.invalid", true, {"replay.cash=1", "replay.cash=2"}},
+    {"no target", info_ok, 2, "usage.missing_argument", true, {"replay.cash=1", "--"}},
+    {"two targets", info_ok, 2, "usage.bad_value", true, {"t.toml"}},
+    {"an atlc without --info",
+      "check err atlc check: unknown option `--info`\ncheck err usage: atlc <command> [arguments]\ncheck exit 2\n", 1,
+      "atlc.unsupported"},
+    {"exit 2 without JSON or usage", "check err atlc check: something else\ncheck exit 2\n", 1, "atlc.failed"},
+    {"exit 2, usage, and a broken object", "check out {\"atlc_info\":1\ncheck err usage: atlc\ncheck exit 2\n", 1,
       "atlc.failed"},
-    {"malformed JSON", "spec out {not json\n", 1, "atlc.failed"},
-    {"no reply", "spec exit 0\n", 1, "atlc.failed"},
-    {"two objects", spec_ok + spec_ok, 1, "atlc.failed"},
-    {"an array", "spec out []\n", 1, "atlc.failed"},
-    {"ok with errors", "spec out " + envelope("ok", PROGRAM_ERROR) + "\n", 1, "atlc.failed"},
-    {"error without errors", "spec out " + envelope("error", "[]") + "\nspec exit 2\n", 1, "atlc.failed"},
-    {"error on exit 0", "spec out " + envelope("error", PROGRAM_ERROR) + "\n", 1, "atlc.failed"},
-    {"ok on exit 1", spec_ok + "spec exit 1\n", 1, "atlc.failed"},
-    {"no warnings", "spec out {\"atlc_spec\":1,\"status\":\"ok\",\"errors\":[]}\n", 1, "atlc.failed"},
-    {"warnings not an array", "spec out {\"atlc_spec\":1,\"status\":\"ok\",\"warnings\":{},\"errors\":[]}\n", 1,
+    {"malformed JSON", "check out {not json\n", 1, "atlc.failed"},
+    {"no reply", "check exit 0\n", 1, "atlc.failed"},
+    {"two objects", info_ok + info_ok, 1, "atlc.failed"},
+    {"an array", "check out []\n", 1, "atlc.failed"},
+    {"error with a program", "check out " + info_with("\"ok\"", "\"error\"") + "\ncheck exit 1\n", 1, "atlc.failed"},
+    {"error on exit 0", "check out " + failed_info(PROGRAM_ERROR) + "\n", 1, "atlc.failed"},
+    {"ok on exit 1", info_ok + "check exit 1\n", 1, "atlc.failed"},
+    {"another format", "check out " + info_with("\"atlc_info\":1", "\"atlc_info\":2") + "\n", 1, "atlc.failed"},
+    {"another program's path", "check out " + info_with("@DIR@/dip.atls", "/elsewhere/dip.atls") + "\n", 1,
       "atlc.failed"},
-    {"a diagnostic without a code",
-      "spec out " + envelope("error", R"([{"severity":"error","message":"x"}])") + "\nspec exit 2\n", 1, "atlc.failed"},
-    {"a status that is not a string", "spec out {\"atlc_spec\":1,\"status\":true,\"warnings\":[],\"errors\":[]}\n", 1,
-      "atlc.failed"},
-    {"another format", "spec out {\"atlc_spec\":2,\"status\":\"ok\",\"warnings\":[],\"errors\":[]}\n", 1,
-      "atlc.failed"},
-    {"spec killed by a signal", "spec raise 9\n", 1, "atlc.failed"},
-    {"spec exit 101", "spec err atlc: internal error\nspec exit 101\n", 1, "atlc.failed"},
-    {"the program broke between the calls", spec_ok + "run err error[undefined-name]: `x` is not defined\nrun exit 1\n",
-      5, "program.invalid"},
-    {"the spec broke between the calls", spec_ok + "run err atlc run: unknown key `dta`\nrun exit 2\n", 2,
-      "spec.invalid"},
-    {"a build failure",
-      spec_ok +
-        "run err atlc: building\nrun err atlc run: cmake failed\nrun err (the build's log is /c/build.log)\n"
-        "run exit 3\n",
-      1, "build.failed"},
-    {"a replay failure", spec_ok + "run err error: lookback=1 is below its lower bound 2\nrun exit 4\n", 1,
+    {"a struct that is code", "check out " + info_with("\"Dip\"", "\"Dip; int main\"") + "\n", 1, "atlc.failed"},
+    {"a parameter of another type", "check out " + info_with("\"int\"", "\"float\"") + "\n", 1, "atlc.failed"},
+    {"check killed by a signal", "check raise 9\n", 1, "atlc.failed"},
+    {"check exit 101", "check err atlc: internal error\ncheck exit 101\n", 1, "atlc.failed"},
+    {"a replay failure", info_ok + "driver err error: lookback=1 is below its lower bound 2\ndriver exit 1\n", 1,
       "replay.failed"},
-    {"run exit 101", spec_ok + "run exit 101\n", 1, "atlc.failed"},
-    {"run killed by a signal", spec_ok + "run raise 9\n", 1, "atlc.failed"},
-    {"run exit 130, an exit code and not a signal", spec_ok + "run exit 130\n", 1, "atlc.failed"},
-    {"run exit 0 without a report", spec_ok + "run exit 0\n", 1, "atlc.failed"},
-    {"run exit 0 with a broken report", spec_ok + "run out {\"bars\":\n", 1, "atlc.failed"},
-    {"run exit 0 with two reports", spec_ok + "run out " + REPORT + "\nrun out " + REPORT + "\n", 1, "atlc.failed"},
+    {"driver exit 101", info_ok + "driver exit 101\n", 1, "replay.failed"},
+    {"driver killed by a signal", info_ok + "driver raise 9\n", 1, "replay.failed"},
+    {"driver exit 130, an exit code and not a signal", info_ok + "driver exit 130\n", 1, "replay.failed"},
+    {"driver exit 0 without a report", info_ok + "driver exit 0\n", 1, "replay.failed"},
+    {"driver exit 0 with a broken report", info_ok + "driver out {\"bars\":\n", 1, "replay.failed"},
+    {"driver exit 0 with two reports", info_ok + "driver out " + REPORT + "\ndriver out " + REPORT + "\n", 1,
+      "replay.failed"},
     {"--version fails", "version exit 1\n", 1, "atlc.missing", false},
     {"--version says nothing readable", "version out atlc banana\n", 1, "atlc.unsupported", false},
   };
@@ -125,6 +136,8 @@ void check_form(const Ran& ran, const std::string& format, const Case& expected)
   CHECK(ran.exit_ == expected.exit_);
   CHECK(declares({"strategy", "backtest"}, ran.exit_, expected.code_));
   const auto failed = !expected.code_.empty();
+  // The words are sorted before anything is said: a usage error comes alone.
+  const bool usage = expected.code_.rfind("usage.", 0) == 0;
   if (format == "json") {
     const auto lines = lines_of(ran.out_);
     REQUIRE(lines.size() == 1);
@@ -133,23 +146,29 @@ void check_form(const Ran& ran, const std::string& format, const Case& expected)
     if (failed) {
       CHECK(code_of(lines.front()) == expected.code_);
     }
-    CHECK(lines_of(ran.err_).front() == "cmdatl: replaying s.toml");
+    if (!usage) {
+      CHECK(lines_of(ran.err_).front() == "cmdatl: replaying s.toml");
+    }
   } else if (format == "jsonl") {
     const auto lines = lines_of(ran.out_);
-    REQUIRE(lines.size() >= 2);
+    REQUIRE(lines.size() >= (usage ? 1u : 2u));
     for (std::size_t i = 0; i + 1 < lines.size(); ++i) {
       const auto event = reply_of(lines[i]);
       CHECK(event.at("event").as_string() == "progress");
       CHECK(event.at("message").is_string());
     }
-    CHECK(reply_of(lines.front()).at("message").as_string() == "cmdatl: replaying s.toml");
+    if (!usage) {
+      CHECK(reply_of(lines.front()).at("message").as_string() == "cmdatl: replaying s.toml");
+    }
     CHECK(reply_of(lines.back()).contains("error") == failed);
     if (failed) {
       CHECK(code_of(lines.back()) == expected.code_);
     }
     CHECK(ran.err_.empty());
   } else {
-    CHECK(lines_of(ran.err_).front() == "cmdatl: replaying s.toml");
+    if (!usage) {
+      CHECK(lines_of(ran.err_).front() == "cmdatl: replaying s.toml");
+    }
     if (failed) {
       CHECK(ran.out_.empty());
       CHECK(ran.err_.find("  code: " + expected.code_ + "\n") != std::string::npos);
@@ -223,89 +242,174 @@ std::string template_text(const std::string& name) {
 
 } // namespace
 
-TEST_CASE("every answer of atlc spec and atlc run maps to its reply in json and jsonl and text") {
+TEST_CASE("every answer of atlc check --info and the driver maps to its reply in json and jsonl and text") {
   const Watchdog watchdog("the mapping", 300);
   for (const auto& expected : cases()) {
     for (const auto* format : {"json", "jsonl", "text"}) {
       const FakeAtlc fake(expected.script_, expected.version_);
-      check_form(run({"--format", format, "strategy", "backtest", "s.toml"}), format, expected);
+      std::vector<std::string> line{"--format", format, "strategy", "backtest"};
+      if (expected.code_ != "usage.missing_argument") {
+        line.push_back("s.toml");
+      }
+      for (const auto& setting : expected.settings_) {
+        if (setting != "--") {
+          line.push_back(setting);
+        }
+      }
+      check_form(run(line), format, expected);
     }
   }
 }
 
-TEST_CASE("a failure carries atlc's diagnostics or its last stderr lines and names a signal") {
+TEST_CASE("a failure carries the diagnostics or the last stderr lines and names a signal") {
   const Watchdog watchdog("the failure details", 60);
   {
-    const FakeAtlc fake("spec out " + envelope("error", PROGRAM_ERROR) + "\nspec exit 1\n");
+    const FakeAtlc fake("check out " + failed_info(PROGRAM_ERROR) + "\ncheck exit 1\n");
     const auto reply = reply_of(run({"strategy", "backtest", "s.toml"}).out_);
     const auto& error = reply.at("errors").as_array().at(0).as_object();
     CHECK(error.at("line").as_int64() == 9);
-    CHECK(error.at("file").as_string() == "/x/dip.atls");
+    CHECK(error.at("file").as_string() == (fake.dir() / "dip.atls").string());
     CHECK(reply.at("error").as_object().at("message").as_string() == "`lookbak` is not defined");
   }
   {
-    const FakeAtlc fake(
-      "spec out " + SPEC_OK +
-      "\nrun err atlc: building\nrun err atlc run: cmake failed\n"
-      "run err (the build's log is /c/build.log)\nrun exit 3\n"
+    // Settings errors: every one, each at its place, the file's and the command line's.
+    const FakeAtlc fake("check out " + INFO_OK + "\n");
+    spit("bad.toml", "strategy = 'dip.atls'\n[data]\nfile = 'bars.csv'\n[replay]\ncash = 0\nfill = \"close\"\n");
+    const auto ran = run({"strategy", "backtest", "bad.toml", "replay.sell_tax=-1"});
+    CHECK(ran.exit_ == 2);
+    const auto reply = reply_of(ran.out_);
+    const auto& errors = reply.at("errors").as_array();
+    REQUIRE(errors.size() == 3);
+    CHECK(errors[0].at("line").as_int64() == 5);
+    CHECK(errors[1].at("line").as_int64() == 6);
+    CHECK(errors[0].at("file").as_string() == (fake.dir() / "bad.toml").string());
+    CHECK(errors[2].at("origin").as_string() == "command_line");
+    CHECK(errors[2].at("file").is_null());
+    CHECK(
+      reply.at("error").as_object().at("message").as_string() == "`replay.cash` is a number above 0, not 0 (and 2 more)"
     );
-    const auto reply = reply_of(run({"strategy", "backtest", "s.toml"}).out_);
-    CHECK(reply.at("stderr").as_array().size() == 3);
-    CHECK(reply.at("error").as_object().at("message").as_string().find("/c/build.log") != std::string::npos);
+    CHECK(reply.at("error").as_object().at("next").as_string().find("bad.toml") != std::string::npos);
+    // atlc was not asked: the settings' own errors come first.
+    CHECK(fake.args("check").empty());
   }
   {
-    const FakeAtlc fake("spec out " + SPEC_OK + "\nrun err error[x]: one\nrun err   two\nrun exit 1\n");
+    const FakeAtlc fake("check out " + INFO_OK + "\ndriver err error[x]: one\ndriver err error: two\ndriver exit 1\n");
     const auto reply = reply_of(run({"strategy", "backtest", "s.toml"}).out_);
-    CHECK(reply.at("error").as_object().at("message").as_string() == "error[x]: one\n  two");
+    CHECK(reply.at("stderr").as_array().size() == 2);
+    CHECK(reply.at("error").as_object().at("message").as_string() == "the replay failed: error: two");
   }
   {
-    const FakeAtlc fake("spec out " + SPEC_OK + "\nrun raise 9\n");
+    const FakeAtlc fake("check out " + INFO_OK + "\ndriver raise 9\n");
     const auto reply = reply_of(run({"strategy", "backtest", "s.toml"}).out_);
     CHECK(reply.at("error").as_object().at("message").as_string().find("signal 9") != std::string::npos);
+    CHECK(reply.at("error").as_object().at("message").as_string().find("backtest driver") != std::string::npos);
   }
   {
-    const FakeAtlc fake("spec out " + SPEC_OK + "\nrun exit 130\n");
+    const FakeAtlc fake("check out " + INFO_OK + "\ndriver exit 130\n");
     const auto ran = run({"strategy", "backtest", "s.toml"});
     CHECK(ran.exit_ == 1);
     CHECK(
       reply_of(ran.out_).at("error").as_object().at("message").as_string().find("exited with 130") != std::string::npos
     );
   }
+  {
+    // A warning goes on as progress, with its place.
+    const FakeAtlc fake(
+      "check out " +
+      info_with(
+        "\"diagnostics\":[]",
+        R"("diagnostics":[{"severity":"warning","code":"unused-series","message":"`m` is never read","file":"@DIR@/dip.atls","line":4,"origin":"program"}])"
+      ) +
+      "\ndriver out " + REPORT + "\n"
+    );
+    const auto ran = run({"strategy", "backtest", "s.toml"});
+    CHECK(ran.exit_ == 0);
+    CHECK(
+      ran.err_.find((fake.dir() / "dip.atls").string() + ":4: warning[unused-series]: `m` is never read") !=
+      std::string::npos
+    );
+  }
 }
 
-TEST_CASE("the backtest passes -P to both calls and an absolute --fills to the run and replies with them") {
+TEST_CASE(
+  "the backtest passes the settings to check and to the driver and an absolute --fills, and replies with them"
+) {
   const Watchdog watchdog("the arguments", 60);
-  const FakeAtlc fake("spec args\nspec out " + SPEC_OK + "\nrun args\nrun out " + REPORT + "\n");
-  const InDir here(fake.dir());
-  const auto ran = run({"strategy", "backtest", "s.toml", "-P", "a=1", "-P", "b=2", "--fills", "out/fills.csv"});
+  const FakeAtlc fake("check args\ncheck out " + INFO_OK + "\ndriver args\ndriver out " + REPORT + "\n");
+  spit("s.toml", FAKE_SPEC + "[replay]\ncash = 1_000_000\ncommission = 1.5e-4\n[params]\nlookback = 10\n");
+  const auto ran = run(
+    {"strategy", "backtest", "params.lookback=30", "s.toml", "replay.market=kr", "--fills", "out/fills.csv",
+      "instruments.stock=005930"}
+  );
   REQUIRE(ran.exit_ == 0);
-  const auto spec = (fake.dir() / "s.toml").string();
-  const auto fills = (fake.dir() / "out/fills.csv").string();
-  CHECK(fake.args("spec") == std::vector<std::string>{spec, "-P", "a=1", "-P", "b=2", "--json"});
-  CHECK(fake.args("run") == std::vector<std::string>{spec, "-P", "a=1", "-P", "b=2", "--fills", fills});
+  const auto dir = fake.dir().string();
+  const auto spec = dir + "/s.toml";
+  const auto fills = dir + "/out/fills.csv";
+  CHECK(fake.args("check") == std::vector<std::string>{dir + "/dip.atls", "--info"});
+  CHECK(
+    fake.args("driver") ==
+    std::vector<std::string>{
+      "data.source=wide", "data.file=" + dir + "/bars.csv", "replay.cash=1000000", "replay.commission=0.00015",
+      "replay.market=kr", "instrument.stock=005930", "param.lookback=30", "output.fills=" + fills
+    }
+  );
   const auto reply = reply_of(ran.out_);
   CHECK(reply.at("spec").as_string() == spec);
+  CHECK(reply.at("program").as_string() == dir + "/dip.atls");
   CHECK(reply.at("fills").as_string() == fills);
-  CHECK(reply.at("params_given") == boost::json::value(boost::json::array{"a=1", "b=2"}));
+  CHECK(
+    reply.at("settings_given") ==
+    boost::json::value(boost::json::array{"params.lookback=30", "replay.market=kr", "instruments.stock=005930"})
+  );
   CHECK(reply.at("atlc").as_string() == "0.0.0-9000");
-  // Nothing in the reply comes from the spec check: a spec changed between the calls cannot be misdescribed.
   std::set<std::string> keys;
   for (const auto& entry : reply) {
     keys.insert(std::string(entry.key()));
   }
-  CHECK(keys == std::set<std::string>{"env", "report", "spec", "params_given", "atlc", "fills"});
+  CHECK(keys == std::set<std::string>{"env", "report", "spec", "program", "settings_given", "atlc", "fills"});
   CHECK(reply.at("report") == boost::json::parse(REPORT));
+}
+
+TEST_CASE("a program as the target: settings only, the spec null, paths against the working directory") {
+  const Watchdog watchdog("a program target", 60);
+  const FakeAtlc fake("check args\ncheck out " + INFO_OK + "\ndriver args\ndriver out " + REPORT + "\n");
+  std::filesystem::create_directories("sub");
+  const InDir sub("sub");
+  const auto ran = run({"strategy", "backtest", "data.file=b.csv", "../sub/./../dip.atls"});
+  INFO(ran.out_);
+  REQUIRE(ran.exit_ == 0);
+  const auto dir = fake.dir().string();
+  CHECK(fake.args("check") == std::vector<std::string>{dir + "/dip.atls", "--info"});
+  CHECK(fake.args("driver") == std::vector<std::string>{"data.source=wide", "data.file=" + dir + "/sub/b.csv"});
+  const auto reply = reply_of(ran.out_);
+  CHECK(reply.at("spec").is_null());
+  CHECK(reply.at("program").as_string() == dir + "/dip.atls");
+  // Without a spec, a setting missing from the command line is reported with no place.
+  const auto bare = run({"strategy", "backtest", "../dip.atls"});
+  CHECK(bare.exit_ == 2);
+  CHECK(code_of(bare.out_) == "spec.invalid");
+  CHECK(
+    reply_of(bare.out_).at("error").as_object().at("message").as_string().find("give the closes") != std::string::npos
+  );
+  // A spec that names no program, and one that cannot be read.
+  spit("none.toml", "[data]\nfile = 'x.csv'\n");
+  CHECK(code_of(run({"strategy", "backtest", "none.toml"}).out_) == "spec.invalid");
+  const auto missing = run({"strategy", "backtest", "missing.toml"});
+  CHECK(missing.exit_ == 2);
+  CHECK(reply_of(missing.out_).at("errors").as_array().at(0).at("code").as_string() == "unreadable");
+  // strategy is not a setting on the command line.
+  CHECK(code_of(run({"strategy", "backtest", "../s.toml", "strategy.x=1"}).out_) == "spec.invalid");
 }
 
 TEST_CASE("--fields and --value select from the final reply only and never from progress") {
   const Watchdog watchdog("the selections", 60);
-  const auto script = "spec out " + SPEC_OK + "\nrun err atlc: building\nrun out " + REPORT + "\n";
+  const auto script = "check out " + INFO_OK + "\ndriver err building\ndriver out " + REPORT + "\n";
   {
     const FakeAtlc fake(script);
     const auto ran = run({"--format", "jsonl", "--fields", "report.executions", "strategy", "backtest", "s.toml"});
     const auto lines = lines_of(ran.out_);
     REQUIRE(lines.size() == 3);
-    CHECK(reply_of(lines[1]).at("message").as_string() == "atlc: building");
+    CHECK(reply_of(lines[1]).at("message").as_string() == "building");
     CHECK(!reply_of(lines[1]).contains("warning"));
     const auto final_reply = reply_of(lines[2]);
     CHECK(final_reply.at("report").as_object().size() == 1);
@@ -320,19 +424,19 @@ TEST_CASE("--fields and --value select from the final reply only and never from 
   }
   {
     // A failure is written whole, whatever was selected.
-    const FakeAtlc fake("spec out " + SPEC_OK + "\nrun exit 4\n");
+    const FakeAtlc fake("check out " + INFO_OK + "\ndriver exit 4\n");
     const auto ran = run({"--fields", "report.executions", "strategy", "backtest", "s.toml"});
     CHECK(ran.exit_ == 1);
     CHECK(code_of(ran.out_) == "replay.failed");
   }
 }
 
-TEST_CASE("atlc's stderr reaches the reader as progress while atlc still runs") {
+TEST_CASE("the driver's stderr reaches the reader as progress while it still runs") {
   const Watchdog watchdog("live progress", 60);
   const FakeAtlc fake(
-    "spec out " + SPEC_OK + "\nrun err atlc: building\nrun sleep 300\nrun touch done\nrun out " + REPORT + "\n"
+    "check out " + INFO_OK + "\ndriver err replaying\ndriver sleep 300\ndriver touch done\ndriver out " + REPORT + "\n"
   );
-  MarkWatcher watcher(fake, "atlc: building", "done");
+  MarkWatcher watcher(fake, "replaying", "done");
   std::ostream err(&watcher);
   std::ostringstream out;
   CHECK(cmdatl::run({"--format", "json", "strategy", "backtest", "s.toml"}, out, err, false) == 0);

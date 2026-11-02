@@ -1,5 +1,4 @@
-// `run start` and `run status`: the pure parts (grammars, the cache key, the build's file writes, the spec's fields,
-// the run's state) in process, and the commands as processes against the real atlc and algotradelib (tagged
+// `run start` and `run status`: the pure parts (grammars, the cache key, the build's file writes, the run's state) in process, and the commands as processes against the real atlc and algotradelib (tagged
 // `[acceptance][runs]`: they build a driver with CMake, and skip, reported, without CMDATL_TEST_ATLC and
 // CMDATL_TEST_PREFIX).
 
@@ -74,18 +73,18 @@ TEST_CASE("run grammars: run ids, argument keys, structs and offsets") {
   CHECK(!cmdatl::valid_run_id("r0123456789aB"));
   CHECK(!cmdatl::valid_run_id("r0123456789a"));
   CHECK(!cmdatl::valid_run_id("x0123456789ab"));
-  CHECK(runs::valid_key("param.lookback"));
-  CHECK(runs::valid_key(std::string(128, 'a')));
-  CHECK(!runs::valid_key(std::string(129, 'a')));
-  CHECK(!runs::valid_key("a b"));
-  CHECK(!runs::valid_key(""));
-  CHECK(runs::valid_struct("MeanReversion"));
-  CHECK(runs::valid_struct("M" + std::string(63, 'a')));
-  CHECK(!runs::valid_struct("M" + std::string(64, 'a')));
-  CHECK(!runs::valid_struct("Params"));
-  CHECK(!runs::valid_struct("Lane"));
-  CHECK(!runs::valid_struct("meanReversion"));
-  CHECK(!runs::valid_struct("Mean_Reversion"));
+  CHECK(cmdatl::spec::valid_key("param.lookback"));
+  CHECK(cmdatl::spec::valid_key(std::string(128, 'a')));
+  CHECK(!cmdatl::spec::valid_key(std::string(129, 'a')));
+  CHECK(!cmdatl::spec::valid_key("a b"));
+  CHECK(!cmdatl::spec::valid_key(""));
+  CHECK(cmdatl::spec::valid_struct("MeanReversion"));
+  CHECK(cmdatl::spec::valid_struct("M" + std::string(63, 'a')));
+  CHECK(!cmdatl::spec::valid_struct("M" + std::string(64, 'a')));
+  CHECK(!cmdatl::spec::valid_struct("Params"));
+  CHECK(!cmdatl::spec::valid_struct("Lane"));
+  CHECK(!cmdatl::spec::valid_struct("meanReversion"));
+  CHECK(!cmdatl::spec::valid_struct("Mean_Reversion"));
   CHECK(runs::valid_offset("0.01"));
   CHECK(runs::valid_offset("0"));
   CHECK(!runs::valid_offset("1"));
@@ -188,76 +187,6 @@ TEST_CASE("the driver's sources are carried inside cmdatl, and only the modules 
       CHECK(text == slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "include" / "cmdatl" / "core" / "runs.hpp"));
     }
   }
-}
-
-TEST_CASE("atlc spec's fields a run consumes are checked at and past each bound") {
-  const ScratchDir dir;
-  spit(dir.path() / "p.atls", "");
-  const auto pairs = [](std::vector<std::pair<std::string, std::string>> given) {
-    json::array out;
-    for (auto& [key, value] : given) {
-      json::array pair;
-      pair.push_back(json::value(key));
-      pair.push_back(json::value(value));
-      out.push_back(std::move(pair));
-    }
-    return out;
-  };
-  const auto envelope = [&dir](const json::array& args) {
-    return json::object{
-      {"program", json::object{{"path", (dir.path() / "p.atls").string()}, {"struct", "P"}}},
-      {"build", json::object{{"indicators", "incremental"}}},
-      {"store", false},
-      {"orders", json::object{{"type", "limit"}, {"offset", "0.01"}}},
-      {"args", args},
-    };
-  };
-  runs::SpecFields fields;
-  CHECK(!runs::spec_fields(envelope(pairs({{"param.a", "1 = 2 é"}})), fields));
-  CHECK(fields.args_ == std::vector<std::string>{"param.a=1 = 2 é"});
-  json::array many;
-  for (int k = 0; k < 1000; ++k) {
-    json::array pair;
-    pair.push_back(json::value("k" + std::to_string(k)));
-    pair.push_back(json::value("v"));
-    many.push_back(std::move(pair));
-  }
-  runs::SpecFields thousand;
-  CHECK(!runs::spec_fields(envelope(many), thousand));
-  {
-    json::array pair;
-    pair.push_back(json::value("k1000"));
-    pair.push_back(json::value("v"));
-    many.push_back(std::move(pair));
-  }
-  runs::SpecFields over;
-  CHECK(runs::spec_fields(envelope(many), over)->exit_ == cmdatl::Exit::FAILED);
-  const auto refused = [&envelope](json::object e) {
-    runs::SpecFields f;
-    return runs::spec_fields(e, f).has_value();
-  };
-  CHECK(refused(envelope(pairs({{"a", "1"}, {"a", "2"}}))));
-  CHECK(refused(envelope(pairs({{std::string(129, 'k'), "1"}}))));
-  CHECK(!refused(envelope(pairs({{std::string(128, 'k'), "1"}}))));
-  CHECK(refused(envelope(pairs({{"a", std::string("x\0y", 3)}}))));
-  CHECK(refused(envelope(pairs({{"a", std::string(4097, 'v')}}))));
-  CHECK(!refused(envelope(pairs({{"a", std::string(4096, 'v')}}))));
-  auto e = envelope(json::array{});
-  e["program"].as_object()["struct"] = "Params";
-  CHECK(refused(e));
-  e = envelope(json::array{});
-  e["program"].as_object()["path"] = "relative.atls";
-  CHECK(refused(e));
-  e = envelope(json::array{});
-  e["build"].as_object()["indicators"] = "fast";
-  CHECK(refused(e));
-  e = envelope(json::array{});
-  e["orders"].as_object()["offset"] = "2";
-  CHECK(refused(e));
-  e = envelope(json::array{});
-  e["store"] = true;
-  runs::SpecFields f;
-  CHECK(runs::spec_fields(e, f)->exit_ == cmdatl::Exit::USAGE);
 }
 
 TEST_CASE("a run's state from its records, every row") {
@@ -485,7 +414,10 @@ TEST_CASE("the table's run commands: options, codes, kinds of code and the schem
   for (const auto& option : start->options_) {
     names.push_back(option.name_);
   }
-  CHECK(names == std::vector<std::string>{"param", "wait"});
+  CHECK(names == std::vector<std::string>{"wait"});
+  REQUIRE(start->args_.size() == 1);
+  CHECK(start->args_[0].name_ == "TARGET");
+  CHECK(start->args_[0].variadic_);
   CHECK(start->may_send_);
   CHECK(static_cast<bool>(start->run_config_));
   CHECK(static_cast<bool>(status->run_config_));
@@ -504,7 +436,7 @@ TEST_CASE("the table's run commands: options, codes, kinds of code and the schem
     CHECK(std::find(start->errors_.begin(), start->errors_.end(), code) != start->errors_.end());
   }
   CHECK(cmdatl::check_table(table).empty());
-  CHECK(cmdatl::SCHEMA_VERSION == 7);
+  CHECK(cmdatl::SCHEMA_VERSION == 8);
   // Two kinds of code on one command is a problem the table check reports.
   auto list = cmdatl::command_list();
   for (auto& command : list) {
@@ -793,15 +725,34 @@ TEST_CASE("run start --wait trades as strategy backtest does on the same spec, f
   std::optional<std::filesystem::file_time_type> before;
   std::filesystem::path shape;
   for (const auto& entry : std::filesystem::directory_iterator(driver)) {
-    if (entry.path().filename().string().rfind("Dip-", 0) == 0) {
+    // The run's driver, not the backtest's (both build Dip, in shapes of their own).
+    if (
+      entry.path().filename().string().rfind("Dip-", 0) == 0 &&
+      slurp(entry.path() / "src" / "program.hpp").find("cmdatl run start") != std::string::npos
+    ) {
       shape = entry.path();
       before = std::filesystem::last_write_time(shape / "build" / "driver");
     }
   }
   REQUIRE(before);
-  const auto again = fixture.json({"run", "start", shared().spec("dip"), "--wait", "-P", "lookback=21"});
-  CHECK(again.exit_ == 0);
+  const auto again = fixture.json({"run", "start", shared().spec("dip"), "--wait", "params.lookback=21"});
+  REQUIRE(again.exit_ == 0);
   CHECK((std::filesystem::last_write_time(shape / "build" / "driver") == *before));
+  // The run's record holds the settings given; the driver's arguments are the settings' keys, never its own.
+  const auto record =
+    reply_of(slurp(run_path(fixture, std::string(reply_of(again.out_).at("run").as_string())) / "run.json"));
+  CHECK(record.at("format").as_int64() == 1);
+  CHECK(record.at("settings_given") == json::value(json::array{"params.lookback=21"}));
+  CHECK(!record.contains("params_given"));
+  bool parameter = false;
+  for (const auto& pair : record.at("args").as_array()) {
+    const auto key = std::string(pair.as_array()[0].as_string());
+    CHECK(key != "run.id");
+    CHECK(key != "output.fills");
+    CHECK((cmdatl::spec::known(key) != nullptr || key.rfind("instrument.", 0) == 0 || key.rfind("param.", 0) == 0));
+    parameter = parameter || (key == "param.lookback" && pair.as_array()[1].as_string() == "21");
+  }
+  CHECK(parameter);
   // The driver's include closure, from the compiler's own dependency files: no CLI11, nothing of cmdatl's cli/ or strategy/ (the layout check's driver row, seen in the real build).
   // Only `<source>.o.d`: on Linux the linker also writes `link.d`, which lists libraries.
   std::size_t read = 0;
@@ -912,9 +863,9 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
     CHECK(code_of(other.out_) == "refused.symbol_not_allowed");
   }
   {
-    // A program with session legs: atlc asks for replay.fill = "legs", and with it run start gives the driver's own
-    // refusal before anything is built, instead of a spec refusal that sends the agent back. The account is not armed,
-    // so the refusal is shown to come before the operator's checks; the case's own cache shows that nothing was built.
+    // A program with session legs: run start gives the driver's own refusal before anything is built, whatever
+    // replay.fill says, from a spec, with a setting, or with the program as the target. The account is not armed, so
+    // the refusal is shown to come before the operator's checks; the case's own cache shows that nothing was built.
     const PaperFixture fixture(run_operator());
     const RunEquipped equipped(equipment->first, equipment->second);
     const ScratchDir cache;
@@ -925,22 +876,21 @@ TEST_CASE("run start relays refusals: its own before anything is built, and the 
       "strategy = \"legs.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\n"
       "time = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n[replay]\nmarket = \"kr\"\n";
     const std::string orders = "\n[orders]\ntype = \"limit\"\noffset = 0.01\n";
+    const auto legs_refused = [](const Ran& ran) {
+      INFO(ran.out_);
+      CHECK(ran.exit_ == 5);
+      CHECK(code_of(ran.out_) == "program.live_unsupported");
+      const auto reply = reply_of(ran.out_);
+      CHECK(reply.at("unsupported").as_string() == "legs");
+      CHECK(reply.at("error").as_object().at("message").as_string() == cmdatl::LEGS_UNSUPPORTED);
+      CHECK(reply.at("error").as_object().at("next").as_string() == cmdatl::LEGS_UNSUPPORTED_NEXT);
+    };
     spit(fixture.dir() / "legs.toml", spec + orders);
-    const auto asked = fixture.json({"run", "start", (fixture.dir() / "legs.toml").string()});
-    INFO(asked.out_);
-    CHECK(asked.exit_ == 2);
-    CHECK(code_of(asked.out_) == "spec.invalid");
-    const auto asked_message = std::string(reply_of(asked.out_).at("error").as_object().at("message").as_string());
-    CHECK(asked_message.find("replay.fill") != std::string::npos);
+    legs_refused(fixture.json({"run", "start", (fixture.dir() / "legs.toml").string()}));
+    legs_refused(fixture.json({"run", "start", (fixture.dir() / "legs.toml").string(), "replay.fill=legs"}));
+    legs_refused(fixture.json({"run", "start", (fixture.dir() / "legs.atls").string(), "replay.market=kr"}));
     spit(fixture.dir() / "legs.toml", spec + "fill = \"legs\"\n" + orders);
-    const auto legs = fixture.json({"run", "start", (fixture.dir() / "legs.toml").string()});
-    INFO(legs.out_);
-    CHECK(legs.exit_ == 5);
-    CHECK(code_of(legs.out_) == "program.live_unsupported");
-    const auto reply = reply_of(legs.out_);
-    CHECK(reply.at("unsupported").as_string() == "legs");
-    CHECK(reply.at("error").as_object().at("message").as_string() == cmdatl::LEGS_UNSUPPORTED);
-    CHECK(reply.at("error").as_object().at("next").as_string() == cmdatl::LEGS_UNSUPPORTED_NEXT);
+    legs_refused(fixture.json({"run", "start", (fixture.dir() / "legs.toml").string()}));
     const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
     CHECK((!std::filesystem::exists(runs_dir) || std::filesystem::is_empty(runs_dir)));
     CHECK(!std::filesystem::exists(cache.path() / "cmdatl" / "drivers"));
@@ -1313,7 +1263,7 @@ TEST_CASE(
     "cmdatl strategy new dip --template mean-reversion",
     "cmdatl strategy reference builtins",
     "atlc check dip.atls",
-    "cmdatl strategy backtest dip.toml -P lookback=30",
+    "cmdatl strategy backtest dip.toml params.lookback=30",
     "cmdatl run start dip.toml --wait",
     "cmdatl run status",
     "cmdatl run log",
@@ -1357,7 +1307,7 @@ TEST_CASE(
   }
   spit("dip.toml", spec);
 
-  const auto backtest = fixture.json({"strategy", "backtest", "dip.toml", "-P", "lookback=30"});
+  const auto backtest = fixture.json({"strategy", "backtest", "dip.toml", "params.lookback=30"});
   INFO(backtest.err_);
   REQUIRE(backtest.exit_ == 0);
   const auto backtested = reply_of(backtest.out_);

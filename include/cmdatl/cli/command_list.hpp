@@ -3,6 +3,7 @@
 #include "../account/reads.hpp"
 #include "../core/table.hpp"
 #include "../orders/orders.hpp"
+#include "../strategy/backtest.hpp"
 #include "../strategy/control.hpp"
 #include "../strategy/runs.hpp"
 #include "../strategy/strategy.hpp"
@@ -20,11 +21,8 @@ namespace cmdatl {
 inline const std::vector<Exit> READ_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE};
 /** @brief The exit codes of a command that may send, or that plans or reconciles what was sent. */
 inline const std::vector<Exit> SEND_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE, Exit::REFUSED, Exit::UNKNOWN};
-/** @brief The exit codes of a command that runs atlc on a program, and stops it on SIGINT or SIGTERM. */
+/** @brief The exit codes of a command that runs atlc and a driver on a program, and stops them on SIGINT or SIGTERM. */
 inline const std::vector<Exit> PROGRAM_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE, Exit::PROGRAM, Exit::INTERRUPTED};
-
-/** @brief `-P k=v`, shared by the commands that run a program. */
-inline const OptionSpec PARAMETER{"param", "k=v", "set a program parameter for this call", false, true, "P"};
 
 /**
  * @brief Every command, in the order `cmdatl --help` lists them.
@@ -249,21 +247,30 @@ inline std::vector<Command> command_list() {
     .runs([](const Invocation& invocation, const Table&, Output&) {
       return new_reply(invocation);
     }));
-  add(make_command({"strategy", "backtest"}, "Strategy", "replay a run spec with atlc and report")
+  add(make_command({"strategy", "backtest"}, "Strategy", "replay a program on its run settings and report")
+    .describe(
+      "TARGET is a run spec (TOML) or a program (.atls); KEY=VALUE words are settings (a dotted key before the first "
+      "=), before or after it, and win over the spec's. cmdatl strategy reference run-spec lists the settings. "
+      "The program is built once per shape (CMake and a C++17 compiler are needed; builds are cached)."
+    )
     .example("cmdatl strategy backtest dip.toml")
-    .example("cmdatl strategy backtest dip.toml -P lookback=30 --fills fills.csv")
-    .arg("SPEC", "a run spec")
-    .option(PARAMETER)
+    .example("cmdatl strategy backtest dip.toml params.lookback=30 --fills fills.csv")
+    .example("cmdatl strategy backtest dip.atls data.source=csv data.file=bars.csv data.symbol=005930")
+    .arg("TARGET", "a run spec or a program (.atls), and KEY=VALUE settings in any order", true, true)
     .option("fills", "FILE", "also write every fill")
-    .returns("report", "atlc's report, unchanged")
-    .returns("spec", "the run spec, absolute")
-    .returns("params_given", "the -P given (the spec's and the program's own values are not listed)")
+    .returns("report", "the replay's report, unchanged")
+    .returns("spec", "the run spec, absolute, or null for a program")
+    .returns("program", "the program, absolute")
+    .returns("settings_given", "the KEY=VALUE settings given (the spec's and the program's own values are not listed)")
     .returns("atlc", "atlc's version")
     .returns("fills", "the fills file, absolute, when asked")
-    .returns("errors", "on a failure atlc spec found: atlc's diagnostics, with file and line")
-    .returns("stderr", "on a failure atlc reported: its last stderr lines")
+    .returns("errors", "on a settings or program failure: the diagnostics, with file and line")
+    .returns("stderr", "on a failure atlc, the build or the replay reported: its last stderr lines")
     .exits(PROGRAM_EXITS)
     .error("interrupted")
+    .error("usage.missing_argument")
+    .error("usage.bad_value")
+    .error("cache.unavailable")
     .error("atlc.missing")
     .error("atlc.unsupported")
     .error("atlc.failed")
@@ -280,8 +287,9 @@ inline std::vector<Command> command_list() {
   add(make_command({"strategy", "reference"}, "Strategy", "the atls language reference, from the atlc cmdatl runs")
     .example("cmdatl strategy reference")
     .example("cmdatl strategy reference builtins")
-    .arg("TOPIC", "a chapter (builtins, run-spec, syntax, ...); the index when omitted", false)
-    .returns("text", "the reference's index or chapter, as atlc reference prints it")
+    .example("cmdatl strategy reference run-spec")
+    .arg("TOPIC", "a chapter (builtins, syntax, ...), or run-spec for cmdatl's run settings; the index when omitted", false)
+    .returns("text", "the reference's index or chapter, as atlc reference prints it; run-spec as cmdatl has it")
     .returns("stderr", "on a failure atlc reported: its last stderr lines")
     .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
     .error("interrupted")
@@ -299,13 +307,17 @@ inline std::vector<Command> command_list() {
   add(make_command({"run", "start"}, "Run", "start a strategy on its own mock market, in the background")
     .describe(
       "Builds the program's driver (CMake and a C++17 compiler are needed; builds are cached), starts it detached on a "
-      "mock market made from the run spec's data, and answers once its start line is written. The operator's file "
-      "limits every order the run places. The agent commands do not see a run's market."
+      "mock market made from the settings' data, and answers once its start line is written. Settings are read as "
+      "strategy backtest reads them. The operator's file limits every order the run places, and no setting changes it. "
+      "The agent commands do not see a run's market."
     )
     .example("cmdatl run start dip.toml")
     .example("cmdatl run start dip.toml --wait")
-    .arg("SPEC", "a run spec, with replay.market = \"kr\" and limit orders")
-    .option(PARAMETER)
+    .example("cmdatl run start dip.toml params.lookback=21 --wait")
+    .arg(
+      "TARGET", "a run spec or a program (.atls), and KEY=VALUE settings; replay.market = \"kr\" and limit orders", true,
+      true
+    )
     .flag("wait", "wait for the run's end and answer with its summary and exit")
     .returns("run", "the run id")
     .returns("state", "running; with --wait or an early end: ended, refused, failed, lost or unknown")
