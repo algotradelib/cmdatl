@@ -1,5 +1,5 @@
-# Channel breakout: buy when the close rises above the highest high of the last `entry` bars;
-# sell when it falls below the lowest low of the last `exit` bars.
+// Channel breakout: buy when the close rises above the highest high of the last `entry` bars;
+// sell when it falls below the lowest low of the last `exit` bars.
 params {
   int<lower=1> entry = 20;
   int<lower=1> exit = 10;

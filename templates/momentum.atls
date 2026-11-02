@@ -1,4 +1,4 @@
-# Time-series momentum: hold while the close has risen more than `threshold` over the last `lookback` bars; flat otherwise.
+// Time-series momentum: hold while the close has risen more than `threshold` over the last `lookback` bars; flat otherwise.
 params {
   int<lower=1> lookback = 60;
   real<lower=0> threshold = 0;
