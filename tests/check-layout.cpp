@@ -28,7 +28,8 @@ const std::map<std::string, std::set<std::string>> ALLOWED{
   {"account", {"core", "system", "paper"}},
   {"orders", {"core", "system", "paper", "account"}},
   {"strategy", {"core", "system", "account"}},
-  {"driver", {"core", "system", "paper", "account", "orders"}},
+  {"replay", {}},
+  {"driver", {"core", "system", "paper", "account", "orders", "replay"}},
   {"cli", {"core", "system", "paper", "account", "orders", "strategy"}},
 };
 

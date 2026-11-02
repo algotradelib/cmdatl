@@ -124,7 +124,7 @@ configure_file(${CMDATL_GENERATED}/guides.hpp.new ${CMDATL_GENERATED}/cmdatl/gui
 # licence, and the backtest driver's main.cpp and CMakeLists.txt.
 add_executable(cmdatl_embed tools/embed.cpp)
 target_compile_features(cmdatl_embed PRIVATE cxx_std_17)
-set(CMDATL_DRIVER_MODULES driver orders account paper system core)
+set(CMDATL_DRIVER_MODULES driver replay orders account paper system core)
 set(cmdatl_driver_pairs "")
 set(cmdatl_driver_sources "")
 foreach(module IN LISTS CMDATL_DRIVER_MODULES)
@@ -135,7 +135,8 @@ foreach(module IN LISTS CMDATL_DRIVER_MODULES)
     list(APPEND cmdatl_driver_sources ${CMAKE_CURRENT_SOURCE_DIR}/include/${header})
   endforeach()
 endforeach()
-# The backtest driver's own two files go under backtest/; `strategy backtest` builds from those and atlc's output alone.
+# The backtest driver's own two files go under backtest/; `strategy backtest` builds from those, the replay module and
+# atlc's output alone.
 foreach(file main.cpp CMakeLists.txt backtest/main.cpp backtest/CMakeLists.txt)
   list(APPEND cmdatl_driver_pairs "${file}=${CMAKE_CURRENT_SOURCE_DIR}/driver/${file}")
   list(APPEND cmdatl_driver_sources ${CMAKE_CURRENT_SOURCE_DIR}/driver/${file})
@@ -178,6 +179,8 @@ install(TARGETS cmdatl RUNTIME DESTINATION bin)
 # The skills, for a project's .agents/skills/.
 include(GNUInstallDirs)
 install(DIRECTORY skills/ DESTINATION ${CMAKE_INSTALL_DATADIR}/cmdatl/skills)
+# The replay module, for a project's own `main` around `atlc build`'s header; it includes nothing else of cmdatl's.
+install(DIRECTORY include/cmdatl/replay/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/cmdatl/replay)
 
 if(CMDATL_BUILD_TESTS)
   enable_testing()

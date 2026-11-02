@@ -409,7 +409,7 @@ inline int copy_driver(const std::filesystem::path& source, const std::filesyste
 enum class DriverKind {
   /** @brief A run's driver: cmdatl's own `driver/main.cpp`, on the mock market. */
   RUN,
-  /** @brief A backtest's driver: `atls::run::main` on atlc's replay. */
+  /** @brief A backtest's driver: `cmdatl::replay::main`, the replay module's own main. */
   BACKTEST,
 };
 
@@ -590,14 +590,13 @@ inline std::optional<Reply> build_driver(
       Exit::FAILED, "atlc.failed", "atlc build: " + ending_of(generated), generated, "check atlc with cmdatl env"
     );
   }
-  for (const auto* runtime : {"atls/args.hpp", "atls/run.hpp"}) {
-    if (!std::filesystem::is_regular_file(next / runtime, ec)) {
-      return error_reply(
-        Exit::FAILED, "atlc.failed",
-        "atlc " + request.atlc_version_ + " wrote no " + runtime + "; a run's driver needs atlc afb2490 or later",
-        "install a newer atlc"
-      );
-    }
+  // The runtime the generated strategy includes: an atlc that emits none fails here, not in the compiler.
+  if (!std::filesystem::is_regular_file(next / "atls" / "ops.hpp", ec)) {
+    return error_reply(
+      Exit::FAILED, "atlc.failed",
+      "atlc " + request.atlc_version_ + " wrote no atls/ops.hpp, the runtime the generated strategy includes",
+      "install a newer atlc"
+    );
   }
   // The inputs, each written only when its bytes changed.
   std::map<std::string, std::string> inputs;
@@ -610,19 +609,22 @@ inline std::optional<Reply> build_driver(
     }
     inputs[relative] = std::move(text);
   }
-  // A run's driver takes every carried file but the backtest's own; a backtest's driver takes only those, at the root.
+  // A run's driver takes every carried file but the backtest's own; a backtest's driver takes only those, at the root,
+  // and the replay module.
   const std::string backtest_prefix = "backtest/";
+  const std::string replay_prefix = "cmdatl/replay/";
   for (const auto& file : DRIVER_FILES) {
     std::string path = file.path_;
     const bool backtest_file = path.compare(0, backtest_prefix.size(), backtest_prefix) == 0;
-    if (backtest != backtest_file) {
+    const bool replay_file = path.compare(0, replay_prefix.size(), replay_prefix) == 0;
+    if (backtest ? !backtest_file && !replay_file : backtest_file) {
       continue;
     }
     std::string text;
     for (std::size_t k = 0; k < file.count_; ++k) {
       text.append(file.chunks_[k], file.sizes_[k]);
     }
-    inputs[backtest ? path.substr(backtest_prefix.size()) : path] = std::move(text);
+    inputs[backtest_file ? path.substr(backtest_prefix.size()) : path] = std::move(text);
   }
   inputs["program.hpp"] = std::string("#pragma once\n\n// Written by cmdatl ") +
     (backtest ? "strategy backtest" : "run start") +

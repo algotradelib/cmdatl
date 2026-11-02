@@ -1,5 +1,5 @@
 # The backtest driver of one program shape, built by `cmdatl strategy backtest` in its cache from the program's
-# `atlc build` output and the main cmdatl carries; never built from a checkout.
+# `atlc build` output, the main and the replay module cmdatl carries; never built from a checkout.
 cmake_minimum_required(VERSION 3.20)
 project(cmdatl_backtest LANGUAGES CXX)
 
@@ -33,7 +33,7 @@ endif()
 add_executable(driver main.cpp)
 target_include_directories(driver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(driver PRIVATE algotradelib::algotradelib)
-# Floating-point contraction off: Clang by the runtime's pragmas, GCC by a flag, as atlc compiles its replays.
+# Floating-point contraction off: Clang by the runtime's pragmas, GCC by a flag, as atlc compiles its strategies.
 target_compile_options(driver PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)
 
 # A store backtest: DuckDB's prebuilt C library, from CMDATL_DUCKDB_DIR alone when cmdatl names it (`build.duckdb`), else
@@ -59,5 +59,5 @@ if(CMDATL_STORE)
   get_filename_component(cmdatl_duckdb_dir "${CMDATL_DUCKDB_LIBRARY}" DIRECTORY)
   set_target_properties(driver PROPERTIES BUILD_RPATH "${cmdatl_duckdb_dir}")
   target_link_libraries(driver PRIVATE cmdatl_duckdb)
-  target_compile_definitions(driver PRIVATE ATLS_DUCKDB=1)
+  target_compile_definitions(driver PRIVATE CMDATL_DUCKDB=1)
 endif()
