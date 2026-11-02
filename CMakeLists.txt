@@ -184,7 +184,7 @@ if(CMDATL_BUILD_TESTS)
   add_executable(test-cli
     tests/test-cli.cpp tests/test-process.cpp tests/test-strategy.cpp tests/test-acceptance.cpp tests/test-operator.cpp
     tests/test-account.cpp tests/test-paper.cpp tests/test-orders.cpp tests/test-order-process.cpp
-    tests/test-run-start.cpp tests/test-run-control.cpp tests/test-guides.cpp
+    tests/test-run-start.cpp tests/test-run-control.cpp tests/test-guides.cpp tests/test-spec.cpp
   )
   target_link_libraries(test-cli PRIVATE cmdatl_core Catch2::Catch2WithMain)
   add_dependencies(test-cli cmdatl fake-atlc hold-lock)
