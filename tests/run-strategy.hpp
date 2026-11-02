@@ -1,7 +1,7 @@
 #pragma once
 
 // A hand-written program with the interface of an atlc-generated strategy, and a loader standing in for the replay
-// module's, for the run's in-process tests: the driver never needs atlc for them.
+// module's, for the run's in-process tests and the replay module's own: neither needs atlc.
 
 #include <cmdatl/driver/run.hpp>
 
@@ -34,6 +34,28 @@ struct Decision {
   bool market_{false};
 };
 
+/** @brief The counters of a generated strategy's `pricing_refusals()`, by reason. */
+struct Refusals {
+  /** @brief No price to base a limit on. */
+  std::size_t no_basis_price_{0};
+  /** @brief No price grid for the instrument. */
+  std::size_t no_price_grid_{0};
+  /** @brief A limit that does not fit a decimal. */
+  std::size_t price_not_representable_{0};
+  /** @brief A limit at or below zero. */
+  std::size_t price_not_positive_{0};
+  /** @brief A net order that does not fit a decimal. */
+  std::size_t net_not_representable_{0};
+
+  /**
+   * @brief Every refusal.
+   * @return The sum.
+   */
+  std::size_t total() const {
+    return no_basis_price_ + no_price_grid_ + price_not_representable_ + price_not_positive_ + net_not_representable_;
+  }
+};
+
 /** @brief What every test program does, set by a test before the run. */
 struct Script {
   /** @brief The bars before the first decision. */
@@ -44,6 +66,12 @@ struct Script {
   std::map<std::size_t, std::function<void()>> actions_;
   /** @brief The warm-up the program states, when not `warmup_` (a program that never decides). */
   std::optional<std::size_t> stated_warmup_;
+  /** @brief What `pricing_refusals()` reports. */
+  Refusals refusals_;
+  /** @brief Every `set` call, refused or not. */
+  std::vector<std::pair<std::string, double>> sets_;
+  /** @brief Every pricing set, as (type, offset). */
+  std::vector<std::pair<atl::OrderType, std::string>> pricing_;
 };
 
 /** @brief The script the programs read; each test sets it before it runs. */
@@ -175,6 +203,49 @@ struct Program {
     return script().stated_warmup_.value_or(script().warmup_);
   }
 
+  /**
+   * @brief Sets a parameter as a generated strategy does: stores it, then checks every bound with the values so far;
+   *   `entry` lies in [0, 100] and `exit` in [0, entry].
+   * @param name The parameter.
+   * @param value Its value.
+   */
+  void set(std::string_view name, double value) {
+    script().sets_.emplace_back(std::string(name), value);
+    if (name == "entry") {
+      entry_ = value;
+    } else if (name == "exit") {
+      exit_ = value;
+    } else {
+      throw std::invalid_argument("the program has no parameter '" + std::string(name) + "'");
+    }
+    if (entry_ < 0 || entry_ > 100) {
+      throw std::invalid_argument("entry is outside [0, 100]");
+    }
+    if (exit_ < 0 || exit_ > entry_) {
+      throw std::invalid_argument("exit is outside [0, entry]");
+    }
+  }
+
+  /**
+   * @brief Records the pricing; an offset without a limit is refused, as a generated strategy refuses it.
+   * @param type The order type.
+   * @param offset The offset.
+   */
+  void set_order_pricing(atl::OrderType type, const atl::Decimal64& offset) {
+    if (type == atl::OrderType::MARKET && !(offset == atl::Decimal64::parse("0"))) {
+      throw std::invalid_argument("an offset prices a limit");
+    }
+    script().pricing_.emplace_back(type, offset.str());
+  }
+
+  /**
+   * @brief The pricing refusals the script states.
+   * @return The counters.
+   */
+  const Refusals& pricing_refusals() const {
+    return script().refusals_;
+  }
+
   template <class Ctx>
   void on_bar(Ctx& ctx, const atl::strategy::BarEvent& event) {
     if (ids_.empty() || !(event.instrument_ == ids_.front())) {
@@ -210,6 +281,8 @@ struct Program {
 protected:
   std::vector<atl::InstrumentId> ids_;
   std::size_t seen_{0};
+  double entry_{50};
+  double exit_{10};
 };
 
 /** @brief The same program with session legs, which a run refuses. */

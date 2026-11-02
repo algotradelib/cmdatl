@@ -212,6 +212,9 @@ if(CMDATL_BUILD_TESTS)
     CMDATL_HOLD_LOCK="$<TARGET_FILE:hold-lock>"
   )
   add_test(NAME test-cli COMMAND test-cli "~[acceptance]")
+  # The acceptance cases compare replays with figures computed in the test: no floating-point contraction on GCC, as
+  # the drivers are built.
+  target_compile_options(test-cli PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)
   # The store backtest's acceptance case: DuckDB's C library, whose directory CMDATL_TEST_DUCKDB names (a cache
   # variable or the environment), writes its store; without it the case is skipped, and says so.
   if(NOT CMDATL_TEST_DUCKDB AND DEFINED ENV{CMDATL_TEST_DUCKDB})
@@ -220,7 +223,7 @@ if(CMDATL_BUILD_TESTS)
   if(CMDATL_TEST_DUCKDB)
     add_executable(make-store tests/make-store.cpp)
     target_compile_features(make-store PRIVATE cxx_std_17)
-    target_include_directories(make-store PRIVATE ${CMDATL_TEST_DUCKDB})
+    target_include_directories(make-store SYSTEM PRIVATE ${CMDATL_TEST_DUCKDB})
     find_library(CMDATL_TEST_DUCKDB_LIBRARY duckdb PATHS ${CMDATL_TEST_DUCKDB} NO_DEFAULT_PATH REQUIRED)
     target_link_libraries(make-store PRIVATE ${CMDATL_TEST_DUCKDB_LIBRARY})
     set_target_properties(make-store PROPERTIES BUILD_RPATH ${CMDATL_TEST_DUCKDB})
@@ -229,7 +232,23 @@ if(CMDATL_BUILD_TESTS)
       CMDATL_TEST_DUCKDB="${CMDATL_TEST_DUCKDB}"
       CMDATL_MAKE_STORE="$<TARGET_FILE:make-store>"
     )
+    # The replay module's store loader: its own executable, whose one translation unit defines CMDATL_DUCKDB, so no
+    # inline definition without the store is mixed with it.
+    add_executable(test-replay-store tests/test-replay-store.cpp)
+    target_link_libraries(test-replay-store PRIVATE algotradelib::algotradelib Catch2::Catch2WithMain ${CMDATL_TEST_DUCKDB_LIBRARY})
+    target_include_directories(test-replay-store PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(test-replay-store SYSTEM PRIVATE ${CMDATL_TEST_DUCKDB})
+    target_compile_definitions(test-replay-store PRIVATE CMDATL_DUCKDB=1)
+    target_compile_options(test-replay-store PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)
+    set_target_properties(test-replay-store PROPERTIES BUILD_RPATH ${CMDATL_TEST_DUCKDB})
+    add_test(NAME test-replay-store COMMAND test-replay-store)
   endif()
+  # The replay module with hand-written programs and files written by the test, as the drivers build it: no
+  # floating-point contraction on GCC.
+  add_executable(test-replay tests/test-replay.cpp)
+  target_link_libraries(test-replay PRIVATE cmdatl_core Catch2::Catch2WithMain)
+  target_compile_options(test-replay PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)
+  add_test(NAME test-replay COMMAND test-replay)
   # The fault tests: their own executable, whose one translation unit defines CMDATL_FAULT_HOOKS and gives the
   # system calls of the account's state files their stand-ins, so no inline definition is mixed with them.
   add_executable(test-faults tests/test-faults.cpp)
