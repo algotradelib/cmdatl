@@ -401,6 +401,24 @@ TEST_CASE("a program as the target: settings only, the spec null, paths against 
   CHECK(code_of(run({"strategy", "backtest", "../s.toml", "strategy.x=1"}).out_) == "spec.invalid");
 }
 
+TEST_CASE("the program's path atlc gives back matches the one passed once both are lexically normal") {
+  const Watchdog watchdog("program paths", 60);
+  const FakeAtlc fake("check args\ncheck out " + INFO_OK + "\ndriver out " + REPORT + "\n");
+  std::filesystem::create_directories("a/b");
+  for (const auto* target : {"./dip.atls", "a/./b/../../dip.atls", "a//b/../..//dip.atls"}) {
+    INFO(target);
+    const auto ran = run({"strategy", "backtest", target, "data.file=bars.csv"});
+    CHECK(ran.exit_ == 0);
+    CHECK(reply_of(ran.out_).at("program").as_string() == (fake.dir() / "dip.atls").string());
+  }
+  // A spec whose strategy is written with `.` components.
+  spit("dotted.toml", "strategy = './a/../dip.atls'\n[data]\nfile = 'bars.csv'\n");
+  CHECK(run({"strategy", "backtest", "dotted.toml"}).exit_ == 0);
+  for (const auto& passed : lines_of(slurp(fake.dir() / "script.check.args"))) {
+    CHECK((passed == "--info" || passed == (fake.dir() / "dip.atls").string()));
+  }
+}
+
 TEST_CASE("--fields and --value select from the final reply only and never from progress") {
   const Watchdog watchdog("the selections", 60);
   const auto script = "check out " + INFO_OK + "\ndriver err building\ndriver out " + REPORT + "\n";
