@@ -31,7 +31,7 @@ namespace {
 const std::function<void(const std::string&)> ignore_lines = [](const std::string&) {};
 
 /**
- * @brief The fake atlc as `atlc run`, run in process by `run_child`.
+ * @brief The fake atlc, run in process by `run_child`.
  * @param on_line The stderr callback.
  * @return How it ended.
  */
@@ -229,7 +229,7 @@ TEST_CASE("run_child tells a signal from an exit code and a missing program from
 
 TEST_CASE("a child that closes its pipes and exits soon after is reaped soon, not a poll step later") {
   const Watchdog watchdog("the reap after end of file", 30);
-  // atlc run's shape: its replay closes the pipes, and atlc exits a moment later.
+  // A replay's shape: it closes the pipes, and the child exits a moment later.
   std::vector<double> took;
   for (int i = 0; i < 5; ++i) {
     const auto started = std::chrono::steady_clock::now();

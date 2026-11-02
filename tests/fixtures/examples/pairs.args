@@ -1,0 +1,10 @@
+data.source=csv
+data.file=@EXAMPLES@/data/daily.csv
+data.symbol_column=symbol
+data.time=date
+data.time_format=iso
+instrument.y=BBB
+instrument.x=AAA
+replay.cash=100000
+replay.shorts=true
+param.lookback=40

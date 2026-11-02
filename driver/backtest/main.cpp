@@ -1,5 +1,5 @@
-// The backtest driver's entry: the program atlc generated, replayed by atlc's own runtime (`atls::run::main`), as
-// `atlc run` replays it. `program.hpp` is written for each build and names the program's struct.
+// The backtest driver's entry: the program atlc generated, replayed by atlc's replay runtime (`atls::run::main`).
+// `program.hpp` is written for each build and names the program's struct.
 
 #include "program.hpp"
 

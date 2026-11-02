@@ -1,0 +1,1 @@
+Each NAME.json is the stdout of `atlc run examples/NAME.toml` and NAME.args the args of `atlc spec examples/NAME.toml --json` (one per line, the examples directory written @EXAMPLES@), from atlc 3f9ce62 against algotradelib 7b16b00.

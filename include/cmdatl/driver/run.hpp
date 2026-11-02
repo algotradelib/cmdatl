@@ -2,8 +2,8 @@
 
 // A run: the driver `run start` builds for one program shape and runs detached.
 //
-// The run's market is the library's mock broker, built in this process from the run spec's data as `atlc run` reads
-// it, and gone when the process ends: each run is its own market, with its own journal and its own lock, and shares
+// The run's market is the library's mock broker, built in this process from the run's data as atlc's replay runtime
+// reads it, and gone when the process ends: each run is its own market, with its own journal and its own lock, and shares
 // nothing with the agent commands' paper account or with another run. The operator's file decides what may be placed.
 //
 // The driver checks the start refusals in order, builds the market, trades the program through the live wiring

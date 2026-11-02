@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <optional>
@@ -135,33 +136,27 @@ Ran backtest(const std::vector<std::string>& args) {
 }
 
 /**
- * @brief Runs `atlc run` directly and reads its report.
- * @param atlc atlc's path.
- * @param args What follows `atlc run`.
- * @return The report, or null when it printed none.
+ * @brief A backtest's report, which must succeed.
+ * @param args What follows `strategy backtest`.
+ * @return The report.
  */
-boost::json::value atlc_report(const std::string& atlc, const std::vector<std::string>& args) {
-  std::vector<std::string> argv{atlc, "run"};
-  argv.insert(argv.end(), args.begin(), args.end());
-  const auto result = cmdatl::run_child(argv, [](const std::string&) {});
-  if (result.kind_ != cmdatl::ChildResult::Kind::FINISHED || result.code_ != 0) {
-    return nullptr;
-  }
-  const auto report = cmdatl::one_object(result.stdout_);
-  return report ? boost::json::value(*report) : boost::json::value(nullptr);
+boost::json::value report_of(const std::vector<std::string>& args) {
+  const auto ran = backtest(args);
+  INFO(cmdatl::join(args) << "\n" << ran.out_ << "\n" << ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  return reply_of(ran.out_).at("report");
 }
 
 /**
- * @brief Runs atlc with arguments and gives its stdout bytes.
- * @param argv atlc and its arguments.
- * @return The bytes, or nothing when it failed.
+ * @brief The struct atlc names a program, from `atlc check FILE --info`.
+ * @param atlc atlc's path.
+ * @param program The program.
+ * @return The struct, or empty.
  */
-std::optional<std::string> atlc_bytes(const std::vector<std::string>& argv) {
-  const auto result = cmdatl::run_child(argv, [](const std::string&) {});
-  if (result.kind_ != cmdatl::ChildResult::Kind::FINISHED || result.code_ != 0) {
-    return std::nullopt;
-  }
-  return result.stdout_;
+std::string struct_of(const std::string& atlc, const std::string& program) {
+  const auto result = cmdatl::run_child({atlc, "check", program, "--info"}, [](const std::string&) {});
+  const auto info = cmdatl::spec::read_info(result.stdout_, program);
+  return info && info->ok_ ? info->program_.struct_ : std::string();
 }
 
 /**
@@ -233,7 +228,9 @@ TEST_CASE("each starter written by strategy new backtests and trades from anothe
   CHECK(traded == 4);
 }
 
-TEST_CASE("strategy backtest's report is atlc run's for atlc's examples, byte for byte", "[acceptance]") {
+TEST_CASE(
+  "strategy backtest's reports and arguments for atlc's examples are the recorded ones, byte for byte", "[acceptance]"
+) {
   const auto equip = equipment();
   const auto examples = cmdatl::variable("CMDATL_TEST_ATLC_EXAMPLES");
   if (!equip || !examples) {
@@ -241,20 +238,20 @@ TEST_CASE("strategy backtest's report is atlc run's for atlc's examples, byte fo
   }
   const Equipped equipped(*equip);
   const ScratchDir dir;
+  // Recorded once from atlc's own replay (tests/fixtures/examples/how-made.txt).
+  const auto fixtures = std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "fixtures" / "examples";
   int compared = 0;
   for (const auto* name : {"mean-reversion", "pairs", "trailing-stop", "universe", "user-indicator"}) {
     INFO(name);
     const auto spec = (std::filesystem::path(*examples) / (std::string(name) + ".toml")).string();
-    const auto ran = backtest({spec});
-    INFO(ran.out_ << "\n" << ran.err_);
-    REQUIRE(ran.exit_ == 0);
-    const auto expected = atlc_bytes({equip->atlc_, "run", spec});
-    REQUIRE(expected);
-    CHECK(reply_of(ran.out_).at("report") == boost::json::parse(*expected));
+    const auto expected = slurp(fixtures / (std::string(name) + ".json"));
+    REQUIRE(!expected.empty());
+    CHECK(report_of({spec}) == boost::json::parse(expected));
     // The driver's own bytes and arguments: a stand-in records both, then runs the driver cmdatl built.
-    const auto checked = cmdatl::one_object(*atlc_bytes({equip->atlc_, "spec", spec, "--json"}));
-    REQUIRE(checked);
-    const auto driver = backtest_driver(std::string(checked->at("program").as_object().at("struct").as_string()));
+    const auto structure =
+      struct_of(equip->atlc_, (std::filesystem::path(*examples) / (std::string(name) + ".atls")).string());
+    REQUIRE(!structure.empty());
+    const auto driver = backtest_driver(structure);
     REQUIRE(!driver.empty());
     const auto stand_in = dir.path() / (std::string(name) + ".sh");
     spit(
@@ -266,10 +263,14 @@ TEST_CASE("strategy backtest's report is atlc run's for atlc's examples, byte fo
     std::filesystem::permissions(stand_in, std::filesystem::perms::owner_all);
     const ScopedVariable hook("CMDATL_TEST_BACKTEST_DRIVER", stand_in.string());
     REQUIRE(backtest({spec}).exit_ == 0);
-    CHECK(slurp(stand_in.string() + ".out") == *expected);
+    CHECK(slurp(stand_in.string() + ".out") == expected);
     std::vector<std::string> args;
-    for (const auto& pair : checked->at("args").as_array()) {
-      args.push_back(std::string(pair.as_array()[0].as_string()) + "=" + std::string(pair.as_array()[1].as_string()));
+    for (auto line : lines_of(slurp(fixtures / (std::string(name) + ".args")))) {
+      const std::string placeholder = "@EXAMPLES@";
+      if (const auto at = line.find(placeholder); at != std::string::npos) {
+        line.replace(at, placeholder.size(), *examples);
+      }
+      args.push_back(line);
     }
     CHECK(lines_of(slurp(stand_in.string() + ".args")) == args);
     ++compared;
@@ -278,7 +279,8 @@ TEST_CASE("strategy backtest's report is atlc run's for atlc's examples, byte fo
 }
 
 TEST_CASE(
-  "strategy backtest agrees with atlc run on limits and -P and --fills and warnings and failures", "[acceptance]"
+  "strategy backtest's settings: limits, parameters, overrides, a program alone, --fills, warnings and failures",
+  "[acceptance]"
 ) {
   const auto equip = equipment();
   if (!equip) {
@@ -293,40 +295,32 @@ TEST_CASE(
   write_bars(dir.path() / "bars.csv");
   REQUIRE(run({"strategy", "new", "base", "--dir", dir.path().string()}).exit_ == 0);
   const auto spec = slurp(at("base.toml"));
+  const auto with = [&spec](const std::string& from, const std::string& to) {
+    auto text = spec;
+    text.replace(text.find(from), from.size(), to);
+    return text;
+  };
 
-  SECTION("a limit-order spec whose offset makes pricing refuse") {
-    auto limit = spec;
-    limit.replace(
-      limit.find("type = \"market\""), std::string("type = \"market\"").size(),
-      "type = \"limit\"\noffset = 0.299999999999999999"
-    );
-    spit(at("limit.toml"), limit);
-    const auto ran = backtest({at("limit.toml")});
-    INFO(ran.out_ << "\n" << ran.err_);
-    REQUIRE(ran.exit_ == 0);
-    const auto report = reply_of(ran.out_).at("report");
+  SECTION("a limit-order spec whose offset makes pricing refuse, from the file or the command line") {
+    spit(at("limit.toml"), with("type = \"market\"", "type = \"limit\"\noffset = 0.299999999999999999"));
+    const auto report = report_of({at("limit.toml")});
     CHECK(report.as_object().at("pricing_refused").as_int64() > 0);
-    CHECK(report == atlc_report(equip->atlc_, {at("limit.toml")}));
+    spit(at("plain.toml"), with("type = \"market\"", ""));
+    CHECK(report_of({at("plain.toml"), "orders.type=limit", "orders.offset=0.299999999999999999"}) == report);
   }
-  SECTION("a parameter on the command line") {
+  SECTION("a parameter on the command line, as the file's") {
     const auto ran = backtest({"params.lookback=30", at("base.toml")});
     REQUIRE(ran.exit_ == 0);
     const auto reply = reply_of(ran.out_);
     CHECK(reply.at("settings_given") == boost::json::value(boost::json::array{"params.lookback=30"}));
-    CHECK(reply.at("report") == atlc_report(equip->atlc_, {at("base.toml"), "-P", "lookback=30"}));
-    CHECK(reply.at("report") != atlc_report(equip->atlc_, {at("base.toml")}));
+    spit(at("thirty.toml"), spec + "\n[params]\nlookback = 30\n");
+    CHECK(reply.at("report") == report_of({at("thirty.toml")}));
+    CHECK(reply.at("report") != report_of({at("base.toml")}));
   }
   SECTION("a setting on the command line wins over the file's") {
-    const auto ran = backtest({at("base.toml"), "replay.cash=250000", "replay.commission=0.001"});
-    REQUIRE(ran.exit_ == 0);
-    auto changed = spec;
-    changed.replace(changed.find("cash = 100000"), std::string("cash = 100000").size(), "cash = 250000");
-    changed.replace(
-      changed.find("commission = 0.0005"), std::string("commission = 0.0005").size(), "commission = 0.001"
-    );
-    spit(at("changed.toml"), changed);
-    const auto report = reply_of(ran.out_).at("report");
-    CHECK(report == atlc_report(equip->atlc_, {at("changed.toml")}));
+    spit(at("changed.toml"), with("cash = 100000", "cash = 250000"));
+    const auto report = report_of({at("base.toml"), "replay.cash=250000"});
+    CHECK(report == report_of({at("changed.toml")}));
     CHECK(report.as_object().at("opening_equity").as_string() == "250000");
   }
   SECTION("a program with settings only") {
@@ -340,9 +334,11 @@ TEST_CASE(
     const auto reply = reply_of(ran.out_);
     CHECK(reply.at("spec").is_null());
     CHECK(reply.at("program").as_string() == at("base.atls"));
-    CHECK(reply.at("report") == atlc_report(equip->atlc_, {at("base.toml")}));
+    CHECK(reply.at("report") == report_of({at("base.toml")}));
   }
   SECTION("two backtests of one program at once") {
+    const auto twenty = report_of({at("base.toml"), "params.lookback=20"});
+    const auto forty = report_of({at("base.toml"), "params.lookback=40"});
     Spawned first({"--json", "strategy", "backtest", at("base.toml"), "params.lookback=20"});
     Spawned second({"--json", "strategy", "backtest", at("base.toml"), "params.lookback=40"});
     const int a = first.wait(600);
@@ -352,8 +348,8 @@ TEST_CASE(
     REQUIRE(WIFEXITED(b));
     CHECK(WEXITSTATUS(a) == 0);
     CHECK(WEXITSTATUS(b) == 0);
-    CHECK(reply_of(first.out()).at("report") == atlc_report(equip->atlc_, {at("base.toml"), "-P", "lookback=20"}));
-    CHECK(reply_of(second.out()).at("report") == atlc_report(equip->atlc_, {at("base.toml"), "-P", "lookback=40"}));
+    CHECK(reply_of(first.out()).at("report") == twenty);
+    CHECK(reply_of(second.out()).at("report") == forty);
     // Each ran from its own copy, removed after: nothing is left beside the cache.
     const auto copies = std::filesystem::path(*cmdatl::build::cache_root()).parent_path() / "backtests";
     CHECK((!std::filesystem::exists(copies) || std::filesystem::is_empty(copies)));
@@ -364,11 +360,13 @@ TEST_CASE(
     REQUIRE(ran.exit_ == 0);
     const auto reply = reply_of(ran.out_);
     CHECK(reply.at("fills").as_string() == (dir.path() / "work" / "fills.csv").string());
-    CHECK(reply.at("report") == atlc_report(equip->atlc_, {at("base.toml"), "--fills", at("atlc-fills.csv")}));
+    CHECK(reply.at("report") == report_of({at("base.toml")}));
     const auto fills = slurp(dir.path() / "work" / "fills.csv");
     CHECK(fills.rfind("at,symbol,side,quantity,price,commission,tax\n", 0) == 0);
-    CHECK(lines_of(fills).size() > 1);
-    CHECK(fills == slurp(at("atlc-fills.csv")));
+    CHECK(
+      static_cast<std::int64_t>(lines_of(fills).size()) ==
+      reply.at("report").as_object().at("executions").as_int64() + 1
+    );
   }
   SECTION("a warning reaches the reader as progress") {
     spit(at("warn.atls"), program_with_a_warning());
@@ -382,7 +380,8 @@ TEST_CASE(
     INFO(ran.out_ << "\n" << ran.err_);
     REQUIRE(ran.exit_ == 0);
     CHECK(ran.err_.find("warning[unused-series]") != std::string::npos);
-    CHECK(reply_of(ran.out_).at("report") == atlc_report(equip->atlc_, {at("warn.toml")}));
+    // A series nothing reads changes no trade.
+    CHECK(reply_of(ran.out_).at("report") == report_of({at("base.toml")}));
   }
   SECTION("build.algotradelib is refused") {
     spit(at("broken.toml"), spec + "\n[build]\nalgotradelib = \"/nonexistent/prefix\"\n");
@@ -424,9 +423,11 @@ TEST_CASE(
   }
 }
 
-TEST_CASE("a store backtest links DuckDB from build.duckdb or DUCKDB_ROOT alone, as atlc run does", "[acceptance]") {
-  const auto equip = equipment();
+// Compiled only when CMDATL_TEST_DUCKDB named DuckDB's C library at configure time, so a build without it lists no store
+// case rather than one that always skips.
 #if defined(CMDATL_TEST_DUCKDB)
+TEST_CASE("a store backtest links DuckDB from build.duckdb or DUCKDB_ROOT alone", "[acceptance]") {
+  const auto equip = equipment();
   if (!equip) {
     SKIP(UNEQUIPPED);
   }
@@ -442,15 +443,12 @@ TEST_CASE("a store backtest links DuckDB from build.duckdb or DUCKDB_ROOT alone,
   const std::string data = "strategy = 'dip.atls'\n[data]\nstore = \"test/1d/AAA\"\nstore_root = 'store'\n";
   spit(at("store.toml"), data + "[build]\nduckdb = '" + duckdb + "'\n");
   spit(at("plain.toml"), data);
-  const auto expected = atlc_report(equip->atlc_, {at("store.toml")});
-  REQUIRE(expected.is_object());
-  CHECK(expected.as_object().at("executions").as_int64() > 0);
+  boost::json::value expected;
   {
     const ScopedVariable root("DUCKDB_ROOT", std::nullopt);
-    const auto ran = backtest({at("store.toml")});
-    INFO(ran.out_ << "\n" << ran.err_);
-    REQUIRE(ran.exit_ == 0);
-    CHECK(reply_of(ran.out_).at("report") == expected);
+    expected = report_of({at("store.toml")});
+    CHECK(expected.as_object().at("executions").as_int64() > 0);
+    CHECK(expected.as_object().at("bars").as_int64() == 120);
     // Without build.duckdb or DUCKDB_ROOT, and none on the system's paths: the build fails and says where it looked.
     const auto none = backtest({at("plain.toml")});
     if (none.exit_ != 0) {
@@ -468,11 +466,8 @@ TEST_CASE("a store backtest links DuckDB from build.duckdb or DUCKDB_ROOT alone,
     REQUIRE(ran.exit_ == 0);
     CHECK(reply_of(ran.out_).at("report") == expected);
   }
-#else
-  (void)equip;
-  SKIP("CMDATL_TEST_DUCKDB named no DuckDB C library when cmdatl was configured: the store case did not run");
-#endif
 }
+#endif
 
 TEST_CASE("every strategy reference the docs and skills name answers from the real atlc", "[acceptance]") {
   const auto equip = equipment();

@@ -1,0 +1,7 @@
+data.source=csv
+data.file=@EXAMPLES@/data/daily.csv
+data.symbol_column=symbol
+data.time=date
+data.time_format=iso
+replay.cash=1000000
+replay.fill=legs
