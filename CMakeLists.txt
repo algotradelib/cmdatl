@@ -105,12 +105,15 @@ file(WRITE ${CMDATL_GENERATED}/guides.hpp.new
   "};\n\n"
   "/** @brief The guides. */\n"
   "inline constexpr GuideFile GUIDES[] = {\n${cmdatl_guides}};\n\n"
+  "/** @brief The run settings' reference, docs/run-spec.md, whole. */\n"
+  "inline constexpr const char* RUN_SPEC_REFERENCE = R\"md(${cmdatl_run_spec})md\";\n\n"
   "}  // namespace cmdatl\n"
 )
 configure_file(${CMDATL_GENERATED}/guides.hpp.new ${CMDATL_GENERATED}/cmdatl/guides.hpp COPYONLY)
 
-# The run driver's sources, carried inside cmdatl so `run start` builds a driver from the same sources as the running
-# cmdatl: every header of the modules the driver may include, its main.cpp and CMakeLists.txt, and toml++ with its licence.
+# The drivers' sources, carried inside cmdatl so `run start` and `strategy backtest` build from the same sources as the
+# running cmdatl: every header of the modules the run driver may include, its main.cpp and CMakeLists.txt, toml++ with its
+# licence, and the backtest driver's main.cpp and CMakeLists.txt.
 add_executable(cmdatl_embed tools/embed.cpp)
 target_compile_features(cmdatl_embed PRIVATE cxx_std_17)
 set(CMDATL_DRIVER_MODULES driver orders account paper system core)
@@ -124,7 +127,8 @@ foreach(module IN LISTS CMDATL_DRIVER_MODULES)
     list(APPEND cmdatl_driver_sources ${CMAKE_CURRENT_SOURCE_DIR}/include/${header})
   endforeach()
 endforeach()
-foreach(file main.cpp CMakeLists.txt)
+# The backtest driver's own two files go under backtest/; `strategy backtest` builds from those and atlc's output alone.
+foreach(file main.cpp CMakeLists.txt backtest/main.cpp backtest/CMakeLists.txt)
   list(APPEND cmdatl_driver_pairs "${file}=${CMAKE_CURRENT_SOURCE_DIR}/driver/${file}")
   list(APPEND cmdatl_driver_sources ${CMAKE_CURRENT_SOURCE_DIR}/driver/${file})
 endforeach()

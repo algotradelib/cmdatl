@@ -1,12 +1,14 @@
 #pragma once
 
-// Building a run's driver: one executable per program shape, in a cache directory, from the sources cmdatl carries
-// (`cmdatl/driver_files.hpp`) and the program's `atlc build` output, as CmdStan compiles stanc's header.
+// Building a driver: one executable per program shape and kind (a run's driver, or a backtest's), in a cache directory,
+// from the sources cmdatl carries (`cmdatl/driver_files.hpp`) and the program's `atlc build` output, as CmdStan compiles
+// stanc's header.
 //
 // The shape's directory is named by what CMake fixes at configure time and does not track afterwards (the program's
-// path, its indicators setting, the environment CMake reads, and the algotradelib package cmdatl was built against);
-// everything else is CMake's own dependency tracking. Its lock is held from `atlc build` until the executable has been
-// copied into the run's directory, so a run always executes the build it asked for.
+// path, its indicators setting, the environment CMake reads, the algotradelib package cmdatl was built against, and for
+// a backtest its kind); everything else is CMake's own dependency tracking. Its lock is held from `atlc build` until the
+// executable has been copied out (into the run's directory, or a backtest's scratch directory), so a driver always
+// executes the build it asked for, and a backtest's replay never holds the lock.
 
 #include "../account/account.hpp"
 #include "../core/reply.hpp"
@@ -98,17 +100,20 @@ inline std::uint64_t fnv1a(const std::string& text) {
 
 /**
  * @brief A shape's directory name: the program's struct and 16 hex digits of the key, a length-prefixed encoding of the
- *   program's path, its indicators setting, each key variable (set or not) and the algotradelib package directory.
+ *   program's path, its indicators setting, each key variable (set or not), the algotradelib package directory, and
+ *   any further fields (a backtest's kind and DuckDB's location; none for a run's driver).
  * @param program The program's absolute path.
  * @param structure The program's struct.
  * @param indicators The indicators setting.
  * @param lookup Reads an environment variable.
  * @param package The algotradelib package directory the driver is built against.
+ * @param extra The further fields.
  * @return The name.
  */
 inline std::string shape_name(
   const std::string& program, const std::string& structure, const std::string& indicators,
-  const std::function<std::optional<std::string>(const std::string&)>& lookup, const std::string& package
+  const std::function<std::optional<std::string>(const std::string&)>& lookup, const std::string& package,
+  const std::vector<std::string>& extra = {}
 ) {
   std::string encoded;
   const auto put = [&encoded](const std::string& field) {
@@ -122,6 +127,9 @@ inline std::string shape_name(
     put(value ? "=" + *value : "-");
   }
   put(package);
+  for (const auto& field : extra) {
+    put(field);
+  }
   char hex[17];
   std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(fnv1a(encoded)));
   return structure + "-" + hex;
@@ -132,13 +140,17 @@ inline std::string shape_name(
  *   (`CMAKE_PREFIX_PATH` and every other `*_ROOT` or `*_DIR` variable), so a package's dependencies are never found
  *   through a variable that does not name the shape.
  * @param entries The environment, `NAME=VALUE`.
+ * @param kept Further variables the shape's key holds, kept too.
  * @return The child's environment.
  */
-inline std::vector<std::string> child_environment(const std::vector<std::string>& entries) {
+inline std::vector<std::string> child_environment(
+  const std::vector<std::string>& entries, const std::vector<std::string>& kept = {}
+) {
   std::vector<std::string> out;
   for (const auto& entry : entries) {
     const auto name = entry.substr(0, entry.find('='));
-    const bool keyed = std::find(KEY_VARIABLES.begin(), KEY_VARIABLES.end(), name) != KEY_VARIABLES.end();
+    const bool keyed = std::find(KEY_VARIABLES.begin(), KEY_VARIABLES.end(), name) != KEY_VARIABLES.end() ||
+      std::find(kept.begin(), kept.end(), name) != kept.end();
     const auto ends = [&name](const std::string& suffix) {
       return name.size() >= suffix.size() && name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0;
     };
@@ -336,10 +348,10 @@ private:
 };
 
 /**
- * @brief Copies the built driver into the run's directory: `driver.tmp` created exclusively (mode 0700), every byte
- *   written, the count compared with the source's size, synced, then renamed to `driver`.
+ * @brief Copies the built driver into a directory: `driver.tmp` created exclusively (mode 0700), every byte written,
+ *   the count compared with the source's size, synced, then renamed to `driver`.
  * @param source The built executable.
- * @param run_dir The run's directory.
+ * @param run_dir The directory: the run's, or a backtest's scratch directory.
  * @return 0, or the error number (`EIO` for a short copy); a failed copy leaves no `driver.tmp`.
  */
 inline int copy_driver(const std::filesystem::path& source, const std::filesystem::path& run_dir) {
@@ -393,6 +405,14 @@ inline int copy_driver(const std::filesystem::path& source, const std::filesyste
 }
 #endif
 
+/** @brief Which driver a build makes. */
+enum class DriverKind {
+  /** @brief A run's driver: cmdatl's own `driver/main.cpp`, on the mock market. */
+  RUN,
+  /** @brief A backtest's driver: `atls::run::main` on atlc's replay. */
+  BACKTEST,
+};
+
 /** @brief What a driver build needs. */
 struct Request {
   /** @brief atlc's path. */
@@ -407,6 +427,8 @@ struct Request {
   std::string indicators_;
   /** @brief The algotradelib package directory the driver is built against: the one cmdatl was built against. */
   std::string package_{CMDATL_ALGOTRADELIB_DIR};
+  /** @brief Which driver. */
+  DriverKind kind_{DriverKind::RUN};
 };
 
 /**
@@ -459,9 +481,9 @@ inline std::string tail_of(const ChildResult& result) {
 }
 
 /**
- * @brief Builds the run's driver and copies it into the run's directory, under the shape's lock.
- * @param request The program and atlc.
- * @param run_dir The run's directory, which exists.
+ * @brief Builds a driver and copies it into a directory, under the shape's lock.
+ * @param request The program, atlc and the driver's kind.
+ * @param run_dir The directory, which exists: the run's, or a backtest's scratch directory.
  * @param progress Where progress lines go (and the children's stderr lines).
  * @return A failure reply, or nothing when `run_dir/driver` exists.
  */
@@ -494,12 +516,17 @@ inline std::optional<Reply> build_driver(
       "reinstall that algotradelib, or rebuild cmdatl against the one installed"
     );
   }
+  const bool backtest = request.kind_ == DriverKind::BACKTEST;
+  std::vector<std::string> extra;
+  if (backtest) {
+    extra.push_back("backtest");
+  }
   const auto name = shape_name(
     request.program_, request.struct_, request.indicators_,
     [](const std::string& key) {
       return variable(key.c_str());
     },
-    package
+    package, extra
   );
   const std::filesystem::path shape = std::filesystem::path(*root) / name;
   if (make_private_dirs(shape) != 0) {
@@ -522,7 +549,10 @@ inline std::optional<Reply> build_driver(
   if (make_private_dirs(next) != 0) {
     return error_reply(Exit::FAILED, "cache.unavailable", "the build cache " + next.string() + " cannot be made");
   }
-  progress("cmdatl: building the run's driver for " + request.struct_ + " in " + shape.string());
+  progress(
+    std::string("cmdatl: building the ") + (backtest ? "backtest's" : "run's") + " driver for " + request.struct_ +
+    " in " + shape.string()
+  );
   const auto generated = run_child(
     {request.atlc_, "build", request.program_, "-o", (next / "strategy.hpp").string(), "--indicators",
       request.indicators_, "--emit-runtime", next.string()},
@@ -561,16 +591,23 @@ inline std::optional<Reply> build_driver(
     }
     inputs[relative] = std::move(text);
   }
+  // A run's driver takes every carried file but the backtest's own; a backtest's driver takes only those, at the root.
+  const std::string backtest_prefix = "backtest/";
   for (const auto& file : DRIVER_FILES) {
+    std::string path = file.path_;
+    const bool backtest_file = path.compare(0, backtest_prefix.size(), backtest_prefix) == 0;
+    if (backtest != backtest_file) {
+      continue;
+    }
     std::string text;
     for (std::size_t k = 0; k < file.count_; ++k) {
       text.append(file.chunks_[k], file.sizes_[k]);
     }
-    inputs[file.path_] = std::move(text);
+    inputs[backtest ? path.substr(backtest_prefix.size()) : path] = std::move(text);
   }
-  inputs["program.hpp"] =
-    "#pragma once\n\n// Written by cmdatl run start.\n\n#include \"strategy.hpp\"\n\nusing Program = atls::" +
-    request.struct_ + ";\n";
+  inputs["program.hpp"] = std::string("#pragma once\n\n// Written by cmdatl ") +
+    (backtest ? "strategy backtest" : "run start") +
+    ".\n\n#include \"strategy.hpp\"\n\nusing Program = atls::" + request.struct_ + ";\n";
   for (const auto& [relative, text] : inputs) {
     if (write_if_changed(src / relative, text) == Written::FAILED) {
       return error_reply(
@@ -586,7 +623,9 @@ inline std::optional<Reply> build_driver(
   const auto cmake = find_on_path("cmake");
   if (!cmake) {
     return error_reply(
-      Exit::FAILED, "build.failed", "cmake was not found on PATH; a run needs CMake and a C++17 compiler"
+      Exit::FAILED, "build.failed",
+      std::string("cmake was not found on PATH; ") + (backtest ? "a backtest" : "a run") +
+        " needs CMake and a C++17 compiler"
     );
   }
   const auto build_dir = shape / "build";
@@ -636,13 +675,14 @@ inline std::optional<Reply> build_driver(
     return error_reply(
       Exit::FAILED, "build.failed",
       "the driver was configured against " + used.value_or(std::string("no algotradelib")) + ", not " + package,
-      "run cmdatl run start again; the driver's build cache was cleared"
+      std::string("run cmdatl ") + (backtest ? "strategy backtest" : "run start") +
+        " again; the driver's build cache was cleared"
     );
   }
   if (const int error = copy_driver(build_dir / "driver", run_dir)) {
     return error_reply(
       Exit::FAILED, "build.failed",
-      "the driver could not be copied into the run's directory: " + std::string(std::strerror(error))
+      "the driver could not be copied out of the build cache: " + std::string(std::strerror(error))
     );
   }
   return std::nullopt;
