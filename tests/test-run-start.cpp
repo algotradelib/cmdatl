@@ -172,10 +172,14 @@ TEST_CASE("the driver's sources are carried inside cmdatl, and only the modules 
   CHECK(paths.count("main.cpp") == 1);
   CHECK(paths.count("CMakeLists.txt") == 1);
   CHECK(paths.count("cmdatl/driver/run.hpp") == 1);
+  // The replay module, which both drivers include; nothing of atlc's own runtime is carried.
+  CHECK(paths.count("cmdatl/replay/replay.hpp") == 1);
+  CHECK(paths.count("cmdatl/replay/settings.hpp") == 1);
   CHECK(paths.count("third_party/toml++/toml.hpp") == 1);
   for (const auto& path : paths) {
     CHECK(path.find("cmdatl/cli/") == std::string::npos);
     CHECK(path.find("cmdatl/strategy/") == std::string::npos);
+    CHECK(path.find("atls/") == std::string::npos);
   }
   // A file's bytes come back whole.
   for (const auto& file : cmdatl::DRIVER_FILES) {
@@ -769,6 +773,9 @@ TEST_CASE("run start --wait trades as strategy backtest does on the same spec, f
       CHECK(deps.find("cmdatl/cli/") == std::string::npos);
       CHECK(deps.find("cmdatl/strategy/") == std::string::npos);
       CHECK(deps.find("cmdatl/driver/run.hpp") != std::string::npos);
+      CHECK(deps.find("cmdatl/replay/replay.hpp") != std::string::npos);
+      CHECK(deps.find("atls/run.hpp") == std::string::npos);
+      CHECK(deps.find("atls/args.hpp") == std::string::npos);
     }
   }
   CHECK(read >= 1);
