@@ -2,7 +2,8 @@
   "name": "cmdatl",
   "description": "Skills for trading and running strategies with cmdatl, algotradelib from the command line: the agent guide and the strategy guide.",
   "author": {
-    "name": "algotradelib"
+    "name": "algotradelib",
+    "url": "https://github.com/algotradelib"
   },
   "repository": "https://github.com/algotradelib/cmdatl",
   "license": "MIT"

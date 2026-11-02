@@ -2,7 +2,8 @@
   "name": "cmdatl",
   "description": "cmdatl's skills for Claude Code: trading with cmdatl and writing strategies for it.",
   "owner": {
-    "name": "algotradelib"
+    "name": "algotradelib",
+    "url": "https://github.com/algotradelib"
   },
   "plugins": [
     {
