@@ -1,0 +1,19 @@
+# cmdatl strategy backtest typical-price.toml
+# mean-reversion.toml with market orders filled at the fill bar's typical price, by the rule in typical-price.hpp.
+strategy = "mean-reversion.atls"
+
+[data]
+source = "csv"
+file = "data/daily.csv"
+symbol_column = "symbol"
+time = "date"
+time_format = "iso"
+
+[instruments]
+stock = "AAA"
+
+[replay]
+cash = 100000
+commission = 0.0005
+fill_header = "typical-price.hpp"
+fill_function = "typical_price"
