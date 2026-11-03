@@ -48,9 +48,8 @@ cmdatl::driver::Loaded load(const std::vector<std::string>& args) {
     );
   }
   const auto market = replay::market_of(s);
-  const auto fill = s.get_or("replay.fill", "next-open");
   const bool wide = data.series_.empty() && !data.close_.names_.empty();
-  const auto feed = wide ? replay::events(data, market, fill) : replay::bar_events(data, market, fill);
+  const auto feed = wide ? replay::events(data, market, false) : replay::bar_events(data, market, false);
   const auto config = replay::replay_config(s, data);
   cmdatl::driver::Loaded loaded;
   loaded.symbols_ = data.symbols_;

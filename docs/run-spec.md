@@ -9,7 +9,7 @@ cmdatl run TARGET [KEY=VALUE]...
 A run spec given with a program applies to that program, so one spec can serve several programs.
 A run spec given alone names its program with `strategy`.
 Settings come from the run spec and from `KEY=VALUE` words on the command line, and the command line wins.
-Both are checked by the same rules, against the program's facts (its parameters, instruments and session legs).
+Both are checked by the same rules, against the program's facts (its parameters, instruments and whether it has `on_open` or `on_close`).
 
 A word is a setting when the text before its first `=` is a dotted key: bare parts (letters, digits, `_`, `-`) joined by dots, such as `replay.cash`, `params.lookback` or `instruments.y`.
 Of the other words, one ending in `.atls` is the program and any other the run spec.
@@ -76,10 +76,10 @@ A key given twice on the command line is an error.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `data.file`, `data.close` | path | one is required | the closes (give one of the two) |
-| `data.open`, `data.high`, `data.low` | path | none | the other fields, with the closes' dates and columns; `replay.fill = "legs"` needs all three |
+| `data.open`, `data.high`, `data.low` | path | none | the other fields, with the closes' dates and columns; `data.open_point` needs all three |
 | `data.names` | path | the tables' headers | a file whose second line names the columns (Chan's `*_stocks.csv`) |
 
-A row is a bar with open, high and low equal to its close, unless the fill is `legs`.
+A row is a bar with open, high and low equal to its close, unless `data.open_point` reads the other tables.
 
 `source = "csv"`: OHLCV rows, split on commas without quoting.
 
@@ -136,16 +136,14 @@ A spec names data only: credentials never appear in it.
 | `replay.min_commission` | number, 0 or more | 0 | the least commission of a fill |
 | `replay.sell_tax` | number, 0 or more | 0 | the tax, a rate of each sell's value |
 | `replay.slippage_ticks` | whole number, 0 to 1e9 | 0 | slippage, in ticks |
-| `replay.fill` | `"next-open"` or `"legs"` | `"next-open"` | how bars are fed (below) |
-| `replay.fill_header` | path | none | a C++ header declaring a market-price rule (below); with `replay.fill_function` |
-| `replay.fill_function` | a C++ name, such as `decision_close` or `rules::decision_close` | none | the rule the header declares; with `replay.fill_header` |
+| `replay.fill_header` | path, in the spec file only | none | a C++ header declaring a market-price rule (below); with `replay.fill_function` |
+| `replay.fill_function` | a C++ name, such as `decision_close` or `rules::decision_close`, in the spec file only | none | the rule the header declares; with `replay.fill_header` |
 | `replay.shorts` | boolean | `false` | whether a position may go below zero; no borrow is modelled |
 | `replay.periods_per_year` | number above 0 | 252 | bars a year, for the annualized Sharpe ratio |
 
-| `fill` | Data | Program | An order fills |
-| --- | --- | --- | --- |
-| `next-open` | any source | `on_bar` | at the next bar's open, or at the market-price rule's price |
-| `legs` | daily bars: wide tables with opens, highs and lows, or a CSV or store | a universe with `on_open`, `on_close` or both | at the open for a target stated in `on_open`, at the close for one in `on_close` |
+A market order fills against the bar after its decision, at that bar's open, unless the run names a market-price rule.
+A limit order fills when that bar reaches its limit, whichever is set.
+`replay.fill` was removed: a spec naming it is refused, with a pointer to the rule and to `data.open_point`.
 
 A market-price rule chooses the price of a market order, in place of the next bar's open.
 It is a C++ function in a header of your own, compiled into the driver with the program:
@@ -155,7 +153,7 @@ It is a C++ function in a header of your own, compiled into the driver with the 
 #pragma once
 #include <algotradelib/backtest>
 inline std::optional<algotradelib::Decimal64> decision_close(const algotradelib::backtest::MarketPriceInput& in) {
-  return in.previous_ ? std::optional<algotradelib::Decimal64>(in.previous_->close_) : in.next_.bar_.open_;
+  return in.decision_price_ ? in.decision_price_ : in.next_.bar_.open_;
 }
 ```
 
@@ -165,13 +163,31 @@ fill_header = "decision-close.hpp"
 fill_function = "decision_close"
 ```
 
-The function gets the order (`order_`), the instrument's bar before the fill bar, the one the program saw (`previous_`, null for the first bar), the bar the order fills against (`next_`) and the price grid (`rule_`), and returns a price, or nothing to leave a day order for a later bar of its session.
-It is the library's `NextBarFillModel::with_market_price`; slippage, commission and tax apply to its price, limit orders are untouched, and nothing checks the price against the bar.
+The function gets the order (`order_`), the price it was decided on (`decision_price_`: the close of the bar, or the quote, the program decided on; empty when it had none), when it was decided (`decided_at_`), the bar the order fills against (`next_`) and the price grid (`rule_`), and returns a price, or nothing to leave a day order for a later bar of its session.
+It is the library's `NextBarFillModel::with_market_price`; slippage, commission and tax apply to its price, limit orders are untouched, nothing checks the price against the bar, and a price that is not positive stops the replay.
 The report's `caveats` name the rule (`market_price_rule`) and count its fills (`market_fills_by_rule`).
 A rule needs market orders: with `orders.type = "limit"` it is refused.
-A run (`cmdatl run`) prices its mock market's market orders by the same rule.
+Both keys come from the spec file: given on the command line they are refused, since the header is C++ that cmdatl compiles and runs.
+A function of the wrong signature fails the build with one line naming the expected one.
 
-A run (`cmdatl run`) takes neither a program with `on_open` or `on_close` nor `replay.fill = "legs"`.
+`on_open` and `on_close` run on the bars that open and close each session, whatever the interval, by the market's session (`kr`: 09:00-15:30 KST; `us`: 09:30-16:00 at UTC-5, daylight saving not modelled):
+
+| Data | `on_open` runs on | `on_close` runs on |
+| --- | --- | --- |
+| intraday bars (`1m` to `1h`) | the session's first bar, at its end; the program reads only its open | the bar whose period holds the close (on KRX minute data, the 15:30 closing print) |
+| daily bars with `data.open_point = true` | a point at the session's open: the day's open alone, stamped at the open | the day's bar, stamped at the close |
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `data.open_point` | boolean | `false` | each daily bar replayed as a point at the session's open and the day's bar at its close; only for a program with `on_open` or `on_close`, and only on daily bars (wide tables need `data.open`, `data.high` and `data.low`) |
+
+A program with `on_open` or `on_close` needs `replay.market`, and on daily bars `data.open_point = true`: a daily bar is a whole session, and `on_open`'s targets would be replaced by `on_close`'s on the same bar.
+On US intraday bars it is refused until the session follows daylight saving.
+A replay in which such a program met no session's open or close fails, naming the market and the interval; the report gives `sessions_opened` and `sessions_closed`, and `caveats.open_points` when `data.open_point` is set.
+With the decision-close rule, a target stated in `on_open` fills at the open it saw and one in `on_close` at the close it saw; without a rule, at the next bar's open.
+A fill is dated at the bar it fills against: an `on_close` exit at the next session's first bar, so the last session's exit does not fill.
+
+A run (`cmdatl run`) takes neither a program with `on_open` or `on_close`, nor a market-price rule, nor `data.open_point`.
 
 ### `[params]`
 
@@ -219,7 +235,7 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `bars` | integer | bar events replayed (each instrument's bar counts once; a day read as legs counts three) |
+| `bars` | integer | bar events replayed (each instrument's bar counts once; a day split at its open counts two) |
 | `executions` | integer | fills |
 | `opening_equity`, `closing_equity` | decimal string | equity at the first and last recorded point |
 | `total_return` | number or null | over the replay, as a fraction |
@@ -235,7 +251,7 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 | `rejection_reasons` | object | each rejection and refusal reason, with its count (refusals as `guard:REASON`) |
 | `pricing_refused` | integer | targets limit pricing did not submit ("Limit orders"); 0 with market orders |
 | `pricing_refusal_reasons` | object | each pricing refusal reason with its count, when nonzero: `no_basis_price`, `no_price_grid`, `price_not_representable`, `price_not_positive`, `net_not_representable` |
-| `caveats` | object | `gaps` (bars that did not follow their predecessor), `unfilled` (orders still queued at the end), `expired` (`DAY` orders withdrawn unfilled when their session ended, as they would expire live; on daily bars, after one bar), `unvalued_bars`, `multiple_instruments`, `cost_totals_incomplete`, `volume_ignored` (always true: fills are not capped by volume), `lowest_cash` (the lowest cash a fill left, as a decimal string, when below zero) and `shorts_borrow_nothing` (always true) |
+| `caveats` | object | `gaps` (bars that did not follow their predecessor), `unfilled` (orders still queued at the end), `expired` (`DAY` orders withdrawn unfilled when their session ended, as they would expire live; on daily bars, after one bar), `unvalued_bars`, `multiple_instruments`, `cost_totals_incomplete`, `volume_ignored` (always true: fills are not capped by volume), `market_price_rule` and `market_fills_by_rule` (the rule named by `replay.fill_function` and the fills it priced, only when one is set), `open_points` (true with `data.open_point`), `lowest_cash` (the lowest cash a fill left, as a decimal string, when below zero) and `shorts_borrow_nothing` (always true) |
 | `first_bar`, `last_bar` | string | the first and last recorded times, ISO 8601 in UTC; absent when nothing was replayed |
 
 A number is printed with ten significant digits; a figure the library leaves undefined (a return on zero equity, a ratio without variance) is null.

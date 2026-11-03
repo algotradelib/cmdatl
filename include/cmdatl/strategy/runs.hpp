@@ -181,6 +181,17 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     for (const auto& [key, value] : resolved.args_) {
       args.push_back(key + "=" + value);
     }
+    // A market-price rule prices a replay's fills; a run's fills are the market's, so a rule would only mislead.
+    if (!resolved.fill_header_.empty()) {
+      auto reply = error_reply(
+        Exit::USAGE, "spec.invalid",
+        "a market-price rule prices a backtest's fills; a run's fills are the market's: remove [replay] fill_header "
+        "and fill_function",
+        "fix the run spec"
+      );
+      reply.body_["key"] = std::string("replay.fill_header");
+      return reply;
+    }
     // The early refusals, with nothing built; the driver checks each again, and its checks are what count.
     if (const auto refusal = spec_refusal(args)) {
       auto reply = error_reply(Exit::USAGE, "spec.invalid", refusal->second, "fix the run spec");

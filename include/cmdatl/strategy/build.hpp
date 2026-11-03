@@ -453,12 +453,17 @@ inline std::string program_header(const Request& request) {
   if (rule) {
     out += "#include \"" + request.fill_header_ + "\"\n";
   }
-  out += "\n#include <algotradelib/backtest>\n\nusing Program = atls::" + request.struct_ + ";\n\n";
+  out += "\n#include <algotradelib/backtest>\n\n#include <optional>\n#include <type_traits>\n\nusing Program = atls::" + request.struct_ + ";\n\n";
   out += "// The fill model, with the run's market-price rule when it has one.\n";
   out +=
     "inline algotradelib::backtest::NextBarFillModel program_fills(algotradelib::backtest::NextBarFillModel model) "
     "{\n";
   if (rule) {
+    // One line naming the expected signature, instead of the compiler's candidate notes.
+    out += "  static_assert(\n    std::is_invocable_r_v<std::optional<algotradelib::Decimal64>, decltype((" + request.fill_function_ +
+      ")), const algotradelib::backtest::MarketPriceInput&>,\n    \"replay.fill_function: " + request.fill_function_ +
+      " must be callable as std::optional<algotradelib::Decimal64>(const algotradelib::backtest::MarketPriceInput&)\"\n"
+      "  );\n";
     out += "  return model.with_market_price(\"" + request.fill_function_ + "\", " + request.fill_function_ + ");\n";
   } else {
     out += "  return model;\n";
@@ -572,8 +577,13 @@ inline std::optional<Reply> build_driver(
   }
   // The market-price rule changes `program.hpp`, which make may not see when it is rewritten in the second the last build
   // ended (make 3.81 compares whole seconds): each rule is its own shape.
+  // The header's bytes too: an edited rule is another shape, so an old build can never run in its place.
   if (!request.fill_header_.empty()) {
-    extra.push_back("fill=" + request.fill_header_ + ";" + request.fill_function_);
+    std::string bytes;
+    read_file(request.fill_header_, bytes);
+    char digest[17];
+    std::snprintf(digest, sizeof(digest), "%016llx", static_cast<unsigned long long>(fnv1a(bytes)));
+    extra.push_back("fill=" + request.fill_header_ + ";" + request.fill_function_ + ";" + digest);
   }
   const auto name = shape_name(
     request.program_, request.struct_, request.indicators_,

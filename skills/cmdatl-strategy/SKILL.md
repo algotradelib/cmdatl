@@ -67,7 +67,9 @@ offset = 0.01 # a buy's limit 1 % above the price, a sell's 1 % below, inside th
 
 - A run also needs bars from a file and the operator's armed file; each missing condition is refused before anything is built, with what to do in `error.next`.
   The armed file is the operator's: never create, remove or edit it or the operator's file; on `refused.not_armed`, ask.
-- A run refuses a program with session legs (`on_open`, `on_close`) before the build (exit 5, `program.live_unsupported`): backtest such a program instead.
+- A run refuses a program with `on_open` or `on_close` before the build (exit 5, `program.live_unsupported`): backtest such a program instead.
+- `on_open` and `on_close` follow the market's session on any bars: state `market` under `[replay]`, and `open_point = true` under `[data]` on daily bars; a backtest in which no bar opened or closed a session fails.
+- A market-price rule (`fill_header` and `fill_function` under `[replay]`) is C++ cmdatl compiles and runs: only in the spec file, never on the command line.
 - After the build, a run refuses a program with `on_fill` or a warm-up above 10,000 bars (exit 5, `program.live_unsupported`), and bars that are not daily (`unsupported.interval`).
 - Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.
 - `cmdatl run NAME.toml` runs in the foreground and prints its events, then its reply (`executions`, `commission_paid`, `closing_equity`, `holdings_at_end`, `refused`) as the last line.

@@ -442,7 +442,7 @@ TEST_CASE("a run withdraws an order resting at its end and confirms it before ex
   CHECK(journal.find("\"outcome\":\"confirmed\"") != std::string::npos);
 }
 
-TEST_CASE("a run refuses before trading: arguments, session legs, on_fill, the market, the armed file") {
+TEST_CASE("a run refuses before trading: arguments, session handlers, on_fill, the market, the armed file") {
   const PaperFixture fixture(run_parts());
   fixture.arm();
   set_script({{2, {10, "1"}}});
@@ -451,9 +451,9 @@ TEST_CASE("a run refuses before trading: arguments, session legs, on_fill, the m
   const auto bad = run_child<runtest::Program>(fixture, args);
   CHECK(bad.exit_ == 2);
   CHECK(code_of(bad) == "usage.bad_value");
-  const auto legs = run_child<runtest::LegsProgram>(fixture, spec_args());
-  CHECK(legs.exit_ == 5);
-  CHECK(code_of(legs) == "program.live_unsupported");
+  const auto session = run_child<runtest::SessionProgram>(fixture, spec_args());
+  CHECK(session.exit_ == 5);
+  CHECK(code_of(session) == "program.live_unsupported");
   const auto fill = run_child<runtest::FillProgram>(fixture, spec_args());
   CHECK(fill.exit_ == 5);
   CHECK(code_of(fill) == "program.live_unsupported");
@@ -487,7 +487,7 @@ TEST_CASE("a run refuses each start condition in order, before anything is sent"
   CHECK(spec_code(with("replay.market=us")) == std::make_pair(2, std::string("spec.invalid")));
   CHECK(spec_code(with("data.store=kis/krx")) == std::make_pair(2, std::string("spec.invalid")));
   CHECK(spec_code(with("replay.shorts=true")) == std::make_pair(2, std::string("spec.invalid")));
-  CHECK(spec_code(with("replay.fill=legs")) == std::make_pair(2, std::string("spec.invalid")));
+  CHECK(spec_code(with("data.open_point=true")) == std::make_pair(2, std::string("spec.invalid")));
   CHECK(spec_code(with("param.bad=1")) == std::make_pair(5, std::string("program.invalid")));
   CHECK(spec_code(with("instrument.y=035720")) == std::make_pair(3, std::string("refused.symbol_not_allowed")));
   CHECK(

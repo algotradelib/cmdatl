@@ -137,7 +137,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"unknown.broker_refused", Exit::UNKNOWN, false,
       "the market refused it and nothing rests: cmdatl order reconcile SYMBOL shows nothing owed; do not place again in the same phase, report it"},
     {"program.live_unsupported", Exit::PROGRAM, false,
-      "a run takes programs without on_fill or session legs, warming up on at most 10,000 bars; cmdatl strategy backtest replays the rest"},
+      "a run takes programs without on_fill, on_open or on_close, warming up on at most 10,000 bars; cmdatl strategy backtest replays the rest"},
     {"spec.no_instruments", Exit::USAGE, false,
       "name the symbols in the run spec's [instruments], as the data names them"},
     {"refused.order_type", Exit::REFUSED, false,

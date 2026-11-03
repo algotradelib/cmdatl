@@ -36,13 +36,14 @@
  * the settings before it passes them; the checks here repeat what a reader needs. Nothing here includes the rest of
  * cmdatl, so a project's own `main` can include it beside `atlc build`'s header.
  *
- * Fills (`replay.fill`):
- * - `next-open`: bars as they are; a market order fills at the next bar's open, or at the price of the run's
- *   market-price rule (`replay.fill_header` and `replay.fill_function`, compiled into the driver); a wide table's
- *   row is a bar with open = high = low = close, so on closes alone the open is the next close.
- * - `legs` (daily bars): each day as three one-minute bars stamped 0, 1 and 2 minutes after midnight, the open
- *   alone, the day's bar and the close alone: a target stated at the open fills at the open, one stated at the
- *   close at the close.
+ * Fills: a market order fills against the bar after its decision, at that bar's open, or at the price of the run's
+ * market-price rule (`replay.fill_header` and `replay.fill_function`, compiled into the driver); a wide table's row is
+ * a bar with open = high = low = close, so on closes alone the open is the next close.
+ *
+ * Sessions: the replay's session window is the market's (`kr` 09:00-15:30 KST, `us` 09:30-16:00 at UTC-5).
+ * `data.open_point` replays each daily bar as two bars, a point at the session's open (its open alone) and the day's
+ * bar stamped at the close, so a program's `on_open` runs at the open and its `on_close` at the close; intraday bars
+ * are replayed as they are, and the session's first and last bars run those handlers.
  *
  * Sources (`data.source`):
  * - `wide`: tables of one field each, a yyyymmdd date column then one column per symbol.
@@ -945,42 +946,86 @@ inline std::vector<BarSeries> load_store_source(const Settings& s) {
 }
 
 /**
- * @brief The bar events of OHLCV series: each bar as it is, or each daily bar as three legs.
+ * @brief The session window of a market preset: phases, `DAY` orders and a program's `on_open`/`on_close` follow it.
+ * @param market `kr` or `us`.
+ * @return KRX's regular session, or the US regular session at a fixed UTC-5 (daylight saving is not modelled).
+ */
+inline atl::strategy::SessionWindow session_of(const std::string& market) {
+  if (market == "kr") {
+    return atl::strategy::SessionWindow::krx();
+  }
+  atl::strategy::SessionWindow us;
+  us.open_ = std::chrono::hours(9) + std::chrono::minutes(30);
+  us.close_ = std::chrono::hours(16);
+  us.utc_offset_ = std::chrono::hours(-5);
+  us.source_ = "US regular session, 09:30-16:00 at UTC-5 (cmdatl's us preset; daylight saving is not modelled)";
+  return us;
+}
+
+/**
+ * @brief Noon, market time, of the date a daily bar states: its stamp is that date's midnight in some time zone, so
+ *   twelve hours later it is still that date in UTC.
+ * @param stamp The daily bar's timestamp.
+ * @param session The market's session window.
+ * @return An instant on that date in the market's time zone.
+ */
+inline std::chrono::system_clock::time_point market_noon(
+  std::chrono::system_clock::time_point stamp, const atl::strategy::SessionWindow& session
+) {
+  using Days = std::chrono::duration<std::int64_t, std::ratio<86400>>;
+  const auto date = std::chrono::floor<Days>(stamp + std::chrono::hours(12));
+  return std::chrono::time_point_cast<std::chrono::system_clock::duration>(date) + std::chrono::hours(12) -
+    session.utc_offset_;
+}
+
+/**
+ * @brief A daily bar as two bars (`data.open_point`): a point at the session's open, its open alone, and the day's
+ *   bar stamped at the session's close; both daily and close-stamped, so the first is an empty period.
+ * @param id The instrument.
+ * @param bar The daily bar.
+ * @param session The market's session window.
+ * @param out Where the two bars go.
+ */
+inline void split_day(
+  const atl::InstrumentId& id, const atl::Bar& bar, const atl::strategy::SessionWindow& session,
+  std::vector<atl::strategy::BarEvent>& out
+) {
+  const auto noon = market_noon(bar.timestamp_, session);
+  const auto open = bar.open_ ? *bar.open_ : bar.close_;
+  atl::Bar point;
+  point.timestamp_ = session.opens_at(noon);
+  point.open_ = open;
+  point.high_ = open;
+  point.low_ = open;
+  point.close_ = open;
+  point.volume_ = atl::Decimal64::parse("0");
+  out.push_back(atl::strategy::make_bar_event(id, atl::BarInterval::ONE_DAY, atl::BarStamp::CLOSE, point));
+  atl::Bar day = bar;
+  day.timestamp_ = session.closes_at(noon);
+  out.push_back(atl::strategy::make_bar_event(id, atl::BarInterval::ONE_DAY, atl::BarStamp::CLOSE, day));
+}
+
+/**
+ * @brief The bar events of OHLCV series: each bar as it is, or each daily bar split at the open.
  * @param data The series.
  * @param market The market preset.
- * @param fill `next-open` or `legs`.
+ * @param open_point Whether each daily bar is replayed as a point at the open and the day's bar (`data.open_point`).
  * @return The events, in time order (then series order).
  */
-inline std::vector<atl::strategy::BarEvent> bar_events(
-  const Data& data, const std::string& market, const std::string& fill
-) {
+inline std::vector<atl::strategy::BarEvent> bar_events(const Data& data, const std::string& market, bool open_point) {
   struct Tagged {
     std::chrono::system_clock::time_point at_;
     std::size_t series_;
     std::size_t bar_;
-    int part_;
   };
-  if (fill != "next-open" && fill != "legs") {
-    throw std::invalid_argument("an OHLCV source fills next-open or legs, not '" + fill + "'");
-  }
   std::vector<Tagged> order;
   for (std::size_t k = 0; k < data.series_.size(); ++k) {
     const auto& series = data.series_[k];
-    if (fill == "legs" && series.interval_ != atl::BarInterval::ONE_DAY) {
-      throw std::invalid_argument("replay.fill = legs needs daily bars");
+    if (open_point && series.interval_ != atl::BarInterval::ONE_DAY) {
+      throw std::invalid_argument("data.open_point splits daily bars; intraday bars are replayed as they are");
     }
     for (std::size_t i = 0; i < series.bars_.size(); ++i) {
-      if (fill == "legs") {
-        const auto hours =
-          std::chrono::duration_cast<std::chrono::hours>(series.bars_[i].timestamp_.time_since_epoch()).count();
-        const auto midnight =
-          std::chrono::system_clock::time_point{} + std::chrono::hours(hours - ((hours % 24) + 24) % 24);
-        for (int part = 0; part < 3; ++part) {
-          order.push_back({midnight + std::chrono::minutes(part), k, i, part});
-        }
-      } else {
-        order.push_back({series.bars_[i].timestamp_, k, i, -1});
-      }
+      order.push_back({series.bars_[i].timestamp_, k, i});
     }
   }
   std::stable_sort(order.begin(), order.end(), [](const Tagged& a, const Tagged& b) {
@@ -991,31 +1036,37 @@ inline std::vector<atl::strategy::BarEvent> bar_events(
     ids.push_back(instrument_of(series.symbol_, market).id_);
   }
   std::vector<atl::strategy::BarEvent> out;
-  out.reserve(order.size());
-  for (const auto& t : order) {
-    const auto& series = data.series_[t.series_];
-    atl::Bar bar = series.bars_[t.bar_];
-    if (t.part_ < 0) {
-      out.push_back(atl::strategy::make_bar_event(ids[t.series_], series.interval_, series.stamp_, bar));
-      continue;
+  out.reserve(order.size() * (open_point ? 2 : 1));
+  if (!open_point) {
+    for (const auto& t : order) {
+      const auto& series = data.series_[t.series_];
+      out.push_back(
+        atl::strategy::make_bar_event(ids[t.series_], series.interval_, series.stamp_, series.bars_[t.bar_])
+      );
     }
-    const auto open = bar.open_ ? *bar.open_ : bar.close_;
-    const auto close = bar.close_;
-    bar.timestamp_ = t.at_;
-    if (t.part_ == 0) {
-      bar.open_ = open;
-      bar.high_ = open;
-      bar.low_ = open;
-      bar.close_ = open;
-    } else if (t.part_ == 2) {
-      bar.open_ = close;
-      bar.high_ = close;
-      bar.low_ = close;
-      bar.close_ = close;
+    return out;
+  }
+  // Every instrument's open point of a date before any of its day bars.
+  const auto session = session_of(market);
+  for (std::size_t a = 0; a < order.size();) {
+    std::size_t b = a;
+    const auto date = market_noon(data.series_[order[a].series_].bars_[order[a].bar_].timestamp_, session);
+    while (
+      b < order.size() && market_noon(data.series_[order[b].series_].bars_[order[b].bar_].timestamp_, session) == date
+    ) {
+      ++b;
     }
-    out.push_back(
-      atl::strategy::make_bar_event(ids[t.series_], atl::BarInterval::ONE_MINUTE, atl::BarStamp::OPEN, bar)
-    );
+    std::vector<atl::strategy::BarEvent> two;
+    for (std::size_t i = a; i < b; ++i) {
+      split_day(ids[order[i].series_], data.series_[order[i].series_].bars_[order[i].bar_], session, two);
+    }
+    for (std::size_t i = 0; i < two.size(); i += 2) {
+      out.push_back(two[i]);
+    }
+    for (std::size_t i = 1; i < two.size(); i += 2) {
+      out.push_back(two[i]);
+    }
+    a = b;
   }
   return out;
 }
@@ -1098,15 +1149,13 @@ inline Data load(const Settings& s, const std::vector<std::string>& symbols) {
 }
 
 /**
- * @brief The bar events of wide tables.
+ * @brief The bar events of wide tables: a row a day, or each row split at the open.
  * @param data The tables.
  * @param market The market preset.
- * @param fill `next-open` or `legs`.
+ * @param open_point Whether each day is replayed as a point at the open and the day's bar (`data.open_point`).
  * @return The events, in time order (then symbol order).
  */
-inline std::vector<atl::strategy::BarEvent> events(
-  const Data& data, const std::string& market, const std::string& fill
-) {
+inline std::vector<atl::strategy::BarEvent> events(const Data& data, const std::string& market, bool open_point) {
   std::vector<atl::strategy::BarEvent> out;
   const auto& close = data.close_;
   std::vector<atl::InstrumentId> ids;
@@ -1116,37 +1165,38 @@ inline std::vector<atl::strategy::BarEvent> events(
   const auto where = [&close](std::size_t day) {
     return close.path_ + " " + std::to_string(close.dates_[day]);
   };
-  if (fill == "legs") {
+  if (open_point) {
     if (!data.open_ || !data.high_ || !data.low_) {
-      throw std::invalid_argument("replay.fill = legs needs data.open, data.high, data.low and data.close");
+      throw std::invalid_argument("data.open_point on wide tables needs data.open, data.high, data.low and data.close");
     }
+    const auto session = session_of(market);
     const auto volume = atl::Decimal64::parse("1000000000");
     for (std::size_t day = 0; day < close.dates_.size(); ++day) {
-      for (int part = 0; part < 3; ++part) {
-        for (std::size_t at = 0; at < ids.size(); ++at) {
-          const auto c = data.columns_[at];
-          const auto& op = data.open_->cells_[c][day];
-          const auto& cl = close.cells_[c][day];
-          if (op.empty() || cl.empty()) {
-            continue;
-          }
-          const auto& hi = data.high_->cells_[c][day];
-          const auto& lo = data.low_->cells_[c][day];
-          atl::Bar bar;
-          bar.timestamp_ = day_of(close.dates_[day]) + std::chrono::minutes(part);
-          bar.open_ = decimal_of(part == 2 ? cl : op, where(day));
-          bar.high_ = decimal_of(part == 0 ? op : (part == 2 ? cl : hi), where(day));
-          bar.low_ = decimal_of(part == 0 ? op : (part == 2 ? cl : lo), where(day));
-          bar.close_ = decimal_of(part == 0 ? op : cl, where(day));
-          bar.volume_ = volume;
-          out.push_back(atl::strategy::make_bar_event(ids[at], atl::BarInterval::ONE_MINUTE, atl::BarStamp::OPEN, bar));
+      std::vector<atl::strategy::BarEvent> two;
+      for (std::size_t at = 0; at < ids.size(); ++at) {
+        const auto c = data.columns_[at];
+        const auto& op = data.open_->cells_[c][day];
+        const auto& cl = close.cells_[c][day];
+        if (op.empty() || cl.empty()) {
+          continue;
         }
+        atl::Bar bar;
+        bar.timestamp_ = day_of(close.dates_[day]);
+        bar.open_ = decimal_of(op, where(day));
+        bar.high_ = decimal_of(data.high_->cells_[c][day], where(day));
+        bar.low_ = decimal_of(data.low_->cells_[c][day], where(day));
+        bar.close_ = decimal_of(cl, where(day));
+        bar.volume_ = volume;
+        split_day(ids[at], bar, session, two);
+      }
+      for (std::size_t i = 0; i < two.size(); i += 2) {
+        out.push_back(two[i]);
+      }
+      for (std::size_t i = 1; i < two.size(); i += 2) {
+        out.push_back(two[i]);
       }
     }
     return out;
-  }
-  if (fill != "next-open") {
-    throw std::invalid_argument("replay.fill is next-open or legs, not '" + fill + "'");
   }
   const auto volume = atl::Decimal64::parse("100000");
   for (std::size_t day = 0; day < close.dates_.size(); ++day) {
@@ -1182,6 +1232,7 @@ inline atl::backtest::ReplayConfig replay_config(const Settings& s, const Data& 
   for (const auto& symbol : data.symbols_) {
     replay.instruments_.push_back(instrument_of(symbol, market));
   }
+  replay.session_ = session_of(market);
   replay.series_capacity_ = 512;
   replay.limits_.permitted_phases_ = std::nullopt;
   if (s.get_or("replay.shorts", "false") == "true") {
@@ -1191,7 +1242,8 @@ inline atl::backtest::ReplayConfig replay_config(const Settings& s, const Data& 
 }
 
 /**
- * @brief Commission, slippage and sell tax; zero costs are the library's `none()` models.
+ * @brief Commission, slippage and sell tax; zero costs are the library's `none()` models (a market-price rule is the
+ *   driver's, `program_fills`).
  * @param s The settings.
  * @return The fill model.
  */
@@ -1289,6 +1341,20 @@ inline void write_fills(const atl::backtest::ReplayResult& result, const std::st
   }
 }
 
+/** @brief What a program with `on_open` or `on_close` met, for the report. */
+struct SessionFacts {
+  /** @brief Whether the program has session handlers (nothing below is reported otherwise). */
+  bool session_{false};
+  /** @brief Sessions a bar opened. */
+  std::size_t opened_{0};
+  /** @brief Sessions a bar closed. */
+  std::size_t closed_{0};
+  /** @brief Bars wholly outside their session (pre-market or after-hours). */
+  std::size_t outside_{0};
+  /** @brief Whether each daily bar was replayed as an open point and the day (`data.open_point`). */
+  bool open_points_{false};
+};
+
 /**
  * @brief The library's report, and what the replay's result and the strategy add, as one JSON object.
  * @tparam Refusals The strategy's pricing refusals (`pricing_refusals()`'s type): the counters `no_basis_price_`,
@@ -1296,11 +1362,13 @@ inline void write_fills(const atl::backtest::ReplayResult& result, const std::st
  * @param result The replay's result.
  * @param r The report.
  * @param pricing The targets limit pricing did not submit.
+ * @param session What a session program met; empty for any other.
  * @return The JSON text, one field per line.
  */
 template <typename Refusals>
 std::string report_json(
-  const atl::backtest::ReplayResult& result, const atl::backtest::Report& r, const Refusals& pricing
+  const atl::backtest::ReplayResult& result, const atl::backtest::Report& r, const Refusals& pricing,
+  const SessionFacts& session = {}
 ) {
   std::ostringstream o;
   auto opt = [](const auto& value) {
@@ -1368,6 +1436,13 @@ std::string report_json(
     o << ", \"market_price_rule\": " << quoted(c.market_price_rule_)
       << ", \"market_fills_by_rule\": " << c.market_fills_by_rule_;
   }
+  if (session.session_) {
+    o << ", \"sessions_opened\": " << session.opened_ << ", \"sessions_closed\": " << session.closed_
+      << ", \"bars_outside_session\": " << session.outside_;
+  }
+  if (session.open_points_) {
+    o << ", \"open_points\": true";
+  }
   o << "}";
   if (!result.equity_.empty()) {
     o << ",\n  \"first_bar\": " << quoted(iso(result.equity_.front().at_));
@@ -1381,7 +1456,7 @@ std::string report_json(
  * @brief Runs a compiled strategy from `key=value` settings: loads the data, sets the parameters
  *   (`param.NAME=VALUE`) and then the order pricing (`orders.type`, `orders.offset`), replays, prints the report as
  *   JSON on standard output and writes the fills to `output.fills` when given.
- * @tparam Strategy A strategy generated by `atlc`; of its interface the replay uses `atls_mode`, `atls_legs`,
+ * @tparam Strategy A strategy generated by `atlc`; of its interface the replay uses `atls_mode`, `atls_session`,
  *   `atls_instruments()`, the constructor from the instruments, `set`, `set_order_pricing` and `pricing_refusals()`.
  * @tparam Fills A callable taking the settings' fill model and returning the one the replay uses.
  * @param argc The argument count.
@@ -1396,13 +1471,9 @@ int main(int argc, char** argv, Fills fills_of) {
     const std::string mode = Strategy::atls_mode;
     const auto market = market_of(s);
     const auto symbols = symbols_of<Strategy>(s);
-    const auto fill = s.get_or("replay.fill", "next-open");
-    if (Strategy::atls_legs != (fill == "legs")) {
-      throw std::invalid_argument(
-        Strategy::atls_legs ?
-          "the program has on_open/on_close: set replay.fill = \"legs\"" :
-          "replay.fill = \"legs\" needs a program with on_open/on_close"
-      );
+    const bool open_point = s.get_or("data.open_point", "false") == "true";
+    if (open_point && !Strategy::atls_session) {
+      throw std::invalid_argument("data.open_point is for a program with on_open/on_close");
     }
     const auto data = load(s, symbols);
     if (mode == "single" && data.symbols_.size() != 1) {
@@ -1412,7 +1483,16 @@ int main(int argc, char** argv, Fills fills_of) {
       );
     }
     const bool wide = data.series_.empty() && !data.close_.names_.empty();
-    const auto feed = wide ? events(data, market, fill) : bar_events(data, market, fill);
+    const bool daily = wide || std::all_of(data.series_.begin(), data.series_.end(), [](const BarSeries& x) {
+      return x.interval_ == atl::BarInterval::ONE_DAY;
+    });
+    if (Strategy::atls_session && daily && !open_point) {
+      throw std::invalid_argument(
+        "the program has on_open/on_close and a daily bar is a whole session: set data.open_point = true, or give "
+        "intraday bars"
+      );
+    }
+    const auto feed = wide ? events(data, market, open_point) : bar_events(data, market, open_point);
     const auto config = replay_config(s, data);
     const auto fills = fills_of(fill_model(s));
     std::vector<atl::InstrumentId> ids;
@@ -1437,7 +1517,25 @@ int main(int argc, char** argv, Fills fills_of) {
     if (const auto path = s.get("output.fills")) {
       write_fills(result, *path);
     }
-    std::cout << report_json(result, report, engine.strategy().pricing_refusals());
+    SessionFacts session;
+    session.open_points_ = open_point;
+    if constexpr (Strategy::atls_session) {
+      session.session_ = true;
+      session.opened_ = engine.strategy().session_opens();
+      session.closed_ = engine.strategy().session_closes();
+      session.outside_ = engine.strategy().session_outside_bars();
+      // A session program that never met the edge its handlers run on traded on nothing it was written for.
+      const bool no_open = Strategy::atls_on_open && session.opened_ == 0;
+      const bool no_close = Strategy::atls_on_close && session.closed_ == 0;
+      if (!engine.result().halted_ && (no_open || no_close)) {
+        throw std::invalid_argument(
+          std::string("the program's ") + (no_open ? "on_open" : "on_close") + " never ran: no bar " +
+          (no_open ? "opened" : "closed") + " a session of the market `" + market +
+          "` (check replay.market and the bars' interval and times)"
+        );
+      }
+    }
+    std::cout << report_json(result, report, engine.strategy().pricing_refusals(), session);
     std::cout.flush();
     return std::cout ? 0 : 1;
   } catch (const std::exception& e) {

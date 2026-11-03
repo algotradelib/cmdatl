@@ -1,12 +1,12 @@
 {
-  "bars": 3723,
+  "bars": 2482,
   "executions": 520,
   "opening_equity": "1000000",
   "closing_equity": "1010023",
   "total_return": 0.010023,
-  "sharpe_per_period": 0.09999740618,
-  "sharpe_annualized": 1.587409611,
-  "sortino_per_period": 0.1801282082,
+  "sharpe_per_period": 0.1227795199,
+  "sharpe_annualized": 1.949064455,
+  "sortino_per_period": 0.2206847713,
   "max_drawdown": 0.0009963738363,
   "turnover": 7.243819,
   "commission_paid": "0",
@@ -19,7 +19,7 @@
   "rejection_reasons": {},
   "pricing_refused": 0,
   "pricing_refusal_reasons": {},
-  "caveats": {"gaps": 249, "unfilled": 0, "expired": 0, "unvalued_bars": 0, "multiple_instruments": true, "cost_totals_incomplete": false, "volume_ignored": true, "lowest_cash": null, "shorts_borrow_nothing": true},
-  "first_bar": "2024-01-02T00:01:00Z",
-  "last_bar": "2024-12-16T00:03:00Z"
+  "caveats": {"gaps": 0, "unfilled": 0, "expired": 0, "unvalued_bars": 0, "multiple_instruments": true, "cost_totals_incomplete": false, "volume_ignored": true, "market_price_rule": true, "lowest_cash": null, "shorts_borrow_nothing": true},
+  "first_bar": "2024-01-02T14:30:00Z",
+  "last_bar": "2024-12-16T21:00:00Z"
 }

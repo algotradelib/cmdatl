@@ -3,5 +3,6 @@ data.file=@EXAMPLES@/data/daily.csv
 data.symbol_column=symbol
 data.time=date
 data.time_format=iso
+data.open_point=true
 replay.cash=1000000
-replay.fill=legs
+replay.fill=close

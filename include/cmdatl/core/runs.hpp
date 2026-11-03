@@ -39,17 +39,19 @@ inline std::optional<std::string> atlc_value(const std::vector<std::string>& arg
   return found;
 }
 
-/** @brief Why a run refuses a program with session legs: one wording for `run` and the driver. */
-inline constexpr const char* LEGS_UNSUPPORTED =
-  "the program has on_open/on_close (session legs), which no live source delivers";
+/** @brief Why a run refuses a program with session handlers: one wording for `run` and the driver. */
+inline constexpr const char* SESSION_UNSUPPORTED =
+  "the program has on_open/on_close, and a run feeds daily bars as they close, so no bar opens a session before it "
+  "closes";
 
-/** @brief What to do with a program with session legs. */
-inline constexpr const char* LEGS_UNSUPPORTED_NEXT =
-  "run it with cmdatl strategy backtest; a run takes programs without session legs";
+/** @brief What to do with a program with session handlers. */
+inline constexpr const char* SESSION_UNSUPPORTED_NEXT =
+  "run it with cmdatl strategy backtest (intraday bars, or data.open_point on daily ones); a run takes programs "
+  "without on_open/on_close";
 
 /**
  * @brief Why a run spec's market settings are refused before anything is loaded, or nothing: the market `kr`, no store,
- *   no short sales, no session legs.
+ *   no short sales, no fill at a decided close, no open points.
  * @param args atlc's arguments.
  * @return The key at fault and why, or nothing.
  */
@@ -69,9 +71,10 @@ inline std::optional<std::pair<std::string, std::string>> spec_refusal(const std
       std::string("replay.shorts"), std::string("a run keeps the sellable check on: remove [replay] shorts")
     );
   }
-  if (atlc_value(args, "replay.fill").value_or("next-open") == "legs") {
+  if (atlc_value(args, "data.open_point").value_or("false") == "true") {
     return std::make_pair(
-      std::string("replay.fill"), std::string("a run has no session legs: remove [replay] fill = \"legs\"")
+      std::string("data.open_point"),
+      std::string("data.open_point invents a bar a run never sees: remove [data] open_point")
     );
   }
   return std::nullopt;

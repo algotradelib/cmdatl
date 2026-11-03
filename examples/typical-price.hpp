@@ -8,7 +8,7 @@
 
 /**
  * @brief The fill bar's typical price, to four decimals.
- * @param in The order, the bar before the fill bar and the fill bar.
+ * @param in The order, the price it was decided on and the fill bar.
  * @return The price, or nothing when it does not fit an exact decimal (a day order then waits for a later bar).
  */
 inline std::optional<algotradelib::Decimal64> typical_price(const algotradelib::backtest::MarketPriceInput& in) {

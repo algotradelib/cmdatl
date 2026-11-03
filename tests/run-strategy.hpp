@@ -192,7 +192,7 @@ struct Load {
 /** @brief A program trading the script on its first symbol. */
 struct Program {
   static constexpr const char* atls_mode = "named";
-  static constexpr bool atls_legs = false;
+  static constexpr bool atls_session = false;
   static std::vector<std::string> atls_instruments() {
     return {"x"};
   }
@@ -285,10 +285,16 @@ protected:
   double exit_{10};
 };
 
-/** @brief The same program with session legs, which a run refuses. */
-struct LegsProgram : Program {
+/** @brief The same program with session handlers, which a run refuses. */
+struct SessionProgram : Program {
   using Program::Program;
-  static constexpr bool atls_legs = true;
+  static constexpr bool atls_session = true;
+  static constexpr bool atls_on_open = true;
+  static constexpr bool atls_on_close = true;
+  // A stand-in meets no session edge, as a program on the wrong market's bars would.
+  std::size_t session_opens() const { return 0; }
+  std::size_t session_closes() const { return 0; }
+  std::size_t session_outside_bars() const { return 0; }
 };
 
 /** @brief The same program with `on_fill`, which a live runner never calls. */

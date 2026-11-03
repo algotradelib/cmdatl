@@ -473,16 +473,28 @@ TEST_CASE("replay wide tables: dates must increase and the fill reads them") {
     settings({"data.file=" + dir.write("ok.csv", "date,A,B\n20200101,1,\n20200102,2,NaN\n20200103,4,5\n")});
   const auto data = replay::load(ok, {});
   CHECK(data.symbols_ == std::vector<std::string>{"A", "B"});
-  // Bars as they are: open = high = low = close; a missing cell is no bar.
-  const auto feed = replay::events(data, "us", "next-open");
+  // A row is a bar with open = high = low = close; a missing cell is no bar.
+  const auto feed = replay::events(data, "us", false);
   REQUIRE(feed.size() == 4);
   CHECK(feed[1].bar_.open_->str() == "2");
   CHECK(feed[1].bar_.close_.str() == "2");
-  CHECK(feed[1].bar_.low_.str() == "2");
-  // The bar rewrite is gone: a market-price rule prices at the decision close instead.
-  CHECK_THROWS_AS(replay::events(data, "us", "open-prev-close"), std::invalid_argument);
-  CHECK_THROWS_AS(replay::events(data, "us", "legs"), std::invalid_argument);
-  CHECK_THROWS_AS(replay::events(data, "us", "nope"), std::invalid_argument);
+  // An open point needs the opens, highs and lows.
+  CHECK_THROWS_AS(replay::events(data, "us", true), std::invalid_argument);
+  auto full = data;
+  full.open_ = full.close_;
+  full.high_ = full.close_;
+  full.low_ = full.close_;
+  // Each day as a point at the open (09:30 at UTC-5, 14:30 UTC) and the day's bar at the close (21:00 UTC): every
+  // instrument's point before any day's bar.
+  const auto split = replay::events(full, "us", true);
+  REQUIRE(split.size() == 8);
+  CHECK(split[0].bar_.timestamp_ == replay::day_of(20200101) + std::chrono::hours(14) + std::chrono::minutes(30));
+  CHECK(split[0].interval_ == algotradelib::BarInterval::ONE_DAY);
+  CHECK(split[0].stamp_ == algotradelib::BarStamp::CLOSE);
+  CHECK(split[1].bar_.timestamp_ == replay::day_of(20200101) + std::chrono::hours(21));
+  CHECK(split[4].bar_.timestamp_ == replay::day_of(20200103) + std::chrono::hours(14) + std::chrono::minutes(30));
+  CHECK(split[5].bar_.timestamp_ == split[4].bar_.timestamp_);
+  CHECK(split[6].bar_.timestamp_ == replay::day_of(20200103) + std::chrono::hours(21));
 }
 
 TEST_CASE("replay main: shorts go through only with replay.shorts true") {
@@ -526,7 +538,7 @@ TEST_CASE("replay main: a market-price rule prices market orders and the report 
   CHECK(plain.out_.find("market_price_rule") == std::string::npos);
   const auto ruled = replay_main<runtest::Program>(args, [](atl::backtest::NextBarFillModel model) {
     return model.with_market_price("decision_close", [](const atl::backtest::MarketPriceInput& in) {
-      return in.previous_ ? std::optional<atl::Decimal64>(in.previous_->close_) : in.next_.bar_.open_;
+      return in.decision_price_ ? in.decision_price_ : in.next_.bar_.open_;
     });
   });
   INFO(ruled.err_);
@@ -614,8 +626,7 @@ TEST_CASE("replay main: the pricing refusals by reason and the refusals before a
   };
   const std::vector<std::pair<std::vector<std::string>, std::string>> refused{
     {{"orders.type=market", "orders.offset=0.001"}, "error: an offset prices a limit\n"},
-    {{"replay.fill=legs"}, "error: replay.fill = \"legs\" needs a program with on_open/on_close\n"},
-    {{"replay.fill=open-prev-close"}, "error: an OHLCV source fills next-open or legs, not 'open-prev-close'\n"},
+    {{"data.open_point=true"}, "error: data.open_point is for a program with on_open/on_close\n"},
     {{"data.source=store", "data.store=test/1d/AAA"},
       "error: this binary was built without DuckDB (cmdatl builds with it when a spec reads a store)\n"},
     {{"output.fills=" + dir.at("no/such/dir/fills.csv")},
@@ -627,9 +638,19 @@ TEST_CASE("replay main: the pricing refusals by reason and the refusals before a
     CHECK(ran.exit_ == 1);
     CHECK(ran.err_ == says);
   }
-  const auto legs = replay_main<runtest::LegsProgram>(base);
-  CHECK(legs.exit_ == 1);
-  CHECK(legs.err_ == "error: the program has on_open/on_close: set replay.fill = \"legs\"\n");
+  const auto session = replay_main<runtest::SessionProgram>(base);
+  CHECK(session.exit_ == 1);
+  CHECK(
+    session.err_ ==
+    "error: the program has on_open/on_close and a daily bar is a whole session: set data.open_point = true, or give "
+    "intraday bars\n"
+  );
+  // With open points but no session edge met, the replay fails instead of reporting a run that traded on nothing.
+  auto open_points = base;
+  open_points.push_back("data.open_point=true");
+  const auto missed = replay_main<runtest::SessionProgram>(open_points);
+  CHECK(missed.exit_ == 1);
+  CHECK(missed.err_.find("on_open never ran") != std::string::npos);
 }
 
 TEST_CASE("replay sweep: generated settings and files are read or refused with an exception and nothing else") {
@@ -666,7 +687,8 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
     {"data.columns.close", {"close", "AAA", "nope"}},
     {"replay.from", {"2020-01-01", "20200102", "2020-13-01", "x", "00010101"}},
     {"replay.to", {"2020-01-03", "99991231", "2019-12-31", ""}},
-    {"replay.fill", {"next-open", "open-prev-close", "legs", "x"}},
+    {"replay.fill", {"next-open", "close", "legs", "x"}},
+    {"data.open_point", {"true", "false", "x"}},
     {"replay.market", {"us", "kr", "x"}},
     {"replay.cash", {"100000", "1e5", "0", "-1", "x", "1e400"}},
     {"replay.commission", {"0", "0.001", "-1", "x"}},
@@ -754,8 +776,8 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
       const auto data = replay::load(s, chance(30) ? std::vector<std::string>{"AAA"} : std::vector<std::string>{});
       const bool wide = data.series_.empty() && !data.close_.names_.empty();
       const auto market = replay::market_of(s);
-      const auto fill = s.get_or("replay.fill", "next-open");
-      const auto feed = wide ? replay::events(data, market, fill) : replay::bar_events(data, market, fill);
+      const bool open_point = s.get_or("data.open_point", "false") == "true";
+      const auto feed = wide ? replay::events(data, market, open_point) : replay::bar_events(data, market, open_point);
       (void)replay::replay_config(s, data);
       (void)replay::fill_model(s);
       (void)feed;

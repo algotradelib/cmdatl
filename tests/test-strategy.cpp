@@ -274,7 +274,7 @@ TEST_CASE("a failure carries the diagnostics or the last stderr lines and names 
   {
     // Settings errors: every one, each at its place, the file's and the command line's.
     const FakeAtlc fake("check out " + INFO_OK + "\n");
-    spit("bad.toml", "strategy = 'dip.atls'\n[data]\nfile = 'bars.csv'\n[replay]\ncash = 0\nfill = \"close\"\n");
+    spit("bad.toml", "strategy = 'dip.atls'\n[data]\nfile = 'bars.csv'\n[replay]\ncash = 0\nshorts = \"yes\"\n");
     const auto ran = run({"strategy", "backtest", "bad.toml", "replay.sell_tax=-1"});
     CHECK(ran.exit_ == 2);
     const auto reply = reply_of(ran.out_);

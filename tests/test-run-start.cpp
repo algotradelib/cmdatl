@@ -70,7 +70,7 @@ TEST_CASE("the market settings a run refuses before anything is built") {
   CHECK(cmdatl::spec_refusal({"replay.market=us"})->first == "replay.market");
   CHECK(cmdatl::spec_refusal({"replay.market=kr", "data.store=kis/krx"})->first == "data.store");
   CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.shorts=true"})->first == "replay.shorts");
-  CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.fill=legs"})->first == "replay.fill");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "data.open_point=true"})->first == "data.open_point");
   // The last value wins, as atlc's settings read it.
   CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}));
 }
@@ -642,8 +642,8 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     CHECK(run_code(other) == "refused.symbol_not_allowed");
   }
   {
-    // A program with session legs: run gives the driver's own refusal before anything is built, whatever replay.fill
-    // says, from a spec, with a setting, or with the program as the target. The account is not armed, so the refusal
+    // A program with session handlers: run gives the driver's own refusal before anything is built, whatever the
+    // settings say, from a spec, with a setting, or with the program as the target. The account is not armed, so the refusal
     // is shown to come before the operator's checks; the case's own cache shows that nothing was built.
     const PaperFixture fixture(run_operator());
     const RunEquipped equipped(equipment->first, equipment->second);
@@ -659,31 +659,31 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
       INFO(ran.out_);
       CHECK(ran.exit_ == 5);
       CHECK(run_code(ran) == "program.live_unsupported");
-      CHECK(ran.reply_.at("unsupported").as_string() == "legs");
-      CHECK(ran.reply_.at("error").as_object().at("message").as_string() == cmdatl::LEGS_UNSUPPORTED);
-      CHECK(ran.reply_.at("error").as_object().at("next").as_string() == cmdatl::LEGS_UNSUPPORTED_NEXT);
+      CHECK(ran.reply_.at("unsupported").as_string() == "session");
+      CHECK(ran.reply_.at("error").as_object().at("message").as_string() == cmdatl::SESSION_UNSUPPORTED);
+      CHECK(ran.reply_.at("error").as_object().at("next").as_string() == cmdatl::SESSION_UNSUPPORTED_NEXT);
     };
     spit(fixture.dir() / "legs.toml", spec + orders);
     legs_refused(run_process({(fixture.dir() / "legs.toml").string()}));
-    legs_refused(run_process({(fixture.dir() / "legs.toml").string(), "replay.fill=legs"}));
+    legs_refused(run_process({(fixture.dir() / "legs.toml").string(), "data.open_point=true"}));
     legs_refused(run_process({(fixture.dir() / "legs.atls").string(), "replay.market=kr"}));
-    spit(fixture.dir() / "legs.toml", spec + "fill = \"legs\"\n" + orders);
-    legs_refused(run_process({(fixture.dir() / "legs.toml").string()}));
     const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
     CHECK((!std::filesystem::exists(runs_dir) || std::filesystem::is_empty(runs_dir)));
     CHECK(!std::filesystem::exists(cache.path() / "cmdatl" / "drivers"));
-    // atlc's rule the refusal rests on: it takes replay.fill = "legs" only for a program with session legs.
+    // A market-price rule prices a backtest's fills; a run's orders fill at the market.
     spit(fixture.dir() / "plain.atls", "on_bar {\n  target(10);\n}\n");
+    spit(fixture.dir() / "rule.hpp", "#pragma once\n");
     spit(
       fixture.dir() / "plain.toml",
-      "strategy = \"plain.atls\"\n" + spec.substr(spec.find('\n')) + "fill = \"legs\"\n" + orders
+      "strategy = \"plain.atls\"\n" + spec.substr(spec.find('\n')) +
+        "fill_header = \"rule.hpp\"\nfill_function = \"decision_close\"\n" + orders
     );
     const auto plain = run_process({(fixture.dir() / "plain.toml").string()});
     INFO(plain.out_);
     CHECK(plain.exit_ == 2);
     CHECK(run_code(plain) == "spec.invalid");
     const auto plain_message = std::string(plain.reply_.at("error").as_object().at("message").as_string());
-    CHECK(plain_message.find("replay.fill") != std::string::npos);
+    CHECK(plain_message.find("market-price rule") != std::string::npos);
   }
   {
     // A program with on_fill: the build succeeds and the driver refuses it, exit 5.

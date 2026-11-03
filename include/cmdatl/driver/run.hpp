@@ -368,11 +368,11 @@ int run_main(int argc, char** argv, Load load, Make make) {
     return run_error(base, Exit::USAGE, "usage.bad_value", *problem);
   }
   base["run"] = args.id_;
-  // Row 2: session legs have no live source.
-  if (Program::atls_legs) {
+  // Row 2: no bar of a run opens a session before it closes.
+  if (Program::atls_session) {
     return run_error(
-      base, Exit::PROGRAM, "program.live_unsupported", LEGS_UNSUPPORTED, LEGS_UNSUPPORTED_NEXT,
-      {{"unsupported", "legs"}}
+      base, Exit::PROGRAM, "program.live_unsupported", SESSION_UNSUPPORTED, SESSION_UNSUPPORTED_NEXT,
+      {{"unsupported", "session"}}
     );
   }
   // Row 3: the market's settings.

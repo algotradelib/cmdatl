@@ -132,6 +132,7 @@ inline const std::vector<Key>& keys() {
     {"data.store", Kind::COORDINATES, store, {}},
     {"data.store_root", Kind::PATH, store, {}},
     {"data.as_of", Kind::INSTANT, store, {}},
+    {"data.open_point", Kind::BOOL, {}, {}},
     {"replay.from", Kind::DATE, {}, {}},
     {"replay.to", Kind::DATE, {}, {}},
     {"replay.market", Kind::CHOICE, {}, {"us", "kr"}},
@@ -140,7 +141,7 @@ inline const std::vector<Key>& keys() {
     {"replay.min_commission", Kind::NUMBER, {}, {}, 0, false},
     {"replay.sell_tax", Kind::NUMBER, {}, {}, 0, false},
     {"replay.slippage_ticks", Kind::COUNT, {}, {}},
-    {"replay.fill", Kind::CHOICE, {}, {"next-open", "legs"}},
+    {"replay.fill", Kind::TEXT, {}, {}},
     {"replay.fill_header", Kind::PATH, {}, {}},
     {"replay.fill_function", Kind::TEXT, {}, {}},
     {"replay.shorts", Kind::BOOL, {}, {}},
@@ -1118,8 +1119,8 @@ struct Program {
   std::string mode_;
   /** @brief The names in `instruments {}`, in order; empty for the other modes. */
   std::vector<std::string> instruments_;
-  /** @brief Whether it has `on_open` or `on_close`. */
-  bool legs_{false};
+  /** @brief Whether it has `on_open` or `on_close` (session handlers). */
+  bool session_{false};
   /** @brief Each parameter's name and type. */
   std::vector<std::pair<std::string, ParamType>> params_;
 };
@@ -1283,20 +1284,21 @@ inline std::vector<Error> resolve(
     }
   }
 
-  // Fills: an error about a setting is at the setting, if it is given; else nowhere.
-  const auto fill = text("replay.fill").value_or("next-open");
+  // Sessions: an error about a setting is at the setting, if it is given; else nowhere.
   const auto at = [&get](const std::string& key, const std::string& message) {
     const auto* e = get(key);
     return e == nullptr ? Error::nowhere(message) : Error::at(e->origin_, message);
   };
-  if (program.legs_ && fill != "legs") {
-    errors.push_back(at("replay.fill", "the program has on_open or on_close: set replay.fill = \"legs\""));
-  }
-  if (!program.legs_ && fill == "legs") {
-    errors.push_back(at(
-      "replay.fill",
-      "replay.fill = \"legs\" feeds each day as an open and a close, for a program with on_open or on_close"
-    ));
+  // replay.fill is gone: the price is the default (the next bar's open) or a market-price rule, and when a program
+  // decides is the program's (on_open and on_close follow the session; data.open_point for daily bars).
+  if (const auto* e = get("replay.fill")) {
+    const auto value = e->value_.text();
+    const std::string instead = value == "next-open" ? "it was the default: remove the key" :
+      value == "legs" ? "on_open and on_close follow the session: remove it, and set `data.open_point = true` for "
+                        "daily bars" :
+                        "a market order fills at the next bar's open, or at the price a rule names: remove it, and give "
+                        "`replay.fill_header` and `replay.fill_function` (a decision-close rule for the textbook close)";
+    errors.push_back(Error::at(e->origin_, "replay.fill was removed; " + instead));
   }
   // The market-price rule: a header and the function it declares, both or neither.
   const auto* fill_header = get("replay.fill_header");
@@ -1335,27 +1337,81 @@ inline std::vector<Error> resolve(
       )
     );
   }
-  if (fill == "legs" && program.legs_ && source == "wide") {
-    for (const auto* k : {"data.open", "data.high", "data.low"}) {
-      if (get(k) == nullptr) {
-        errors.push_back(Error::nowhere("replay.fill = \"legs\" on wide tables needs `" + std::string(k) + "`"));
-      }
+  // A rule is C++ compiled into the driver cmdatl runs, so it comes from the spec file, never the command line.
+  for (const auto* k : {"replay.fill_header", "replay.fill_function"}) {
+    if (const auto* e = get(k); e != nullptr && e->origin_.file_.empty()) {
+      errors.push_back(
+        Error::at(
+          e->origin_, "`" + std::string(k) + "` names C++ that cmdatl compiles and runs: give it in the spec file, "
+                      "not on the command line"
+        )
+      );
     }
   }
-  if (fill == "legs" && program.legs_ && source == "csv") {
-    const auto interval = text("data.interval");
-    if (interval && *interval != "1d") {
-      errors.push_back(at("data.interval", "replay.fill = \"legs\" needs daily bars"));
+  // Whether every bar is daily: wide tables always, a CSV by its interval, a store by each coordinate's.
+  bool daily = true;
+  std::string intraday;
+  if (source == "csv") {
+    const auto interval = text("data.interval").value_or("1d");
+    if (interval != "1d") {
+      daily = false;
+      intraday = "data.interval";
     }
   }
-  if (fill == "legs" && program.legs_ && source == "store") {
+  if (source == "store") {
     if (const auto* e = get("data.store"); e != nullptr && e->value_.type_ == Value::Type::LIST) {
       for (const auto& item : e->value_.items_) {
         const auto parts = split(item.text(), '/');
         if (parts.size() < 2 || parts[1] != "1d") {
-          errors.push_back(at("data.store", "replay.fill = \"legs\" needs daily bars, not \"" + item.text() + "\""));
+          daily = false;
+          intraday = "data.store";
         }
       }
+    }
+  }
+  const auto* open_point_entry = get("data.open_point");
+  const bool open_point = open_point_entry != nullptr && open_point_entry->value_.text() == "true";
+  if (open_point && !program.session_) {
+    errors.push_back(at(
+      "data.open_point",
+      "data.open_point splits each day at its open, for a program with on_open or on_close; this one has neither"
+    ));
+  }
+  if (open_point && !daily) {
+    errors.push_back(at(intraday, "data.open_point splits daily bars; intraday bars are replayed as they are"));
+  }
+  if (program.session_ && daily && !open_point) {
+    errors.push_back(at(
+      "data.open_point",
+      "the program has on_open or on_close, and a daily bar is a whole session: set data.open_point = true (each day "
+      "as a point at its open, then the day's bar at its close), or give intraday bars"
+    ));
+  }
+  if (open_point && source == "wide") {
+    for (const auto* k : {"data.open", "data.high", "data.low"}) {
+      if (get(k) == nullptr) {
+        errors.push_back(Error::nowhere("data.open_point on wide tables needs `" + std::string(k) + "`"));
+      }
+    }
+  }
+  // A session program's edges come from the market's session window, so the market is stated, not defaulted.
+  if (program.session_) {
+    const auto* market = get("replay.market");
+    if (market == nullptr) {
+      errors.push_back(
+        Error::nowhere(
+          "the program has on_open or on_close, which follow the market's session: give `replay.market` (\"kr\" or "
+          "\"us\")"
+        )
+      );
+    } else if (market->value_.text() == "us" && !daily) {
+      errors.push_back(
+        Error::at(
+          market->origin_,
+          "on_open and on_close on US intraday bars would follow a fixed UTC-5 session that daylight saving moves: "
+          "not supported yet (US daily bars with data.open_point are)"
+        )
+      );
     }
   }
   if (const auto* from = get("replay.from")) {
@@ -1948,7 +2004,7 @@ inline bool info_diagnostic(const json::value& value) {
  * @brief Reads `atlc check FILE --info`'s one JSON object and checks every field cmdatl uses: `atlc_info` 1; `status`
  *   `error` exactly when a diagnostic is an error, and `program` null exactly then; the program's path absolute and the
  *   one cmdatl passed; its struct one cmdatl may paste into C++; its mode one of three, with instruments only when
- *   named; parameters and instruments named by bare keys; `legs` a boolean.
+ *   named; parameters and instruments named by bare keys; `session` a boolean.
  * @param text atlc's standard output.
  * @param passed The program's path as cmdatl passed it.
  * @return The answer, or nothing when it is not one.
@@ -2004,12 +2060,12 @@ inline std::optional<Info> read_info(const std::string& text, const std::string&
   const auto name = string_of("struct");
   const auto mode = string_of("mode");
   const auto* instruments = facts.if_contains("instruments");
-  const auto* legs = facts.if_contains("legs");
+  const auto* session = facts.if_contains("session");
   const auto* params = facts.if_contains("params");
   if (
     !path || path->empty() || path->front() != '/' || !same_path(*path, passed) || !name || !valid_struct(*name) ||
     !mode || (*mode != "single" && *mode != "named" && *mode != "universe") || instruments == nullptr ||
-    !instruments->is_array() || legs == nullptr || !legs->is_bool() || params == nullptr || !params->is_array() ||
+    !instruments->is_array() || session == nullptr || !session->is_bool() || params == nullptr || !params->is_array() ||
     instruments->as_array().size() > MAX_ARGS || params->as_array().size() > MAX_ARGS
   ) {
     return std::nullopt;
@@ -2018,7 +2074,7 @@ inline std::optional<Info> read_info(const std::string& text, const std::string&
   p.path_ = *path;
   p.struct_ = *name;
   p.mode_ = *mode;
-  p.legs_ = legs->as_bool();
+  p.session_ = session->as_bool();
   for (const auto& instrument : instruments->as_array()) {
     if (!instrument.is_string() || !bare(instrument.as_string()) || instrument.as_string().size() > 64) {
       return std::nullopt;

@@ -7,7 +7,10 @@ file = "data/daily.csv"          # synthetic daily bars written for these exampl
 symbol_column = "symbol"
 time = "date"
 time_format = "iso"
+open_point = true                 # each day as a point at its open, then the day's bar at its close
 
 [replay]
+market = "us"                     # on_open and on_close follow this market's session
 cash = 1000000
-fill = "legs"                     # each day as an open and a close, for on_open and on_close
+fill_header = "decision-close.hpp" # at the price a handler saw: the open in on_open, the close in on_close
+fill_function = "decision_close"

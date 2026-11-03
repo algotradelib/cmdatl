@@ -251,7 +251,7 @@ TEST_CASE("values are checked key by key, each error at its file and line") {
     {"[replay]\nslippage_ticks = 1.5", "a whole number"},
     {"[replay]\nslippage_ticks = 2.0", "written as an integer"},
     {"[replay]\nshorts = \"yes\"", "`true` or `false`"},
-    {"[replay]\nfill = \"close\"", "one of \"next-open\""},
+    {"[data]\nopen_point = \"yes\"", "`true` or `false`"},
     {"[replay]\nfrom = 20230230", "a date"},
     {"[replay]\nfrom = \"2023-13-01\"", "a date"},
     {"[replay]\nmarket = \"jp\"", "one of \"us\", \"kr\""},
@@ -274,13 +274,13 @@ TEST_CASE("values are checked key by key, each error at its file and line") {
     CHECK(e.rfind(FILE_PATH + ":", 0) == 0);
   }
   // Every key's error, past one only the file's reading finds, in line order.
-  const auto mixed = spec("[replay]\ncash = 0\nfrom = 2024-01-02\nfill = \"close\"\n");
+  const auto mixed = spec("[replay]\ncash = 0\nfrom = 2024-01-02\nshorts = \"yes\"\n");
   REQUIRE(mixed.errors_.size() == 3);
   CHECK(mixed.errors_[0].rfind(FILE_PATH + ":2: ", 0) == 0);
   CHECK(has(mixed.errors_[1], FILE_PATH + ":3: `replay.from`: write a date"));
   CHECK(mixed.errors_[2].rfind(FILE_PATH + ":4: ", 0) == 0);
   // Every key's error, not only the first, each at its line.
-  const auto parsed = spec("strategy = \"m.atls\"\nfoo = 1\n[replay]\ncash = 0\nfill = \"close\"\n");
+  const auto parsed = spec("strategy = \"m.atls\"\nfoo = 1\n[replay]\ncash = 0\nshorts = \"yes\"\n");
   REQUIRE(parsed.errors_.size() == 3);
   CHECK(parsed.errors_[0].rfind(FILE_PATH + ":2: ", 0) == 0);
   CHECK(parsed.errors_[1].rfind(FILE_PATH + ":4: `replay.cash` is a number above 0, not 0", 0) == 0);
@@ -728,15 +728,25 @@ TEST_CASE("data keys belong to their source") {
   CHECK(csv.arg("data.symbols") == std::optional<std::string>("A,B"));
 }
 
-TEST_CASE("fills match the program and the data") {
-  sp::Program legs;
-  legs.mode_ = "universe";
-  legs.legs_ = true;
+TEST_CASE("open points match the program and the data") {
+  sp::Program session;
+  session.mode_ = "universe";
+  session.session_ = true;
   const auto plain = single();
   const std::vector<std::tuple<std::string, const sp::Program*, std::string>> cases{
-    {"[data]\nfile = \"c\"", &legs, "set replay.fill = \"legs\""},
-    {"[data]\nfile = \"c\"\n[replay]\nfill = \"legs\"", &plain, "for a program with on_open or on_close"},
-    {"[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\n[replay]\nfill = \"legs\"", &legs, "needs `data.low`"},
+    {"[data]\nfile = \"c\"\n[replay]\nmarket = \"kr\"", &session, "set data.open_point = true"},
+    {"[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nlow = \"l\"\nopen_point = true", &plain,
+      "for a program with on_open or on_close"},
+    {"[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nopen_point = true\n[replay]\nmarket = \"kr\"", &session,
+      "needs `data.low`"},
+    {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1h\"\nopen_point = true\n[replay]\nmarket = \"kr\"",
+      &session, "intraday bars are replayed as they are"},
+    {"[data]\nstore = [\"a/1d/b\", \"a/1m/c\"]\nstore_root = \"/s\"\nopen_point = true\n[replay]\nmarket = \"kr\"", &session,
+      "intraday bars are replayed as they are"},
+    {"[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nlow = \"l\"\nopen_point = true", &session, "give `replay.market`"},
+    {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1m\"\n[replay]\nmarket = \"us\"", &session,
+      "daylight saving"},
+    {"[data]\nfile = \"c\"\n[replay]\nfill = \"next-open\"", &plain, "replay.fill was removed"},
     {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"", &plain, "give both `replay.fill_header`"},
     {"[data]\nfile = \"c\"\n[replay]\nfill_function = \"f\"", &plain, "give both `replay.fill_header`"},
     {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"a-b\"", &plain,
@@ -745,10 +755,6 @@ TEST_CASE("fills match the program and the data") {
       "give a C++ function's name"},
     {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"f\"\n[orders]\ntype = \"limit\"",
       &plain, "prices market orders"},
-    {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1h\"\n[replay]\nfill = \"legs\"", &legs,
-      "needs daily bars"},
-    {"[data]\nstore = [\"a/1d/b\", \"a/1m/c\"]\nstore_root = \"/s\"\n[replay]\nfill = \"legs\"", &legs,
-      "not \"a/1m/c\""},
   };
   for (const auto& [src, program, says] : cases) {
     const auto r = run("strategy = \"m.atls\"\n" + src + "\n", *program);
@@ -768,10 +774,31 @@ TEST_CASE("a market-price rule is a build setting, never a driver argument") {
   CHECK(has(r.resolved_.fill_header_, "rules/close.hpp"));
   CHECK_FALSE(r.arg("replay.fill_header"));
   CHECK_FALSE(r.arg("replay.fill_function"));
-  // The bar rewrite is gone: open-prev-close is no longer a fill.
-  const auto old = spec(WIDE_SPEC + "[replay]\nfill = \"open-prev-close\"\n");
+  // The bar rewrite is gone, and so is replay.fill.
+  const auto old = run(WIDE_SPEC + "[replay]\nfill = \"open-prev-close\"\n", plain);
   REQUIRE(old.errors_.size() == 1);
-  CHECK(has(old.errors_.front(), "\"next-open\", \"legs\""));
+  CHECK(has(old.errors_.front(), "replay.fill was removed"));
+}
+
+TEST_CASE("a market-price rule comes from the spec file, not the command line") {
+  const auto file = spec(WIDE_SPEC);
+  std::vector<std::string> errors;
+  const auto line = cli({"replay.fill_header=r.hpp", "replay.fill_function=f"}, errors);
+  const auto r = resolve({file.entries_, line}, single());
+  REQUIRE(r.errors_.size() == 2);
+  CHECK(has(r.errors_.front(), "not on the command line"));
+}
+
+TEST_CASE("a program with session handlers takes intraday bars as they are, with its market stated") {
+  sp::Program session;
+  session.mode_ = "universe";
+  session.session_ = true;
+  const auto r = run(
+    "strategy = \"m.atls\"\n[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol_column = \"s\"\ninterval = \"1m\"\n"
+    "[replay]\nmarket = \"kr\"\n",
+    session
+  );
+  CHECK(r.errors_.empty());
 }
 
 TEST_CASE("instruments match the program") {
@@ -933,7 +960,7 @@ TEST_CASE("atlc check --info's object is read only when every field cmdatl uses 
           {"struct", "Pairs"},
           {"mode", "named"},
           {"instruments", boost::json::array{"y", "x"}},
-          {"legs", false},
+          {"session", false},
           {"params",
             boost::json::array{
               boost::json::object{{"name", "lookback"}, {"type", "int"}},
@@ -1045,8 +1072,8 @@ TEST_CASE("atlc check --info's object is read only when every field cmdatl uses 
   with("an instrument that is a number", [&program](auto& o) {
     program(o)["instruments"] = boost::json::array{1};
   });
-  with("legs not a boolean", [&program](auto& o) {
-    program(o)["legs"] = "no";
+  with("session not a boolean", [&program](auto& o) {
+    program(o)["session"] = "no";
   });
   with("a parameter's type", [&program](auto& o) {
     program(o)["params"] = boost::json::array{boost::json::object{{"name", "x"}, {"type", "float"}}};

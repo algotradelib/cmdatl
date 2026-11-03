@@ -302,7 +302,7 @@ struct CheckedSettings {
 
 /**
  * @brief Checks the settings given against the program's facts: the program asked of atlc, then (for a run) a
- *   program with session legs refused as the driver refuses it, then every rule that reads the program.
+ *   program with session handlers refused as the driver refuses it, then every rule that reads the program.
  * @param given The settings, read by `read_given`.
  * @param atlc atlc's path.
  * @param output Where progress goes.
@@ -319,10 +319,10 @@ inline std::optional<Reply> check_given(
   if (interrupted()) {
     return interrupted_reply();
   }
-  // No live source delivers session legs: the driver's own refusal, before the settings' rules ask for legs.
-  if (run && checked.info_.program_.legs_) {
-    auto reply = error_reply(Exit::PROGRAM, "program.live_unsupported", LEGS_UNSUPPORTED, LEGS_UNSUPPORTED_NEXT);
-    reply.body_["unsupported"] = "legs";
+  // No bar of a run opens a session before it closes: the driver's own refusal, before the settings' rules.
+  if (run && checked.info_.program_.session_) {
+    auto reply = error_reply(Exit::PROGRAM, "program.live_unsupported", SESSION_UNSUPPORTED, SESSION_UNSUPPORTED_NEXT);
+    reply.body_["unsupported"] = "session";
     return reply;
   }
   const auto errors = spec::resolve({given.file_, given.line_}, checked.info_.program_, checked.resolved_);
