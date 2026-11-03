@@ -1,0 +1,19 @@
+# The example paper account, over the examples' synthetic daily bars; the operator's file, read through CMDATL_CONFIG:
+#   export CMDATL_CONFIG=$PWD/examples/paper.toml
+#   touch examples/paper.armed # the operator arms the account; without this file nothing may be placed
+
+[account]
+broker = "paper"
+number = "example" # names the account's state directory
+
+[limits]
+symbols = ["AAA", "BBB"]
+position = { AAA = 100, BBB = 100 }
+order_value = 20000 # KRW, one order
+daily_orders = 10 # placements per KST date
+collar = 0.05
+
+[paper]
+bars = "data/daily.csv"
+cash = 1000000
+start = "2024-01-03T09:30" # KST: the second date's session, with the first date's close as the previous close

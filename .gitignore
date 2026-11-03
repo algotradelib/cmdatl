@@ -9,3 +9,7 @@
 .vscode/
 .idea/
 *.DS_Store
+
+# What the operator and cmdatl write beside the example paper account's file.
+/examples/paper.*
+!/examples/paper.toml

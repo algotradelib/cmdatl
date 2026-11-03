@@ -1,0 +1,22 @@
+# cmdatl run start run.toml --wait
+# mean-reversion.atls as a run on its own mock market: a run needs a market and limit orders.
+strategy = "mean-reversion.atls"
+
+[data]
+source = "csv"
+file = "data/daily.csv"          # synthetic daily bars written for these examples
+symbol_column = "symbol"
+time = "date"
+time_format = "iso"
+
+[instruments]
+stock = "AAA"                     # a symbol in the operator's limits.symbols
+
+[replay]
+cash = 100000
+commission = 0.0005
+market = "kr"                     # the market a run trades
+
+[orders]
+type = "limit"                    # a run places limit orders only
+offset = 0.01                     # a buy's limit 1 % above the price, a sell's 1 % below, inside the operator's collar
