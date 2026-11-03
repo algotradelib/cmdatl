@@ -737,8 +737,14 @@ TEST_CASE("fills match the program and the data") {
     {"[data]\nfile = \"c\"", &legs, "set replay.fill = \"legs\""},
     {"[data]\nfile = \"c\"\n[replay]\nfill = \"legs\"", &plain, "for a program with on_open or on_close"},
     {"[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\n[replay]\nfill = \"legs\"", &legs, "needs `data.low`"},
-    {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\n[replay]\nfill = \"open-prev-close\"", &plain,
-      "reads wide tables"},
+    {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"", &plain, "give both `replay.fill_header`"},
+    {"[data]\nfile = \"c\"\n[replay]\nfill_function = \"f\"", &plain, "give both `replay.fill_header`"},
+    {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"a-b\"", &plain,
+      "give a C++ function's name"},
+    {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"1f\"", &plain,
+      "give a C++ function's name"},
+    {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"f\"\n[orders]\ntype = \"limit\"",
+      &plain, "prices market orders"},
     {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1h\"\n[replay]\nfill = \"legs\"", &legs,
       "needs daily bars"},
     {"[data]\nstore = [\"a/1d/b\", \"a/1m/c\"]\nstore_root = \"/s\"\n[replay]\nfill = \"legs\"", &legs,
@@ -750,6 +756,22 @@ TEST_CASE("fills match the program and the data") {
     REQUIRE(r.errors_.size() == 1);
     CHECK(has(r.errors_.front(), says));
   }
+}
+
+TEST_CASE("a market-price rule is a build setting, never a driver argument") {
+  const auto plain = single();
+  const auto r =
+    run(WIDE_SPEC + "[replay]\nfill_header = \"rules/close.hpp\"\nfill_function = \"rules::decision_close\"\n", plain);
+  REQUIRE(r.errors_.empty());
+  CHECK(r.resolved_.fill_function_ == "rules::decision_close");
+  CHECK(std::filesystem::path(r.resolved_.fill_header_).is_absolute());
+  CHECK(has(r.resolved_.fill_header_, "rules/close.hpp"));
+  CHECK_FALSE(r.arg("replay.fill_header"));
+  CHECK_FALSE(r.arg("replay.fill_function"));
+  // The bar rewrite is gone: open-prev-close is no longer a fill.
+  const auto old = spec(WIDE_SPEC + "[replay]\nfill = \"open-prev-close\"\n");
+  REQUIRE(old.errors_.size() == 1);
+  CHECK(has(old.errors_.front(), "\"next-open\", \"legs\""));
 }
 
 TEST_CASE("instruments match the program") {

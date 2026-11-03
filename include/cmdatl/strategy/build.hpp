@@ -5,8 +5,8 @@
 // stanc's header.
 //
 // The shape's directory is named by what CMake fixes at configure time and does not track afterwards (the program's
-// path, its indicators setting, the environment CMake reads, the algotradelib package cmdatl was built against, and for
-// a backtest its kind); everything else is CMake's own dependency tracking. Its lock is held from `atlc build` until the
+// path, its indicators setting, the environment CMake reads, the algotradelib package cmdatl was built against, its
+// market-price rule, and for a backtest its kind); everything else is CMake's own dependency tracking. Its lock is held from `atlc build` until the
 // executable has been copied out (into the run's directory, or a backtest's scratch directory), so a driver always
 // executes the build it asked for, and a backtest's replay never holds the lock.
 
@@ -101,7 +101,7 @@ inline std::uint64_t fnv1a(const std::string& text) {
 /**
  * @brief A shape's directory name: the program's struct and 16 hex digits of the key, a length-prefixed encoding of the
  *   program's path, its indicators setting, each key variable (set or not), the algotradelib package directory, and
- *   any further fields (a backtest's kind and DuckDB's location; none for a run's driver).
+ *   any further fields (a backtest's kind and DuckDB's location, and the market-price rule's header and function).
  * @param program The program's absolute path.
  * @param structure The program's struct.
  * @param indicators The indicators setting.
@@ -433,7 +433,39 @@ struct Request {
   bool store_{false};
   /** @brief DuckDB's directory (`build.duckdb`), absolute, or empty for `DUCKDB_ROOT`, then the system's paths. */
   std::string duckdb_{};
+  /** @brief The market-price rule's header (`replay.fill_header`), absolute, or empty for the next bar's open. */
+  std::string fill_header_{};
+  /** @brief The market-price rule's function (`replay.fill_function`), a C++ name the header declares. */
+  std::string fill_function_{};
 };
+
+/**
+ * @brief The driver's `program.hpp`: the generated strategy as `Program`, and `program_fills`, which gives the fill
+ *   model the run's market-price rule when it has one.
+ * @param request The program and the rule.
+ * @return The header's text.
+ */
+inline std::string program_header(const Request& request) {
+  const bool backtest = request.kind_ == DriverKind::BACKTEST;
+  const bool rule = !request.fill_header_.empty();
+  std::string out = std::string("#pragma once\n\n// Written by cmdatl ") + (backtest ? "strategy backtest" : "run") +
+    ".\n\n#include \"strategy.hpp\"\n";
+  if (rule) {
+    out += "#include \"" + request.fill_header_ + "\"\n";
+  }
+  out += "\n#include <algotradelib/backtest>\n\nusing Program = atls::" + request.struct_ + ";\n\n";
+  out += "// The fill model, with the run's market-price rule when it has one.\n";
+  out +=
+    "inline algotradelib::backtest::NextBarFillModel program_fills(algotradelib::backtest::NextBarFillModel model) "
+    "{\n";
+  if (rule) {
+    out += "  return model.with_market_price(\"" + request.fill_function_ + "\", " + request.fill_function_ + ");\n";
+  } else {
+    out += "  return model;\n";
+  }
+  out += "}\n";
+  return out;
+}
 
 /**
  * @brief A path with its links resolved, or as given when it does not exist.
@@ -538,6 +570,11 @@ inline std::optional<Reply> build_driver(
       extra.push_back("duckdb=" + request.duckdb_);
     }
   }
+  // The market-price rule changes `program.hpp`, which make may not see when it is rewritten in the second the last build
+  // ended (make 3.81 compares whole seconds): each rule is its own shape.
+  if (!request.fill_header_.empty()) {
+    extra.push_back("fill=" + request.fill_header_ + ";" + request.fill_function_);
+  }
   const auto name = shape_name(
     request.program_, request.struct_, request.indicators_,
     [](const std::string& key) {
@@ -626,9 +663,7 @@ inline std::optional<Reply> build_driver(
     }
     inputs[backtest_file ? path.substr(backtest_prefix.size()) : path] = std::move(text);
   }
-  inputs["program.hpp"] = std::string("#pragma once\n\n// Written by cmdatl ") +
-    (backtest ? "strategy backtest" : "run") +
-    ".\n\n#include \"strategy.hpp\"\n\nusing Program = atls::" + request.struct_ + ";\n";
+  inputs["program.hpp"] = program_header(request);
   for (const auto& [relative, text] : inputs) {
     if (write_if_changed(src / relative, text) == Written::FAILED) {
       return error_reply(

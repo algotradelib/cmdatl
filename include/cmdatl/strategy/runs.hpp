@@ -236,14 +236,15 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       return error_reply(Exit::FAILED, "file.unwritable", "the run's directory " + dir.string() + " cannot be made");
     }
     DirGuard guard(dir);
-    if (
-      auto failed = build::build_driver(
-        build::Request{atlc.path_, atlc.version_, given.program_, checked.info_.program_.struct_, resolved.indicators_},
-        dir, [&output](const std::string& line) {
-          output.progress(line);
-        }
-      )
-    ) {
+    build::Request request{
+      atlc.path_, atlc.version_, given.program_, checked.info_.program_.struct_, resolved.indicators_
+    };
+    request.fill_header_ = resolved.fill_header_;
+    request.fill_function_ = resolved.fill_function_;
+    const auto progress = [&output](const std::string& line) {
+      output.progress(line);
+    };
+    if (auto failed = build::build_driver(request, dir, progress)) {
       return std::move(*failed);
     }
     const auto driver = (dir / "driver").string();

@@ -116,13 +116,15 @@ struct Replayed {
 };
 
 /**
- * @brief Runs `cmdatl::replay::main` with arguments, its standard output and error captured.
+ * @brief Runs `cmdatl::replay::main` with arguments and a fill model's maker, its standard output and error captured.
  * @tparam Strategy The program.
+ * @tparam Fills The fill model's maker.
  * @param args The arguments.
+ * @param fills Gives the fill model the replay uses.
  * @return What it gave.
  */
-template <typename Strategy>
-Replayed replay_main(std::vector<std::string> args) {
+template <typename Strategy, typename Fills>
+Replayed replay_main(std::vector<std::string> args, Fills fills) {
   std::vector<char*> argv{const_cast<char*>("driver")};
   for (auto& arg : args) {
     argv.push_back(arg.data());
@@ -132,12 +134,25 @@ Replayed replay_main(std::vector<std::string> args) {
   auto* const saved_out = std::cout.rdbuf(out.rdbuf());
   auto* const saved_err = std::cerr.rdbuf(err.rdbuf());
   Replayed replayed;
-  replayed.exit_ = replay::main<Strategy>(static_cast<int>(argv.size()), argv.data());
+  replayed.exit_ = replay::main<Strategy>(static_cast<int>(argv.size()), argv.data(), fills);
   std::cout.rdbuf(saved_out);
   std::cerr.rdbuf(saved_err);
   replayed.out_ = out.str();
   replayed.err_ = err.str();
   return replayed;
+}
+
+/**
+ * @brief Runs `cmdatl::replay::main` with arguments, its standard output and error captured.
+ * @tparam Strategy The program.
+ * @param args The arguments.
+ * @return What it gave.
+ */
+template <typename Strategy>
+Replayed replay_main(std::vector<std::string> args) {
+  return replay_main<Strategy>(std::move(args), [](atl::backtest::NextBarFillModel model) {
+    return model;
+  });
 }
 
 /**
@@ -458,12 +473,14 @@ TEST_CASE("replay wide tables: dates must increase and the fill reads them") {
     settings({"data.file=" + dir.write("ok.csv", "date,A,B\n20200101,1,\n20200102,2,NaN\n20200103,4,5\n")});
   const auto data = replay::load(ok, {});
   CHECK(data.symbols_ == std::vector<std::string>{"A", "B"});
-  // open-prev-close: each bar after the first opens at the previous close; a missing cell is no bar.
-  const auto feed = replay::events(data, "us", "open-prev-close");
+  // Bars as they are: open = high = low = close; a missing cell is no bar.
+  const auto feed = replay::events(data, "us", "next-open");
   REQUIRE(feed.size() == 4);
-  CHECK(feed[1].bar_.open_->str() == "1");
+  CHECK(feed[1].bar_.open_->str() == "2");
   CHECK(feed[1].bar_.close_.str() == "2");
-  CHECK(feed[1].bar_.low_.str() == "1");
+  CHECK(feed[1].bar_.low_.str() == "2");
+  // The bar rewrite is gone: a market-price rule prices at the decision close instead.
+  CHECK_THROWS_AS(replay::events(data, "us", "open-prev-close"), std::invalid_argument);
   CHECK_THROWS_AS(replay::events(data, "us", "legs"), std::invalid_argument);
   CHECK_THROWS_AS(replay::events(data, "us", "nope"), std::invalid_argument);
 }
@@ -493,6 +510,32 @@ TEST_CASE("replay main: shorts go through only with replay.shorts true") {
   CHECK(field(refused.out_, "executions") == "0");
   CHECK(field(refused.out_, "refused") != "0");
   CHECK(refused.out_.find("\"guard:") != std::string::npos);
+}
+
+TEST_CASE("replay main: a market-price rule prices market orders and the report names it") {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", flat_bars({100, 110, 120}));
+  runtest::script().decisions_[2] = runtest::Decision{1, "1", true};
+  const std::vector<std::string> args{
+    "data.source=csv", "data.file=" + file, "data.symbol=AAA", "instrument.x=AAA", "output.fills=" + dir.at("f.csv")
+  };
+  const auto plain = replay_main<runtest::Program>(args);
+  REQUIRE(plain.exit_ == 0);
+  CHECK(slurp(dir.at("f.csv")).find("AAA,buy,1,120,") != std::string::npos);
+  CHECK(plain.out_.find("market_price_rule") == std::string::npos);
+  const auto ruled = replay_main<runtest::Program>(args, [](atl::backtest::NextBarFillModel model) {
+    return model.with_market_price("decision_close", [](const atl::backtest::MarketPriceInput& in) {
+      return in.previous_ ? std::optional<atl::Decimal64>(in.previous_->close_) : in.next_.bar_.open_;
+    });
+  });
+  INFO(ruled.err_);
+  REQUIRE(ruled.exit_ == 0);
+  // Decided on the second bar, filled against the third at the second's close.
+  CHECK(slurp(dir.at("f.csv")).find("AAA,buy,1,110,") != std::string::npos);
+  CHECK(
+    ruled.out_.find(", \"market_price_rule\": \"decision_close\", \"market_fills_by_rule\": 1}") != std::string::npos
+  );
 }
 
 TEST_CASE("replay main: a limit never reached expires with its session and the last is still queued") {
@@ -572,8 +615,7 @@ TEST_CASE("replay main: the pricing refusals by reason and the refusals before a
   const std::vector<std::pair<std::vector<std::string>, std::string>> refused{
     {{"orders.type=market", "orders.offset=0.001"}, "error: an offset prices a limit\n"},
     {{"replay.fill=legs"}, "error: replay.fill = \"legs\" needs a program with on_open/on_close\n"},
-    {{"replay.fill=open-prev-close"},
-      "error: replay.fill = open-prev-close reads wide tables (data.source = \"wide\")\n"},
+    {{"replay.fill=open-prev-close"}, "error: an OHLCV source fills next-open or legs, not 'open-prev-close'\n"},
     {{"data.source=store", "data.store=test/1d/AAA"},
       "error: this binary was built without DuckDB (cmdatl builds with it when a spec reads a store)\n"},
     {{"output.fills=" + dir.at("no/such/dir/fills.csv")},

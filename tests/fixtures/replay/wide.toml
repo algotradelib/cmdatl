@@ -8,7 +8,8 @@ file = "wide-close.csv"
 stock = "BBB"
 
 [replay]
-fill = "open-prev-close"
+fill_header = "decision-close.hpp"
+fill_function = "decision_close"
 from = "2021-02-01"
 to = "2021-11-30"
 cash = 50000

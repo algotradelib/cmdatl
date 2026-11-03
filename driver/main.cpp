@@ -50,16 +50,14 @@ cmdatl::driver::Loaded load(const std::vector<std::string>& args) {
   const auto market = replay::market_of(s);
   const auto fill = s.get_or("replay.fill", "next-open");
   const bool wide = data.series_.empty() && !data.close_.names_.empty();
-  if (!wide && fill == "open-prev-close") {
-    throw std::invalid_argument("replay.fill = open-prev-close reads wide tables (data.source = \"wide\")");
-  }
   const auto feed = wide ? replay::events(data, market, fill) : replay::bar_events(data, market, fill);
   const auto config = replay::replay_config(s, data);
   cmdatl::driver::Loaded loaded;
   loaded.symbols_ = data.symbols_;
   loaded.instruments_ = config.instruments_;
   loaded.cash_ = config.cash_;
-  loaded.fills_ = replay::fill_model(s);
+  // The market prices market orders by the run's rule, as the backtest does.
+  loaded.fills_ = program_fills(replay::fill_model(s));
   std::vector<bool> started(loaded.instruments_.size(), false);
   for (const auto& instrument : loaded.instruments_) {
     atl::BarSeries series;

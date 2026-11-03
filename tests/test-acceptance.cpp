@@ -165,9 +165,10 @@ std::string struct_of(const std::string& atlc, const std::string& program) {
 /**
  * @brief The backtest driver cmdatl built for a struct, in the cache.
  * @param structure The struct.
+ * @param rule The market-price rule its program header names, or empty for a driver without one.
  * @return The executable, or empty.
  */
-std::filesystem::path backtest_driver(const std::string& structure) {
+std::filesystem::path backtest_driver(const std::string& structure, const std::string& rule = "") {
   const auto root = cmdatl::build::cache_root();
   if (!root || !std::filesystem::exists(*root)) {
     return {};
@@ -176,9 +177,13 @@ std::filesystem::path backtest_driver(const std::string& structure) {
   std::filesystem::file_time_type newest{};
   for (const auto& entry : std::filesystem::directory_iterator(*root)) {
     const auto exe = entry.path() / "build" / "driver";
+    const auto header = slurp(entry.path() / "src" / "program.hpp");
+    const bool ruled = rule.empty() ?
+      header.find("with_market_price") == std::string::npos :
+      header.find("with_market_price(\"" + rule + "\"") != std::string::npos;
     if (
       entry.path().filename().string().rfind(structure + "-", 0) == 0 && std::filesystem::exists(exe) &&
-      slurp(entry.path() / "src" / "program.hpp").find("cmdatl strategy backtest") != std::string::npos &&
+      header.find("cmdatl strategy backtest") != std::string::npos && ruled &&
       (found.empty() || std::filesystem::last_write_time(exe) > newest)
     ) {
       found = exe;
@@ -716,7 +721,7 @@ TEST_CASE("the replay fixtures recorded from atlc run are strategy backtest's by
   const auto fixture = [&dir](const std::string& file) {
     return with_dir(slurp(replay_fixtures() / file), dir.path().string());
   };
-  // The wide tables read with open-prev-close, and limit orders on the KRX grid with their fills.
+  // The wide tables at the decision close (the fixture's market-price rule), and limits on the KRX grid with their fills.
   REQUIRE(report_of({at("wide.toml")}) == boost::json::parse(fixture("wide.json")));
   REQUIRE(
     report_of({at("limit.toml"), "--fills", at("limit-cmdatl.csv")}) == boost::json::parse(fixture("limit.json"))
@@ -727,9 +732,15 @@ TEST_CASE("the replay fixtures recorded from atlc run are strategy backtest's by
   const auto driver = backtest_driver(structure);
   REQUIRE(!driver.empty());
   check_replay_includes(driver);
+  // The wide spec's rule makes a shape of its own.
+  const auto ruled = backtest_driver(structure, "decision_close");
+  REQUIRE(!ruled.empty());
+  CHECK(ruled != driver);
   for (const auto* name : {"wide", "limit"}) {
     INFO(name);
-    const auto recorded = through_stand_in(dir.path(), name, driver, {at(std::string(name) + ".toml")});
+    const auto recorded = through_stand_in(
+      dir.path(), name, std::string(name) == "wide" ? ruled : driver, {at(std::string(name) + ".toml")}
+    );
     CHECK(recorded.exit_ == 0);
     CHECK(recorded.out_ == fixture(std::string(name) + ".json"));
     CHECK(recorded.args_ == lines_of(fixture(std::string(name) + ".args")));

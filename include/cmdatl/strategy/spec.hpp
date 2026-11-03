@@ -14,6 +14,7 @@
 #include "../system/files.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cmath>
 #include <cstddef>
@@ -139,7 +140,9 @@ inline const std::vector<Key>& keys() {
     {"replay.min_commission", Kind::NUMBER, {}, {}, 0, false},
     {"replay.sell_tax", Kind::NUMBER, {}, {}, 0, false},
     {"replay.slippage_ticks", Kind::COUNT, {}, {}},
-    {"replay.fill", Kind::CHOICE, {}, {"next-open", "open-prev-close", "legs"}},
+    {"replay.fill", Kind::CHOICE, {}, {"next-open", "legs"}},
+    {"replay.fill_header", Kind::PATH, {}, {}},
+    {"replay.fill_function", Kind::TEXT, {}, {}},
     {"replay.shorts", Kind::BOOL, {}, {}},
     {"replay.periods_per_year", Kind::NUMBER, {}, {}, 0, true},
     {"orders.type", Kind::CHOICE, {}, {"market", "limit"}},
@@ -1066,6 +1069,38 @@ inline std::optional<std::string> cmake_refuses(const std::string& path, const s
   return "`" + setting + "` = \"" + path + "\": a path holding `\"`, `;` or `$` cannot be passed to CMake";
 }
 
+/**
+ * @brief Tests whether a text is a C++ name, possibly qualified: identifiers of ASCII letters, digits and `_`, joined
+ *   by `::`.
+ * @param text The text.
+ * @return Whether it is.
+ */
+inline bool cpp_name(const std::string& text) {
+  if (text.empty() || text.size() > 256) {
+    return false;
+  }
+  std::size_t at = 0;
+  while (true) {
+    const auto start = at;
+    while (
+      at < text.size() && (std::isalnum(static_cast<unsigned char>(text[at])) != 0 || text[at] == '_') &&
+      static_cast<unsigned char>(text[at]) < 0x80
+    ) {
+      ++at;
+    }
+    if (at == start || std::isdigit(static_cast<unsigned char>(text[start])) != 0) {
+      return false;
+    }
+    if (at == text.size()) {
+      return true;
+    }
+    if (text.compare(at, 2, "::") != 0) {
+      return false;
+    }
+    at += 2;
+  }
+}
+
 /** @brief A parameter's type. */
 enum class ParamType {
   INT,
@@ -1101,6 +1136,10 @@ struct Resolved {
   std::string order_type_{"market"};
   /** @brief The limit's offset as written, or empty when no setting gives one. */
   std::string offset_;
+  /** @brief `replay.fill_header`, absolute, or empty: the header the driver includes for the market-price rule. */
+  std::string fill_header_;
+  /** @brief `replay.fill_function`, a C++ name, or empty: the market-price rule the header declares. */
+  std::string fill_function_;
   /** @brief The driver's `key=value` arguments, one per key, parameters as `param.NAME` and instruments as
    * `instrument.NAME`. */
   std::vector<std::pair<std::string, std::string>> args_;
@@ -1259,9 +1298,41 @@ inline std::vector<Error> resolve(
       "replay.fill = \"legs\" feeds each day as an open and a close, for a program with on_open or on_close"
     ));
   }
-  if (fill == "open-prev-close" && source != "wide") {
+  // The market-price rule: a header and the function it declares, both or neither.
+  const auto* fill_header = get("replay.fill_header");
+  const auto* fill_function = get("replay.fill_function");
+  if ((fill_header == nullptr) != (fill_function == nullptr)) {
     errors.push_back(
-      at("replay.fill", "replay.fill = \"open-prev-close\" reads wide tables of closes (data.source = \"wide\")")
+      Error::at(
+        (fill_header != nullptr ? fill_header : fill_function)->origin_,
+        "a market-price rule names its header and its function: give both `replay.fill_header` and "
+        "`replay.fill_function`"
+      )
+    );
+  }
+  if (fill_header != nullptr && fill_header->value_.text().find_first_of("\"\\\n\r") != std::string::npos) {
+    errors.push_back(
+      Error::at(
+        fill_header->origin_, "`replay.fill_header`: a path holding `\"`, `\\` or a line break cannot be included"
+      )
+    );
+  }
+  if (fill_function != nullptr && !cpp_name(fill_function->value_.text())) {
+    errors.push_back(
+      Error::at(
+        fill_function->origin_,
+        "`replay.fill_function` = \"" + fill_function->value_.text() +
+          "\": give a C++ function's name, such as `decision_close` or `rules::decision_close`"
+      )
+    );
+  }
+  if (fill_function != nullptr && text("orders.type").value_or("market") == "limit") {
+    errors.push_back(
+      Error::at(
+        fill_function->origin_,
+        "`replay.fill_function` prices market orders, and orders.type = \"limit\" sends none: remove the rule or "
+        "use market orders"
+      )
     );
   }
   if (fill == "legs" && program.legs_ && source == "wide") {
@@ -1410,7 +1481,7 @@ inline std::vector<Error> resolve(
   for (const auto& e : merged) {
     if (
       e.key_ == "strategy" || e.key_ == "data.source" || e.key_.rfind("build.", 0) == 0 ||
-      e.key_.rfind("params.", 0) == 0
+      e.key_.rfind("params.", 0) == 0 || e.key_ == "replay.fill_header" || e.key_ == "replay.fill_function"
     ) {
       continue;
     }
@@ -1428,6 +1499,8 @@ inline std::vector<Error> resolve(
     out.duckdb_ = e->value_.text();
   }
   out.indicators_ = text("build.indicators").value_or("incremental");
+  out.fill_header_ = text("replay.fill_header").value_or("");
+  out.fill_function_ = text("replay.fill_function").value_or("");
   out.order_type_ = kind;
   out.offset_ = text("orders.offset").value_or("");
   // The driver's arguments are bounded, so a huge setting is refused here rather than failing at exec.

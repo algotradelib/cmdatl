@@ -75,6 +75,24 @@ TEST_CASE("the market settings a run refuses before anything is built") {
   CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}));
 }
 
+TEST_CASE("a driver's program header gives the fill model the run's market-price rule, or leaves it") {
+  build::Request request;
+  request.struct_ = "Dip";
+  request.kind_ = build::DriverKind::BACKTEST;
+  const auto plain = build::program_header(request);
+  CHECK(plain.find("using Program = atls::Dip;") != std::string::npos);
+  CHECK(plain.find("  return model;\n") != std::string::npos);
+  CHECK(plain.find("with_market_price") == std::string::npos);
+  request.fill_header_ = "/specs/rules/close.hpp";
+  request.fill_function_ = "rules::decision_close";
+  const auto ruled = build::program_header(request);
+  CHECK(ruled.find("#include \"/specs/rules/close.hpp\"\n") != std::string::npos);
+  CHECK(
+    ruled.find("  return model.with_market_price(\"rules::decision_close\", rules::decision_close);\n") !=
+    std::string::npos
+  );
+}
+
 TEST_CASE("a shape's key changes with each input it holds, and with nothing else") {
   std::map<std::string, std::string> env;
   const auto lookup = [&env](const std::string& name) -> std::optional<std::string> {
