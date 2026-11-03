@@ -1409,4 +1409,74 @@ TEST_CASE(
   CHECK(fixture.json({"account"}).out_ == account_before);
   CHECK(fixture.json({"order", "list"}).out_ == orders_before);
 }
+
+TEST_CASE("the README's quick start runs on the example paper account and its run spec", "[acceptance][runs]") {
+  const auto equipment = run_equipment();
+  if (!equipment) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const RunEquipped equipped(equipment->first, equipment->second);
+  // A copy of the examples, as a clone holds them, with the account's state in the copy's own directory.
+  const ScratchDir dir;
+  std::filesystem::copy(
+    std::filesystem::path(CMDATL_SOURCE_DIR) / "examples", dir.path() / "examples",
+    std::filesystem::copy_options::recursive
+  );
+  // Without what a reader of the README may have written beside the example account in the source tree.
+  std::vector<std::filesystem::path> written;
+  for (const auto& entry : std::filesystem::directory_iterator(dir.path() / "examples")) {
+    const auto name = entry.path().filename().string();
+    if (name.rfind("paper.", 0) == 0 && name != "paper.toml") {
+      written.push_back(entry.path());
+    }
+  }
+  for (const auto& path : written) {
+    std::filesystem::remove_all(path);
+  }
+  const ScopedVariable config("CMDATL_CONFIG", (dir.path() / "examples" / "paper.toml").string());
+  const ScopedVariable state("XDG_STATE_HOME", (dir.path() / "state").string());
+  const InDir here(dir.path());
+  const auto ask = [](std::vector<std::string> args) {
+    args.insert(args.begin(), "--json");
+    return run(args);
+  };
+  // The bars are read when the account opens, not when the operator's file is.
+  const auto status = ask({"status"});
+  INFO(status.out_ << status.err_);
+  REQUIRE(status.exit_ == 0);
+  CHECK(reply_of(status.out_).at("phase").as_string() == "open");
+  CHECK(reply_of(status.out_).at("armed").as_bool() == false);
+  spit(dir.path() / "examples" / "paper.armed", "");
+  const auto plan = ask({"order", "plan", "AAA", "--target", "10", "--limit", "102"});
+  INFO(plan.out_ << plan.err_);
+  REQUIRE(plan.exit_ == 0);
+  const auto placed = ask({"order", "place", std::string(reply_of(plan.out_).at("plan_id").as_string())});
+  INFO(placed.out_ << placed.err_);
+  REQUIRE(placed.exit_ == 0);
+  CHECK(reply_of(placed.out_).at("reason").as_string() == "placed");
+  const auto advanced = ask({"clock", "advance", "--minutes", "30"});
+  REQUIRE(advanced.exit_ == 0);
+  const auto moved = reply_of(advanced.out_);
+  const auto& events = moved.at("events").as_array();
+  REQUIRE(events.size() == 1);
+  CHECK(events[0].as_object().at("kind").as_string() == "filled");
+  const auto reconciled = ask({"order", "reconcile", "AAA"});
+  INFO(reconciled.out_ << reconciled.err_);
+  REQUIRE(reconciled.exit_ == 0);
+  CHECK(reply_of(reconciled.out_).at("reason").as_string() == "clean");
+  // The run spec run start accepts: it ends clean, every order placed is filled, none is refused before sending, and
+  // it trades as the backtest of the same program and bars does (10 executions), so the guard refused none either.
+  const auto ran = ask({"run", "start", "examples/run.toml", "--wait"});
+  INFO(ran.out_ << ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  const auto reply = reply_of(ran.out_);
+  CHECK(reply.at("run_exit").as_int64() == 0);
+  CHECK(reply.at("summary").as_object().at("outcome").as_string() == "clean");
+  CHECK(reply.at("summary").as_object().at("executions").as_int64() == 10);
+  const auto& counted = reply.at("progress").as_object().at("events").as_object();
+  REQUIRE(counted.contains("placed"));
+  CHECK(counted.at("placed").as_int64() > 0);
+  CHECK(counted.at("filled") == counted.at("placed"));
+  CHECK(!counted.contains("refused"));
+}
 #endif
