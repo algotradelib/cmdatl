@@ -73,7 +73,7 @@ offset = 0.01 # a buy's limit 1 % above the price, a sell's 1 % below, inside th
 - `cmdatl run start NAME.toml --wait` answers with the summary (`executions`, `commission_paid`, `closing_equity`, `holdings_at_end`); without `--wait`, `cmdatl run status` and `cmdatl run log` show it.
   Starting, watching and stopping runs, and every exit code: the agent guide (`cmdatl guide agent`).
 
-When a run's fills differ from the backtest's, the README's rule says why:
+When a run's fills differ from the backtest's, this rule says why:
 The run starts at the first bar and steps through the data 15 market minutes at a time, as fast as the machine allows; at the end it withdraws whatever rests and confirms it before it reports.
 A run's fills are those of `cmdatl strategy backtest` on the same spec when the program decides from bars alone, the bars end on that step (date-only rows do), and none of the operator's limits, the cash or the order budget refuses an order the backtest makes, since the backtest applies none of them.
 

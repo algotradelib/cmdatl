@@ -1,6 +1,6 @@
 {
   "name": "cmdatl",
-  "description": "Skills for trading and running strategies with cmdatl, algotradelib from the command line: the agent guide and the strategy guide.",
+  "description": "Skills for trading a paper account and running strategies with cmdatl, algotradelib from the command line: the agent guide and the strategy guide.",
   "author": {
     "name": "algotradelib",
     "url": "https://github.com/algotradelib"

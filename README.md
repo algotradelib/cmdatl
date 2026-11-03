@@ -6,24 +6,25 @@
 <!-- badges: end -->
 
 algotradelib from the command line.
-With [algotradelib](https://github.com/algotradelib/algotradelib) alone you write your own C++ for a backtest or a trading loop; with cmdatl you write the strategy in [atls](https://github.com/algotradelib/atlc), describe the run in a TOML file, and backtest and trade it from the command line.
+With [algotradelib](https://github.com/algotradelib/algotradelib) alone you write your own C++ for a backtest or a trading loop; with cmdatl you write the strategy in [atls](https://github.com/algotradelib/atlc), describe the run in a TOML file, and backtest it or run it from the command line.
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
+In this version the account is a paper account: a market simulated from stored daily bars, with no broker and no network.
+
+From a clone, with cmdatl and atlc installed (below):
 
 ```sh
-cmdatl strategy new dip --template mean-reversion # dip.atls and dip.toml to start from
-cmdatl strategy backtest dip.toml params.lookback=30 # builds and replays it; the report as JSON
+cmdatl strategy backtest examples/mean-reversion.toml params.lookback=30 # builds and replays it; the report as JSON
+export CMDATL_CONFIG=$PWD/examples/paper.toml # the example paper account: the operator's file
+touch examples/paper.armed # the operator arms the account; without this file nothing may be placed
 cmdatl status # the account in one read
-cmdatl run start dip.toml # a run on its own mock market, in the background
-cmdatl run status # its state, and its summary once it ended
+cmdatl order plan AAA --target 10 --limit 102 # sends nothing; replies with a plan id
+cmdatl order place p8c16a0bcd2 # the plan id the reply named
+cmdatl clock advance --minutes 30 # the paper clock moves only when told; the order fills
+cmdatl order reconcile AAA # records the fill from holdings; sends nothing
+cmdatl run start examples/run.toml --wait # a strategy run on its own mock market, its summary at the end
 ```
 
-An agent plans an order, then places that plan:
-
-```sh
-cmdatl order plan 005930 --target 10 --limit 78200 # sends nothing; replies with a plan id
-cmdatl order place p9cc4b94da4
-cmdatl account --value cash # one value, nothing else
-```
+`cmdatl strategy new dip --template mean-reversion` starts a program of your own: `dip.atls` and `dip.toml`, a run spec that reads `bars.csv` beside it (`cp examples/data/daily.csv bars.csv` gives it the examples' bars).
 
 How cmdatl's parts use algotradelib's modules and atlc:
 
@@ -31,14 +32,21 @@ How cmdatl's parts use algotradelib's modules and atlc:
 
 ## Install
 
-cmdatl is built with CMake and a C++17 compiler against an installed algotradelib; see [the library's install guide](https://github.com/algotradelib/algotradelib#install).
+cmdatl needs a C++17 compiler, CMake 3.20 or later, and algotradelib [as an installed package](https://github.com/algotradelib/algotradelib/blob/main/doxygen/index.md#as-an-installed-package), with the Boost 1.87 and OpenSSL 3.0 it was built with installed too.
+It is built and tested on Linux and macOS; Windows is not supported yet.
 
 ```sh
-cmake -S . -B build -DCMAKE_PREFIX_PATH=/path/to/algotradelib/prefix
+export OPENSSL_ROOT_DIR=$(brew --prefix openssl@3) # macOS only: Homebrew's OpenSSL 3 is not on the default paths
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH=/path/to/algotradelib/prefix
 cmake --build build
+cmake --install build --prefix /your/prefix # bin/cmdatl, include/cmdatl/replay/, share/cmdatl/skills/
 ```
 
-Backtests and runs compile each strategy at run time, so they also need CMake and a C++17 compiler, the algotradelib cmdatl was built against, and `atlc`, the atls compiler, on `PATH` or named by `CMDATL_ATLC`.
+CLI11, toml++ and Catch2 are downloaded when they are not installed (`CMDATL_FETCH_DEPS`, on by default); `-DCMDATL_BUILD_TESTS=OFF` leaves the tests out.
+
+Backtests and runs compile each strategy at run time, so they also need CMake and a C++17 compiler, the algotradelib cmdatl was built against, and `atlc`, the atls compiler, on `PATH` or named by `CMDATL_ATLC` ([its install](https://github.com/algotradelib/atlc#install): `cargo install --git https://github.com/algotradelib/atlc`, with a Rust toolchain).
+Those builds find algotradelib where cmdatl was built against it, but not through `CMAKE_PREFIX_PATH`: of the variables that locate packages they pass on only `OPENSSL_ROOT_DIR`, `BOOST_ROOT`, `Boost_ROOT` and `Eigen3_ROOT` (and `DUCKDB_ROOT` for a store).
+So keep `OPENSSL_ROOT_DIR` exported on macOS for every backtest and run as for the build above, and export the others when Boost or Eigen live outside the library's prefix and the system's paths.
 atlc only translates a program to C++; cmdatl builds that once per program, keeps the build, and replays it.
 A backtest that reads a Parquet store also needs DuckDB's C library, named by the `[build]` table's `duckdb` or by `DUCKDB_ROOT`.
 `cmdatl strategy reference` needs atlc only; `cmdatl strategy new` needs neither.
@@ -56,7 +64,8 @@ A backtest that reads a Parquet store also needs DuckDB's C library, named by th
 
 ## Examples
 
-`examples/` holds five atls programs, each with a run spec over the synthetic daily bars in `examples/data/daily.csv`.
+`examples/` holds five atls programs, each with a run spec over the synthetic daily bars in `examples/data/daily.csv`; those specs are backtests (market orders and no market), which `cmdatl run start` refuses.
+`examples/run.toml` runs `mean-reversion` as a run (a market and limit orders), and `examples/paper.toml` is a paper account over the same bars: the commands at the top use both.
 
 ```sh
 cmdatl strategy backtest examples/mean-reversion.toml params.lookback=30
@@ -64,7 +73,7 @@ cmdatl strategy backtest examples/mean-reversion.toml params.lookback=30
 
 - `mean-reversion` buys when the price falls well below its recent mean and sells when it comes back.
 - `pairs` trades the spread of two instruments around its hedge ratio, short sales included.
-- `trailing-stop` buys a breakout and sells a fraction below the highest price since the fill; it uses `on_fill`, so `cmdatl run start` refuses it.
+- `trailing-stop` buys a breakout and sells a fraction below the highest price since the fill; it uses `on_fill`, which a run refuses.
 - `universe` trades every symbol of the file at the open and the close, and leaves a missing bar out.
 - `user-indicator` is mean reversion on a band written as a user indicator, with a function that caps the position.
 
@@ -95,11 +104,23 @@ start = "2024-03-25T09:30" # KST, at or after the first date's close
 ```
 
 - Every key is checked: an unknown key, a value of another type or out of range is refused with the file, the line and the column (`config.invalid`); `cmdatl env` shows what was read.
+- Optional keys, with their defaults:
+  - `atlc`: none (`CMDATL_ATLC`, then `PATH`).
+  - `account.env`: `"paper"`, the only value with the paper broker.
+  - `limits.order_type`: `"limit"`, the only order type.
+  - `limits.collar`: 0.05, how far a limit may sit from the last price, as a fraction (above 0, at most 0.30).
+  - `limits.phases`: `["open"]`.
+  - `limits.plan_ttl`: 60, the seconds a plan id stays good (1 to 3600).
+  - `limits.portfolio_age`: 30, how old, in seconds, holdings and the order list may be when an order is decided (1 to 86400).
+  - `paper.listing_lag`, `paper.holdings_lag`: 0, the seconds an accepted order stays out of the order list and a fill out of holdings, as a broker's may (up to 86400).
+- The account's state is tied to the bars file's bytes, `cash`, `start` and the two lags: changing any of them on a used account is refused (exit 4, not this account's).
+  To start an account again, move its state directory aside.
 - The armed file is `<stem>.armed` beside the operator's file (`paper.toml` gives `paper.armed`); while it is missing nothing may be placed, and `orders_accepted_now` says so.
 - The account's state lives in `$XDG_STATE_HOME/cmdatl/accounts/<broker>-<env>-<number>` (else `~/.local/state/cmdatl`): its lock, its order journal and `paper.jsonl`, the paper market's log.
   Another `XDG_STATE_HOME` is another paper account.
 - Keep the operator's file out of the state directory.
-  The agent runs as the operator's own user, so the file is advisory until a separate daemon owns the account.
+  cmdatl applies the operator's file to every command, but the agent runs as the operator's own user: cmdatl cannot stop a process of that user from changing the operator's file, the armed file, the release approval, the stop file or the account's state directory.
+- The commands in this section and the next use the sample file's symbols; on the example account, use `AAA` and `BBB`.
 
 ```sh
 cmdatl status # time, phase, readiness, positions, cash, owed and working orders, quotes

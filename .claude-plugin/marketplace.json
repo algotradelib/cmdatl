@@ -1,6 +1,6 @@
 {
   "name": "cmdatl",
-  "description": "cmdatl's skills for Claude Code: trading with cmdatl and writing strategies for it.",
+  "description": "cmdatl's skills for Claude Code: trading a paper account with cmdatl and writing strategies for it.",
   "owner": {
     "name": "algotradelib",
     "url": "https://github.com/algotradelib"
@@ -9,7 +9,7 @@
     {
       "name": "cmdatl",
       "source": "./",
-      "description": "Skills for trading and running strategies with cmdatl: the agent guide and the strategy guide."
+      "description": "Skills for trading a paper account and running strategies with cmdatl: the agent guide and the strategy guide."
     }
   ]
 }
