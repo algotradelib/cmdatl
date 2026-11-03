@@ -119,7 +119,7 @@ start = "2024-03-25T09:30" # KST, at or after the first date's close
 - The account's state lives in `$XDG_STATE_HOME/cmdatl/accounts/<broker>-<env>-<number>` (else `~/.local/state/cmdatl`): its lock, its order journal and `paper.jsonl`, the paper market's log.
   Another `XDG_STATE_HOME` is another paper account.
 - Keep the operator's file out of the state directory.
-  cmdatl applies the operator's file to every command, but the agent runs as the operator's own user: cmdatl cannot stop a process of that user from changing the operator's file, the armed file, the release approval, the stop file or the account's state directory.
+  cmdatl applies the operator's file to every command, but the agent runs as the operator's own user: cmdatl cannot stop a process of that user from changing the operator's file, the armed file, the release approval or the account's state directory.
 - The commands in this section and the next use the sample file's symbols; on the example account, use `AAA` and `BBB`.
 
 ```sh
@@ -195,9 +195,11 @@ cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
 - The output is JSON lines whatever the output format: events (each with `event`: `start`, `placed`, `filled`, `canceled`, `expired`, `refused`, `stop`, `clock`, `end`), then the reply as the last line, and the command exits with the run's exit.
   The reply's `refused` counts orders refused by the operator's limits or the market (`boundary`), by the library's guard (`guard`) and targets atlc could not price (`pricing`); a run with any is `outcome: refused_orders`.
   A run whose outcome is unknown (a journal write failed, an order it could not confirm) exits 4; its market ended with its process and no account was affected.
-- Ctrl-C, SIGTERM and SIGHUP (a closed terminal) withdraw the run: no new placements, its resting orders cancelled and confirmed, then the reply; so does a closed output.
+- Ctrl-C, SIGTERM and SIGHUP (a closed terminal) withdraw the run: no new placements, its resting orders cancelled and confirmed, then the reply; so does a closed output, and a stopped run whose output nobody reads gives up writing after a second.
+  Placements refused once a stop is noted are counted under `signal` in the reply's `refused` and leave the run clean.
   Removing the armed file stops every run's placements at its next step.
-  For a run that outlives its terminal, start it with `nohup` and redirect its output.
+  For a run that outlives its terminal, start it with `nohup` and redirect its output: a SIGHUP ignored when cmdatl starts stays ignored.
+  `--fields` and `--value` do not apply to `run`, which prints every event and its whole reply.
 - A run needs CMake and a C++17 compiler: `run` builds a program once per shape under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`); a later run of an unchanged program builds nothing, and a change to the program, atlc or algotradelib builds again.
 
 ## Output
@@ -206,7 +208,7 @@ cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
 - `--fields a,b.c` keeps only those fields; `--value PATH` prints one value bare, the one reply without `env`.
 - Every other reply carries `env`; a failure carries one `error` object with a stable code, such as `refused.position_limit`.
 - A field name no reply of the command has is refused before the command runs; one missing from a reply the command already produced comes back with the whole reply and a `warning`.
-- Exit codes: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (nothing was sent), 4 unknown (follow error.next before anything else), 5 strategy errors, 130 interrupted (Ctrl-C or SIGTERM stopped a command before anything could be sent; it still replies, and once an order command has begun to send it answers with its own outcome instead).
+- Exit codes: 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (nothing was sent), 4 unknown (follow error.next before anything else), 5 strategy errors, 130 interrupted (Ctrl-C, SIGTERM or SIGHUP stopped a command before anything could be sent; it still replies, and once an order command has begun to send it answers with its own outcome instead).
 - On a terminal a failure is written to stderr; in JSON it is the reply, on stdout.
 - `cmdatl help COMMAND` (or `--help`) shows a command's usage and examples; `cmdatl schema` describes every command, its fields and its error codes for a program.
 

@@ -346,16 +346,6 @@ private:
   ScopedVariable cache_;
 };
 
-/**
- * @brief A run's directory under a fixture.
- * @param fixture The fixture.
- * @param run The run's id.
- * @return The directory.
- */
-std::filesystem::path run_path(const PaperFixture& fixture, const std::string& run) {
-  return fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001" / run;
-}
-
 /** @brief What a `run` process wrote and how it ended. */
 struct RunProcess {
   /** @brief Its exit. */
@@ -697,6 +687,73 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     CHECK(ran.exit_ == 5);
     CHECK(run_code(ran) == "program.live_unsupported");
     CHECK(ran.reply_.at("result").as_string() == "failed");
+  }
+}
+
+TEST_CASE(
+  "cmdatl run becomes its driver: SIGINT withdraws a resting order, and a SIGHUP ignored when it started stays ignored",
+  "[acceptance][runs]"
+) {
+  const auto equipment = run_equipment();
+  if (!equipment) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const PaperFixture fixture(run_operator());
+  const RunEquipped equipped(equipment->first, equipment->second);
+  fixture.arm();
+  // A driver with the test barrier, held at each step while an order rests (its own shape: CXXFLAGS is in the key).
+  const ScopedVariable hooks("CXXFLAGS", "-DCMDATL_RUN_TEST_HOOKS");
+  const auto barrier = fixture.dir() / "barrier";
+  const ScopedVariable held("CMDATL_TEST_BARRIER", barrier.string());
+  const ScopedVariable on_order("CMDATL_TEST_BARRIER_ON_ORDER", "1");
+  // Waits for the first resting order; a build can take minutes.
+  const auto until_placed = [](Spawned& cmdatl) {
+    while (true) {
+      const auto line = cmdatl.line(false, 600);
+      REQUIRE(line);
+      if (line->find("\"event\":\"placed\"") != std::string::npos) {
+        return;
+      }
+    }
+  };
+  {
+    spit(barrier, "");
+    Spawned cmdatl({"--json", "run", shared().spec("dip")});
+    until_placed(cmdatl);
+    cmdatl.signal(SIGINT);
+    std::filesystem::remove(barrier);
+    const int status = cmdatl.wait(120);
+    INFO(cmdatl.out() << cmdatl.err());
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
+    // Nothing the run started keeps its output open.
+    CHECK(cmdatl.stdout_ended());
+    const auto reply = json::parse(lines_of(cmdatl.out()).back()).as_object();
+    CHECK(reply.at("stopped").as_string() == "signal");
+    CHECK(reply.at("outcome").as_string() == "clean");
+    CHECK(reply.at("owed_at_end").as_array().empty());
+    CHECK(cmdatl.out().find("\"event\":\"canceled\"") != std::string::npos);
+  }
+  {
+    // As under nohup: SIGHUP ignored when cmdatl starts. The run takes no notice and ends at the end of its data.
+    struct sigaction ignored{};
+    ignored.sa_handler = SIG_IGN;
+    sigemptyset(&ignored.sa_mask);
+    struct sigaction before{};
+    REQUIRE(::sigaction(SIGHUP, &ignored, &before) == 0);
+    spit(barrier, "");
+    Spawned cmdatl({"--json", "run", shared().spec("dip")});
+    ::sigaction(SIGHUP, &before, nullptr);
+    until_placed(cmdatl);
+    cmdatl.signal(SIGHUP);
+    std::filesystem::remove(barrier);
+    const int status = cmdatl.wait(120);
+    INFO(cmdatl.out() << cmdatl.err());
+    REQUIRE(WIFEXITED(status));
+    CHECK(WEXITSTATUS(status) == 0);
+    const auto reply = json::parse(lines_of(cmdatl.out()).back()).as_object();
+    CHECK(reply.at("stopped").as_string() == "end");
+    CHECK(reply.at("executions").as_int64() > 0);
   }
 }
 

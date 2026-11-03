@@ -9,15 +9,19 @@
 #include <boost/json.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if !defined(_WIN32)
 #include <fcntl.h>
+#include <poll.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -89,12 +93,15 @@ ConfigParts run_parts() {
  * @tparam P The program.
  * @param fixture The operator's file and state root.
  * @param args The arguments after `run.id`.
+ * @param before Called with the run's id and directory before the child starts.
+ * @param during Called in the parent with the child's pid and its stdout file while the child runs.
  * @return What it answered.
  */
 template <typename P>
 RunResult run_child(
   const PaperFixture& fixture, const std::vector<std::string>& args,
-  const std::function<void(const std::string&, const std::filesystem::path&)>& before = {}
+  const std::function<void(const std::string&, const std::filesystem::path&)>& before = {},
+  const std::function<void(pid_t, const std::filesystem::path&)>& during = {}
 ) {
   RunResult ran;
   ran.run_ = next_run();
@@ -128,6 +135,9 @@ RunResult run_child(
     std::fflush(nullptr);
     ::_exit(code);
   }
+  if (during) {
+    during(pid, reply_path);
+  }
   int status = 0;
   REQUIRE(::waitpid(pid, &status, 0) == pid);
   REQUIRE(WIFEXITED(status));
@@ -148,6 +158,96 @@ RunResult run_child(
     }
   }
   return ran;
+}
+
+/**
+ * @brief Runs `run_main<P>` in a child as `run_child` does, its stdout a pipe the parent holds both ends of while
+ *   `during` runs; then the parent reads what is left and parses what it read.
+ * @tparam P The program.
+ * @param fixture The operator's file and state root.
+ * @param args The arguments after `run.id`.
+ * @param during Called with the child's pid, the pipe's read end, its write end, and the text read so far.
+ * @return What it answered, from what the parent read.
+ */
+template <typename P>
+RunResult run_child_piped(
+  const PaperFixture& fixture, const std::vector<std::string>& args,
+  const std::function<void(pid_t, int, int, std::string&)>& during
+) {
+  RunResult ran;
+  ran.run_ = next_run();
+  ran.dir_ = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001" / ran.run_;
+  std::filesystem::create_directories(ran.dir_);
+  const auto stderr_path = fixture.dir() / (ran.run_ + ".stderr");
+  int fds[2];
+  REQUIRE(::pipe(fds) == 0);
+  std::fflush(nullptr);
+  const pid_t pid = ::fork();
+  REQUIRE(pid >= 0);
+  if (pid == 0) {
+    ::alarm(120);
+    ::dup2(fds[1], STDOUT_FILENO);
+    ::close(fds[0]);
+    ::close(fds[1]);
+    const int err = ::open(stderr_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    ::dup2(err, STDERR_FILENO);
+    ::close(err);
+    std::vector<std::string> owned{"driver", "run.id=" + ran.run_};
+    owned.insert(owned.end(), args.begin(), args.end());
+    std::vector<char*> argv;
+    for (auto& arg : owned) {
+      argv.push_back(arg.data());
+    }
+    const int code =
+      cmdatl::driver::run_main<P>(static_cast<int>(argv.size()), argv.data(), runtest::Load{}, runtest::Make<P>{});
+    std::fflush(nullptr);
+    ::_exit(code);
+  }
+  std::string text;
+  during(pid, fds[0], fds[1], text);
+  ::close(fds[1]);
+  int status = 0;
+  REQUIRE(::waitpid(pid, &status, 0) == pid);
+  ::close(fds[0]);
+  REQUIRE(WIFEXITED(status));
+  ran.exit_ = WEXITSTATUS(status);
+  ran.stderr_ = slurp(stderr_path);
+  for (const auto& line : split_lines(text)) {
+    auto object = json::parse(line).as_object();
+    if (object.contains("event")) {
+      ran.events_.push_back(std::move(object));
+    } else {
+      ran.reply_ = std::move(object);
+    }
+  }
+  return ran;
+}
+
+/**
+ * @brief Reads a pipe until what was read holds a text, at most 60 s; only whole lines are kept.
+ * @param fd The read end.
+ * @param text What was read; whole lines only.
+ * @param want The text.
+ */
+void read_until(int fd, std::string& text, const std::string& want) {
+  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  std::string buffer;
+  while (text.find(want) == std::string::npos) {
+    REQUIRE(std::chrono::steady_clock::now() < until);
+    pollfd in{fd, POLLIN, 0};
+    if (::poll(&in, 1, 100) <= 0) {
+      continue;
+    }
+    char chunk[4096];
+    const auto n = ::read(fd, chunk, sizeof chunk);
+    REQUIRE(n > 0);
+    buffer.append(chunk, static_cast<std::size_t>(n));
+    const auto last = buffer.rfind('\n');
+    if (last != std::string::npos) {
+      text += buffer.substr(0, last + 1);
+      buffer.erase(0, last + 1);
+    }
+  }
 }
 
 /**
@@ -214,6 +314,44 @@ std::vector<json::object> events_of(const RunResult& ran, const std::string& kin
   }
   return out;
 }
+
+/**
+ * @brief Waits until a file holds a text, at most 60 s.
+ * @param path The file.
+ * @param text The text.
+ */
+void wait_for_text(const std::filesystem::path& path, const std::string& text) {
+  const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+  while (slurp(path).find(text) == std::string::npos) {
+    REQUIRE(std::chrono::steady_clock::now() < until);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+}
+
+/** @brief Holds a run at each step while an order rests, until `release()`: the driver's test barrier. */
+class HeldOnOrder {
+public:
+  /**
+   * @brief Creates the barrier file and points the driver at it.
+   * @param fixture Where the file lives.
+   */
+  explicit HeldOnOrder(const PaperFixture& fixture)
+  : path_(fixture.dir() / "barrier"),
+    barrier_("CMDATL_TEST_BARRIER", path_.string()),
+    on_order_("CMDATL_TEST_BARRIER_ON_ORDER", "1") {
+    spit(path_, "");
+  }
+
+  /** @brief Lets the run go on. */
+  void release() const {
+    std::filesystem::remove(path_);
+  }
+
+private:
+  std::filesystem::path path_;
+  ScopedVariable barrier_;
+  ScopedVariable on_order_;
+};
 
 /** @brief A broker error of a category, as the mock's scripted faults take it. */
 algotradelib::BrokerError broker_error(algotradelib::ErrorCategory category) {
@@ -734,13 +872,15 @@ TEST_CASE("SIGINT, SIGTERM and SIGHUP each withdraw: the resting order cancelled
     INFO("signal " << sig);
     const PaperFixture fixture(run_parts());
     fixture.arm();
-    // A buy below the price at bar 4, the signal noted at the same bar: the guard reads it at the next step, before
-    // the order's session ends, so the closing pass cancels it.
+    const HeldOnOrder held(fixture);
+    // A buy below the price at bar 4 rests; the run is held there and signalled.
     set_script({{4, {10, "0.97"}}});
-    runtest::script().actions_[4] = [sig] {
-      std::raise(sig);
-    };
-    const auto ran = run_child<runtest::Program>(fixture, spec_args());
+    const auto ran =
+      run_child<runtest::Program>(fixture, spec_args(), {}, [&held, sig](pid_t pid, const std::filesystem::path& out) {
+        wait_for_text(out, "\"event\":\"placed\"");
+        ::kill(pid, sig);
+        held.release();
+      });
     INFO(json::serialize(ran.reply_));
     CHECK(ran.exit_ == 0);
     CHECK(ran.reply_.at("stopped").as_string() == "signal");
@@ -751,32 +891,82 @@ TEST_CASE("SIGINT, SIGTERM and SIGHUP each withdraw: the resting order cancelled
     REQUIRE(!stops.empty());
     CHECK(stops.front().at("intent").as_string() == "withdraw");
     CHECK(ran.reply_.at("owed_at_end").as_array().empty());
-    CHECK(slurp(ran.dir_ / "journal.jsonl").find("\"outcome\":\"confirmed\"") != std::string::npos);
+    const auto journal = slurp(ran.dir_ / "journal.jsonl");
+    CHECK(journal.find("\"action\":\"cancel\"") != std::string::npos);
+    CHECK(journal.find("\"outcome\":\"confirmed\"") != std::string::npos);
   }
+}
+
+TEST_CASE("a placement after a signal is refused before sending, counted apart, and the run stays clean") {
+  const PaperFixture fixture(run_parts());
+  fixture.arm();
+  // The signal arrives at bar 4, before that bar's decision: the guard has not yet run, the boundary refuses.
+  set_script({{4, {10, "0.97"}}});
+  runtest::script().actions_[4] = [] {
+    std::raise(SIGINT);
+  };
+  const auto ran = run_child<runtest::Program>(fixture, spec_args());
+  INFO(json::serialize(ran.reply_));
+  CHECK(ran.exit_ == 0);
+  CHECK(count_of(ran, "placed") == 0);
+  const auto refused = events_of(ran, "refused");
+  REQUIRE(refused.size() >= 1);
+  CHECK(refused.front().at("reason").as_string() == "signal");
+  CHECK(ran.reply_.at("refused").as_object().at("signal").as_int64() >= 1);
+  CHECK(ran.reply_.at("refused").as_object().at("boundary").as_int64() == 0);
+  CHECK(ran.reply_.at("outcome").as_string() == "clean");
+  CHECK(ran.reply_.at("stopped").as_string() == "signal");
 }
 
 TEST_CASE("a closed output withdraws the run: the resting order is cancelled and confirmed although nobody reads") {
   const PaperFixture fixture(run_parts());
   fixture.arm();
+  const HeldOnOrder held(fixture);
   set_script({{4, {10, "0.97"}}});
-  // At bar 4 stdout becomes a pipe whose reader is gone, as when the caller's pipe closes.
-  runtest::script().actions_[4] = [] {
-    int fds[2];
-    if (::pipe(fds) == 0) {
-      ::close(fds[0]);
-      ::dup2(fds[1], STDOUT_FILENO);
-      ::close(fds[1]);
+  // Once the order rests, the reader goes away, as when the caller's pipe closes: the next event (the heartbeat) fails.
+  const auto ran = run_child_piped<runtest::Program>(
+    fixture, spec_args(), [&held](pid_t, int read_end, int write_end, std::string& text) {
+      read_until(read_end, text, "\"event\":\"placed\"");
+      ::close(write_end);
+      ::close(read_end);
+      // Past the heartbeat's second, so the step after the hold writes one, which fails while the order rests.
+      std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+      held.release();
     }
-  };
-  const auto ran = run_child<runtest::Program>(fixture, spec_args());
+  );
   CHECK(ran.exit_ == 0);
   CHECK(ran.reply_.empty());
-  // The placement's event was lost with the output: the journal holds the order and its confirmed end.
+  CHECK(count_of(ran, "placed") == 1);
   const auto journal = slurp(ran.dir_ / "journal.jsonl");
-  CHECK(journal.find("005930") != std::string::npos);
+  CHECK(journal.find("\"action\":\"cancel\"") != std::string::npos);
   CHECK(journal.find("\"outcome\":\"confirmed\"") != std::string::npos);
-  CHECK(ran.stderr_.find("owed after restore") != std::string::npos);
-  CHECK(ran.stderr_.find("finalization: ") != std::string::npos);
+  CHECK(ran.stderr_.find(", 0 owed") != std::string::npos);
+}
+
+TEST_CASE("a signal stops a run whose output nobody reads: it gives up writing, withdraws and exits") {
+  const PaperFixture fixture(run_parts());
+  fixture.arm();
+  const HeldOnOrder held(fixture);
+  set_script({{4, {10, "0.97"}}});
+  // Once the order rests, the reader stops reading and the pipe is filled, as a caller waiting on the process without
+  // reading its output: every write would block. Then SIGTERM.
+  const auto ran = run_child_piped<runtest::Program>(
+    fixture, spec_args(), [&held](pid_t pid, int read_end, int write_end, std::string& text) {
+      read_until(read_end, text, "\"event\":\"placed\"");
+      const int flags = ::fcntl(write_end, F_GETFL);
+      ::fcntl(write_end, F_SETFL, flags | O_NONBLOCK);
+      const std::string filler(4096, ' ');
+      while (::write(write_end, filler.data(), filler.size()) > 0) {
+      }
+      ::kill(pid, SIGTERM);
+      held.release();
+    }
+  );
+  // It ended by itself, though nobody read (a hang would end in the child's alarm, not an exit), after withdrawing.
+  CHECK(ran.exit_ == 0);
+  const auto journal = slurp(ran.dir_ / "journal.jsonl");
+  CHECK(journal.find("\"action\":\"cancel\"") != std::string::npos);
+  CHECK(journal.find("\"outcome\":\"confirmed\"") != std::string::npos);
   CHECK(ran.stderr_.find(", 0 owed") != std::string::npos);
 }
 #endif

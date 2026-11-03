@@ -24,6 +24,7 @@
 #include <boost/json.hpp>
 
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -37,6 +38,7 @@
 
 #if !defined(_WIN32)
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -244,9 +246,6 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     ) {
       return std::move(*failed);
     }
-    if (interrupted()) {
-      return interrupted_reply();
-    }
     const auto driver = (dir / "driver").string();
     std::vector<std::string> argv_owned{driver, "run.id=" + *id};
     argv_owned.insert(argv_owned.end(), args.begin(), args.end());
@@ -270,9 +269,20 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     output.progress("cmdatl: run " + *id + " in " + dir.string());
     std::cout.flush();
     std::cerr.flush();
+    // The stops are blocked from the last check through the exec: one arriving in between stays pending, and the
+    // driver receives it once it has noted its own handlers (`handle_signals` unblocks them).
+    const sigset_t stops = stop_signals();
+    sigset_t before;
+    ::sigprocmask(SIG_BLOCK, &stops, &before);
+    if (interrupted()) {
+      ::sigprocmask(SIG_SETMASK, &before, nullptr);
+      return interrupted_reply();
+    }
     ::execve(driver.c_str(), argv.data(), envp.data());
+    const int error = errno;
+    ::sigprocmask(SIG_SETMASK, &before, nullptr);
     return error_reply(
-      Exit::FAILED, "run.failed", "the driver could not be started: " + std::string(std::strerror(errno)),
+      Exit::FAILED, "run.failed", "the driver could not be started: " + std::string(std::strerror(error)),
       next_for("run.failed"), true
     );
   } catch (const std::exception& error) {

@@ -1,6 +1,6 @@
 ---
 name: cmdatl-agent
-description: How to trade a paper account (the only account of this version) through the cmdatl command line - read positions, cash and the operator's limits, plan and place limit orders, confirm fills, handle refusals and exit codes, and start, watch and stop strategy runs. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
+description: How to trade a paper account (the only account of this version) through the cmdatl command line - read positions, cash and the operator's limits, plan and place limit orders, confirm fills, handle refusals and exit codes, and start and stop strategy runs. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
 ---
 
 # Trading with cmdatl

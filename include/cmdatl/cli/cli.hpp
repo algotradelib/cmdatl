@@ -276,6 +276,16 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
   if (globals.rendering_.value_) {
     asked.push_back(*globals.rendering_.value_);
   }
+  // `run` becomes its driver, which prints every event and its whole reply: there is nothing to select from.
+  if (!asked.empty() && command.run_config_) {
+    prepared.refusal_ = error_reply(
+      Exit::USAGE, "usage.bad_value",
+      "cmdatl " + join(command.path_) + " prints every event and its whole reply; --fields and --value do not apply",
+      "run it without --fields and --value, and read the last line"
+    );
+    prepared.refusal_->body_["usage"] = usage_line;
+    return prepared;
+  }
   for (const auto& field : asked) {
     if (!declares_field(command, field)) {
       prepared.refusal_ = error_reply(

@@ -312,7 +312,8 @@ inline std::vector<Command> command_list() {
       "trades a mock market made from the settings' data and prints its events as JSON lines, its reply last, "
       "whatever the output format. Settings are read as strategy backtest reads them. The operator's file limits "
       "every order the run places, and no setting changes it. Ctrl-C, SIGTERM or SIGHUP withdraws the run: no new "
-      "orders, its resting orders cancelled. The agent commands do not see a run's market."
+      "orders, its resting orders cancelled; under nohup, SIGHUP is ignored. The agent commands do not see a run's "
+      "market."
     )
     .example("cmdatl run dip.toml")
     .example("cmdatl run dip.toml params.lookback=21")
@@ -323,10 +324,18 @@ inline std::vector<Command> command_list() {
     .returns("result", "ended, refused, failed or unknown")
     .returns("outcome", "clean, refused_orders, or how the run ended otherwise")
     .returns("stopped", "why the run stopped placing: end, signal, not_armed, lock_lost or event_log")
-    .returns("refused", "orders refused, by whom: boundary (the operator's limits or the market), guard, pricing")
+    .returns(
+      "refused",
+      "orders refused, by whom: boundary (the operator's limits or the market), guard, pricing; signal, once stopping"
+    )
     .returns("from", "the run's first instant, market time")
     .returns("to", "the date of the data's last bar")
+    .returns("ended_at", "the run's last instant, market time")
     .returns("executions", "fills")
+    .returns("commission_paid", "commission, in won")
+    .returns("tax_paid", "tax, in won")
+    .returns("opening_equity", "the run's cash at its start")
+    .returns("closing_equity", "cash and holdings at the last price, at the end")
     .returns("holdings_at_end", "shares held at the end, by symbol")
     .returns("owed_at_end", "orders the run's journal still waits on")
     .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::REFUSED, Exit::UNKNOWN, Exit::PROGRAM, Exit::INTERRUPTED})

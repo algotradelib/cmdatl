@@ -10,15 +10,19 @@
 #include "../core/reply.hpp"
 #include "../paper/time.hpp"
 #include "../system/files.hpp"
+#include "../system/process.hpp"
+#include "../system/syscalls.hpp"
 
 #include <boost/json.hpp>
 
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <string>
 #include <utility>
 
 #if !defined(_WIN32)
+#include <poll.h>
 #include <unistd.h>
 #endif
 
@@ -54,6 +58,36 @@ inline std::string next_of(const std::string& code) {
 }
 
 #if !defined(_WIN32)
+/**
+ * @brief Writes a line to stdout whole, waiting while the reader is slow; once a stop is noted, a write that cannot go
+ *   ahead within a second fails instead, so a reader that stopped reading never keeps a stopped run from withdrawing.
+ * @param line The line.
+ * @return Whether it was written whole.
+ */
+inline bool write_line(const std::string& line) noexcept {
+  std::size_t written = 0;
+  while (written < line.size()) {
+    if (interrupted()) {
+      pollfd out{STDOUT_FILENO, POLLOUT, 0};
+      if (::poll(&out, 1, 1000) <= 0) {
+        return false;
+      }
+    }
+    const auto n = sys::write(STDOUT_FILENO, line.data() + written, line.size() - written);
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return false;
+    }
+    if (n == 0) {
+      return false;
+    }
+    written += static_cast<std::size_t>(n);
+  }
+  return true;
+}
+
 /** @brief The run's events on stdout; a line that cannot be written is remembered, and the run withdraws. */
 class EventLog {
 public:
@@ -74,9 +108,7 @@ public:
     if (failed_) {
       return false;
     }
-    const auto line = json::serialize(event) + "\n";
-    std::size_t written = 0;
-    if (write_whole(STDOUT_FILENO, line.data(), line.size(), written) != 0) {
+    if (!write_line(json::serialize(event) + "\n")) {
       failed_ = true;
     }
     return !failed_;
@@ -103,9 +135,7 @@ inline int write_run_reply(json::object body, Exit exit) {
       "unknown" :
       "failed";
   }
-  const auto line = json::serialize(body) + "\n";
-  std::size_t written = 0;
-  (void)write_whole(STDOUT_FILENO, line.data(), line.size(), written);
+  (void)write_line(json::serialize(body) + "\n");
   return static_cast<int>(exit);
 }
 

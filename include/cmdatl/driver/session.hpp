@@ -10,6 +10,7 @@
 
 #include "../account/operator.hpp"
 #include "../system/lock.hpp"
+#include "../system/process.hpp"
 
 #include <algotradelib/broker>
 #include <algotradelib/strategy>
@@ -179,7 +180,11 @@ public:
       }
     }
     const auto phase = closed_ ? atl::strategy::MarketPhase::UNKNOWN : phase_now();
-    if (const auto reason = placement_refusal(policy_, closed_, order, mark, phase)) {
+    // A stop noted since the last step refuses at once: the guard withdraws at the next step, and nothing new goes out
+    // meanwhile.
+    const auto reason =
+      interrupted() ? std::optional<std::string>("signal") : placement_refusal(policy_, closed_, order, mark, phase);
+    if (reason) {
       tell("refused", order, "", *reason);
       atl::BrokerError error;
       error.category_ = atl::ErrorCategory::INVALID_ARGUMENT;

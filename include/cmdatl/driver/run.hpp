@@ -542,6 +542,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
     Ledger ledger;
     ledger.cash_ = loaded.cash_;
     std::size_t session_refused = 0;
+    std::size_t signal_refused = 0;
     PlacementPolicy policy;
     policy.armed_ = config.armed_path();
     policy.lock_ = &lock;
@@ -558,7 +559,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
       [&market]() {
         return market.now();
       },
-      [&guard, &ledger, &session_refused](const PlacementEvent& placed) {
+      [&guard, &ledger, &session_refused, &signal_refused](const PlacementEvent& placed) {
         json::object event{
           {"event", placed.kind_},
           {"at", at_text(placed.at_)},
@@ -574,7 +575,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
           ledger.acknowledged_.insert(placed.order_id_);
           ledger.seen_.insert(placed.order_id_);
         } else {
-          ++session_refused;
+          // A placement refused because the run is stopping is the stop's doing, not a refused order.
+          ++(placed.reason_ == "signal" ? signal_refused : session_refused);
           event["reason"] = placed.reason_;
         }
         guard.emit(std::move(event));
@@ -724,12 +726,14 @@ int run_main(int argc, char** argv, Load load, Make make) {
       code = std::string("unknown.") + outcome_name(traded.outcome_);
     }
     body["outcome"] = thrown.empty() ? outcome_name(traded.outcome_) : "stopped_by_error";
-    // Every refusal counts: the boundary's and the broker's, the library guard's, and targets atlc could not price.
+    // Every refusal counts: the boundary's and the broker's, the library guard's, and targets atlc could not price;
+    // placements refused once a stop was noted are counted apart and leave the run clean.
     const std::size_t guard_refused = traded.report_ ? traded.report_->orders_guard_refused_ : 0;
     body["refused"] = json::object{
       {"boundary", session_refused},
       {"guard", guard_refused},
       {"pricing", traded.pricing_refused_},
+      {"signal", signal_refused},
     };
     if (
       thrown.empty() && traded.outcome_ == Outcome::CLEAN &&

@@ -263,9 +263,25 @@ inline bool interrupted() noexcept {
   return interruption != 0;
 }
 
+#if !defined(_WIN32)
+/**
+ * @brief The signals that stop a command or a run: SIGINT, SIGTERM and SIGHUP.
+ * @return The set.
+ */
+inline sigset_t stop_signals() noexcept {
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, SIGINT);
+  sigaddset(&set, SIGTERM);
+  sigaddset(&set, SIGHUP);
+  return set;
+}
+#endif
+
 /**
  * @brief cmdatl's signal dispositions, set once at start: SIGINT, SIGTERM and SIGHUP are noted, never fatal, so a
- *   command stops its child and still replies, and a run withdraws when its terminal closes; SIGPIPE is ignored, so
+ *   command stops its child and still replies, and a run withdraws when its terminal closes (a SIGHUP the caller
+ *   ignores stays ignored), and all three are unblocked; SIGPIPE is ignored, so
  *   a write to a closed output fails through its stream; SIGCHLD is the default, so children are not reaped behind
  *   cmdatl's back.
  */
@@ -276,7 +292,11 @@ inline void handle_signals() noexcept {
   sigemptyset(&noted.sa_mask);
   ::sigaction(SIGINT, &noted, nullptr);
   ::sigaction(SIGTERM, &noted, nullptr);
-  ::sigaction(SIGHUP, &noted, nullptr);
+  // A SIGHUP the caller ignores (nohup) stays ignored, and an exec keeps it so.
+  struct sigaction hangup{};
+  if (::sigaction(SIGHUP, nullptr, &hangup) != 0 || hangup.sa_handler != SIG_IGN) {
+    ::sigaction(SIGHUP, &noted, nullptr);
+  }
   struct sigaction ignored{};
   ignored.sa_handler = SIG_IGN;
   sigemptyset(&ignored.sa_mask);
@@ -285,6 +305,9 @@ inline void handle_signals() noexcept {
   standard.sa_handler = SIG_DFL;
   sigemptyset(&standard.sa_mask);
   ::sigaction(SIGCHLD, &standard, nullptr);
+  // Unblocked once noted: a stop the caller had blocked, or one held pending across `cmdatl run`'s exec, arrives now.
+  const sigset_t stops = stop_signals();
+  ::sigprocmask(SIG_UNBLOCK, &stops, nullptr);
 #endif
 }
 
