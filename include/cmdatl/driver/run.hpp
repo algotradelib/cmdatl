@@ -50,6 +50,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -646,6 +647,13 @@ int run_main(int argc, char** argv, Load load, Make make) {
       return true;
     };
     Traded traded;
+    // The recovery, loop and finalization lines, written to stderr after trading through the stop-aware writer: a
+    // caller whose stderr shares an unread pipe with stdout cannot hold a stopped run there either.
+    std::ostringstream diagnostics;
+    const auto flush_diagnostics = [&diagnostics]() {
+      (void)write_line(diagnostics.str(), STDERR_FILENO);
+      diagnostics.str({});
+    };
     std::string thrown;
     std::string thrown_code;
     try {
@@ -663,7 +671,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
           (void)client;
 #endif
         },
-        std::cerr
+        diagnostics
       );
     } catch (const RunBound& error) {
       thrown = error.what();
@@ -678,6 +686,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
       thrown = std::string("the market halted: ") + *market.halted();
       thrown_code = "unknown.market_halted";
     }
+    flush_diagnostics();
     if (!thrown.empty() && !trading) {
       return run_error(base, Exit::FAILED, "internal.error", thrown);
     }

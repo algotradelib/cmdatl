@@ -167,12 +167,13 @@ RunResult run_child(
  * @param fixture The operator's file and state root.
  * @param args The arguments after `run.id`.
  * @param during Called with the child's pid, the pipe's read end, its write end, and the text read so far.
+ * @param merged Whether stderr shares the pipe, as `2>&1` does.
  * @return What it answered, from what the parent read.
  */
 template <typename P>
 RunResult run_child_piped(
   const PaperFixture& fixture, const std::vector<std::string>& args,
-  const std::function<void(pid_t, int, int, std::string&)>& during
+  const std::function<void(pid_t, int, int, std::string&)>& during, bool merged = false
 ) {
   RunResult ran;
   ran.run_ = next_run();
@@ -187,11 +188,15 @@ RunResult run_child_piped(
   if (pid == 0) {
     ::alarm(120);
     ::dup2(fds[1], STDOUT_FILENO);
+    if (merged) {
+      ::dup2(fds[1], STDERR_FILENO);
+    } else {
+      const int err = ::open(stderr_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+      ::dup2(err, STDERR_FILENO);
+      ::close(err);
+    }
     ::close(fds[0]);
     ::close(fds[1]);
-    const int err = ::open(stderr_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
-    ::dup2(err, STDERR_FILENO);
-    ::close(err);
     std::vector<std::string> owned{"driver", "run.id=" + ran.run_};
     owned.insert(owned.end(), args.begin(), args.end());
     std::vector<char*> argv;
@@ -211,8 +216,14 @@ RunResult run_child_piped(
   ::close(fds[0]);
   REQUIRE(WIFEXITED(status));
   ran.exit_ = WEXITSTATUS(status);
-  ran.stderr_ = slurp(stderr_path);
+  if (!merged) {
+    ran.stderr_ = slurp(stderr_path);
+  }
   for (const auto& line : split_lines(text)) {
+    // With stderr merged, its lines (`recovery:`, `loop:`) are not JSON.
+    if (merged && (line.empty() || line.front() != '{')) {
+      continue;
+    }
     auto object = json::parse(line).as_object();
     if (object.contains("event")) {
       ran.events_.push_back(std::move(object));
@@ -221,6 +232,25 @@ RunResult run_child_piped(
     }
   }
   return ran;
+}
+
+/**
+ * @brief Fills a pipe as a blocking writer would: a helper process writes until it blocks, then is killed. (On macOS a
+ *   blocking writer grows a pipe to 64 KiB, beyond what non-blocking writes fill.)
+ * @param write_end The pipe's write end.
+ */
+void fill_pipe(int write_end) {
+  const pid_t filler = ::fork();
+  REQUIRE(filler >= 0);
+  if (filler == 0) {
+    const std::string chunk(512, ' ');
+    while (::write(write_end, chunk.data(), chunk.size()) > 0) {
+    }
+    ::_exit(0);
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  ::kill(filler, SIGKILL);
+  ::waitpid(filler, nullptr, 0);
 }
 
 /**
@@ -988,9 +1018,10 @@ TEST_CASE("stopping, a line longer than the room a nearly full output polls with
 }
 
 TEST_CASE("a signal stops a run whose output nobody reads: it gives up writing, withdraws and exits") {
-  // A full pipe, and a nearly full one: room for a few hundred bytes, which polls writable but holds no whole line.
-  for (const std::size_t freed : {std::size_t{0}, std::size_t{700}}) {
-    INFO("bytes freed: " << freed);
+  // A full pipe, and a nearly full one: room for a few hundred bytes, which polls writable but holds no whole line;
+  // each with stderr apart, and sharing the pipe as `2>&1` does.
+  for (const auto& [freed, merged] : std::vector<std::pair<std::size_t, bool>>{{0, false}, {700, false}, {0, true}}) {
+    INFO("bytes freed: " << freed << ", stderr merged: " << merged);
     const PaperFixture fixture(run_parts());
     fixture.arm();
     const HeldOnOrder held(fixture);
@@ -998,15 +1029,10 @@ TEST_CASE("a signal stops a run whose output nobody reads: it gives up writing, 
     // Once the order rests, the reader stops reading and the pipe is filled, as a caller waiting on the process
     // without reading its output. Then SIGTERM.
     const auto ran = run_child_piped<runtest::Program>(
-      fixture, spec_args(), [&held, freed](pid_t pid, int read_end, int write_end, std::string& text) {
+      fixture, spec_args(),
+      [&held, freed](pid_t pid, int read_end, int write_end, std::string& text) {
         read_until(read_end, text, "\"event\":\"placed\"");
-        const int flags = ::fcntl(write_end, F_GETFL);
-        ::fcntl(write_end, F_SETFL, flags | O_NONBLOCK);
-        const std::string filler(4096, ' ');
-        while (::write(write_end, filler.data(), filler.size()) > 0) {
-        }
-        while (::write(write_end, filler.data(), 1) > 0) {
-        }
+        fill_pipe(write_end);
         std::vector<char> drained(freed);
         std::size_t got = 0;
         while (got < freed) {
@@ -1016,14 +1042,17 @@ TEST_CASE("a signal stops a run whose output nobody reads: it gives up writing, 
         }
         ::kill(pid, SIGTERM);
         held.release();
-      }
+      },
+      merged
     );
     // It ended by itself, though nobody read (a hang would end in the child's alarm, not an exit), after withdrawing.
     CHECK(ran.exit_ == 0);
     const auto journal = slurp(ran.dir_ / "journal.jsonl");
     CHECK(journal.find("\"action\":\"cancel\"") != std::string::npos);
     CHECK(journal.find("\"outcome\":\"confirmed\"") != std::string::npos);
-    CHECK(ran.stderr_.find(", 0 owed") != std::string::npos);
+    if (!merged) {
+      CHECK(ran.stderr_.find(", 0 owed") != std::string::npos);
+    }
   }
 }
 #endif

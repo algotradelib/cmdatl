@@ -2,9 +2,9 @@
 
 // A run's events and its reply, both on stdout.
 //
-// One JSON object per line, each line one whole write (the journal is the authority; the events describe the run).
-// The reply is the last line, one JSON object in one write, always with `env`, `run`, `result` and `exit`; an event
-// always has `event`.
+// One JSON object per line (the journal is the authority; the events describe the run). The reply is the last line,
+// always with `env`, `run`, `result` and `exit`; an event always has `event`. Every write, stderr's included, goes
+// through `write_line`, so once a stop is noted no reader that stopped reading can hold the run.
 
 #include "../core/errors.hpp"
 #include "../core/reply.hpp"
@@ -60,34 +60,55 @@ inline std::string next_of(const std::string& code) {
 }
 
 #if !defined(_WIN32)
+/** @brief Whether the last line given up on was cut part-way, so the next one starts on a fresh line. */
+inline bool& line_cut() noexcept {
+  static bool cut = false;
+  return cut;
+}
+
 /**
- * @brief Writes a line to stdout whole, waiting while the reader is slow; once a stop is noted, a write that cannot go
- *   ahead within a second fails instead, so a reader that stopped reading never keeps a stopped run from withdrawing.
+ * @brief Writes a line whole, waiting while the reader is slow; once a stop is noted, a write that cannot go ahead
+ *   within a second fails instead, so a reader that stopped reading never keeps a stopped run from withdrawing.
  *   Stopping, it writes at most `PIPE_BUF` bytes at a time: a pipe or socket that polls writable takes that many
- *   without blocking, though a whole line may not fit.
+ *   without blocking, though a whole line may not fit. A descriptor left non-blocking by the caller waits as a slow
+ *   reader does.
  * @param line The line.
+ * @param fd Where: stdout by default.
  * @return Whether it was written whole.
  */
-inline bool write_line(const std::string& line) noexcept {
+inline bool write_line(const std::string& line, int fd = STDOUT_FILENO) noexcept {
   std::size_t written = 0;
+  const auto give_up = [&written, fd]() {
+    if (written > 0 && fd == STDOUT_FILENO) {
+      line_cut() = true;
+    }
+    return false;
+  };
   while (written < line.size()) {
     if (interrupted()) {
-      pollfd out{STDOUT_FILENO, POLLOUT, 0};
+      pollfd out{fd, POLLOUT, 0};
       if (::poll(&out, 1, 1000) <= 0) {
-        return false;
+        return give_up();
       }
     }
     const std::size_t left = line.size() - written;
     const std::size_t size = interrupted() ? std::min<std::size_t>(left, PIPE_BUF) : left;
-    const auto n = sys::write(STDOUT_FILENO, line.data() + written, size);
+    const auto n = sys::write(fd, line.data() + written, size);
     if (n < 0) {
       if (errno == EINTR) {
         continue;
       }
-      return false;
+      if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        pollfd out{fd, POLLOUT, 0};
+        if (::poll(&out, 1, interrupted() ? 1000 : -1) <= 0 && interrupted()) {
+          return give_up();
+        }
+        continue;
+      }
+      return give_up();
     }
     if (n == 0) {
-      return false;
+      return give_up();
     }
     written += static_cast<std::size_t>(n);
   }
@@ -141,7 +162,8 @@ inline int write_run_reply(json::object body, Exit exit) {
       "unknown" :
       "failed";
   }
-  (void)write_line(json::serialize(body) + "\n");
+  // After an event cut part-way, the reply still starts its own line.
+  (void)write_line((line_cut() ? "\n" : "") + json::serialize(body) + "\n");
   return static_cast<int>(exit);
 }
 
