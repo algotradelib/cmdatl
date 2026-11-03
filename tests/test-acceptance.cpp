@@ -993,3 +993,26 @@ TEST_CASE("every strategy reference the docs and skills name answers from the re
   CHECK(code_of(wrong.out_) == "usage.bad_value");
 }
 #endif
+
+TEST_CASE("an on_start block runs once, before the first bar", "[acceptance]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const ScratchDir dir;
+  const auto at = [&dir](const std::string& file) {
+    return (dir.path() / file).string();
+  };
+  spit(at("bars.csv"), walk_csv(walk(30)));
+  // The size is set only if no bar came first; any later or repeated call leaves it zero.
+  spit(
+    at("start.atls"),
+    "state {\n  int calls = 0;\n  int size = 0;\n}\non_start {\n  size = calls == 0 ? 10 : 0;\n}\n"
+    "on_bar {\n  calls = calls + 1;\n  target(size);\n}\n"
+  );
+  spit(at("start.toml"), "strategy = 'start.atls'\n[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n");
+  const auto report = report_of({at("start.toml")});
+  CHECK(report.as_object().at("halted").is_null());
+  CHECK(report.as_object().at("executions").as_int64() == 1);
+}
