@@ -470,7 +470,7 @@ TEST_CASE(
   const Equipped equipped(*equip);
   const ScratchDir dir;
   const auto examples = std::filesystem::path(CMDATL_SOURCE_DIR) / "examples";
-  // Recorded once from atlc 3f9ce62's `atlc run` (tests/fixtures/examples/how-made.txt).
+  // Recorded once from atlc 27b912a's `atlc run` (tests/fixtures/examples/how-made.txt).
   const auto fixtures = std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "fixtures" / "examples";
   int compared = 0;
   for (const auto* name : {"mean-reversion", "pairs", "trailing-stop", "universe", "user-indicator"}) {
