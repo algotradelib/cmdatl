@@ -15,8 +15,10 @@
 
 #include <boost/json.hpp>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <climits>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -61,6 +63,8 @@ inline std::string next_of(const std::string& code) {
 /**
  * @brief Writes a line to stdout whole, waiting while the reader is slow; once a stop is noted, a write that cannot go
  *   ahead within a second fails instead, so a reader that stopped reading never keeps a stopped run from withdrawing.
+ *   Stopping, it writes at most `PIPE_BUF` bytes at a time: a pipe or socket that polls writable takes that many
+ *   without blocking, though a whole line may not fit.
  * @param line The line.
  * @return Whether it was written whole.
  */
@@ -73,7 +77,9 @@ inline bool write_line(const std::string& line) noexcept {
         return false;
       }
     }
-    const auto n = sys::write(STDOUT_FILENO, line.data() + written, line.size() - written);
+    const std::size_t left = line.size() - written;
+    const std::size_t size = interrupted() ? std::min<std::size_t>(left, PIPE_BUF) : left;
+    const auto n = sys::write(STDOUT_FILENO, line.data() + written, size);
     if (n < 0) {
       if (errno == EINTR) {
         continue;

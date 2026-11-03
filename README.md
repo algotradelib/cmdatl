@@ -196,6 +196,7 @@ cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
   The reply's `refused` counts orders refused by the operator's limits or the market (`boundary`), by the library's guard (`guard`) and targets atlc could not price (`pricing`); a run with any is `outcome: refused_orders`.
   A run whose outcome is unknown (a journal write failed, an order it could not confirm) exits 4; its market ended with its process and no account was affected.
 - Ctrl-C, SIGTERM and SIGHUP (a closed terminal) withdraw the run: no new placements, its resting orders cancelled and confirmed, then the reply; so does a closed output, and a stopped run whose output nobody reads gives up writing after a second.
+  A run stopped this way exits 0 with `stopped: signal`; 130 is for a command stopped before anything could be sent.
   Placements refused once a stop is noted are counted under `signal` in the reply's `refused` and leave the run clean.
   Removing the armed file stops every run's placements at its next step.
   For a run that outlives its terminal, start it with `nohup` and redirect its output: a SIGHUP ignored when cmdatl starts stays ignored.

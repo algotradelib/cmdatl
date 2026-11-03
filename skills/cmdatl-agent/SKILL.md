@@ -77,7 +77,7 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 
 - Start a run only when the task asks for one, and never start again a run that a stop, the operator, a refusal or a limit ended, whatever its exit.
 - `cmdatl run TARGET [KEY=VALUE]...` (a spec, a program, or both) runs in the foreground: JSON lines, events then its reply last, and the run's exit as its own.
-- To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies; never `kill -9` it.
+- To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies (exit 0, `stopped: signal`); never `kill -9` it.
 - The reply's `refused` counts refused orders; `outcome: refused_orders` means a limit or the market refused some: report it.
 - The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours, and several symbols get the smallest cap.
 - Exit 4: report the reply's `error`; its market ended with it and no account changed.
@@ -88,7 +88,7 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 Both fill whole orders against stored daily bars.
 The paper account takes orders 08:30-15:30 KST on dates in its data; a run's market fills a limit when a later bar reaches it, as a backtest does.
 Neither is a broker's demo account or evidence of how one would answer.
-Money and quantities are decimal strings; `--fields a,b.c` keeps fields, `--value PATH` prints one.
+Money and quantities are decimal strings; `--fields a,b.c` keeps fields, `--value PATH` prints one (not for `run`).
 
 ## A session
 
