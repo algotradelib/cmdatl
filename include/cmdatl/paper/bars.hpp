@@ -1,12 +1,13 @@
 #pragma once
 
-// The paper market's history: one strict CSV of daily bars, `symbol,date,open,high,low,close,volume`, the shape
-// `cmdatl strategy new` documents for bars.csv.
+// The paper market's history: one strict CSV of daily bars with the columns `symbol`, `date`, `open`, `high`, `low`,
+// `close` and `volume`, in any order: the columns `cmdatl strategy new` documents for bars.csv.
 // A daily bar stands for that date's 09:00-15:30 KST session.
 
 #include "./time.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -148,15 +149,66 @@ struct BarsProblem {
 };
 
 /**
- * @brief Parses a whole bars file, strictly: the header exactly `symbol,date,open,high,low,close,volume`; each row
- *   exactly seven cells, unquoted and without spaces; a symbol by its grammar; a real date inside the supported
- *   interval; prices by `parse_price` with low <= open, close <= high; a volume by `parse_volume`; dates strictly
- *   increasing within a symbol; at most a million rows; `\r\n` accepted, a blank line refused.
+ * @brief Reads a bars file's header: exactly the seven field names, each once, in any order.
+ * @param line The header line, its `\r` removed.
+ * @param fields The field names, in the order the parser reads them.
+ * @param column Where each field's cell is, by the field's index in `fields`.
+ * @return What is wrong with the header, or nothing.
+ */
+inline std::optional<std::string> read_header(
+  std::string_view line, const std::array<std::string_view, 7>& fields, std::array<std::size_t, 7>& column
+) {
+  const std::string expected = "the header names the seven columns symbol,date,open,high,low,close,volume in any order";
+  std::array<bool, 7> seen{};
+  std::size_t cell = 0;
+  std::size_t from = 0;
+  while (true) {
+    const auto comma = line.find(',', from);
+    const auto name = line.substr(from, comma == std::string_view::npos ? std::string_view::npos : comma - from);
+    const auto at = std::find(fields.begin(), fields.end(), name);
+    if (at == fields.end()) {
+      if (cell == 0 && name.substr(0, 3) == "\xEF\xBB\xBF") {
+        return expected + ", and begins with a byte-order mark: save the file as UTF-8 without one";
+      }
+      if (name.empty()) {
+        return expected + ", and has an empty column name";
+      }
+      return expected + ", not `" + std::string(name.substr(0, 64)) + "`";
+    }
+    const auto field = static_cast<std::size_t>(at - fields.begin());
+    if (seen[field]) {
+      return expected + ", and names " + std::string(name) + " twice";
+    }
+    // Seven distinct names at most, so cell stays below seven.
+    seen[field] = true;
+    column[field] = cell++;
+    if (comma == std::string_view::npos) {
+      break;
+    }
+    from = comma + 1;
+  }
+  for (std::size_t k = 0; k < fields.size(); ++k) {
+    if (!seen[k]) {
+      return expected + ", and lacks " + std::string(fields[k]);
+    }
+  }
+  return std::nullopt;
+}
+
+/**
+ * @brief Parses a whole bars file, strictly: the header names the seven columns `symbol`, `date`, `open`, `high`,
+ *   `low`, `close` and `volume`, each once, in any order; each row exactly seven cells, unquoted and without spaces;
+ *   a symbol by its grammar; a real date inside the supported interval; prices by `parse_price` with low <= open,
+ *   close <= high; a volume by `parse_volume`; dates strictly increasing within a symbol; at most a million rows;
+ *   `\r\n` accepted, a blank line refused.
  * @param text The file's bytes.
  * @param data Where the bars go; its hash is of `text`.
  * @return The first problem, or nothing when the file is sound.
  */
 inline std::optional<BarsProblem> parse_bars(std::string_view text, MarketData& data) {
+  // Each field's cell in a row, in the order symbol, date, open, high, low, close, volume, as the header names them.
+  const std::array<std::string_view, 7> fields{"symbol", "date", "open", "high", "low", "close", "volume"};
+  std::array<std::size_t, 7> column{};
   data.bars_.clear();
   data.hash_ = fnv1a(text);
   std::size_t line_number = 0;
@@ -179,8 +231,8 @@ inline std::optional<BarsProblem> parse_bars(std::string_view text, MarketData& 
       return BarsProblem{line_number, "a blank line"};
     }
     if (line_number == 1) {
-      if (line != "symbol,date,open,high,low,close,volume") {
-        return BarsProblem{line_number, "the header is not symbol,date,open,high,low,close,volume"};
+      if (auto problem = read_header(line, fields, column)) {
+        return BarsProblem{line_number, *problem};
       }
       continue;
     }
@@ -200,10 +252,11 @@ inline std::optional<BarsProblem> parse_bars(std::string_view text, MarketData& 
     if (cells.size() != 7) {
       return BarsProblem{line_number, "a row needs exactly seven cells"};
     }
-    if (!valid_symbol(cells[0])) {
+    const auto symbol = cells[column[0]];
+    if (!valid_symbol(symbol)) {
       return BarsProblem{line_number, "the symbol is not 1 to 32 of letters, digits, '.', '_' or '-'"};
     }
-    const auto day = parse_date(cells[1]);
+    const auto day = parse_date(cells[column[1]]);
     if (!day) {
       return BarsProblem{line_number, "the date is not a real YYYY-MM-DD date from 1990-01-01 to 2100-12-31"};
     }
@@ -212,7 +265,7 @@ inline std::optional<BarsProblem> parse_bars(std::string_view text, MarketData& 
     const std::string_view names[] = {"open", "high", "low", "close"};
     double* targets[] = {&bar.open_, &bar.high_, &bar.low_, &bar.close_};
     for (std::size_t k = 0; k < 4; ++k) {
-      const auto price = parse_price(cells[2 + k]);
+      const auto price = parse_price(cells[column[2 + k]]);
       if (!price) {
         return BarsProblem{
           line_number, "the " + std::string(names[k]) + " is not a price from 1 to 10000000 with at most four decimals"
@@ -223,14 +276,14 @@ inline std::optional<BarsProblem> parse_bars(std::string_view text, MarketData& 
     if (bar.low_ > bar.open_ || bar.open_ > bar.high_ || bar.low_ > bar.close_ || bar.close_ > bar.high_) {
       return BarsProblem{line_number, "the open and the close must lie between the low and the high"};
     }
-    const auto volume = parse_volume(cells[6]);
+    const auto volume = parse_volume(cells[column[6]]);
     if (!volume) {
       return BarsProblem{line_number, "the volume is not a whole number up to 1000000000000"};
     }
     bar.volume_ = *volume;
-    auto& series = data.bars_[std::string(cells[0])];
+    auto& series = data.bars_[std::string(symbol)];
     if (!series.empty() && series.back().day_ >= bar.day_) {
-      return BarsProblem{line_number, "the dates of " + std::string(cells[0]) + " are not strictly increasing"};
+      return BarsProblem{line_number, "the dates of " + std::string(symbol) + " are not strictly increasing"};
     }
     series.push_back(bar);
   }

@@ -89,7 +89,7 @@ collar = 0.05 # optional, at most 0.30
 phases = ["open"] # optional: pre_open, open, post_close
 
 [paper]
-bars = "bars.csv" # symbol,date,open,high,low,close,volume, beside this file
+bars = "bars.csv" # the columns symbol,date,open,high,low,close,volume in any order, beside this file
 cash = 100000000
 start = "2024-03-25T09:30" # KST, at or after the first date's close
 ```

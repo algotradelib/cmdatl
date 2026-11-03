@@ -194,6 +194,24 @@ TEST_CASE("the bars file is read strictly, its first problem named by line") {
     REQUIRE(problem.has_value());
     CHECK(problem->line_ == entry.second);
   }
+  for (
+    const auto& wrong :
+    {"symbol,date,open,high,low,close\n", "symbol,date,open,high,low,close,volume,extra\n",
+      "symbol,date,open,high,low,close,close\n", "symbol,date,open,high,low,close,volume,volume\n",
+      "symbol,day,open,high,low,close,volume\n", "symbol,date,open,high,low,close,volume,\n", ",\n"}
+  ) {
+    INFO(wrong);
+    const auto problem = paper::parse_bars(std::string(wrong) + "AAA,2024-01-02,10,12,9,11,100\n", data);
+    REQUIRE(problem.has_value());
+    CHECK(problem->line_ == 1);
+    CHECK(problem->message_.find("the seven columns") != std::string::npos);
+  }
+  const auto bom = paper::parse_bars("\xEF\xBB\xBFsymbol,date,open,high,low,close,volume\n", data);
+  REQUIRE(bom.has_value());
+  CHECK(bom->message_.find("byte-order mark") != std::string::npos);
+  const auto empty = paper::parse_bars("symbol,,date,open,high,low,close,volume\n", data);
+  REQUIRE(empty.has_value());
+  CHECK(empty->message_.find("an empty column name") != std::string::npos);
   std::string many = header;
   many.reserve(header.size() + 25 * (paper::MAX_BAR_ROWS + 1));
   for (std::size_t i = 0; i <= paper::MAX_BAR_ROWS; ++i) {
@@ -203,6 +221,39 @@ TEST_CASE("the bars file is read strictly, its first problem named by line") {
   const auto problem = paper::parse_bars(many, data);
   REQUIRE(problem.has_value());
   CHECK(problem->line_ == paper::MAX_BAR_ROWS + 2);
+}
+
+TEST_CASE("the bars file's columns are read by name, in any order") {
+  paper::MarketData documented;
+  REQUIRE(!paper::parse_bars(
+    "symbol,date,open,high,low,close,volume\nAAA,2024-01-02,10,12,9,11,100\nAAA,2024-01-03,11,13,10,12,200\n"
+    "BBB,2024-01-02,5,6,4,5.5,7\n",
+    documented
+  ));
+  paper::MarketData reordered;
+  REQUIRE(!paper::parse_bars(
+    "volume,close,low,high,open,date,symbol\n100,11,9,12,10,2024-01-02,AAA\n200,12,10,13,11,2024-01-03,AAA\n"
+    "7,5.5,4,6,5,2024-01-02,BBB\n",
+    reordered
+  ));
+  REQUIRE(reordered.bars_.size() == documented.bars_.size());
+  for (const auto& entry : documented.bars_) {
+    const auto& other = reordered.bars_.at(entry.first);
+    REQUIRE(other.size() == entry.second.size());
+    for (std::size_t i = 0; i < other.size(); ++i) {
+      CHECK(other[i].day_ == entry.second[i].day_);
+      CHECK(other[i].open_ == entry.second[i].open_);
+      CHECK(other[i].high_ == entry.second[i].high_);
+      CHECK(other[i].low_ == entry.second[i].low_);
+      CHECK(other[i].close_ == entry.second[i].close_);
+      CHECK(other[i].volume_ == entry.second[i].volume_);
+    }
+  }
+  // A row is still checked cell by cell, through the header's order.
+  const auto problem =
+    paper::parse_bars("date,symbol,open,high,low,close,volume\nAAA,2024-01-02,10,12,9,11,100\n", reordered);
+  REQUIRE(problem.has_value());
+  CHECK(problem->line_ == 2);
 }
 
 TEST_CASE("every paper.data case refuses at open and writes nothing") {
