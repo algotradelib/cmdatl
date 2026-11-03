@@ -242,11 +242,12 @@ private:
 };
 #endif
 
-/** @brief Set to 1 by SIGINT or SIGTERM, once `handle_signals` has installed the handlers. */
+/** @brief Set to 1 by SIGINT, SIGTERM or SIGHUP, once `handle_signals` has installed the handlers. */
 inline volatile std::sig_atomic_t interruption = 0;
 
 /**
- * @brief The handler of SIGINT and SIGTERM: it only notes the signal; the loop waiting on a child reads the note.
+ * @brief The handler of SIGINT, SIGTERM and SIGHUP: it only notes the signal; the loop waiting on a child reads the
+ *   note.
  * @param sig The signal.
  */
 inline void note_interruption(int sig) {
@@ -255,7 +256,7 @@ inline void note_interruption(int sig) {
 }
 
 /**
- * @brief Whether SIGINT or SIGTERM has arrived.
+ * @brief Whether SIGINT, SIGTERM or SIGHUP has arrived.
  * @return Whether one has.
  */
 inline bool interrupted() noexcept {
@@ -263,9 +264,10 @@ inline bool interrupted() noexcept {
 }
 
 /**
- * @brief cmdatl's signal dispositions, set once at start: SIGINT and SIGTERM are noted, never fatal, so a command
- *   stops its child and still replies; SIGPIPE is ignored, so a write to a closed output fails through its stream;
- *   SIGCHLD is the default, so children are not reaped behind cmdatl's back.
+ * @brief cmdatl's signal dispositions, set once at start: SIGINT, SIGTERM and SIGHUP are noted, never fatal, so a
+ *   command stops its child and still replies, and a run withdraws when its terminal closes; SIGPIPE is ignored, so
+ *   a write to a closed output fails through its stream; SIGCHLD is the default, so children are not reaped behind
+ *   cmdatl's back.
  */
 inline void handle_signals() noexcept {
 #if !defined(_WIN32)
@@ -274,6 +276,7 @@ inline void handle_signals() noexcept {
   sigemptyset(&noted.sa_mask);
   ::sigaction(SIGINT, &noted, nullptr);
   ::sigaction(SIGTERM, &noted, nullptr);
+  ::sigaction(SIGHUP, &noted, nullptr);
   struct sigaction ignored{};
   ignored.sa_handler = SIG_IGN;
   sigemptyset(&ignored.sa_mask);
@@ -357,8 +360,8 @@ inline int lifted_pipe(int (&fds)[2]) noexcept {
  *   each stderr line on as it arrives.
  *
  * For offline work only (atlc's replies): a command that may send never maps a child's end to an outcome through
- * it. stdin is `/dev/null`; the child starts with the default dispositions of SIGPIPE, SIGINT and SIGTERM and no
- * signal blocked. One loop reads both pipes (whichever is ready, so neither fills), waits at most 100 ms between
+ * it. stdin is `/dev/null`; the child starts with the default dispositions of SIGPIPE, SIGINT, SIGTERM and SIGHUP
+ * and no signal blocked. One loop reads both pipes (whichever is ready, so neither fills), waits at most 100 ms between
  * looks at the interruption note, and checks the leader without blocking. On an interruption the group gets
  * SIGTERM, and SIGKILL two seconds later on the monotonic clock if it has not ended; a group whose leader ended
  * while another process holds its pipes gets the same two seconds. Every descriptor and the group are owned, so an
@@ -427,6 +430,7 @@ inline ChildResult run_child(
     sigaddset(&defaults, SIGPIPE);
     sigaddset(&defaults, SIGINT);
     sigaddset(&defaults, SIGTERM);
+    sigaddset(&defaults, SIGHUP);
     sigemptyset(&unblocked);
     // Each of these returns an error number, not errno; the flags are what make the values below take effect.
     int error = actions.ok() ? attr.status() : ENOMEM;

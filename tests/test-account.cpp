@@ -1303,12 +1303,11 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
     if (command.mutates_) {
       mutating.push_back(cmdatl::join(command.path_));
     }
-    // Only order place, order cancel and run start send (a run places on its own mock market).
+    // Only order place, order cancel and run send (a run places on its own mock market).
     const auto name = cmdatl::join(command.path_);
-    CHECK((
-      !command.available_ || !command.may_send_ || name == "order place" || name == "order cancel" ||
-      name == "run start" || name == "run stop"
-    ));
+    CHECK(
+      (!command.available_ || !command.may_send_ || name == "order place" || name == "order cancel" || name == "run")
+    );
   }
   std::sort(available.begin(), available.end());
   std::sort(mutating.begin(), mutating.end());
@@ -1327,10 +1326,7 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
     "order reconcile",
     "order release",
     "quote",
-    "run log",
-    "run start",
-    "run status",
-    "run stop",
+    "run",
     "schema",
     "status",
     "strategy backtest",
@@ -1339,7 +1335,7 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
   };
   CHECK(available == expected);
   CHECK(mutating == std::vector<std::string>{"clock advance", "order release"});
-  CHECK(cmdatl::SCHEMA_VERSION == 8);
+  CHECK(cmdatl::SCHEMA_VERSION == 9);
   CHECK(declares({"clock", "advance"}, 4, "unknown.internal"));
   CHECK(!declares({"clock"}, 4, "unknown.internal"));
   const auto entry = reply_of(run({"schema", "clock.advance"}).out_).at("commands").as_array()[0].as_object();

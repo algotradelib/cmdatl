@@ -1,7 +1,7 @@
 #pragma once
 
-// What a run's driver and `run start` both read: the run id's grammar, atlc's arguments, the market settings a run
-// refuses, and the bound on a run's description.
+// What a run's driver and `run` both read: the run id's grammar, atlc's arguments, and the market settings a run
+// refuses.
 
 #include <algorithm>
 #include <cstddef>
@@ -11,9 +11,6 @@
 #include <vector>
 
 namespace cmdatl {
-
-/** @brief The largest run description (`run.json`), in bytes: `run start` refuses a larger one, `run status` reads no more. */
-inline constexpr std::size_t RUN_RECORD_MAX = 64u << 10;
 
 /**
  * @brief Whether a text is a run id: `r` and 12 lowercase hex digits.
@@ -42,7 +39,7 @@ inline std::optional<std::string> atlc_value(const std::vector<std::string>& arg
   return found;
 }
 
-/** @brief Why a run refuses a program with session legs: one wording for `run start` and the driver. */
+/** @brief Why a run refuses a program with session legs: one wording for `run` and the driver. */
 inline constexpr const char* LEGS_UNSUPPORTED =
   "the program has on_open/on_close (session legs), which no live source delivers";
 

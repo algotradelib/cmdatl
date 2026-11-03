@@ -18,10 +18,10 @@ Every market here is simulated on this machine; nothing reaches a broker, and `e
 If `env` says anything else, stop and ask: this guide covers paper only.
 
 - The paper account, read and traded by `status`, `account`, `quote`, `order ...` and `clock`; its clock moves by `cmdatl clock advance` and one simulated second per order command.
-- A run's market: each `cmdatl run start` builds a fresh one from the run spec's data, gone when the run ends; the paper account's commands never see it.
+- A run's market: each `cmdatl run` builds a fresh one from the run spec's data, gone when the run ends; the paper account's commands never see it.
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
-The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed`, `<stem>.release` or `<stem>.stop` (`cmdatl run stop` writes a stop for you), or the account's state directory.
+The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed` or `<stem>.release`, or the account's state directory.
 A missing armed file (`refused.not_armed`) is the operator's decision: quote it and ask.
 
 ## Read first
@@ -60,7 +60,6 @@ Stop, quote the refusal, and offer what the limits allow as a question.
 `refused.awaiting` or `refused.awaiting_confirmation`: something is still owed; place nothing until `order reconcile` shows the symbol clean, and after two advances and reconciles, ask.
 Any other 3: follow `error.next` when it names a cmdatl read, a new plan or the same command once; when it names a limit, the armed file or the operator, stop and ask.
 `error.retry: true` means the same call may succeed later unchanged, not that you should repeat it now.
-A `run stop` refused (`refused.stop_file_full`) wrote no stop: the run still trades; tell the operator.
 
 On 4, something may have happened that cmdatl cannot confirm; never repeat the command.
 `unknown.journal_missing`, `unknown.journal_damaged`, `unknown.paper_state` and `unknown.lock_lost`: stop and report to the operator, whatever the command.
@@ -68,7 +67,7 @@ Otherwise read first, then follow `error.next`, and stop and report when it name
 
 - after an order command: `cmdatl order reconcile SYMBOL` (it never places, so it is the one command to run after its own 4, once);
 - after `clock advance`: `cmdatl clock`, before anything else (an order command would move the clock), then reconcile and `cmdatl account`;
-- after `run start`, `run stop` or `run log`: `cmdatl run status`, with the run's id when a reply named it.
+- after `run`: report its reply's `error` to the operator.
 
 After `unknown.broker_refused`, do not place again in the same phase; report it.
 No reply at all, or only cmdatl's line on stderr, counts as 4; a 4 that comes back after that read: stop and report.
@@ -76,14 +75,12 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 
 ## Runs
 
-- Start a run only when the task asks for one, and never start again a run that a stop, the operator, a refusal or a limit ended, whatever its `run_exit`.
-- `cmdatl run start TARGET [KEY=VALUE]...` (a spec, a program, or both) answers once the run trades; `--wait`, with its summary.
-- `cmdatl run status` exits 0 whenever it read the run; the run's own outcome is `run_exit` and `run_error`.
-- `cmdatl run log --follow` prints events until the end; Ctrl-C stops the watching, never the run; `incomplete: true` (exit 4) means read `cmdatl run status`.
-- `cmdatl run stop --withdraw` stops placing and cancels what rests (plain `run stop` leaves resting orders: only when the task says so); neither sells.
-- `run stop` exits 0 only on evidence that trading ended; on `unknown.run_stopping` or `unknown.run_stop`, read `cmdatl run status`, and if it still trades, tell the operator; never kill a run's process.
+- Start a run only when the task asks for one, and never start again a run that a stop, the operator, a refusal or a limit ended, whatever its exit.
+- `cmdatl run TARGET [KEY=VALUE]...` (a spec, a program, or both) runs in the foreground: JSON lines, events then its reply last, and the run's exit as its own.
+- To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies; never `kill -9` it.
+- The reply's `refused` counts refused orders; `outcome: refused_orders` means a limit or the market refused some: report it.
 - The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours, and several symbols get the smallest cap.
-- `run_exit` 4: report it with `run_error`; its market ended with it and no account changed.
+- Exit 4: report the reply's `error`; its market ended with it and no account changed.
 - Removing the armed file stops every run: the operator's lever, not yours.
 
 ## What the markets are

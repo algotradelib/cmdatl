@@ -282,7 +282,7 @@ TEST_CASE("tune and check are gone; new and backtest and reference are the strat
     }
   }
   CHECK(available == std::vector<std::string>{"strategy new", "strategy backtest", "strategy reference"});
-  CHECK(cmdatl::SCHEMA_VERSION == 8);
+  CHECK(cmdatl::SCHEMA_VERSION == 9);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
   CHECK(backtest.at("returns").as_object().contains("settings_given"));
   CHECK(backtest.at("returns").as_object().contains("program"));
@@ -589,19 +589,20 @@ TEST_CASE("the documentation scanner reads what a shell would, and names only wh
   CHECK(accepts_invocation("cmdatl --help", table));
   CHECK(accepts_invocation("cmdatl --version", table));
   CHECK(!accepts_invocation("cmdatl env --fields nonexistent", table));
-  CHECK(!accepts_invocation("cmdatl run start spec.toml --bogus", table));
+  CHECK(!accepts_invocation("cmdatl run spec.toml --bogus", table));
   CHECK(names_command("cmdatl order plan", table));
   CHECK(names_command("cmdatl order", table));
   CHECK(names_command("cmdatl quote 005930 000660", table));
   CHECK(!names_command("cmdatl clock2", table));
   CHECK(!names_command("cmdatl clock.nonexistent-subcommand", table));
   CHECK(!names_command("cmdatl clock nonexistent-subcommand", table));
-  CHECK(names_command("cmdatl run start --wait", table));
+  CHECK(names_command("cmdatl run dip.toml", table));
+  CHECK(!names_command("cmdatl run dip.toml --wait", table));
   CHECK(names_command("cmdatl account --fields cash,positions", table));
   CHECK(names_command("cmdatl strategy backtest --fills f.csv", table));
   CHECK(!names_command("cmdatl strategy backtest -P k=v", table));
   CHECK(accepts_invocation("cmdatl strategy backtest params.k=1 dip.toml --fills f.csv replay.cash=1e8", table));
-  CHECK(!names_command("cmdatl run start dip.toml --until", table));
+  CHECK(!names_command("cmdatl run dip.toml --until", table));
   CHECK(!names_command("cmdatl order --target", table));
   // Through extraction, as the documentation test reads a Markdown line.
   for (const auto* line : {"Use `cmdatl clock2`.", "Use `cmdatl clock.nonexistent-subcommand`."}) {

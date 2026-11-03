@@ -2,7 +2,7 @@
 
 ```sh
 cmdatl strategy backtest TARGET [KEY=VALUE]... [--fills FILE]
-cmdatl run start TARGET [KEY=VALUE]... [--wait]
+cmdatl run TARGET [KEY=VALUE]...
 ```
 
 `TARGET` is a program (`.atls`), a run spec (a TOML file), or both: at most one of each, and at least one.
@@ -112,7 +112,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 | `data.as_of` | instant: `"YYYY-MM-DD"`, optionally `THH:MM[:SS]` and `Z` or `+HH:MM` | the latest | read the latest version fetched at or before this instant |
 
 A backtest of a store needs DuckDB (`[build]` below); a CSV or wide run does not.
-A run (`cmdatl run start`) reads files, not a store.
+A run (`cmdatl run`) reads files, not a store.
 A spec names data only: credentials never appear in it.
 
 ### `[instruments]`: names to symbols
@@ -146,7 +146,7 @@ A spec names data only: credentials never appear in it.
 | `open-prev-close` | `source = "wide"` (not a CSV's wide layout) | `on_bar` | at the close it was decided on: each bar opens at the previous close |
 | `legs` | daily bars: wide tables with opens, highs and lows, or a CSV or store | a universe with `on_open`, `on_close` or both | at the open for a target stated in `on_open`, at the close for one in `on_close` |
 
-A run (`cmdatl run start`) takes neither a program with `on_open` or `on_close` nor `replay.fill = "legs"`.
+A run (`cmdatl run`) takes neither a program with `on_open` or `on_close` nor `replay.fill = "legs"`.
 
 ### `[params]`
 

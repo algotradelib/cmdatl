@@ -131,16 +131,6 @@ struct OperatorConfig {
   PaperSettings paper_;
 
   /**
-   * @brief The operator's stop file for runs: `<stem>.stop` beside the operator's file, fixed; a run reads it and never
-   *   writes it.
-   * @return The path.
-   */
-  std::string stop_path() const {
-    const std::filesystem::path file(path_);
-    return (file.parent_path() / (file.stem().string() + ".stop")).string();
-  }
-
-  /**
    * @brief The armed file: `<stem>.armed` beside the operator's file, fixed.
    * @return The path.
    */

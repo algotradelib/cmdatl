@@ -11,10 +11,12 @@
 #include <algotradelib/strategy>
 
 #include <chrono>
+#include <cstddef>
 #include <optional>
 #include <ostream>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -118,7 +120,18 @@ struct Traded {
   std::string detail_;
   /** @brief How many finalization rounds ran. */
   int final_rounds_{0};
+  /** @brief Targets the strategy did not submit because it could not price them (atlc's `pricing_refusals()`). */
+  std::size_t pricing_refused_{0};
 };
+
+// Whether a strategy counts the targets it could not price, as atlc's generated strategies do.
+template <typename Strategy, typename = void>
+struct counts_pricing_refusals : std::false_type {};
+
+template <typename Strategy>
+struct counts_pricing_refusals<
+  Strategy, std::void_t<decltype(std::declval<const Strategy&>().pricing_refusals().total())>
+> : std::true_type {};
 
 /**
  * @brief Trades a strategy on a session through its journal, in the order the runner requires: bind through the
@@ -198,7 +211,7 @@ Traded trade_on_rails(
   atl::runner::PollingLoop<decltype(bound), decltype(source), atl::runner::ClockReference<Clock>> loop(
     bound, source, wiring.schedule_, shared_clock
   );
-  // Every age stated, and the market's own window. No control file: the driver reads the operator's stop file itself.
+  // Every age stated, and the market's own window. No control file: the driver stops on a signal.
   loop.set_maximum_portfolio_age(wiring.maximum_portfolio_age_);
   loop.set_maximum_price_limits_age(wiring.maximum_price_limits_age_);
   loop.set_closing_wait(wiring.closing_wait_);
@@ -211,6 +224,9 @@ Traded trade_on_rails(
   }
   traded.report_ = loop.run(stop, 0);
   const auto& report = *traded.report_;
+  if constexpr (counts_pricing_refusals<std::decay_t<decltype(bound.strategy())>>::value) {
+    traded.pricing_refused_ = static_cast<std::size_t>(bound.strategy().pricing_refusals().total());
+  }
   err
     << "loop: " << report.iterations_ << " iteration(s), " << report.blocked_ << " blocked, "
     << report.orders_guard_refused_ << " refused by the guard, " << report.orders_binding_refused_

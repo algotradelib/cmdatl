@@ -70,8 +70,8 @@ offset = 0.01 # a buy's limit 1 % above the price, a sell's 1 % below, inside th
 - A run refuses a program with session legs (`on_open`, `on_close`) before the build (exit 5, `program.live_unsupported`): backtest such a program instead.
 - After the build, a run refuses a program with `on_fill` or a warm-up above 10,000 bars (exit 5, `program.live_unsupported`), and bars that are not daily (`unsupported.interval`).
 - Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.
-- `cmdatl run start NAME.toml --wait` answers with the summary (`executions`, `commission_paid`, `closing_equity`, `holdings_at_end`); without `--wait`, `cmdatl run status` and `cmdatl run log` show it.
-  Starting, watching and stopping runs, and every exit code: the agent guide (`cmdatl guide agent`).
+- `cmdatl run NAME.toml` runs in the foreground and prints its events, then its reply (`executions`, `commission_paid`, `closing_equity`, `holdings_at_end`, `refused`) as the last line.
+  Stopping runs, and every exit code: the agent guide (`cmdatl guide agent`).
 
 When a run's fills differ from the backtest's, this rule says why:
 The run starts at the first bar and steps through the data 15 market minutes at a time, as fast as the machine allows; at the end it withdraws whatever rests and confirms it before it reports.
@@ -84,9 +84,7 @@ cmdatl strategy new dip --template mean-reversion
 cmdatl strategy reference builtins
 atlc check dip.atls
 cmdatl strategy backtest dip.toml params.lookback=30
-cmdatl run start dip.toml --wait
-cmdatl run status
-cmdatl run log
+cmdatl run dip.toml
 ```
 
-Between `strategy new` and the backtest, put `bars.csv` beside the spec and replace its three tables with the block above; the run commands only when the task asks for a run.
+Between `strategy new` and the backtest, put `bars.csv` beside the spec and replace its three tables with the block above; the run command only when the task asks for a run.

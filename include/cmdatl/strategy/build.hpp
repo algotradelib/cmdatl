@@ -627,7 +627,7 @@ inline std::optional<Reply> build_driver(
     inputs[backtest_file ? path.substr(backtest_prefix.size()) : path] = std::move(text);
   }
   inputs["program.hpp"] = std::string("#pragma once\n\n// Written by cmdatl ") +
-    (backtest ? "strategy backtest" : "run start") +
+    (backtest ? "strategy backtest" : "run") +
     ".\n\n#include \"strategy.hpp\"\n\nusing Program = atls::" + request.struct_ + ";\n";
   for (const auto& [relative, text] : inputs) {
     if (write_if_changed(src / relative, text) == Written::FAILED) {
@@ -702,7 +702,7 @@ inline std::optional<Reply> build_driver(
     return error_reply(
       Exit::FAILED, "build.failed",
       "the driver was configured against " + used.value_or(std::string("no algotradelib")) + ", not " + package,
-      std::string("run cmdatl ") + (backtest ? "strategy backtest" : "run start") +
+      std::string("run cmdatl ") + (backtest ? "strategy backtest" : "run") +
         " again; the driver's build cache was cleared"
     );
   }

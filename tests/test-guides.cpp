@@ -350,31 +350,29 @@ TEST_CASE("every next cmdatl gives leaves the operator's decisions with the oper
   }
 }
 
-TEST_CASE("a run command whose reply is lost names cmdatl run status and not order reconcile") {
+TEST_CASE("a run whose reply is lost before its driver started exits 1: nothing was sent") {
   const PaperFixture fixture;
   const auto ran = std::make_shared<int>(0);
   std::vector<cmdatl::Command> commands;
   commands.push_back(
-    cmdatl::make_command({"run", "go"}, "Run", "a stand-in run that starts")
-      .example("cmdatl run go")
+    cmdatl::make_command({"go"}, "Run", "a stand-in run that refuses before its driver starts")
+      .example("cmdatl go")
       .returns("run", "the run id")
       .exits(cmdatl::SEND_EXITS)
       .sends()
       .on_config([ran](const cmdatl::Invocation&, const cmdatl::ConfigSnapshot&, cmdatl::Output&) {
         ++*ran;
-        cmdatl::Reply reply;
-        reply.body_["run"] = "r1";
-        return reply;
+        return cmdatl::error_reply(cmdatl::Exit::REFUSED, "refused.not_armed", "not armed");
       })
   );
   const cmdatl::Table table(std::move(commands));
   RefusingBuffer refusing;
   std::ostream refused(&refusing);
   std::ostringstream err;
-  CHECK(cmdatl::run({"--json", "run", "go"}, refused, err, false, table) == 4);
+  CHECK(cmdatl::run({"--json", "go"}, refused, err, false, table) == 1);
   CHECK(*ran == 1);
-  CHECK(err.str().find("run cmdatl run status before anything else") != std::string::npos);
-  CHECK(err.str().find("order reconcile") == std::string::npos);
+  CHECK(err.str().find("its reply could not be written") != std::string::npos);
+  CHECK(err.str().find("unknown") == std::string::npos);
 }
 
 TEST_CASE("the agent guide's session runs as written and each reply holds what the guide says") {

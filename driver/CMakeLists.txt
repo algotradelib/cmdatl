@@ -1,4 +1,4 @@
-# The run driver of one program shape, built by `cmdatl run start` in its cache from the sources cmdatl carries and the
+# The run driver of one program shape, built by `cmdatl run` in its cache from the sources cmdatl carries and the
 # program's `atlc build` output; never built from a checkout.
 cmake_minimum_required(VERSION 3.20)
 project(cmdatl_driver LANGUAGES CXX)

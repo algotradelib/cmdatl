@@ -21,7 +21,7 @@ cmdatl order plan AAA --target 10 --limit 102 # sends nothing; replies with a pl
 cmdatl order place p8c16a0bcd2 # the plan id the reply named
 cmdatl clock advance --minutes 30 # the paper clock moves only when told; the order fills
 cmdatl order reconcile AAA # records the fill from holdings; sends nothing
-cmdatl run start examples/run.toml --wait # a strategy run on its own mock market, its summary at the end
+cmdatl run examples/run.toml # a strategy run on its own mock market: its events, then its reply
 ```
 
 `cmdatl strategy new dip --template mean-reversion` starts a program of your own: `dip.atls` and `dip.toml`, a run spec that reads `bars.csv` beside it (`cp examples/data/daily.csv bars.csv` gives it the examples' bars).
@@ -64,7 +64,7 @@ A backtest that reads a Parquet store also needs DuckDB's C library, named by th
 
 ## Examples
 
-`examples/` holds five atls programs, each with a run spec over the synthetic daily bars in `examples/data/daily.csv`; those specs are backtests (market orders and no market), which `cmdatl run start` refuses.
+`examples/` holds five atls programs, each with a run spec over the synthetic daily bars in `examples/data/daily.csv`; those specs are backtests (market orders and no market), which `cmdatl run` refuses.
 `examples/run.toml` runs `mean-reversion` as a run (a market and limit orders), and `examples/paper.toml` is a paper account over the same bars: the commands at the top use both.
 
 ```sh
@@ -176,12 +176,8 @@ cmdatl order release 005930 --reason "read the order list and holdings"
 A run trades a strategy through algotradelib's live runner, the code that would trade a broker's account, on a mock market built from the run spec's data.
 
 ```sh
-cmdatl run start dip.toml # builds the program once, starts the run, answers when it trades
-cmdatl run start dip.toml params.lookback=30 --wait # waits for the end and answers with the summary
-cmdatl run status # the latest run's state, and its summary once it ended
-cmdatl run status r3f9c0e12ab45
-cmdatl run log --follow # each event as the run writes it, until its end
-cmdatl run stop --withdraw # stop placing and cancel what rests, then wait for the run's end
+cmdatl run dip.toml # builds the program once, then runs it in the foreground: events as JSON lines, the reply last
+cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
 ```
 
 - A run's market is the library's mock broker, inside the run's own process: each run is a fresh market with its own journal, and nothing is shared with the paper account above or with another run.
@@ -190,26 +186,19 @@ cmdatl run stop --withdraw # stop placing and cancel what rests, then wait for t
   The operator's file describes what may be placed: `limits.symbols`, the position caps (a run with several symbols gets the smallest of their caps), `order_value`, `daily_orders` (per run, per 24 hours of market time), `order_type`, `collar` and `phases`; no setting loosens them.
 - A run needs `[replay] market = "kr"`, daily bars from a file (not a store), `[orders] type = "limit"` with an `offset` within `limits.collar`, symbols in `limits.symbols`, and the armed file: each missing one is refused before anything is built.
   It also needs a program without `on_fill`, a warm-up of at most 10,000 bars, and daily bars: those are refused by the run itself, after the program is built and before anything is placed.
-  A program with session legs (`on_open`, `on_close`) is refused too, whatever the fill setting says: `run start` learns it from `atlc check --info` and answers `program.live_unsupported` before anything is built.
+  A program with session legs (`on_open`, `on_close`) is refused too, whatever the fill setting says: `run` learns it from `atlc check --info` and answers `program.live_unsupported` before anything is built.
   Every refusal says what to do in `error.next`.
 - Every placement is checked once more as the last step before the market: the armed file, a limit inside the collar of the last price, and a permitted phase, closing orders included.
   Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.
 - The run starts at the first bar and steps through the data 15 market minutes at a time, as fast as the machine allows; at the end it withdraws whatever rests and confirms it before it reports.
   A run's fills are those of `cmdatl strategy backtest` on the same spec when the program decides from bars alone, the bars end on that step (date-only rows do), and none of the operator's limits, the cash or the order budget refuses an order the backtest makes, since the backtest applies none of them.
-- `run start` answers once the run trades (exit 0, `state: running`), or with the run's own refusal; `run status` answers 0 whenever it could read the run, and the run's outcome is in `run_exit` and `run_error`.
-  A run whose outcome is unknown (killed, a journal write failed, an order it could not confirm) is `run_exit` 4; its market ended with its process and no account was affected.
-- `run log` reads the run's events while it trades: without `--follow` the events so far (all but the heartbeats, and the last heartbeat, at most 4,096); with it, each event once as it is written, until the run's `end` line.
-  A follow also finishes when the run is over, or its outcome unknown, and its driver has finished writing (its lock free, its exit recorded, or its process gone); without the `end` line (a killed or crashed driver) it says `incomplete: true` and exits 4, and an unknown run without that evidence is followed until Ctrl-C, which stops the watching, never the run.
-  `--symbol` keeps only that symbol's order events.
-- `run stop` stops a run: `quiesce` (the default) stops new placements and leaves resting orders, `--withdraw` also cancels them; neither sells holdings.
-  A quiesce that leaves an order resting ends the run with `run_exit` 4 (`unknown.owed_at_end`), since its market ends with it and the order's fate is then unknown; `--withdraw` ends it clean.
-  It writes the run's line into `<stem>.stop` beside the operator's file the run was started with (`paper.toml` gives `paper.stop`), one line per run, every other run's line kept, and waits up to 30 s for the run to acknowledge the stop and end.
-  Write the stop file only through `run stop`: it replaces the file by a rename under a lock, `<stem>.stop.lock`, which it creates beside it and keeps, so a hand edit made meanwhile is lost.
-  It exits 0 only on evidence that trading ended (the run's reply, or a run already over); acknowledged but not ended is exit 4 `unknown.run_stopping`, not acknowledged is exit 4 `unknown.run_stop`.
-  The run's own outcome stays in `run_exit`, so a stop can exit 0 for a run whose `run_exit` is 4.
-  The stop file holds at most 4 KiB, and a run notes in its events a stop file it cannot read.
-  Removing the armed file also stops every run at its next step.
-- A run needs CMake and a C++17 compiler: `run start` builds a program once per shape under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`); a later run of an unchanged program builds nothing, and a change to the program, atlc or algotradelib builds again.
+- The output is JSON lines whatever the output format: events (each with `event`: `start`, `placed`, `filled`, `canceled`, `expired`, `refused`, `stop`, `clock`, `end`), then the reply as the last line, and the command exits with the run's exit.
+  The reply's `refused` counts orders refused by the operator's limits or the market (`boundary`), by the library's guard (`guard`) and targets atlc could not price (`pricing`); a run with any is `outcome: refused_orders`.
+  A run whose outcome is unknown (a journal write failed, an order it could not confirm) exits 4; its market ended with its process and no account was affected.
+- Ctrl-C, SIGTERM and SIGHUP (a closed terminal) withdraw the run: no new placements, its resting orders cancelled and confirmed, then the reply; so does a closed output.
+  Removing the armed file stops every run's placements at its next step.
+  For a run that outlives its terminal, start it with `nohup` and redirect its output.
+- A run needs CMake and a C++17 compiler: `run` builds a program once per shape under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`); a later run of an unchanged program builds nothing, and a change to the program, atlc or algotradelib builds again.
 
 ## Output
 

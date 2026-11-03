@@ -1,6 +1,6 @@
 #pragma once
 
-// A run: the driver `run start` builds for one program shape and runs detached.
+// A run: the driver `cmdatl run` builds for one program shape and then becomes, in the caller's foreground.
 //
 // The run's market is the library's mock broker, built in this process from the run's data as cmdatl's replay module
 // reads it, and gone when the process ends: each run is its own market, with its own journal and its own lock, and shares
@@ -8,8 +8,8 @@
 //
 // The driver checks the start refusals in order, builds the market, trades the program through the live wiring
 // (`live.hpp`) behind the placement boundary (`session.hpp`) on the market's clock (`clock.hpp`), writes its events to
-// `events.jsonl` in the run's directory (the start line first), and writes one JSON reply on stdout before it releases
-// its lock.
+// stdout as JSON lines (the start line first), and writes its reply as the last line before it releases its lock.
+// SIGINT, SIGTERM and SIGHUP withdraw: no new placements, the run's resting orders cancelled and confirmed.
 //
 // Nothing on its command line names a limit, a phase, a path or a clock: `run.id`, then the replay's `key=value`
 // arguments, which `main.cpp` turns into the market's inputs (`load`) and the strategy (`make`) through the replay
@@ -56,6 +56,10 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if !defined(_WIN32)
+#include <unistd.h>
+#endif
 
 namespace cmdatl {
 namespace driver {
@@ -354,7 +358,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
   (void)make;
   return 1;
 #else
-  // Detached, the run has no cmdatl main: SIGINT and SIGTERM are noted, and the guard stops the run at its next step.
+  // SIGINT, SIGTERM and SIGHUP are noted, and the guard withdraws the run at its next step.
   handle_signals();
   json::object base{{"env", std::string(atl::mock::environment)}};
   // Row 1: the arguments.
@@ -471,11 +475,11 @@ int run_main(int argc, char** argv, Load load, Make make) {
       );
     }
   }
-  // Row 10: the run's own lock, in the directory `run start` made.
+  // Row 10: the run's own lock, in the directory `cmdatl run` made.
   const auto dir = run_dir(config, args.id_);
   std::error_code ec;
   if (!dir || !std::filesystem::is_directory(*dir, ec)) {
-    return run_error(base, Exit::FAILED, "file.unwritable", "the run's directory does not exist; run start makes it");
+    return run_error(base, Exit::FAILED, "file.unwritable", "the run's directory does not exist; cmdatl run makes it");
   }
   OwnerLock lock(*dir);
   const auto taken = lock.acquire(
@@ -487,7 +491,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
   );
   if (taken == OwnerLock::Outcome::BUSY) {
     return run_error(
-      base, Exit::FAILED, "busy.locked", "another driver holds this run's lock", "cmdatl run status " + args.id_
+      base, Exit::FAILED, "busy.locked", "another driver holds this run's lock", "start the run again with cmdatl run"
     );
   }
   if (taken != OwnerLock::Outcome::HELD) {
@@ -502,12 +506,10 @@ int run_main(int argc, char** argv, Load load, Make make) {
     if (!std::filesystem::exists(config.armed_path(), ec)) {
       return run_error(base, Exit::REFUSED, "refused.not_armed", "the operator's armed file does not exist");
     }
-    // Row 12, first part: the run's journal and event log, both new.
+    // Row 12, first part: the run's journal, new.
     const auto journal_path = *dir + "/journal.jsonl";
-    if (std::filesystem::exists(journal_path, ec) || std::filesystem::exists(*dir + "/events.jsonl", ec)) {
-      return run_error(
-        base, Exit::FAILED, "file.unwritable", "the run's directory already holds a journal or an event log"
-      );
+    if (std::filesystem::exists(journal_path, ec)) {
+      return run_error(base, Exit::FAILED, "file.unwritable", "the run's directory already holds a journal");
     }
     const auto scope = config.broker_ + ":" + config.number_ + ":run:" + args.id_;
     atl::runner::FileJournal journal(journal_path, scope);
@@ -516,10 +518,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
         base, Exit::FAILED, "file.unwritable", "the run's journal could not be created: " + journal.rejection()
       );
     }
-    EventLog events(*dir + "/events.jsonl");
-    if (!events.ok()) {
-      return run_error(base, Exit::FAILED, "file.unwritable", "the run's event log could not be created in " + *dir);
-    }
+    EventLog events;
     // The market: the data, the instruments, the cash and the costs, starting at the first bar's end.
     atl::mock::MarketSettings settings;
     settings.cash_ = atl::Money{loaded.cash_, atl::Currency::krw()};
@@ -536,14 +535,13 @@ int run_main(int argc, char** argv, Load load, Make make) {
     atl::runner::StopSource stop;
     Guard guard;
     guard.armed_ = config.armed_path();
-    guard.stop_file_ = config.stop_path();
-    guard.run_ = args.id_;
     guard.lock_ = &lock;
     guard.stop_ = &stop;
     guard.events_ = &events;
     guard.end_ = *last_end + STEP;
     Ledger ledger;
     ledger.cash_ = loaded.cash_;
+    std::size_t session_refused = 0;
     PlacementPolicy policy;
     policy.armed_ = config.armed_path();
     policy.lock_ = &lock;
@@ -560,7 +558,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
       [&market]() {
         return market.now();
       },
-      [&guard, &ledger](const PlacementEvent& placed) {
+      [&guard, &ledger, &session_refused](const PlacementEvent& placed) {
         json::object event{
           {"event", placed.kind_},
           {"at", at_text(placed.at_)},
@@ -576,6 +574,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
           ledger.acknowledged_.insert(placed.order_id_);
           ledger.seen_.insert(placed.order_id_);
         } else {
+          ++session_refused;
           event["reason"] = placed.reason_;
         }
         guard.emit(std::move(event));
@@ -636,10 +635,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
         listed.push_back(json::value(symbol));
       }
       start["symbols"] = listed;
-      const auto identity = lock.identity();
-      start["lock"] = json::object{
-        {"device", static_cast<std::int64_t>(identity.dev_)}, {"inode", static_cast<std::int64_t>(identity.ino_)}
-      };
+      start["pid"] = static_cast<std::int64_t>(::getpid());
       if (!events.write(start)) {
         return false;
       }
@@ -728,6 +724,19 @@ int run_main(int argc, char** argv, Load load, Make make) {
       code = std::string("unknown.") + outcome_name(traded.outcome_);
     }
     body["outcome"] = thrown.empty() ? outcome_name(traded.outcome_) : "stopped_by_error";
+    // Every refusal counts: the boundary's and the broker's, the library guard's, and targets atlc could not price.
+    const std::size_t guard_refused = traded.report_ ? traded.report_->orders_guard_refused_ : 0;
+    body["refused"] = json::object{
+      {"boundary", session_refused},
+      {"guard", guard_refused},
+      {"pricing", traded.pricing_refused_},
+    };
+    if (
+      thrown.empty() && traded.outcome_ == Outcome::CLEAN &&
+      session_refused + guard_refused + traded.pricing_refused_ > 0
+    ) {
+      body["outcome"] = "refused_orders";
+    }
     // The journal as the library restores it, read again from the file.
     const auto view = journal_view(session, atl::runner::read_journal_file(journal_path), scope, 0);
     if (exit == Exit::OK && guard.lock_lost_) {
@@ -802,13 +811,14 @@ int run_main(int argc, char** argv, Load load, Make make) {
         {"next", run_unknown_next()},
       };
     }
-    // The reply first, then the end event, then the lock released (when this scope ends).
+    // The end event, then the reply as the last line, then the lock released (when this scope ends).
     body["result"] = exit == Exit::OK ? "ended" : "unknown";
-    const int exit_code = write_run_reply(body, exit);
     (void)events.write(
-      json::object{{"event", "end"}, {"at", at_text(market.now())}, {"exit", exit_code}, {"result", body["result"]}}
+      json::object{
+        {"event", "end"}, {"at", at_text(market.now())}, {"exit", static_cast<int>(exit)}, {"result", body["result"]}
+      }
     );
-    return exit_code;
+    return write_run_reply(body, exit);
   } catch (const std::exception& error) {
     if (trading) {
       return run_error(base, Exit::UNKNOWN, "unknown.internal", error.what(), run_unknown_next());

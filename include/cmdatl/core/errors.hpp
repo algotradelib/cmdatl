@@ -21,7 +21,7 @@ struct ErrorSpec {
 
 /** @brief What a run whose outcome is unknown tells its caller to do: the operator decides whether another starts. */
 inline constexpr const char* RUN_END =
-  "report run_exit and run_error to the operator, and start another run only when asked";
+  "report the reply's exit and error to the operator, and start another run only when asked";
 
 /**
  * @brief The `next` of a run's own reply when its outcome is unknown (the driver's), for any code.
@@ -143,14 +143,10 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"refused.order_type", Exit::REFUSED, false,
       "set [orders] type = \"limit\" and an offset within the operator's collar"},
     {"unsupported.interval", Exit::FAILED, false, "a run trades daily bars: give the run spec daily data"},
-    {"run.unknown", Exit::FAILED, false, "cmdatl run start starts a run; its reply names the run's id"},
-    {"run.failed", Exit::FAILED, true, "nothing was started or sent: run cmdatl run start again"},
-    {"run.reference_unreadable", Exit::FAILED, true, "nothing was sent: run cmdatl run start again"},
+    {"run.failed", Exit::FAILED, true, "nothing was started or sent: run cmdatl run again"},
+    {"run.reference_unreadable", Exit::FAILED, true, "nothing was sent: run cmdatl run again"},
     {"cache.unavailable", Exit::FAILED, false,
       "set XDG_CACHE_HOME to a writable absolute directory, or ask the operator"},
-    {"unknown.run_start", Exit::UNKNOWN, false, "the run may be trading: cmdatl run status RUN; do not start it again"},
-    {"unknown.run_ended", Exit::UNKNOWN, false,
-      std::string("the run ended without a reply; its market ended with it and no account was affected: ") + RUN_END},
     {"unknown.owed_at_end", Exit::UNKNOWN, false, run_unknown_next()},
     {"unknown.recovery_halted", Exit::UNKNOWN, false,
       std::string("the run's journal halted recovery and nothing was started: ") + RUN_END},
@@ -173,22 +169,13 @@ inline const std::vector<ErrorSpec>& error_catalog() {
         "the mock market could not cost or record a fill; its market ended with it and no account was affected: "
       ) +
         RUN_END},
-    {"unknown.run_stopping", Exit::UNKNOWN, false, "the run stops placing: cmdatl run status RUN shows when it ended"},
-    {"unknown.run_stop", Exit::UNKNOWN, false,
-      "it may still be trading: cmdatl run status RUN; the operator can remove the armed file, which stops every run"},
-    {"refused.stop_file_full", Exit::REFUSED, false,
-      "the stop was not written and the run still trades: the stop file is full of other runs' lines; wait for them to end, or ask the operator, who can remove the armed file, which stops every run"},
-    {"run.log_replaced", Exit::FAILED, false,
-      "the run's event log was replaced or cut while it was read: cmdatl run status RUN"},
-    {"run.log_unreadable", Exit::FAILED, false,
-      "the run started and its event log is missing or not a file that can be read: cmdatl run status RUN"},
   };
   return catalog;
 }
 
 /**
- * @brief Every code `run start` may answer, its own and the run's driver's, which it relays: the table declares each
- *   on `run start`, and `run status` reports the driver's as `run_error`.
+ * @brief Every code `run` may answer, its own before the driver starts and the driver's: the table declares each on
+ *   `run`.
  */
 inline const std::vector<std::string> RUN_CODES{
   "usage.bad_value",
@@ -224,8 +211,6 @@ inline const std::vector<std::string> RUN_CODES{
   "unknown.owed_order",
   "unknown.owed_at_end",
   "unknown.market_halted",
-  "unknown.run_start",
-  "unknown.run_ended",
   "unknown.internal",
   "internal.error",
 };

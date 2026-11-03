@@ -1,6 +1,6 @@
 #pragma once
 
-// The settings `strategy backtest` and `run start` read, in the order both read them: the words sorted into the
+// The settings `strategy backtest` and `run` read, in the order both read them: the words sorted into the
 // program, the run spec and the settings, the run spec and the command line's settings checked key by key, the
 // program's facts from `atlc check FILE --info`, and the settings checked against them.
 
@@ -306,7 +306,7 @@ struct CheckedSettings {
  * @param given The settings, read by `read_given`.
  * @param atlc atlc's path.
  * @param output Where progress goes.
- * @param run Whether the settings are a run's (`run start`).
+ * @param run Whether the settings are a run's (`run`).
  * @param checked Set to the result.
  * @return The refusal, or nothing.
  */

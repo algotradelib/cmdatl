@@ -1,10 +1,10 @@
 #pragma once
 
-// A run's event log and its reply.
+// A run's events and its reply, both on stdout.
 //
-// The event log is `events.jsonl` in the run's directory: created exclusively, one JSON object per line, each line one
-// whole write, not synced (the journal is the authority; the events describe the run). The reply is one JSON object
-// on stdout in one write, always with `env`, `run`, `result` and `exit`.
+// One JSON object per line, each line one whole write (the journal is the authority; the events describe the run).
+// The reply is the last line, one JSON object in one write, always with `env`, `run`, `result` and `exit`; an event
+// always has `event`.
 
 #include "../core/errors.hpp"
 #include "../core/reply.hpp"
@@ -19,7 +19,6 @@
 #include <utility>
 
 #if !defined(_WIN32)
-#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -28,7 +27,7 @@ namespace driver {
 
 namespace json = boost::json;
 
-/** @brief The event log's format. */
+/** @brief The events' format. */
 inline constexpr int EVENT_FORMAT = 1;
 
 /**
@@ -55,18 +54,9 @@ inline std::string next_of(const std::string& code) {
 }
 
 #if !defined(_WIN32)
-/** @brief The run's event log; a line that cannot be written is remembered, and the run stops placing. */
+/** @brief The run's events on stdout; a line that cannot be written is remembered, and the run withdraws. */
 class EventLog {
 public:
-  /**
-   * @brief Creates the log; it must not exist.
-   * @param path The file.
-   */
-  explicit EventLog(const std::string& path) {
-    fd_.reset(open_lifted(path.c_str(), O_WRONLY | O_APPEND | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
-    failed_ = fd_.get() < 0;
-  }
-
   /**
    * @brief Whether every line so far was written whole.
    * @return Whether it was.
@@ -86,14 +76,13 @@ public:
     }
     const auto line = json::serialize(event) + "\n";
     std::size_t written = 0;
-    if (write_whole(fd_.get(), line.data(), line.size(), written) != 0) {
+    if (write_whole(STDOUT_FILENO, line.data(), line.size(), written) != 0) {
       failed_ = true;
     }
     return !failed_;
   }
 
 private:
-  ScopedFd fd_;
   bool failed_{false};
 };
 

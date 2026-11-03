@@ -84,7 +84,7 @@ ConfigParts run_parts() {
 }
 
 /**
- * @brief Runs `run_main<P>` in a child with the given arguments after `run.id`, in a run directory made as `run start`
+ * @brief Runs `run_main<P>` in a child with the given arguments after `run.id`, in a run directory made as `cmdatl run`
  *   makes it, its stdout in a file.
  * @tparam P The program.
  * @param fixture The operator's file and state root.
@@ -133,13 +133,18 @@ RunResult run_child(
   REQUIRE(WIFEXITED(status));
   ran.exit_ = WEXITSTATUS(status);
   ran.stderr_ = slurp(stderr_path);
+  // stdout: the events, one per line, then the reply as the last line.
   const auto text = slurp(reply_path);
-  INFO("reply: " << text);
-  REQUIRE(!text.empty());
-  ran.reply_ = json::parse(text).as_object();
-  if (std::filesystem::exists(ran.dir_ / "events.jsonl")) {
-    for (const auto& line : split_lines(slurp(ran.dir_ / "events.jsonl"))) {
-      ran.events_.push_back(json::parse(line).as_object());
+  INFO("stdout: " << text);
+  const auto lines = split_lines(text);
+  for (const auto& line : lines) {
+    auto object = json::parse(line).as_object();
+    if (object.contains("event")) {
+      REQUIRE(ran.reply_.empty());
+      ran.events_.push_back(std::move(object));
+    } else {
+      REQUIRE(ran.reply_.empty());
+      ran.reply_ = std::move(object);
     }
   }
   return ran;
@@ -242,8 +247,13 @@ TEST_CASE("a run trades its script on the mock, its start line first, and ends c
   CHECK(ran.reply_.at("executions").as_int64() == 2);
   CHECK(ran.reply_.at("holdings_at_end").as_object().at("005930").as_string() == "0");
   CHECK(ran.reply_.at("owed_at_end").as_array().empty());
+  const auto& refused = ran.reply_.at("refused").as_object();
+  CHECK(refused.at("boundary").as_int64() == 0);
+  CHECK(refused.at("guard").as_int64() == 0);
+  CHECK(refused.at("pricing").as_int64() == 0);
   REQUIRE(!ran.events_.empty());
   CHECK(ran.events_.front().at("event").as_string() == "start");
+  CHECK(ran.events_.front().at("pid").is_int64());
   CHECK(ran.events_.back().at("event").as_string() == "end");
   CHECK(count_of(ran, "placed") == 2);
   CHECK(count_of(ran, "filled") == 2);
@@ -453,59 +463,6 @@ TEST_CASE("the step guard: a disarm, a replaced lock and a signal each stop plac
     INFO(json::serialize(ran.reply_));
     CHECK(ran.reply_.at("stopped").as_string() == "signal");
     CHECK(count_of(ran, "placed") == 1);
-  }
-}
-
-TEST_CASE(
-  "the operator's stop file: this run's withdraw cancels, another run's line is noted, a line written before the start acts first"
-) {
-  {
-    const PaperFixture fixture(run_parts());
-    fixture.arm();
-    // A buy below the price at bar 4, the withdraw written at the same bar: read at the next step, before the
-    // order's session ends, so the closing pass cancels it.
-    set_script({{4, {10, "0.97"}}});
-    const auto stop = fixture.dir() / "paper.stop";
-    std::string run_id;
-    runtest::script().actions_[4] = [&run_id, stop] {
-      spit(stop, "withdraw " + run_id + "\n");
-    };
-    const auto ran = run_child<runtest::Program>(
-      fixture, spec_args(), [&run_id](const std::string& run, const std::filesystem::path&) {
-        run_id = run;
-      }
-    );
-    INFO(json::serialize(ran.reply_));
-    CHECK(ran.exit_ == 0);
-    CHECK(ran.reply_.at("stopped").as_string() == "operator");
-    CHECK(count_of(ran, "canceled") >= 1);
-    CHECK(ran.reply_.at("owed_at_end").as_array().empty());
-  }
-  {
-    const PaperFixture fixture(run_parts());
-    fixture.arm();
-    set_script({{2, {10, "1"}}, {5, {0, "1"}}});
-    spit(fixture.dir() / "paper.stop", "withdraw r999999999999\n");
-    const auto ran = run_child<runtest::Program>(fixture, spec_args());
-    CHECK(ran.exit_ == 0);
-    CHECK(ran.events_.front().at("event").as_string() == "start");
-    CHECK(count_of(ran, "note") == 1);
-    CHECK(ran.reply_.at("stopped").as_string() == "end");
-    CHECK(count_of(ran, "filled") == 2);
-  }
-  {
-    const PaperFixture fixture(run_parts());
-    fixture.arm();
-    set_script({{2, {10, "1"}}});
-    const auto ran = run_child<runtest::Program>(
-      fixture, spec_args(), [&fixture](const std::string& run, const std::filesystem::path&) {
-        spit(fixture.dir() / "paper.stop", "quiesce " + run + "\n");
-      }
-    );
-    CHECK(ran.events_.at(0).at("event").as_string() == "start");
-    CHECK(ran.events_.at(1).at("event").as_string() == "stop");
-    CHECK(count_of(ran, "placed") == 0);
-    CHECK(ran.reply_.at("stopped").as_string() == "operator");
   }
 }
 
@@ -772,48 +729,54 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
 #endif
 
 #if !defined(_WIN32)
-TEST_CASE("the stop file holds one line per run, and each run reads the strongest line naming it") {
-  using algotradelib::runner::StopIntent;
-  using cmdatl::stop_intent_of;
-  const std::string a = "r00000000000a";
-  const std::string b = "r00000000000b";
-  const std::string text = "withdraw " + a + "\nquiesce " + b + "\n";
-  CHECK(stop_intent_of(text, a) == StopIntent::WITHDRAW);
-  CHECK(stop_intent_of(text, b) == StopIntent::QUIESCE);
-  CHECK(!stop_intent_of(text, "r00000000000c"));
-  // The strongest of a run's own lines, whatever their order; the last line may lack its newline.
-  CHECK(stop_intent_of("withdraw " + a + "\nquiesce " + a, a) == StopIntent::WITHDRAW);
-  CHECK(stop_intent_of("quiesce " + a + "\nwithdraw " + a, a) == StopIntent::WITHDRAW);
-  // Spaces, tabs and a carriage return around the words count; a third word, another verb or another id does not.
-  CHECK(stop_intent_of("quiesce " + a + "\r\n", a) == StopIntent::QUIESCE);
-  CHECK(stop_intent_of("  withdraw\t " + a + "  \n", a) == StopIntent::WITHDRAW);
-  CHECK(stop_intent_of("flatten " + a + "\nquiesce " + a + " x\nwithdraw " + a + "1\n", a) == std::nullopt);
-  CHECK(stop_intent_of("junk\nquiesce " + a + "\n", a) == StopIntent::QUIESCE);
+TEST_CASE("SIGINT, SIGTERM and SIGHUP each withdraw: the resting order cancelled and confirmed, the run clean") {
+  for (const int sig : {SIGINT, SIGTERM, SIGHUP}) {
+    INFO("signal " << sig);
+    const PaperFixture fixture(run_parts());
+    fixture.arm();
+    // A buy below the price at bar 4, the signal noted at the same bar: the guard reads it at the next step, before
+    // the order's session ends, so the closing pass cancels it.
+    set_script({{4, {10, "0.97"}}});
+    runtest::script().actions_[4] = [sig] {
+      std::raise(sig);
+    };
+    const auto ran = run_child<runtest::Program>(fixture, spec_args());
+    INFO(json::serialize(ran.reply_));
+    CHECK(ran.exit_ == 0);
+    CHECK(ran.reply_.at("stopped").as_string() == "signal");
+    CHECK(ran.reply_.at("outcome").as_string() == "clean");
+    CHECK(count_of(ran, "placed") == 1);
+    CHECK(count_of(ran, "canceled") == 1);
+    const auto stops = events_of(ran, "stop");
+    REQUIRE(!stops.empty());
+    CHECK(stops.front().at("intent").as_string() == "withdraw");
+    CHECK(ran.reply_.at("owed_at_end").as_array().empty());
+    CHECK(slurp(ran.dir_ / "journal.jsonl").find("\"outcome\":\"confirmed\"") != std::string::npos);
+  }
 }
 
-TEST_CASE("a stop file the run cannot read is noted, never ignored without a trace") {
-  {
-    const PaperFixture fixture(run_parts());
-    fixture.arm();
-    set_script({{2, {10, "1"}}});
-    // Above the 4 KiB the driver reads.
-    spit(fixture.dir() / "paper.stop", std::string(4097, '#'));
-    const auto ran = run_child<runtest::Program>(fixture, spec_args());
-    const auto notes = events_of(ran, "note");
-    REQUIRE(notes.size() == 1);
-    CHECK(std::string(notes.front().at("message").as_string()).find("above 4096 bytes") != std::string::npos);
-    CHECK(ran.reply_.at("stopped").as_string() == "end");
-  }
-  {
-    const PaperFixture fixture(run_parts());
-    fixture.arm();
-    set_script({{2, {10, "1"}}});
-    spit(fixture.dir() / "elsewhere.stop", "withdraw r999999999999\n");
-    std::filesystem::create_symlink(fixture.dir() / "elsewhere.stop", fixture.dir() / "paper.stop");
-    const auto ran = run_child<runtest::Program>(fixture, spec_args());
-    const auto notes = events_of(ran, "note");
-    REQUIRE(notes.size() == 1);
-    CHECK(std::string(notes.front().at("message").as_string()).find("symbolic link") != std::string::npos);
-  }
+TEST_CASE("a closed output withdraws the run: the resting order is cancelled and confirmed although nobody reads") {
+  const PaperFixture fixture(run_parts());
+  fixture.arm();
+  set_script({{4, {10, "0.97"}}});
+  // At bar 4 stdout becomes a pipe whose reader is gone, as when the caller's pipe closes.
+  runtest::script().actions_[4] = [] {
+    int fds[2];
+    if (::pipe(fds) == 0) {
+      ::close(fds[0]);
+      ::dup2(fds[1], STDOUT_FILENO);
+      ::close(fds[1]);
+    }
+  };
+  const auto ran = run_child<runtest::Program>(fixture, spec_args());
+  CHECK(ran.exit_ == 0);
+  CHECK(ran.reply_.empty());
+  // The placement's event was lost with the output: the journal holds the order and its confirmed end.
+  const auto journal = slurp(ran.dir_ / "journal.jsonl");
+  CHECK(journal.find("005930") != std::string::npos);
+  CHECK(journal.find("\"outcome\":\"confirmed\"") != std::string::npos);
+  CHECK(ran.stderr_.find("owed after restore") != std::string::npos);
+  CHECK(ran.stderr_.find("finalization: ") != std::string::npos);
+  CHECK(ran.stderr_.find(", 0 owed") != std::string::npos);
 }
 #endif

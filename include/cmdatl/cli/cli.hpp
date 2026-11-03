@@ -295,8 +295,8 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
  *   exit code that does not overstate what is known.
  * @param err stderr.
  * @param may_send Whether the command may have sent.
- * @param hint What to read first: for a sending command, its own read (`cmdatl run status` for a run) or empty for
- *   `cmdatl order reconcile`; for a command that changes the account without sending, its hint; empty otherwise.
+ * @param hint What to read first: empty for a sending command (`cmdatl order reconcile`); for a command that changes
+ *   the account without sending, its hint; empty otherwise.
  * @return 4 (unknown) for a command that may have sent or changed the account, 1 otherwise.
  */
 inline int report_lost_outcome(std::ostream& err, bool may_send, const std::string& hint = "") noexcept {
@@ -510,15 +510,13 @@ inline int run_on_config(const Command& command, const Prepared& prepared, std::
   try {
     Output output(out, err, rendering, env);
     Reply reply;
+    // `run` returns only when its driver did not start: whatever happens here, nothing was sent.
     try {
       reply = command.run_config_(prepared.invocation_, *snapshot, output);
     } catch (const std::exception& e) {
-      reply = command.may_send_ ?
-        error_reply(Exit::UNKNOWN, "unknown.internal", e.what(), "cmdatl run status") :
-        error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line");
+      reply = error_reply(Exit::FAILED, "internal.error", e.what(), "report the defect with the command line");
     } catch (...) {
-      reply = command.may_send_ ?
-        error_reply(Exit::UNKNOWN, "unknown.internal", "an unknown exception", "cmdatl run status") :
+      reply =
         error_reply(Exit::FAILED, "internal.error", "an unknown exception", "report the defect with the command line");
     }
     if (prepared.found_.alias_) {
@@ -526,7 +524,7 @@ inline int run_on_config(const Command& command, const Prepared& prepared, std::
     }
     return static_cast<int>(output.finish(reply));
   } catch (...) {
-    return report_lost_outcome(err, command.may_send_, command.may_send_ ? "cmdatl run status" : std::string());
+    return report_lost_outcome(err, false);
   }
 #endif
 }

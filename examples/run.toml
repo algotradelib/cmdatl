@@ -1,4 +1,4 @@
-# cmdatl run start run.toml --wait
+# cmdatl run run.toml
 # mean-reversion.atls as a run on its own mock market: a run needs a market and limit orders.
 strategy = "mean-reversion.atls"
 

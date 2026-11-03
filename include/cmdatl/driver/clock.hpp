@@ -6,13 +6,12 @@
 // left to fill against there); asked to wait at the bound it throws `RunBound`, which ends the loop, so a stop whose
 // closing pass cannot finish never spins. After each step the run scans what the market did and the guard runs.
 //
-// The guard latches, at every step: the armed file missing, the run's lock no longer at its path, SIGINT or SIGTERM,
-// an event line not written, the operator's stop file naming this run, and the run's end, where it withdraws.
+// The guard latches, at every step: the armed file missing (quiesce), the run's lock no longer at its path (quiesce),
+// SIGINT, SIGTERM or SIGHUP (withdraw), an event line not written (withdraw), and the run's end (withdraw).
 
 #include "../system/files.hpp"
 #include "../system/lock.hpp"
 #include "../system/process.hpp"
-#include "../system/stop_file.hpp"
 #include "./events.hpp"
 
 #include <algotradelib/mock>
@@ -26,7 +25,6 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -48,10 +46,6 @@ namespace atl = algotradelib;
 struct Guard {
   /** @brief The operator's armed file. */
   std::string armed_;
-  /** @brief The operator's stop file. */
-  std::string stop_file_;
-  /** @brief The run's id. */
-  std::string run_;
   /** @brief The run's lock. */
   const OwnerLock* lock_{nullptr};
   /** @brief The stop the loop reads. */
@@ -60,22 +54,19 @@ struct Guard {
   EventLog* events_{nullptr};
   /** @brief The run's end: one tick after the last bar's period end. */
   std::chrono::system_clock::time_point end_{};
-  /** @brief Why the run stopped itself, the first reason: `end`, `not_armed`, `lock_lost`, `signal`, `event_log` or
-   *  `operator`; empty while it has not. */
+  /** @brief Why the run stopped itself, the first reason: `end`, `not_armed`, `lock_lost`, `signal` or `event_log`;
+   *  empty while it has not. */
   std::string stopped_;
   /** @brief Whether the lock was lost at a step. */
   bool lock_lost_{false};
-  /** @brief The strongest intent the stop file has named for this run. */
-  std::optional<atl::runner::StopIntent> operator_intent_;
-  /** @brief The stop file's texts already noted as ignored. */
-  std::set<std::string> noted_;
   /** @brief Events held until the start line is written. */
   std::vector<json::object> held_;
   /** @brief Whether events are held (before the start line). */
   bool holding_{true};
 
   /**
-   * @brief Writes an event, or holds it before the start line; a failed write quiesces the run.
+   * @brief Writes an event, or holds it before the start line; a failed write withdraws the run, since nobody reads
+   *   it any more.
    * @param event The event.
    */
   void emit(json::object event) {
@@ -84,7 +75,7 @@ struct Guard {
       return;
     }
     if (!events_->write(event)) {
-      latch("event_log", atl::runner::StopIntent::QUIESCE, std::nullopt);
+      latch("event_log", atl::runner::StopIntent::WITHDRAW, std::nullopt);
     }
   }
 
@@ -115,49 +106,12 @@ struct Guard {
     if (stopped_.empty()) {
       stopped_ = reason;
     }
-    if (reason != "event_log" && events_->ok() && (stronger || reason == "operator")) {
+    if (reason != "event_log" && events_->ok() && stronger) {
       json::object event{{"event", "stop"}, {"reason", reason}, {"intent", atl::runner::stop_intent_name(intent)}};
       if (at) {
         event["at"] = at_text(*at);
       }
       emit(std::move(event));
-    }
-  }
-
-  /**
-   * @brief Reads the operator's stop file: this run's line requests its intent (one event per stronger intent);
-   *   anything else is noted once.
-   * @param now The instant.
-   */
-  void read_stop(std::chrono::system_clock::time_point now) {
-    const auto read = read_stop_file_checked(stop_file_);
-    if (!read.problem_.empty()) {
-      if (noted_.insert("problem: " + read.problem_).second) {
-        emit(json::object{{"event", "note"}, {"at", at_text(now)}, {"message", read.problem_ + "; ignored"}});
-      }
-      return;
-    }
-    const auto& text = read.text_;
-    if (!text || text->empty()) {
-      return;
-    }
-    const auto intent = stop_intent_of(*text, run_);
-    if (!intent) {
-      if (noted_.insert(*text).second) {
-        emit(
-          json::object{
-            {"event", "note"}, {"at", at_text(now)}, {"message", "the stop file names no stop for this run; ignored"}
-          }
-        );
-      }
-      return;
-    }
-    if (
-      !operator_intent_ ||
-      atl::runner::stop_intent_strength(*intent) > atl::runner::stop_intent_strength(*operator_intent_)
-    ) {
-      operator_intent_ = intent;
-      latch("operator", *intent, now);
     }
   }
 
@@ -175,9 +129,8 @@ struct Guard {
       latch("lock_lost", atl::runner::StopIntent::QUIESCE, now);
     }
     if (interrupted()) {
-      latch("signal", atl::runner::StopIntent::QUIESCE, now);
+      latch("signal", atl::runner::StopIntent::WITHDRAW, now);
     }
-    read_stop(now);
     if (!(now < end_)) {
       latch("end", atl::runner::StopIntent::WITHDRAW, now);
     }

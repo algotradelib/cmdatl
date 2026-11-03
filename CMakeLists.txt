@@ -119,7 +119,7 @@ file(WRITE ${CMDATL_GENERATED}/guides.hpp.new
 )
 configure_file(${CMDATL_GENERATED}/guides.hpp.new ${CMDATL_GENERATED}/cmdatl/guides.hpp COPYONLY)
 
-# The drivers' sources, carried inside cmdatl so `run start` and `strategy backtest` build from the same sources as the
+# The drivers' sources, carried inside cmdatl so `run` and `strategy backtest` build from the same sources as the
 # running cmdatl: every header of the modules the run driver may include, its main.cpp and CMakeLists.txt, toml++ with its
 # licence, and the backtest driver's main.cpp and CMakeLists.txt.
 add_executable(cmdatl_embed tools/embed.cpp)
@@ -199,7 +199,7 @@ if(CMDATL_BUILD_TESTS)
   add_executable(test-cli
     tests/test-cli.cpp tests/test-process.cpp tests/test-strategy.cpp tests/test-acceptance.cpp tests/test-operator.cpp
     tests/test-account.cpp tests/test-paper.cpp tests/test-orders.cpp tests/test-order-process.cpp
-    tests/test-run-start.cpp tests/test-run-control.cpp tests/test-guides.cpp tests/test-spec.cpp
+    tests/test-run-start.cpp tests/test-guides.cpp tests/test-spec.cpp
   )
   target_link_libraries(test-cli PRIVATE cmdatl_core Catch2::Catch2WithMain)
   add_dependencies(test-cli cmdatl fake-atlc hold-lock)
