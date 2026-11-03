@@ -79,7 +79,7 @@ A key given twice on the command line is an error.
 | `data.open`, `data.high`, `data.low` | path | none | the other fields, with the closes' dates and columns; `replay.fill = "legs"` needs all three |
 | `data.names` | path | the tables' headers | a file whose second line names the columns (Chan's `*_stocks.csv`) |
 
-A row is a bar with open, high and low equal to its close, unless the fill is `open-prev-close` or `legs`.
+A row is a bar with open, high and low equal to its close, unless the fill is `legs`.
 
 `source = "csv"`: OHLCV rows, split on commas without quoting.
 
@@ -136,15 +136,40 @@ A spec names data only: credentials never appear in it.
 | `replay.min_commission` | number, 0 or more | 0 | the least commission of a fill |
 | `replay.sell_tax` | number, 0 or more | 0 | the tax, a rate of each sell's value |
 | `replay.slippage_ticks` | whole number, 0 to 1e9 | 0 | slippage, in ticks |
-| `replay.fill` | `"next-open"`, `"open-prev-close"` or `"legs"` | `"next-open"` | when an order fills (below) |
+| `replay.fill` | `"next-open"` or `"legs"` | `"next-open"` | how bars are fed (below) |
+| `replay.fill_header` | path | none | a C++ header declaring a market-price rule (below); with `replay.fill_function` |
+| `replay.fill_function` | a C++ name, such as `decision_close` or `rules::decision_close` | none | the rule the header declares; with `replay.fill_header` |
 | `replay.shorts` | boolean | `false` | whether a position may go below zero; no borrow is modelled |
 | `replay.periods_per_year` | number above 0 | 252 | bars a year, for the annualized Sharpe ratio |
 
 | `fill` | Data | Program | An order fills |
 | --- | --- | --- | --- |
-| `next-open` | any source | `on_bar` | at the next bar's open |
-| `open-prev-close` | `source = "wide"` (not a CSV's wide layout) | `on_bar` | at the close it was decided on: each bar opens at the previous close |
+| `next-open` | any source | `on_bar` | at the next bar's open, or at the market-price rule's price |
 | `legs` | daily bars: wide tables with opens, highs and lows, or a CSV or store | a universe with `on_open`, `on_close` or both | at the open for a target stated in `on_open`, at the close for one in `on_close` |
+
+A market-price rule chooses the price of a market order, in place of the next bar's open.
+It is a C++ function in a header of your own, compiled into the driver with the program:
+
+```cpp
+// decision-close.hpp: the textbook convention, a market order fills at the close it was decided on.
+#pragma once
+#include <algotradelib/backtest>
+inline std::optional<algotradelib::Decimal64> decision_close(const algotradelib::backtest::MarketPriceInput& in) {
+  return in.previous_ ? std::optional<algotradelib::Decimal64>(in.previous_->close_) : in.next_.bar_.open_;
+}
+```
+
+```toml
+[replay]
+fill_header = "decision-close.hpp"
+fill_function = "decision_close"
+```
+
+The function gets the order (`order_`), the instrument's bar before the fill bar, the one the program saw (`previous_`, null for the first bar), the bar the order fills against (`next_`) and the price grid (`rule_`), and returns a price, or nothing to leave a day order for a later bar of its session.
+It is the library's `NextBarFillModel::with_market_price`; slippage, commission and tax apply to its price, limit orders are untouched, and nothing checks the price against the bar.
+The report's `caveats` name the rule (`market_price_rule`) and count its fills (`market_fills_by_rule`).
+A rule needs market orders: with `orders.type = "limit"` it is refused.
+A run (`cmdatl run`) prices its mock market's market orders by the same rule.
 
 A run (`cmdatl run`) takes neither a program with `on_open` or `on_close` nor `replay.fill = "legs"`.
 
