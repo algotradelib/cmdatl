@@ -2,9 +2,8 @@
 
 // A simulated KRX market over stored daily bars: nothing here reaches a network or an account.
 //
-// Ported from labs/atl-strategies/include/paper/market.hpp and trimmed to what cmdatl calls: daily bars only, limit
-// and market orders only, every fill the whole remainder, orders refused outside KRX's acceptance hours (08:30-15:30
-// KST on a date the symbol trades).
+// Daily bars only, limit and market orders only, every fill the whole remainder, orders refused outside KRX's
+// acceptance hours (08:30-15:30 KST on a date the symbol trades).
 //
 // Time model (KST = UTC+9).
 // A daily bar is the session of its date: 09:00-15:30 KST = 00:00-06:30 UTC.

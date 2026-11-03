@@ -376,7 +376,7 @@ TEST_CASE("the journal's view: today's placements, what is owed, and what the ma
       place_entry("j0", runner::JournalOutcome::REJECTED, kst("2024-03-25T10:00")),
       place_entry("j1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:59")),
       place_entry("j1", runner::JournalOutcome::ACCEPTED, kst("2024-03-26T09:00"), "1"),
-      // The lab's regression: an order whose pending line alone survives is still owed.
+      // A regression: an order whose pending line alone survives is still owed.
       place_entry("j2", runner::JournalOutcome::PENDING, kst("2024-03-26T09:01"), "", "000660"),
     }
   );

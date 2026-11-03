@@ -2,7 +2,7 @@
 
 // A run's live wiring: the library's runner, journal, recovery, session source and polling loop composed in the order
 // the runner requires, then a finalization stage. cmdatl's own code for cmdatl's behaviour, on the library's public
-// API: it takes the run's journal as given (one writer per process), states the buying-power currencies (F69), refuses a
+// API: it takes the run's journal as given (one writer per process), states the buying-power currencies, refuses a
 // program with `on_fill` before recovery, calls back once just before the loop starts, and after the loop reads the
 // broker until the runner has confirmed every order it sent, since a closing pass only sends its cancellations.
 
@@ -190,7 +190,7 @@ Traded trade_on_rails(
     }
     bound.context().set_instrument(std::move(reference.value()));
   }
-  // The journal resolves recovered instruments; the currencies let the guard read buying power (F69).
+  // The journal resolves recovered instruments; the currencies let the guard read buying power.
   atl::live::SessionSource<Session, atl::runner::FileJournal> source(session, wiring.universe_);
   source.set_journal(journal);
   source.set_bar_query(atl::BarInterval::ONE_DAY, wiring.bar_count_);

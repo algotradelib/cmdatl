@@ -43,7 +43,7 @@ void open_session(const PaperFixture& fixture) {
 }
 
 /**
- * @brief The day's price range of a symbol in the fixture's bars, for D5's check.
+ * @brief The day's price range of a symbol in the fixture's bars, for the collar check.
  * @param symbol The symbol.
  * @param at The instant, nanoseconds.
  * @return A price inside the day's range nearest to nothing in particular: the day's open.

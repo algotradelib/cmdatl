@@ -3,7 +3,7 @@
 // once(): one target, one decision, one call, on an account whose lock the caller holds and whose journal the caller
 // opened; and release(), the operator's settlement of what the journal owes.
 //
-// The rules, each kept from the lab's one-shot:
+// The rules:
 //   1. Nothing places unless the armed file exists; a withdrawal needs none, since it adds no exposure.
 //   2. The caller holds the account's owner lock for the whole command; once() checks it is still the file at its
 //      path before it writes.

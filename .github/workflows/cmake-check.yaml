@@ -66,7 +66,7 @@ jobs:
           (cd "$RUNNER_TEMP/duckdb" && cmake -E tar xf ../duckdb.zip)
           echo "CMDATL_TEST_DUCKDB=$RUNNER_TEMP/duckdb" >> "$GITHUB_ENV"
 
-      # -Wterminate stays a warning: plan/todo/cmdatl-toml-assert-noexcept.md.
+      # GCC's -Wterminate stays a warning: it flags toml++'s noexcept functions that use the TOML_ASSERT operator.hpp defines.
       - uses: threeal/cmake-action@v2.1.0
         with:
           run-build: true

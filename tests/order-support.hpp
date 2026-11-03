@@ -100,8 +100,8 @@ inline bool no_send_ok(const Answer& answer, const std::string& before, const st
 }
 
 /**
- * @brief D5's check over a whole paper log: every `place` line is a limit order whose price is within the collar of
- *   the price of its symbol at its instant, as the market's own path gives it.
+ * @brief The collar check over a whole paper log: every `place` line is a limit order whose price is within the collar
+ *   of the price of its symbol at its instant, as the market's own path gives it.
  * @param log The log.
  * @param collar The collar.
  * @param price_at The market's price of a symbol at an instant (nanoseconds), or a negative number when none.

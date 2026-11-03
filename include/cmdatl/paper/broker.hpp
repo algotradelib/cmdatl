@@ -2,8 +2,7 @@
 
 // The paper market as a broker: a blocking client and its BrokerTraits, written outside the library the way a third
 // party adds a broker.
-// Ported from labs/atl-strategies/include/paper/broker.hpp without its fault injection; bar queries are refused
-// (nothing in cmdatl reads them yet), and orders carry no trigger price.
+// Bar queries are refused (nothing in cmdatl reads them yet), and orders carry no trigger price.
 
 #include "./market.hpp"
 

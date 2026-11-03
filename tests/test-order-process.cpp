@@ -72,7 +72,7 @@ std::string plan_of(
 }
 
 /**
- * @brief D5 over a whole log: every placement a limit order within the collar of its day's prices.
+ * @brief The collar check over a whole log: every placement a limit order within the collar of its day's prices.
  * @param symbol The symbol.
  * @param at The instant.
  * @return A price of the day, for the collar's check.
@@ -378,15 +378,16 @@ TEST_CASE(
 }
 
 TEST_CASE(
-  "an allocation failing in the journal-open refusal: the library gap is counted and not passed", "[orders][sweep]"
+  "an allocation failing in the journal-open refusal: a descriptor the library leaves open is counted, not passed",
+  "[orders][sweep]"
 ) {
   const Watchdog watchdog("the journal-open refusal sweep", 1800);
   const PaperFixture fixture;
   fixture.arm();
   REQUIRE(ask(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
   // The journal-open refusal: a second writer holds the journal, so the library's flock refuses. An allocation failing
-  // inside the library's refusal message can leave its descriptor open (a library gap, fixed on its own branch); those
-  // iterations are counted and reported, not passed.
+  // inside the library's refusal message could leave its descriptor open before algotradelib 66b066c; those iterations
+  // are counted and reported, not passed.
   long gap = 0;
   long refusal_runs = 0;
   {
