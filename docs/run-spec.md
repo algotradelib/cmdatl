@@ -186,6 +186,8 @@ On US intraday bars it is refused until the session follows daylight saving.
 A replay in which such a program met no session's open or close fails, naming the market and the interval; the report gives `sessions_opened` and `sessions_closed`, and `caveats.open_points` when `data.open_point` is set.
 With the decision-close rule, a target stated in `on_open` fills at the open it saw and one in `on_close` at the close it saw; without a rule, at the next bar's open.
 A fill is dated at the bar it fills against: an `on_close` exit at the next session's first bar, so the last session's exit does not fill.
+With `data.open_point` a day is two bars and two equity points, so set `replay.periods_per_year` to twice the trading days (504) for the annualized ratios.
+A `DAY` order still resting at an open point (a rule that named no price there) expires with it, since a daily bar ends its session.
 
 A run (`cmdatl run`) takes neither a program with `on_open` or `on_close`, nor a market-price rule, nor `data.open_point`.
 

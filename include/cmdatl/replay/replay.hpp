@@ -963,8 +963,12 @@ inline atl::strategy::SessionWindow session_of(const std::string& market) {
 }
 
 /**
- * @brief Noon, market time, of the date a daily bar states: its stamp is that date's midnight in some time zone, so
- *   twelve hours later it is still that date in UTC.
+ * @brief Noon, market time, of the date a daily bar states.
+ *
+ * A stamp at a midnight (UTC, or the market's) is that date's midnight in some time zone, so twelve hours later it is
+ * still that date in UTC; any other stamp is a session time (a US bar stamped at its 09:30 open is 14:30 UTC, at its
+ * close 21:00 UTC), whose date is the market's own.
+ *
  * @param stamp The daily bar's timestamp.
  * @param session The market's session window.
  * @return An instant on that date in the market's time zone.
@@ -973,7 +977,10 @@ inline std::chrono::system_clock::time_point market_noon(
   std::chrono::system_clock::time_point stamp, const atl::strategy::SessionWindow& session
 ) {
   using Days = std::chrono::duration<std::int64_t, std::ratio<86400>>;
-  const auto date = std::chrono::floor<Days>(stamp + std::chrono::hours(12));
+  const auto local = stamp + session.utc_offset_;
+  const bool midnight = std::chrono::floor<Days>(stamp) == stamp || std::chrono::floor<Days>(local) == local;
+  const auto date =
+    midnight ? std::chrono::floor<Days>(stamp + std::chrono::hours(12)) : std::chrono::floor<Days>(local);
   return std::chrono::time_point_cast<std::chrono::system_clock::duration>(date) + std::chrono::hours(12) -
     session.utc_offset_;
 }
@@ -1514,9 +1521,6 @@ int main(int argc, char** argv, Fills fills_of) {
     engine.finish();
     const auto result = engine.result();
     const auto report = atl::backtest::summarize(result, engine.fills(), periods);
-    if (const auto path = s.get("output.fills")) {
-      write_fills(result, *path);
-    }
     SessionFacts session;
     session.open_points_ = open_point;
     if constexpr (Strategy::atls_session) {
@@ -1534,6 +1538,10 @@ int main(int argc, char** argv, Fills fills_of) {
           "` (check replay.market and the bars' interval and times)"
         );
       }
+    }
+    // After the session check, so a failed replay leaves no fills file behind.
+    if (const auto path = s.get("output.fills")) {
+      write_fills(result, *path);
     }
     std::cout << report_json(result, report, engine.strategy().pricing_refusals(), session);
     std::cout.flush();

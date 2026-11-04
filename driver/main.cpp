@@ -55,7 +55,7 @@ cmdatl::driver::Loaded load(const std::vector<std::string>& args) {
   loaded.symbols_ = data.symbols_;
   loaded.instruments_ = config.instruments_;
   loaded.cash_ = config.cash_;
-  // The market prices market orders by the run's rule, as the backtest does.
+  // The run's fill model: costs only, since a run refuses a market-price rule (its fills are the market's).
   loaded.fills_ = program_fills(replay::fill_model(s));
   std::vector<bool> started(loaded.instruments_.size(), false);
   for (const auto& instrument : loaded.instruments_) {

@@ -797,3 +797,15 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
   CHECK(refused > static_cast<std::size_t>(count / 20));
   CHECK(replayed > static_cast<std::size_t>(count / 30));
 }
+
+TEST_CASE("a daily bar's date is its midnight's or the market's date of a session-time stamp") {
+  const auto us = replay::session_of("us");
+  const auto day = replay::day_of(20200102);
+  // Noon at UTC-5 on 2020-01-02 is 17:00 UTC that day.
+  const auto noon = day + std::chrono::hours(17);
+  // A UTC midnight, a midnight at UTC-5, a bar stamped at the 09:30 open (14:30 UTC) and at the 16:00 close (21:00 UTC).
+  CHECK(replay::market_noon(day, us) == noon);
+  CHECK(replay::market_noon(day + std::chrono::hours(5), us) == noon);
+  CHECK(replay::market_noon(day + std::chrono::hours(14) + std::chrono::minutes(30), us) == noon);
+  CHECK(replay::market_noon(day + std::chrono::hours(21), us) == noon);
+}
