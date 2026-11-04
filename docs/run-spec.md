@@ -181,8 +181,8 @@ A function of the wrong signature fails the build with one line naming the expec
 | --- | --- | --- | --- |
 | `data.open_point` | boolean | `false` | each daily bar replayed as a point at the session's open and the day's bar at its close, on the market's date of its stamp (a midnight in any zone, or a session time); only for a program with `on_open` or `on_close`, and only on daily bars (wide tables need `data.open`, `data.high` and `data.low`); the US session is a fixed UTC-5, daylight saving not modelled |
 
-A program with `on_open` or `on_close` needs `replay.market`, and on daily bars `data.open_point = true`: a daily bar is a whole session, and `on_open`'s targets would be replaced by `on_close`'s on the same bar.
-On US intraday bars it is refused until the session follows daylight saving.
+A program with `on_open` or `on_close` follows the market's session, stated by `replay.market` or inferred as for any replay, and on daily bars needs `data.open_point = true`: a daily bar is a whole session, and `on_open`'s targets would be replaced by `on_close`'s on the same bar.
+On US intraday bars, the market stated or inferred, it is refused until the session follows daylight saving (Korean bars in a CSV need `replay.market = "kr"`, since a CSV's market is `us` by default).
 A replay in which such a program met no session's open or close fails, naming the market and the interval; the report gives `sessions_opened` and `sessions_closed`, and `caveats.open_points` when `data.open_point` is set.
 With the decision-close rule, a target stated in `on_open` fills at the open it saw and one in `on_close` at the close it saw; without a rule, at the next bar's open.
 A fill is dated at the bar it fills against: an `on_close` exit at the next session's first bar, so the last session's exit does not fill.

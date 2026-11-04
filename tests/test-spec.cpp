@@ -743,8 +743,8 @@ TEST_CASE("open points match the program and the data") {
       &session, "intraday bars are replayed as they are"},
     {"[data]\nstore = [\"a/1d/b\", \"a/1m/c\"]\nstore_root = \"/s\"\nopen_point = true\n[replay]\nmarket = \"kr\"",
       &session, "intraday bars are replayed as they are"},
-    {"[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nlow = \"l\"\nopen_point = true", &session,
-      "give `replay.market`"},
+    {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1m\"", &session,
+      "for Korean bars, set replay.market"},
     {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1m\"\n[replay]\nmarket = \"us\"", &session,
       "daylight saving"},
     {"[data]\nfile = \"c\"\n[replay]\nfill = \"next-open\"", &plain, "replay.fill was removed"},
@@ -800,6 +800,13 @@ TEST_CASE("a program with session handlers takes intraday bars as they are, with
     session
   );
   CHECK(r.errors_.empty());
+  // The market need not be stated: daily tables with open points, and a store whose source says kr, run as given.
+  const auto daily = run(
+    "strategy = \"m.atls\"\n[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nlow = \"l\"\nopen_point = true\n", session
+  );
+  CHECK(daily.errors_.empty());
+  const auto store = run("strategy = \"m.atls\"\n[data]\nstore = \"kis/1m/005930\"\nstore_root = \"/s\"\n", session);
+  CHECK(store.errors_.empty());
 }
 
 TEST_CASE("instruments match the program") {

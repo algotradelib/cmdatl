@@ -1399,23 +1399,39 @@ inline std::vector<Error> resolve(
       }
     }
   }
-  // A session program's edges come from the market's session window, so the market is stated, not defaulted.
-  if (program.session_) {
+  // A session program's edges come from the market's session window: the market stated, or the one the replay
+  // infers (kr for a KIS, Kiwoom, Toss or KRX store, else us). Only US intraday bars are refused: daylight saving moves
+  // the session an hour, and a file spanning both seasons would meet closes in winter and silently miss them in summer.
+  // A market that meets no edge at all (Korean minute bars read as us) fails the replay instead.
+  if (program.session_ && !daily) {
     const auto* market = get("replay.market");
-    if (market == nullptr) {
+    std::string effective = "us";
+    if (market != nullptr) {
+      effective = market->value_.text();
+    } else if (const auto* store = get("data.store")) {
+      const auto first = store->value_.type_ == Value::Type::LIST ?
+        (store->value_.items_.empty() ? std::string() : store->value_.items_.front().text()) :
+        store->value_.text();
+      const auto source = first.substr(0, first.find('/'));
+      if (
+        source.rfind("kis", 0) == 0 || source.rfind("kiwoom", 0) == 0 || source.rfind("toss", 0) == 0 ||
+        source.find("krx") != std::string::npos
+      ) {
+        effective = "kr";
+      }
+    }
+    if (effective == "us") {
+      const std::string message =
+        "on_open and on_close on US intraday bars would follow a fixed UTC-5 session that daylight saving moves: not "
+        "supported yet (US daily bars with data.open_point are)";
       errors.push_back(
-        Error::nowhere(
-          "the program has on_open or on_close, which follow the market's session: give `replay.market` (\"kr\" or "
-          "\"us\")"
-        )
-      );
-    } else if (market->value_.text() == "us" && !daily) {
-      errors.push_back(
-        Error::at(
-          market->origin_,
-          "on_open and on_close on US intraday bars would follow a fixed UTC-5 session that daylight saving moves: "
-          "not supported yet (US daily bars with data.open_point are)"
-        )
+        market != nullptr ?
+          Error::at(market->origin_, message) :
+          Error::nowhere(
+            message +
+            "; the market is us by default: for Korean bars, set replay.market = "
+            "\"kr\""
+          )
       );
     }
   }
