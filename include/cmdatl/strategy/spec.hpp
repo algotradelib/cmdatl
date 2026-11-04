@@ -1293,11 +1293,14 @@ inline std::vector<Error> resolve(
   // decides is the program's (on_open and on_close follow the session; data.open_point for daily bars).
   if (const auto* e = get("replay.fill")) {
     const auto value = e->value_.text();
-    const std::string instead = value == "next-open" ? "it was the default: remove the key" :
-      value == "legs" ? "on_open and on_close follow the session: remove it, and set `data.open_point = true` for "
-                        "daily bars" :
-                        "a market order fills at the next bar's open, or at the price a rule names: remove it, and give "
-                        "`replay.fill_header` and `replay.fill_function` (a decision-close rule for the textbook close)";
+    std::string instead =
+      "a market order fills at the next bar's open, or at the price a rule names: remove it, and give "
+      "`replay.fill_header` and `replay.fill_function` (a decision-close rule for the textbook close)";
+    if (value == "next-open") {
+      instead = "it was the default: remove the key";
+    } else if (value == "legs") {
+      instead = "on_open and on_close follow the session: remove it, and set `data.open_point = true` for daily bars";
+    }
     errors.push_back(Error::at(e->origin_, "replay.fill was removed; " + instead));
   }
   // The market-price rule: a header and the function it declares, both or neither.
@@ -1342,8 +1345,10 @@ inline std::vector<Error> resolve(
     if (const auto* e = get(k); e != nullptr && e->origin_.file_.empty()) {
       errors.push_back(
         Error::at(
-          e->origin_, "`" + std::string(k) + "` names C++ that cmdatl compiles and runs: give it in the spec file, "
-                      "not on the command line"
+          e->origin_,
+          "`" + std::string(k) +
+            "` names C++ that cmdatl compiles and runs: give it in the spec file, "
+            "not on the command line"
         )
       );
     }

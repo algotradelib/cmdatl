@@ -19,7 +19,7 @@
   "rejection_reasons": {},
   "pricing_refused": 0,
   "pricing_refusal_reasons": {},
-  "caveats": {"gaps": 0, "unfilled": 0, "expired": 0, "unvalued_bars": 0, "multiple_instruments": true, "cost_totals_incomplete": false, "volume_ignored": true, "market_price_rule": true, "lowest_cash": null, "shorts_borrow_nothing": true},
+  "caveats": {"gaps": 0, "unfilled": 0, "expired": 0, "unvalued_bars": 0, "multiple_instruments": true, "cost_totals_incomplete": false, "volume_ignored": true, "lowest_cash": null, "shorts_borrow_nothing": true, "market_price_rule": "decision_close", "market_fills_by_rule": 520, "sessions_opened": 250, "sessions_closed": 250, "bars_outside_session": 0, "open_points": true},
   "first_bar": "2024-01-02T14:30:00Z",
   "last_bar": "2024-12-16T21:00:00Z"
 }

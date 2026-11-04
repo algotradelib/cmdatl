@@ -292,9 +292,15 @@ struct SessionProgram : Program {
   static constexpr bool atls_on_open = true;
   static constexpr bool atls_on_close = true;
   // A stand-in meets no session edge, as a program on the wrong market's bars would.
-  std::size_t session_opens() const { return 0; }
-  std::size_t session_closes() const { return 0; }
-  std::size_t session_outside_bars() const { return 0; }
+  std::size_t session_opens() const {
+    return 0;
+  }
+  std::size_t session_closes() const {
+    return 0;
+  }
+  std::size_t session_outside_bars() const {
+    return 0;
+  }
 };
 
 /** @brief The same program with `on_fill`, which a live runner never calls. */

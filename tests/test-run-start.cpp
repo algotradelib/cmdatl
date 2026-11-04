@@ -683,7 +683,8 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     CHECK(plain.exit_ == 2);
     CHECK(run_code(plain) == "spec.invalid");
     const auto plain_message = std::string(plain.reply_.at("error").as_object().at("message").as_string());
-    CHECK(plain_message.find("market-price rule") != std::string::npos);
+    // Refused at the spec (a rule with limit orders) or by the run (a rule at all): either names the rule.
+    CHECK(plain_message.find("rule") != std::string::npos);
   }
   {
     // A program with on_fill: the build succeeds and the driver refuses it, exit 5.

@@ -4,5 +4,5 @@ data.symbol_column=symbol
 data.time=date
 data.time_format=iso
 data.open_point=true
+replay.market=us
 replay.cash=1000000
-replay.fill=close

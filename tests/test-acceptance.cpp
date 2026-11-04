@@ -487,7 +487,8 @@ TEST_CASE(
     // The driver's own bytes and arguments: a stand-in records both, then runs the driver cmdatl built.
     const auto structure = struct_of(equip->atlc_, (examples / (std::string(name) + ".atls")).string());
     REQUIRE(!structure.empty());
-    const auto driver = backtest_driver(structure);
+    // The universe example prices market orders by its decision-close rule, so its driver is built with it.
+    const auto driver = backtest_driver(structure, std::string(name) == "universe" ? "decision_close" : "");
     REQUIRE(!driver.empty());
     const auto stand_in = dir.path() / (std::string(name) + ".sh");
     spit(
