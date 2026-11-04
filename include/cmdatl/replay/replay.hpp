@@ -965,9 +965,11 @@ inline atl::strategy::SessionWindow session_of(const std::string& market) {
 /**
  * @brief Noon, market time, of the date a daily bar states.
  *
- * A stamp at a midnight (UTC, or the market's) is that date's midnight in some time zone, so twelve hours later it is
- * still that date in UTC; any other stamp is a session time (a US bar stamped at its 09:30 open is 14:30 UTC, at its
- * close 21:00 UTC), whose date is the market's own.
+ * A stamp whose market-local time of day is in the daytime (06:00 to 18:00) is a session time, such as a US bar
+ * stamped at its 09:30 open (14:30 UTC in winter, 13:30 UTC in summer) or its close, and dates by its market-local
+ * date. Any other stamp is some time zone's midnight (UTC, the market's, or another offset, such as an Eastern
+ * Daylight midnight at 04:00 UTC, which a fixed UTC-5 window reads as 23:00), so twelve hours later it is still that
+ * date in UTC.
  *
  * @param stamp The daily bar's timestamp.
  * @param session The market's session window.
@@ -978,9 +980,10 @@ inline std::chrono::system_clock::time_point market_noon(
 ) {
   using Days = std::chrono::duration<std::int64_t, std::ratio<86400>>;
   const auto local = stamp + session.utc_offset_;
-  const bool midnight = std::chrono::floor<Days>(stamp) == stamp || std::chrono::floor<Days>(local) == local;
+  const auto time_of_day = local - std::chrono::floor<Days>(local);
+  const bool daytime = !(time_of_day < std::chrono::hours(6)) && time_of_day < std::chrono::hours(18);
   const auto date =
-    midnight ? std::chrono::floor<Days>(stamp + std::chrono::hours(12)) : std::chrono::floor<Days>(local);
+    daytime ? std::chrono::floor<Days>(local) : std::chrono::floor<Days>(stamp + std::chrono::hours(12));
   return std::chrono::time_point_cast<std::chrono::system_clock::duration>(date) + std::chrono::hours(12) -
     session.utc_offset_;
 }

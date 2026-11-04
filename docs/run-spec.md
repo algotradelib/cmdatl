@@ -179,7 +179,7 @@ A function of the wrong signature fails the build with one line naming the expec
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `data.open_point` | boolean | `false` | each daily bar replayed as a point at the session's open and the day's bar at its close; only for a program with `on_open` or `on_close`, and only on daily bars (wide tables need `data.open`, `data.high` and `data.low`) |
+| `data.open_point` | boolean | `false` | each daily bar replayed as a point at the session's open and the day's bar at its close, on the market's date of its stamp (a midnight in any zone, or a session time); only for a program with `on_open` or `on_close`, and only on daily bars (wide tables need `data.open`, `data.high` and `data.low`); the US session is a fixed UTC-5, daylight saving not modelled |
 
 A program with `on_open` or `on_close` needs `replay.market`, and on daily bars `data.open_point = true`: a daily bar is a whole session, and `on_open`'s targets would be replaced by `on_close`'s on the same bar.
 On US intraday bars it is refused until the session follows daylight saving.

@@ -808,4 +808,13 @@ TEST_CASE("a daily bar's date is its midnight's or the market's date of a sessio
   CHECK(replay::market_noon(day + std::chrono::hours(5), us) == noon);
   CHECK(replay::market_noon(day + std::chrono::hours(14) + std::chrono::minutes(30), us) == noon);
   CHECK(replay::market_noon(day + std::chrono::hours(21), us) == noon);
+  // An Eastern Daylight midnight (04:00 UTC, 23:00 the day before at UTC-5) and a summer open (13:30 UTC).
+  CHECK(replay::market_noon(day + std::chrono::hours(4), us) == noon);
+  CHECK(replay::market_noon(day + std::chrono::hours(13) + std::chrono::minutes(30), us) == noon);
+  // Under the KRX window: a KST midnight (15:00 UTC the day before), 00:00 UTC (09:00 KST, the open) and 15:30 KST.
+  const auto krx = replay::session_of("kr");
+  const auto krx_noon = day + std::chrono::hours(3);
+  CHECK(replay::market_noon(day - std::chrono::hours(9), krx) == krx_noon);
+  CHECK(replay::market_noon(day, krx) == krx_noon);
+  CHECK(replay::market_noon(day + std::chrono::hours(6) + std::chrono::minutes(30), krx) == krx_noon);
 }
