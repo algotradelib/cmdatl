@@ -174,7 +174,7 @@ A function of the wrong signature fails the build with one line naming the expec
 
 | Data | `on_open` runs on | `on_close` runs on |
 | --- | --- | --- |
-| intraday bars (`1m` to `1h`) | the session's first bar, at its end; the program reads only its open | the bar whose period holds the close (on KRX minute data, the 15:30 closing print) |
+| intraday bars (`1m` to `1h`) | the session's first bar, at its end; the program reads only its open | the first bar whose period holds the close: of start-stamped KRX minute bars the 15:29 bar, of end-stamped ones the bar stamped 15:30 |
 | daily bars with `data.open_point = true` | a point at the session's open: the day's open alone, stamped at the open | the day's bar, stamped at the close |
 
 | Key | Type | Default | Meaning |
