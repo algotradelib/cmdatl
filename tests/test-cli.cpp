@@ -251,7 +251,7 @@ TEST_CASE("arguments are checked against the command before anything runs") {
   // The line that parses runs, reads its settings, and finds no atlc here.
   const ScratchDir dir;
   const InDir here(dir.path());
-  spit("s.toml", "strategy = 'dip.atls'\n[data]\nfile = 'bars.csv'\n");
+  spit("s.toml", "strategy = 'dip.atls'\n[bars]\nfile = 'bars.csv'\n");
   ::setenv("CMDATL_ATLC", "/nonexistent/atlc", 1);
   const auto parsed = run({"strategy", "backtest", "params.a=1", "s.toml", "params.b=2"});
   ::unsetenv("CMDATL_ATLC");

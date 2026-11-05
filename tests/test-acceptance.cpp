@@ -563,8 +563,8 @@ TEST_CASE(
   SECTION("a program with settings only") {
     const InDir here(dir.path() / "work");
     const auto ran = backtest(
-      {at("base.atls"), "data.source=csv", "data.file=../bars.csv", "data.symbol_column=symbol", "data.time=date",
-        "data.time_format=iso", "instruments.stock=AAA", "replay.cash=100000", "replay.commission=0.0005"}
+      {at("base.atls"), "bars.source=csv", "bars.file=../bars.csv", "bars.symbol_column=symbol", "bars.time=date",
+        "bars.time_format=iso", "instruments.stock=AAA", "replay.cash=100000", "replay.commission=0.0005"}
     );
     INFO(ran.out_ << "\n" << ran.err_);
     REQUIRE(ran.exit_ == 0);
@@ -677,7 +677,7 @@ TEST_CASE("a store backtest links DuckDB from build.duckdb or DUCKDB_ROOT alone"
   const auto at = [&dir](const std::string& file) {
     return (dir.path() / file).string();
   };
-  const std::string data = "strategy = 'dip.atls'\n[data]\nstore = \"test/1d/AAA\"\nstore_root = 'store'\n";
+  const std::string data = "strategy = 'dip.atls'\n[bars]\nstore = \"test/1d/AAA\"\nstore_root = 'store'\n";
   spit(at("store.toml"), data + "[build]\nduckdb = '" + duckdb + "'\n");
   spit(at("plain.toml"), data);
   boost::json::value expected;
@@ -772,7 +772,7 @@ TEST_CASE("strategy backtest's fills are those of a replay computed in the test"
   spit(at("bars.csv"), walk_csv(bars));
   // The mean-reversion starter: a z-score of the closes, entry and exit thresholds, a quantity.
   spit(at("mr.atls"), cmdatl::TEMPLATES[0].text_);
-  const std::string data = "[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n";
+  const std::string data = "[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n";
   spit(at("mr.toml"), "strategy = 'mr.atls'\n" + data + "[replay]\ncash = 100_000\n[params]\nentry = 1\n");
   for (const std::size_t lookback : {5, 8}) {
     INFO(lookback);
@@ -835,7 +835,7 @@ TEST_CASE(
   const auto spec = [&at](const std::string& name, const std::string& orders) {
     spit(
       at(name),
-      "strategy = 'mr.atls'\n[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n[params]\nentry = 1\n"
+      "strategy = 'mr.atls'\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n[params]\nentry = 1\n"
       "lookback = 5\n" +
         orders
     );
@@ -876,7 +876,7 @@ TEST_CASE(
   REQUIRE(!driver.empty());
   const auto direct = [&driver, &at](const std::string& type, const std::string& offset) {
     return cmdatl::run_child(
-      {driver.string(), "data.source=csv", "data.file=" + at("bars.csv"), "data.symbol=AAA", "orders.type=" + type,
+      {driver.string(), "bars.source=csv", "bars.file=" + at("bars.csv"), "bars.symbol=AAA", "orders.type=" + type,
         "orders.offset=" + offset},
       [](const std::string&) {}
     );
@@ -897,7 +897,7 @@ TEST_CASE(
   }
   spit(at("gaps.csv"), gaps);
   spit(at("buy.atls"), "on_bar {\n  target(1);\n}\n");
-  spit(at("gaps.toml"), "strategy = 'buy.atls'\n[data]\nsource = \"csv\"\nfile = \"gaps.csv\"\nsymbol = \"AAA\"\n");
+  spit(at("gaps.toml"), "strategy = 'buy.atls'\n[bars]\nsource = \"csv\"\nfile = \"gaps.csv\"\nsymbol = \"AAA\"\n");
   const auto expired = report_of({at("gaps.toml"), "orders.type=limit", "orders.offset=0"}).as_object();
   CHECK(expired.at("executions").as_int64() == 0);
   CHECK(expired.at("caveats").as_object().at("expired").as_int64() == 3);
@@ -1023,7 +1023,7 @@ TEST_CASE("an on_start block runs once, before the first bar", "[acceptance]") {
     "state {\n  int calls = 0;\n  int size = 0;\n}\non_start {\n  size = calls == 0 ? 10 : 0;\n}\n"
     "on_bar {\n  calls = calls + 1;\n  target(size);\n}\n"
   );
-  spit(at("start.toml"), "strategy = 'start.atls'\n[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n");
+  spit(at("start.toml"), "strategy = 'start.atls'\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n");
   const auto report = report_of({at("start.toml")});
   CHECK(report.as_object().at("halted").is_null());
   CHECK(report.as_object().at("executions").as_int64() == 1);

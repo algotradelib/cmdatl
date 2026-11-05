@@ -1,8 +1,8 @@
-data.source=csv
-data.file=@EXAMPLES@/data/daily.csv
-data.symbol_column=symbol
-data.time=date
-data.time_format=iso
-data.open_point=true
+bars.source=csv
+bars.file=@EXAMPLES@/data/daily.csv
+bars.symbol_column=symbol
+bars.time=date
+bars.time_format=iso
+bars.open_point=true
 replay.market=us
 replay.cash=1000000

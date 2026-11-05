@@ -410,7 +410,7 @@ inline const std::string INFO_OK =
   R"("mode":"single","instruments":[],"session":false,"params":[{"name":"lookback","type":"int"}]},"diagnostics":[]})";
 
 /** @brief The run spec the fake writes beside its script, `s.toml`: wide closes for `dip.atls`. */
-inline const std::string FAKE_SPEC = "strategy = 'dip.atls'\n\n[data]\nfile = 'bars.csv'\n";
+inline const std::string FAKE_SPEC = "strategy = 'dip.atls'\n\n[bars]\nfile = 'bars.csv'\n";
 
 /** @brief A report as the backtest driver prints it, shortened. */
 inline const std::string REPORT =

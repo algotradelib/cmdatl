@@ -107,32 +107,32 @@ inline const std::vector<Key>& keys() {
   static const std::vector<std::string> store{"store"};
   static const std::vector<Key> table{
     {"strategy", Kind::PATH, {}, {}},
-    {"data.source", Kind::CHOICE, {}, {"wide", "csv", "store"}},
-    {"data.file", Kind::PATH, {"wide", "csv"}, {}},
-    {"data.close", Kind::PATH, wide, {}},
-    {"data.open", Kind::PATH, wide, {}},
-    {"data.high", Kind::PATH, wide, {}},
-    {"data.low", Kind::PATH, wide, {}},
-    {"data.names", Kind::PATH, wide, {}},
-    {"data.files", Kind::PATHS, csv, {}},
-    {"data.symbol", Kind::TEXT, csv, {}},
-    {"data.symbols", Kind::TEXTS, csv, {}},
-    {"data.symbol_column", Kind::TEXT, csv, {}},
-    {"data.layout", Kind::CHOICE, csv, {"long", "wide"}},
-    {"data.time", Kind::TEXT, csv, {}},
-    {"data.time_format", Kind::CHOICE, csv, {"unix", "unix_ms", "yyyymmdd", "iso"}},
-    {"data.timezone", Kind::OFFSET, csv, {}},
-    {"data.stamp", Kind::TEXT, csv, {}},
-    {"data.interval", Kind::CHOICE, csv, INTERVALS},
-    {"data.columns.open", Kind::TEXT, csv, {}},
-    {"data.columns.high", Kind::TEXT, csv, {}},
-    {"data.columns.low", Kind::TEXT, csv, {}},
-    {"data.columns.close", Kind::TEXT, csv, {}},
-    {"data.columns.volume", Kind::TEXT, csv, {}},
-    {"data.store", Kind::COORDINATES, store, {}},
-    {"data.store_root", Kind::PATH, store, {}},
-    {"data.as_of", Kind::INSTANT, store, {}},
-    {"data.open_point", Kind::BOOL, {}, {}},
+    {"bars.source", Kind::CHOICE, {}, {"wide", "csv", "store"}},
+    {"bars.file", Kind::PATH, {"wide", "csv"}, {}},
+    {"bars.close", Kind::PATH, wide, {}},
+    {"bars.open", Kind::PATH, wide, {}},
+    {"bars.high", Kind::PATH, wide, {}},
+    {"bars.low", Kind::PATH, wide, {}},
+    {"bars.names", Kind::PATH, wide, {}},
+    {"bars.files", Kind::PATHS, csv, {}},
+    {"bars.symbol", Kind::TEXT, csv, {}},
+    {"bars.symbols", Kind::TEXTS, csv, {}},
+    {"bars.symbol_column", Kind::TEXT, csv, {}},
+    {"bars.layout", Kind::CHOICE, csv, {"long", "wide"}},
+    {"bars.time", Kind::TEXT, csv, {}},
+    {"bars.time_format", Kind::CHOICE, csv, {"unix", "unix_ms", "yyyymmdd", "iso"}},
+    {"bars.timezone", Kind::OFFSET, csv, {}},
+    {"bars.stamp", Kind::TEXT, csv, {}},
+    {"bars.interval", Kind::CHOICE, csv, INTERVALS},
+    {"bars.columns.open", Kind::TEXT, csv, {}},
+    {"bars.columns.high", Kind::TEXT, csv, {}},
+    {"bars.columns.low", Kind::TEXT, csv, {}},
+    {"bars.columns.close", Kind::TEXT, csv, {}},
+    {"bars.columns.volume", Kind::TEXT, csv, {}},
+    {"bars.store", Kind::COORDINATES, store, {}},
+    {"bars.store_root", Kind::PATH, store, {}},
+    {"bars.as_of", Kind::INSTANT, store, {}},
+    {"bars.open_point", Kind::BOOL, {}, {}},
     {"replay.from", Kind::DATE, {}, {}},
     {"replay.to", Kind::DATE, {}, {}},
     {"replay.market", Kind::CHOICE, {}, {"us", "kr"}},
@@ -870,19 +870,22 @@ inline std::optional<Error> check(Entry& e) {
       "`build.algotradelib` is not a setting: cmdatl builds against the algotradelib it was built with (cmdatl env "
       "shows it)"
     );
+  } else if (e.key_.rfind("data.", 0) == 0 && known("bars." + e.key_.substr(5)) != nullptr) {
+    // The bar keys were `data.*` until [data] was renamed [bars]; an old spec is refused, never read from either.
+    return Error::at(at, "`" + e.key_ + "` moved to `bars." + e.key_.substr(5) + "`: [data] is now [bars]");
   } else if (const auto* key = known(e.key_)) {
     kind = key->kind_;
   } else {
     const auto table = e.key_.substr(0, e.key_.find('.'));
     std::string hint;
-    if (e.key_.find('.') == std::string::npos || table == "data" || table == "replay") {
+    if (e.key_.find('.') == std::string::npos || table == "bars" || table == "replay") {
       hint = "";
     } else if (table == "build") {
       hint = " ([build] takes duckdb and indicators)";
     } else if (table == "orders") {
       hint = " ([orders] takes type and offset)";
     } else {
-      hint = " (tables: [data], [instruments], [replay], [params], [orders], [build])";
+      hint = " (tables: [bars], [instruments], [replay], [params], [orders], [build])";
     }
     return Error::at(at, "unknown setting `" + e.key_ + "`" + hint);
   }
@@ -1192,7 +1195,7 @@ inline std::vector<Error> resolve(
   };
 
   // The data source, and the keys that belong to it.
-  const auto source = text("data.source").value_or(get("data.store") != nullptr ? "store" : "wide");
+  const auto source = text("bars.source").value_or(get("bars.store") != nullptr ? "store" : "wide");
   for (const auto& e : merged) {
     const auto* k = known(e.key_);
     if (
@@ -1202,7 +1205,7 @@ inline std::vector<Error> resolve(
       errors.push_back(
         Error::at(
           e.origin_,
-          "`" + e.key_ + "` applies to data.source = " + quoted_list(k->sources_, " or ") + ", and this run reads \"" +
+          "`" + e.key_ + "` applies to bars.source = " + quoted_list(k->sources_, " or ") + ", and this run reads \"" +
             source + "\""
         )
       );
@@ -1222,63 +1225,63 @@ inline std::vector<Error> resolve(
     return e != nullptr && e->value_.type_ == Value::Type::LIST ? e->value_.items_.size() : 0;
   };
   if (source == "wide") {
-    both("data.file", "data.close");
-    if (get("data.file") == nullptr && get("data.close") == nullptr) {
+    both("bars.file", "bars.close");
+    if (get("bars.file") == nullptr && get("bars.close") == nullptr) {
       errors.push_back(
         Error::nowhere(
-          "the run reads wide tables (data.source = \"wide\"): give the closes, `data.file` or `data.close`"
+          "the run reads wide tables (bars.source = \"wide\"): give the closes, `bars.file` or `bars.close`"
         )
       );
     }
   } else if (source == "csv") {
-    both("data.file", "data.files");
-    both("data.symbol", "data.symbols");
-    if (get("data.file") == nullptr && get("data.files") == nullptr) {
-      errors.push_back(Error::nowhere("the run reads CSV (data.source = \"csv\"): give `data.file` or `data.files`"));
+    both("bars.file", "bars.files");
+    both("bars.symbol", "bars.symbols");
+    if (get("bars.file") == nullptr && get("bars.files") == nullptr) {
+      errors.push_back(Error::nowhere("the run reads CSV (bars.source = \"csv\"): give `bars.file` or `bars.files`"));
     }
-    if (text("data.layout").value_or("long") == "wide") {
+    if (text("bars.layout").value_or("long") == "wide") {
       for (const auto& e : merged) {
         if (
-          e.key_.rfind("data.columns.", 0) == 0 || e.key_ == "data.symbol" || e.key_ == "data.symbols" ||
-          e.key_ == "data.symbol_column"
+          e.key_.rfind("bars.columns.", 0) == 0 || e.key_ == "bars.symbol" || e.key_ == "bars.symbols" ||
+          e.key_ == "bars.symbol_column"
         ) {
           errors.push_back(
             Error::at(
               e.origin_,
-              "`" + e.key_ + "` applies to data.layout = \"long\": a wide CSV names its symbols in its header"
+              "`" + e.key_ + "` applies to bars.layout = \"long\": a wide CSV names its symbols in its header"
             )
           );
         }
       }
-    } else if (get("data.symbol_column") != nullptr) {
-      for (const auto* k : {"data.symbol", "data.symbols"}) {
+    } else if (get("bars.symbol_column") != nullptr) {
+      for (const auto* k : {"bars.symbol", "bars.symbols"}) {
         if (const auto* e = get(k)) {
           errors.push_back(
-            Error::at(e->origin_, "`" + std::string(k) + "` and `data.symbol_column` both name symbols: give one")
+            Error::at(e->origin_, "`" + std::string(k) + "` and `bars.symbol_column` both name symbols: give one")
           );
         }
       }
-    } else if (get("data.files") != nullptr) {
-      if (count("data.symbols") != count("data.files")) {
+    } else if (get("bars.files") != nullptr) {
+      if (count("bars.symbols") != count("bars.files")) {
         errors.push_back(
           Error::nowhere(
-            "data.files names " + std::to_string(count("data.files")) + " files and data.symbols " +
-            std::to_string(count("data.symbols")) + " symbols: give one symbol per file (or data.symbol_column)"
+            "bars.files names " + std::to_string(count("bars.files")) + " files and bars.symbols " +
+            std::to_string(count("bars.symbols")) + " symbols: give one symbol per file (or bars.symbol_column)"
           )
         );
       }
-    } else if (get("data.file") != nullptr && get("data.symbol") == nullptr) {
+    } else if (get("bars.file") != nullptr && get("bars.symbol") == nullptr) {
       errors.push_back(
         Error::nowhere(
-          "a long CSV names its symbol: give `data.symbol`, or `data.symbol_column` for a file of many symbols"
+          "a long CSV names its symbol: give `bars.symbol`, or `bars.symbol_column` for a file of many symbols"
         )
       );
     }
   } else {
-    for (const auto* k : {"data.store", "data.store_root"}) {
+    for (const auto* k : {"bars.store", "bars.store_root"}) {
       if (get(k) == nullptr) {
         errors.push_back(
-          Error::nowhere("the run reads a store (data.source = \"store\"): give `" + std::string(k) + "`")
+          Error::nowhere("the run reads a store (bars.source = \"store\"): give `" + std::string(k) + "`")
         );
       }
     }
@@ -1290,7 +1293,7 @@ inline std::vector<Error> resolve(
     return e == nullptr ? Error::nowhere(message) : Error::at(e->origin_, message);
   };
   // replay.fill is gone: the price is the default (the next bar's open) or a market-price rule, and when a program
-  // decides is the program's (on_open and on_close follow the session; data.open_point for daily bars).
+  // decides is the program's (on_open and on_close follow the session; bars.open_point for daily bars).
   if (const auto* e = get("replay.fill")) {
     const auto value = e->value_.text();
     std::string instead =
@@ -1299,7 +1302,7 @@ inline std::vector<Error> resolve(
     if (value == "next-open") {
       instead = "it was the default: remove the key";
     } else if (value == "legs") {
-      instead = "on_open and on_close follow the session: remove it, and set `data.open_point = true` for daily bars";
+      instead = "on_open and on_close follow the session: remove it, and set `bars.open_point = true` for daily bars";
     }
     errors.push_back(Error::at(e->origin_, "replay.fill was removed; " + instead));
   }
@@ -1357,45 +1360,45 @@ inline std::vector<Error> resolve(
   bool daily = true;
   std::string intraday;
   if (source == "csv") {
-    const auto interval = text("data.interval").value_or("1d");
+    const auto interval = text("bars.interval").value_or("1d");
     if (interval != "1d") {
       daily = false;
-      intraday = "data.interval";
+      intraday = "bars.interval";
     }
   }
   if (source == "store") {
-    if (const auto* e = get("data.store"); e != nullptr && e->value_.type_ == Value::Type::LIST) {
+    if (const auto* e = get("bars.store"); e != nullptr && e->value_.type_ == Value::Type::LIST) {
       for (const auto& item : e->value_.items_) {
         const auto parts = split(item.text(), '/');
         if (parts.size() < 2 || parts[1] != "1d") {
           daily = false;
-          intraday = "data.store";
+          intraday = "bars.store";
         }
       }
     }
   }
-  const auto* open_point_entry = get("data.open_point");
+  const auto* open_point_entry = get("bars.open_point");
   const bool open_point = open_point_entry != nullptr && open_point_entry->value_.text() == "true";
   if (open_point && !program.session_) {
     errors.push_back(at(
-      "data.open_point",
-      "data.open_point splits each day at its open, for a program with on_open or on_close; this one has neither"
+      "bars.open_point",
+      "bars.open_point splits each day at its open, for a program with on_open or on_close; this one has neither"
     ));
   }
   if (open_point && !daily) {
-    errors.push_back(at(intraday, "data.open_point splits daily bars; intraday bars are replayed as they are"));
+    errors.push_back(at(intraday, "bars.open_point splits daily bars; intraday bars are replayed as they are"));
   }
   if (program.session_ && daily && !open_point) {
     errors.push_back(at(
-      "data.open_point",
-      "the program has on_open or on_close, and a daily bar is a whole session: set data.open_point = true (each day "
+      "bars.open_point",
+      "the program has on_open or on_close, and a daily bar is a whole session: set bars.open_point = true (each day "
       "as a point at its open, then the day's bar at its close), or give intraday bars"
     ));
   }
   if (open_point && source == "wide") {
-    for (const auto* k : {"data.open", "data.high", "data.low"}) {
+    for (const auto* k : {"bars.open", "bars.high", "bars.low"}) {
       if (get(k) == nullptr) {
-        errors.push_back(Error::nowhere("data.open_point on wide tables needs `" + std::string(k) + "`"));
+        errors.push_back(Error::nowhere("bars.open_point on wide tables needs `" + std::string(k) + "`"));
       }
     }
   }
@@ -1408,7 +1411,7 @@ inline std::vector<Error> resolve(
     std::string effective = "us";
     if (market != nullptr) {
       effective = market->value_.text();
-    } else if (const auto* store = get("data.store")) {
+    } else if (const auto* store = get("bars.store")) {
       const auto first = store->value_.type_ == Value::Type::LIST ?
         (store->value_.items_.empty() ? std::string() : store->value_.items_.front().text()) :
         store->value_.text();
@@ -1423,7 +1426,7 @@ inline std::vector<Error> resolve(
     if (effective == "us") {
       const std::string message =
         "on_open and on_close on US intraday bars would follow a fixed UTC-5 session that daylight saving moves: not "
-        "supported yet (US daily bars with data.open_point are)";
+        "supported yet (US daily bars with bars.open_point are)";
       errors.push_back(
         market != nullptr ?
           Error::at(market->origin_, message) :
@@ -1554,10 +1557,10 @@ inline std::vector<Error> resolve(
   }
 
   Resolved out;
-  out.args_.emplace_back("data.source", source);
+  out.args_.emplace_back("bars.source", source);
   for (const auto& e : merged) {
     if (
-      e.key_ == "strategy" || e.key_ == "data.source" || e.key_.rfind("build.", 0) == 0 ||
+      e.key_ == "strategy" || e.key_ == "bars.source" || e.key_.rfind("build.", 0) == 0 ||
       e.key_.rfind("params.", 0) == 0 || e.key_ == "replay.fill_header" || e.key_ == "replay.fill_function"
     ) {
       continue;

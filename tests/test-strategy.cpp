@@ -274,7 +274,7 @@ TEST_CASE("a failure carries the diagnostics or the last stderr lines and names 
   {
     // Settings errors: every one, each at its place, the file's and the command line's.
     const FakeAtlc fake("check out " + INFO_OK + "\n");
-    spit("bad.toml", "strategy = 'dip.atls'\n[data]\nfile = 'bars.csv'\n[replay]\ncash = 0\nshorts = \"yes\"\n");
+    spit("bad.toml", "strategy = 'dip.atls'\n[bars]\nfile = 'bars.csv'\n[replay]\ncash = 0\nshorts = \"yes\"\n");
     const auto ran = run({"strategy", "backtest", "bad.toml", "replay.sell_tax=-1"});
     CHECK(ran.exit_ == 2);
     const auto reply = reply_of(ran.out_);
@@ -349,7 +349,7 @@ TEST_CASE(
   CHECK(
     fake.args("driver") ==
     std::vector<std::string>{
-      "data.source=wide", "data.file=" + dir + "/bars.csv", "replay.cash=1000000", "replay.commission=0.00015",
+      "bars.source=wide", "bars.file=" + dir + "/bars.csv", "replay.cash=1000000", "replay.commission=0.00015",
       "replay.market=kr", "instrument.stock=005930", "param.lookback=30", "output.fills=" + fills
     }
   );
@@ -375,12 +375,12 @@ TEST_CASE("a program as the target: settings only, the spec null, paths against 
   const FakeAtlc fake("check args\ncheck out " + INFO_OK + "\ndriver args\ndriver out " + REPORT + "\n");
   std::filesystem::create_directories("sub");
   const InDir sub("sub");
-  const auto ran = run({"strategy", "backtest", "data.file=b.csv", "../sub/./../dip.atls"});
+  const auto ran = run({"strategy", "backtest", "bars.file=b.csv", "../sub/./../dip.atls"});
   INFO(ran.out_);
   REQUIRE(ran.exit_ == 0);
   const auto dir = fake.dir().string();
   CHECK(fake.args("check") == std::vector<std::string>{dir + "/dip.atls", "--info"});
-  CHECK(fake.args("driver") == std::vector<std::string>{"data.source=wide", "data.file=" + dir + "/sub/b.csv"});
+  CHECK(fake.args("driver") == std::vector<std::string>{"bars.source=wide", "bars.file=" + dir + "/sub/b.csv"});
   const auto reply = reply_of(ran.out_);
   CHECK(reply.at("spec").is_null());
   CHECK(reply.at("program").as_string() == dir + "/dip.atls");
@@ -392,7 +392,7 @@ TEST_CASE("a program as the target: settings only, the spec null, paths against 
     reply_of(bare.out_).at("error").as_object().at("message").as_string().find("give the closes") != std::string::npos
   );
   // A spec that names no program, and one that cannot be read.
-  spit("none.toml", "[data]\nfile = 'x.csv'\n");
+  spit("none.toml", "[bars]\nfile = 'x.csv'\n");
   CHECK(code_of(run({"strategy", "backtest", "none.toml"}).out_) == "spec.invalid");
   const auto missing = run({"strategy", "backtest", "missing.toml"});
   CHECK(missing.exit_ == 2);
@@ -407,7 +407,7 @@ TEST_CASE("a program with a run spec: the spec's settings apply to it, and the s
   const auto dir = fake.dir().string();
   std::filesystem::create_directories("specs");
   std::filesystem::create_directories("sub");
-  spit("specs/shared.toml", "[data]\nfile = 'bars.csv'\n[replay]\ncash = 5\n");
+  spit("specs/shared.toml", "[bars]\nfile = 'bars.csv'\n[replay]\ncash = 5\n");
   const auto message = [](const Ran& ran) {
     return std::string(reply_of(ran.out_).at("error").as_object().at("message").as_string());
   };
@@ -422,7 +422,7 @@ TEST_CASE("a program with a run spec: the spec's settings apply to it, and the s
     CHECK(
       fake.args("driver") ==
       std::vector<std::string>{
-        "data.source=wide", "data.file=" + dir + "/specs/bars.csv", "replay.cash=5", "replay.commission=0.001"
+        "bars.source=wide", "bars.file=" + dir + "/specs/bars.csv", "replay.cash=5", "replay.commission=0.001"
       }
     );
     const auto reply = reply_of(ran.out_);
@@ -433,14 +433,14 @@ TEST_CASE("a program with a run spec: the spec's settings apply to it, and the s
     return fake.args("check").size();
   };
   // A spec naming the same program, written with `..`, applies; the program's line comes from the command line.
-  spit("specs/same.toml", "strategy = '../a/../dip.atls'\n[data]\nfile = 'bars.csv'\n");
+  spit("specs/same.toml", "strategy = '../a/../dip.atls'\n[bars]\nfile = 'bars.csv'\n");
   CHECK(run({"strategy", "backtest", "specs/same.toml", "./dip.atls"}).exit_ == 0);
   // Another program, or the same one through a link, is refused at the spec's line before atlc runs.
   const auto before = checks();
   std::filesystem::create_symlink("dip.atls", "link.atls");
   for (const auto* named : {"two.atls", "../link.atls"}) {
     INFO(named);
-    spit("specs/other.toml", std::string("# shared\nstrategy = '") + named + "'\n[data]\nfile = 'bars.csv'\n");
+    spit("specs/other.toml", std::string("# shared\nstrategy = '") + named + "'\n[bars]\nfile = 'bars.csv'\n");
     const auto ran = run({"strategy", "backtest", "dip.atls", "specs/other.toml"});
     CHECK(ran.exit_ == 2);
     CHECK(code_of(ran.out_) == "spec.invalid");
@@ -451,7 +451,7 @@ TEST_CASE("a program with a run spec: the spec's settings apply to it, and the s
     CHECK(error.at("line").as_int64() == 2);
   }
   // `strategy` keeps its own type check when a program is given.
-  spit("specs/typed.toml", "strategy = 3\n[data]\nfile = 'bars.csv'\n");
+  spit("specs/typed.toml", "strategy = 3\n[bars]\nfile = 'bars.csv'\n");
   CHECK(code_of(run({"strategy", "backtest", "dip.atls", "specs/typed.toml"}).out_) == "spec.invalid");
   CHECK(checks() == before);
   // Without a program, the spec must name one.
@@ -478,7 +478,7 @@ TEST_CASE("one run spec serves two programs") {
     "\n"
   );
   spit("two.atls", "");
-  spit("shared.toml", "[data]\nfile = 'bars.csv'\n[replay]\ncash = 5\n");
+  spit("shared.toml", "[bars]\nfile = 'bars.csv'\n[replay]\ncash = 5\n");
   const auto ran = run({"strategy", "backtest", "two.atls", "shared.toml"});
   INFO(ran.out_);
   REQUIRE(ran.exit_ == 0);
@@ -486,7 +486,7 @@ TEST_CASE("one run spec serves two programs") {
   CHECK(fake.args("check") == std::vector<std::string>{dir + "/two.atls", "--info"});
   CHECK(
     fake.args("driver") ==
-    std::vector<std::string>{"data.source=wide", "data.file=" + dir + "/bars.csv", "replay.cash=5"}
+    std::vector<std::string>{"bars.source=wide", "bars.file=" + dir + "/bars.csv", "replay.cash=5"}
   );
   CHECK(reply_of(ran.out_).at("program").as_string() == dir + "/two.atls");
 }
@@ -497,12 +497,12 @@ TEST_CASE("the program's path atlc gives back matches the one passed once both a
   std::filesystem::create_directories("a/b");
   for (const auto* target : {"./dip.atls", "a/./b/../../dip.atls", "a//b/../..//dip.atls"}) {
     INFO(target);
-    const auto ran = run({"strategy", "backtest", target, "data.file=bars.csv"});
+    const auto ran = run({"strategy", "backtest", target, "bars.file=bars.csv"});
     CHECK(ran.exit_ == 0);
     CHECK(reply_of(ran.out_).at("program").as_string() == (fake.dir() / "dip.atls").string());
   }
   // A spec whose strategy is written with `.` components.
-  spit("dotted.toml", "strategy = './a/../dip.atls'\n[data]\nfile = 'bars.csv'\n");
+  spit("dotted.toml", "strategy = './a/../dip.atls'\n[bars]\nfile = 'bars.csv'\n");
   CHECK(run({"strategy", "backtest", "dotted.toml"}).exit_ == 0);
   for (const auto& passed : lines_of(slurp(fake.dir() / "script.check.args"))) {
     CHECK((passed == "--info" || passed == (fake.dir() / "dip.atls").string()));

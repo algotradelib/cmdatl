@@ -41,15 +41,15 @@
  * a bar with open = high = low = close, so on closes alone the open is the next close.
  *
  * Sessions: the replay's session window is the market's (`kr` 09:00-15:30 KST, `us` 09:30-16:00 at UTC-5).
- * `data.open_point` replays each daily bar as two bars, a point at the session's open (its open alone) and the day's
+ * `bars.open_point` replays each daily bar as two bars, a point at the session's open (its open alone) and the day's
  * bar stamped at the close, so a program's `on_open` runs at the open and its `on_close` at the close; intraday bars
  * are replayed as they are, and the session's first and last bars run those handlers.
  *
- * Sources (`data.source`):
+ * Sources (`bars.source`):
  * - `wide`: tables of one field each, a yyyymmdd date column then one column per symbol.
  * - `csv`: OHLCV rows with a column mapping, one symbol per file, a symbol column, or a wide layout of closes.
  * - `store`: a Parquet store by coordinates (`source/interval/symbol`), read with DuckDB's C library: each bar's
- *   latest version, or the latest fetched at or before `data.as_of`. Compiled only with `CMDATL_DUCKDB`.
+ *   latest version, or the latest fetched at or before `bars.as_of`. Compiled only with `CMDATL_DUCKDB`.
  */
 
 namespace cmdatl {
@@ -346,7 +346,7 @@ inline std::string market_of(const Settings& s) {
   if (const auto m = s.get("replay.market")) {
     return *m;
   }
-  if (const auto store = s.get("data.store")) {
+  if (const auto store = s.get("bars.store")) {
     const auto& c = *store;
     const bool korean = c.rfind("kis", 0) == 0 || c.rfind("kiwoom", 0) == 0 || c.rfind("toss", 0) == 0 ||
       c.substr(0, c.find('/')).find("krx") != std::string::npos;
@@ -467,10 +467,10 @@ inline long offset_of(const std::string& text) {
     return 0;
   }
   if ((text[0] != '+' && text[0] != '-') || text.size() != 6 || text[3] != ':') {
-    throw std::invalid_argument("data.timezone is a fixed offset such as \"+09:00\" or \"UTC\", not '" + text + "'");
+    throw std::invalid_argument("bars.timezone is a fixed offset such as \"+09:00\" or \"UTC\", not '" + text + "'");
   }
   const long seconds = static_cast<long>(
-    whole_of(text.substr(1, 2), "data.timezone") * 3600 + whole_of(text.substr(4, 2), "data.timezone") * 60
+    whole_of(text.substr(1, 2), "bars.timezone") * 3600 + whole_of(text.substr(4, 2), "bars.timezone") * 60
   );
   return text[0] == '-' ? -seconds : seconds;
 }
@@ -570,7 +570,7 @@ inline std::chrono::system_clock::time_point time_of(
   if (format == "iso") {
     return iso_of(cell, offset, where);
   }
-  throw std::invalid_argument("data.time_format is unix, unix_ms, yyyymmdd or iso, not '" + format + "'");
+  throw std::invalid_argument("bars.time_format is unix, unix_ms, yyyymmdd or iso, not '" + format + "'");
 }
 
 /**
@@ -628,34 +628,34 @@ inline std::vector<std::string> list_of(const std::string& text) {
 }
 
 /**
- * @brief `data.source = "csv"`: one file per symbol (`data.file` with `data.symbol`, or `data.files` with
- *   `data.symbols`), one long file with a symbol column (`data.symbol_column`), or a wide file of closes
- *   (`data.layout = "wide"`). Columns default to ts, stamp, open, high, low, close and volume.
+ * @brief `bars.source = "csv"`: one file per symbol (`bars.file` with `bars.symbol`, or `bars.files` with
+ *   `bars.symbols`), one long file with a symbol column (`bars.symbol_column`), or a wide file of closes
+ *   (`bars.layout = "wide"`). Columns default to ts, stamp, open, high, low, close and volume.
  * @param s The settings.
  * @return One series per symbol, in order of first appearance.
  */
 inline std::vector<BarSeries> load_csv_source(const Settings& s) {
-  const auto layout = s.get_or("data.layout", "long");
-  const auto time_col = s.get_or("data.time", "ts");
-  const auto format = s.get_or("data.time_format", "unix");
-  const long offset = offset_of(s.get_or("data.timezone", "UTC"));
-  const auto interval = interval_of(s.get_or("data.interval", "1d"));
-  const auto stamp_setting = s.get("data.stamp");
+  const auto layout = s.get_or("bars.layout", "long");
+  const auto time_col = s.get_or("bars.time", "ts");
+  const auto format = s.get_or("bars.time_format", "unix");
+  const long offset = offset_of(s.get_or("bars.timezone", "UTC"));
+  const auto interval = interval_of(s.get_or("bars.interval", "1d"));
+  const auto stamp_setting = s.get("bars.stamp");
   std::vector<std::string> files;
   std::vector<std::string> file_symbols;
-  if (const auto list = s.get("data.files")) {
+  if (const auto list = s.get("bars.files")) {
     files = list_of(*list);
-    file_symbols = list_of(s.get_or("data.symbols", ""));
+    file_symbols = list_of(s.get_or("bars.symbols", ""));
   } else {
-    files.push_back(s.need("data.file"));
-    if (const auto one = s.get("data.symbol")) {
+    files.push_back(s.need("bars.file"));
+    if (const auto one = s.get("bars.symbol")) {
       file_symbols.push_back(*one);
     }
   }
-  const auto symbol_col = s.get("data.symbol_column");
+  const auto symbol_col = s.get("bars.symbol_column");
   if (layout == "long" && !symbol_col && file_symbols.size() != files.size()) {
     throw std::invalid_argument(
-      "a long CSV without data.symbol_column needs one symbol per file (data.symbol, or data.symbols beside data.files)"
+      "a long CSV without bars.symbol_column needs one symbol per file (bars.symbol, or bars.symbols beside bars.files)"
     );
   }
   std::vector<BarSeries> out;
@@ -684,7 +684,7 @@ inline std::vector<BarSeries> load_csv_source(const Settings& s) {
       const auto it = std::find(header.begin(), header.end(), name);
       if (it == header.end()) {
         throw std::invalid_argument(
-          files[f] + ": no column '" + name + "' (data.columns.* or data.time name the columns)"
+          files[f] + ": no column '" + name + "' (bars.columns.* or bars.time name the columns)"
         );
       }
       return static_cast<std::size_t>(it - header.begin());
@@ -741,11 +741,11 @@ inline std::vector<BarSeries> load_csv_source(const Settings& s) {
       }
       continue;
     }
-    const std::size_t o = col(s.get_or("data.columns.open", "open"));
-    const std::size_t h = col(s.get_or("data.columns.high", "high"));
-    const std::size_t l = col(s.get_or("data.columns.low", "low"));
-    const std::size_t c = col(s.get_or("data.columns.close", "close"));
-    const std::size_t v = col(s.get_or("data.columns.volume", "volume"));
+    const std::size_t o = col(s.get_or("bars.columns.open", "open"));
+    const std::size_t h = col(s.get_or("bars.columns.high", "high"));
+    const std::size_t l = col(s.get_or("bars.columns.low", "low"));
+    const std::size_t c = col(s.get_or("bars.columns.close", "close"));
+    const std::size_t v = col(s.get_or("bars.columns.volume", "volume"));
     const std::optional<std::size_t> sym = symbol_col ? std::optional<std::size_t>(col(*symbol_col)) : std::nullopt;
     while (std::getline(file, line)) {
       ++number;
@@ -881,22 +881,22 @@ private:
 #endif
 
 /**
- * @brief `data.source = "store"`: each coordinate of `data.store` (`source/interval/symbol`) from the Parquet store
- *   under `data.store_root`, `bars/source=SOURCE/interval=INTERVAL/symbol=SYMBOL/bars.parquet`; of each bar, the
- *   latest version fetched at or before `data.as_of` (the latest of all when unset). An in-memory DuckDB reads the
+ * @brief `bars.source = "store"`: each coordinate of `bars.store` (`source/interval/symbol`) from the Parquet store
+ *   under `bars.store_root`, `bars/source=SOURCE/interval=INTERVAL/symbol=SYMBOL/bars.parquet`; of each bar, the
+ *   latest version fetched at or before `bars.as_of` (the latest of all when unset). An in-memory DuckDB reads the
  *   files and writes nothing.
  * @param s The settings.
  * @return One series per coordinate.
  */
 inline std::vector<BarSeries> load_store_source(const Settings& s) {
 #if defined(CMDATL_DUCKDB)
-  const auto root = s.need("data.store_root");
+  const auto root = s.need("bars.store_root");
   duck::Connection con;
   con.rows("SET TimeZone = 'UTC'");
   con.rows("SET autoinstall_known_extensions = false");
   con.rows("SET autoload_known_extensions = false");
   std::vector<BarSeries> out;
-  for (const auto& coordinate : list_of(s.need("data.store"))) {
+  for (const auto& coordinate : list_of(s.need("bars.store"))) {
     const auto a = coordinate.find('/');
     const auto b = a == std::string::npos ? a : coordinate.find('/', a + 1);
     if (a == std::string::npos || b == std::string::npos) {
@@ -909,7 +909,7 @@ inline std::vector<BarSeries> load_store_source(const Settings& s) {
     if (!std::ifstream(path).good()) {
       throw std::invalid_argument("the store has no " + coordinate + " (" + path + ")");
     }
-    const auto as_of = s.get("data.as_of");
+    const auto as_of = s.get("bars.as_of");
     const std::string cutoff =
       as_of ? " WHERE fetched_at <= " + duck::literal(*as_of) + "::TIMESTAMPTZ" : std::string();
     const auto rows = con.rows(
@@ -989,7 +989,7 @@ inline std::chrono::system_clock::time_point market_noon(
 }
 
 /**
- * @brief A daily bar as two bars (`data.open_point`): a point at the session's open, its open alone, and the day's
+ * @brief A daily bar as two bars (`bars.open_point`): a point at the session's open, its open alone, and the day's
  *   bar stamped at the session's close; both daily and close-stamped, so the first is an empty period.
  * @param id The instrument.
  * @param bar The daily bar.
@@ -1019,7 +1019,7 @@ inline void split_day(
  * @brief The bar events of OHLCV series: each bar as it is, or each daily bar split at the open.
  * @param data The series.
  * @param market The market preset.
- * @param open_point Whether each daily bar is replayed as a point at the open and the day's bar (`data.open_point`).
+ * @param open_point Whether each daily bar is replayed as a point at the open and the day's bar (`bars.open_point`).
  * @return The events, in time order (then series order).
  */
 inline std::vector<atl::strategy::BarEvent> bar_events(const Data& data, const std::string& market, bool open_point) {
@@ -1032,7 +1032,7 @@ inline std::vector<atl::strategy::BarEvent> bar_events(const Data& data, const s
   for (std::size_t k = 0; k < data.series_.size(); ++k) {
     const auto& series = data.series_[k];
     if (open_point && series.interval_ != atl::BarInterval::ONE_DAY) {
-      throw std::invalid_argument("data.open_point splits daily bars; intraday bars are replayed as they are");
+      throw std::invalid_argument("bars.open_point splits daily bars; intraday bars are replayed as they are");
     }
     for (std::size_t i = 0; i < series.bars_.size(); ++i) {
       order.push_back({series.bars_[i].timestamp_, k, i});
@@ -1089,7 +1089,7 @@ inline std::vector<atl::strategy::BarEvent> bar_events(const Data& data, const s
  */
 inline Data load(const Settings& s, const std::vector<std::string>& symbols) {
   Data data;
-  const auto source = s.get_or("data.source", s.get("data.store") ? "store" : "wide");
+  const auto source = s.get_or("bars.source", s.get("bars.store") ? "store" : "wide");
   if (source == "csv" || source == "store") {
     auto all = source == "csv" ? load_csv_source(s) : load_store_source(s);
     if (symbols.empty()) {
@@ -1111,9 +1111,9 @@ inline Data load(const Settings& s, const std::vector<std::string>& symbols) {
     return data;
   }
   if (source != "wide") {
-    throw std::invalid_argument("data.source is wide, csv or store, not '" + source + "'");
+    throw std::invalid_argument("bars.source is wide, csv or store, not '" + source + "'");
   }
-  const auto names = s.get("data.names");
+  const auto names = s.get("bars.names");
   auto read = [&s, &names](const std::string& path) {
     auto t = load_wide(path);
     if (names) {
@@ -1132,18 +1132,18 @@ inline Data load(const Settings& s, const std::vector<std::string>& symbols) {
     }
     return t;
   };
-  if (const auto file = s.get("data.file")) {
+  if (const auto file = s.get("bars.file")) {
     data.close_ = read(*file);
   } else {
-    data.close_ = read(s.need("data.close"));
+    data.close_ = read(s.need("bars.close"));
   }
-  if (const auto f = s.get("data.open")) {
+  if (const auto f = s.get("bars.open")) {
     data.open_ = read(*f);
   }
-  if (const auto f = s.get("data.high")) {
+  if (const auto f = s.get("bars.high")) {
     data.high_ = read(*f);
   }
-  if (const auto f = s.get("data.low")) {
+  if (const auto f = s.get("bars.low")) {
     data.low_ = read(*f);
   }
   for (const auto* other : {&data.open_, &data.high_, &data.low_}) {
@@ -1162,7 +1162,7 @@ inline Data load(const Settings& s, const std::vector<std::string>& symbols) {
  * @brief The bar events of wide tables: a row a day, or each row split at the open.
  * @param data The tables.
  * @param market The market preset.
- * @param open_point Whether each day is replayed as a point at the open and the day's bar (`data.open_point`).
+ * @param open_point Whether each day is replayed as a point at the open and the day's bar (`bars.open_point`).
  * @return The events, in time order (then symbol order).
  */
 inline std::vector<atl::strategy::BarEvent> events(const Data& data, const std::string& market, bool open_point) {
@@ -1177,7 +1177,7 @@ inline std::vector<atl::strategy::BarEvent> events(const Data& data, const std::
   };
   if (open_point) {
     if (!data.open_ || !data.high_ || !data.low_) {
-      throw std::invalid_argument("data.open_point on wide tables needs data.open, data.high, data.low and data.close");
+      throw std::invalid_argument("bars.open_point on wide tables needs bars.open, bars.high, bars.low and bars.close");
     }
     const auto session = session_of(market);
     const auto volume = atl::Decimal64::parse("1000000000");
@@ -1361,7 +1361,7 @@ struct SessionFacts {
   std::size_t closed_{0};
   /** @brief Bars wholly outside their session (pre-market or after-hours). */
   std::size_t outside_{0};
-  /** @brief Whether each daily bar was replayed as an open point and the day (`data.open_point`). */
+  /** @brief Whether each daily bar was replayed as an open point and the day (`bars.open_point`). */
   bool open_points_{false};
 };
 
@@ -1481,9 +1481,9 @@ int main(int argc, char** argv, Fills fills_of) {
     const std::string mode = Strategy::atls_mode;
     const auto market = market_of(s);
     const auto symbols = symbols_of<Strategy>(s);
-    const bool open_point = s.get_or("data.open_point", "false") == "true";
+    const bool open_point = s.get_or("bars.open_point", "false") == "true";
     if (open_point && !Strategy::atls_session) {
-      throw std::invalid_argument("data.open_point is for a program with on_open/on_close");
+      throw std::invalid_argument("bars.open_point is for a program with on_open/on_close");
     }
     const auto data = load(s, symbols);
     if (mode == "single" && data.symbols_.size() != 1) {
@@ -1498,7 +1498,7 @@ int main(int argc, char** argv, Fills fills_of) {
     });
     if (Strategy::atls_session && daily && !open_point) {
       throw std::invalid_argument(
-        "the program has on_open/on_close and a daily bar is a whole session: set data.open_point = true, or give "
+        "the program has on_open/on_close and a daily bar is a whole session: set bars.open_point = true, or give "
         "intraday bars"
       );
     }

@@ -2,7 +2,7 @@
 # mean-reversion.toml with market orders filled at the fill bar's typical price, by the rule in typical-price.hpp.
 strategy = "mean-reversion.atls"
 
-[data]
+[bars]
 source = "csv"
 file = "data/daily.csv"
 symbol_column = "symbol"

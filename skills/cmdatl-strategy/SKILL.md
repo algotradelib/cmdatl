@@ -32,7 +32,7 @@ on_bar { if (close > m) { target(quantity); } else { target(0); } }
 
 ## The run spec and settings
 
-The spec is TOML: `[data]` (the file and its columns), `[instruments]` (the symbol the program trades), `[replay]` (`cash`, `commission` and the other costs), `[params]`, `[orders]` (`type = "market"` or `"limit"`, and `offset` for a limit).
+The spec is TOML: `[bars]` (the file and its columns), `[instruments]` (the symbol the program trades), `[replay]` (`cash`, `commission` and the other costs), `[params]`, `[orders]` (`type = "market"` or `"limit"`, and `offset` for a limit).
 On the command line, a `KEY=VALUE` word with a dotted key is a setting for this call and wins over the spec's: `params.lookback=30`, `replay.cash=1e8`, `instruments.stock=005930` (a string, as typed).
 Give a program (`NAME.atls`), a spec, or both, with the settings in any order; a spec given with a program applies to it (one spec can serve several programs) and names no other with `strategy`.
 
@@ -68,7 +68,7 @@ offset = 0.01 # a buy's limit 1 % above the price, a sell's 1 % below, inside th
 - A run also needs bars from a file and the operator's armed file; each missing condition is refused before anything is built, with what to do in `error.next`.
   The armed file is the operator's: never create, remove or edit it or the operator's file; on `refused.not_armed`, ask.
 - A run refuses a program with `on_open` or `on_close` before the build (exit 5, `program.live_unsupported`): backtest such a program instead.
-- `on_open` and `on_close` follow the market's session on any bars (Korean bars in a CSV: `market = "kr"` under `[replay]`), with `open_point = true` under `[data]` on daily bars; a backtest in which no bar opened or closed a session fails.
+- `on_open` and `on_close` follow the market's session on any bars (Korean bars in a CSV: `market = "kr"` under `[replay]`), with `open_point = true` under `[bars]` on daily bars; a backtest in which no bar opened or closed a session fails.
 - A market-price rule (`fill_header` and `fill_function` under `[replay]`) is C++ cmdatl compiles and runs: only in the spec file, never on the command line.
 - After the build, a run refuses a program with `on_fill` or a warm-up above 10,000 bars (exit 5, `program.live_unsupported`), and bars that are not daily (`unsupported.interval`).
 - Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.

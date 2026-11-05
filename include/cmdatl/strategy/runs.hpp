@@ -166,7 +166,7 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     const auto& resolved = checked.resolved_;
     if (resolved.store_) {
       return error_reply(
-        Exit::USAGE, "spec.invalid", "a run reads files, not a store: give [data] a file", "fix the run spec"
+        Exit::USAGE, "spec.invalid", "a run reads files, not a store: give [bars] a file", "fix the run spec"
       );
     }
     // A run keeps the offset grammar its collar pre-check compares (at most 8 decimals).

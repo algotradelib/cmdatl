@@ -1,6 +1,6 @@
 strategy = "dip.atls"
 
-[data]
+[bars]
 store = "test/1d/AAA"
 store_root = "store"
 as_of = "2026-06-01T00:00:00Z"

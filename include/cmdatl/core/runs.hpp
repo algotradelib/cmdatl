@@ -46,7 +46,7 @@ inline constexpr const char* SESSION_UNSUPPORTED =
 
 /** @brief What to do with a program with session handlers. */
 inline constexpr const char* SESSION_UNSUPPORTED_NEXT =
-  "run it with cmdatl strategy backtest (intraday bars, or data.open_point on daily ones); a run takes programs "
+  "run it with cmdatl strategy backtest (intraday bars, or bars.open_point on daily ones); a run takes programs "
   "without on_open/on_close";
 
 /**
@@ -63,18 +63,18 @@ inline std::optional<std::pair<std::string, std::string>> spec_refusal(const std
       std::string("a run trades KRX shares in won, under the operator's limits: set [replay] market = \"kr\"")
     );
   }
-  if (atlc_value(args, "data.store")) {
-    return std::make_pair(std::string("data.store"), std::string("a run reads files, not a store: give [data] a file"));
+  if (atlc_value(args, "bars.store")) {
+    return std::make_pair(std::string("bars.store"), std::string("a run reads files, not a store: give [bars] a file"));
   }
   if (atlc_value(args, "replay.shorts").value_or("false") == "true") {
     return std::make_pair(
       std::string("replay.shorts"), std::string("a run keeps the sellable check on: remove [replay] shorts")
     );
   }
-  if (atlc_value(args, "data.open_point").value_or("false") == "true") {
+  if (atlc_value(args, "bars.open_point").value_or("false") == "true") {
     return std::make_pair(
-      std::string("data.open_point"),
-      std::string("data.open_point invents a bar a run never sees: remove [data] open_point")
+      std::string("bars.open_point"),
+      std::string("bars.open_point invents a bar a run never sees: remove [bars] open_point")
     );
   }
   return std::nullopt;

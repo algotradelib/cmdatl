@@ -255,7 +255,7 @@ inline std::vector<Command> command_list() {
     )
     .example("cmdatl strategy backtest dip.toml")
     .example("cmdatl strategy backtest dip.toml params.lookback=30 --fills fills.csv")
-    .example("cmdatl strategy backtest dip.atls data.source=csv data.file=bars.csv data.symbol=005930")
+    .example("cmdatl strategy backtest dip.atls bars.source=csv bars.file=bars.csv bars.symbol=005930")
     .example("cmdatl strategy backtest dip.atls daily.toml instruments.stock=005930")
     .arg("TARGET", "a program (.atls), a run spec, or both")
     .arg("SETTING", "KEY=VALUE with a dotted key (params.lookback=30), before or after TARGET", false, true)

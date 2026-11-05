@@ -1,6 +1,6 @@
-data.source=store
-data.store=test/1d/AAA
-data.store_root=@DIR@/store
-data.as_of=2026-06-01T00:00:00Z
+bars.source=store
+bars.store=test/1d/AAA
+bars.store_root=@DIR@/store
+bars.as_of=2026-06-01T00:00:00Z
 param.lookback=10
 param.entry=1

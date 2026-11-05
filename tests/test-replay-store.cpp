@@ -141,7 +141,7 @@ private:
 TEST_CASE("replay store: the latest version of each bar") {
   const Store store;
   REQUIRE(store.error().empty());
-  const auto s = settings({"data.store=test/1d/AAA", "data.store_root=" + store.root()});
+  const auto s = settings({"bars.store=test/1d/AAA", "bars.store_root=" + store.root()});
   const auto data = replay::load(s, {});
   REQUIRE(data.series_.size() == 1);
   const auto& series = data.series_[0];
@@ -157,14 +157,14 @@ TEST_CASE("replay store: the latest version of each bar") {
   CHECK(data.symbols_ == std::vector<std::string>{"AAA"});
   // A store coordinate is read as `store` unless a source is named, and a source starting with kis is Korean.
   CHECK(replay::market_of(s) == "us");
-  CHECK(replay::market_of(settings({"data.store=kis/1d/005930"})) == "kr");
+  CHECK(replay::market_of(settings({"bars.store=kis/1d/005930"})) == "kr");
 }
 
 TEST_CASE("replay store: as of an instant between the two fetches the first version") {
   const Store store;
   REQUIRE(store.error().empty());
   const auto data = replay::load(
-    settings({"data.store=test/1d/AAA", "data.store_root=" + store.root(), "data.as_of=2026-01-15T00:00:00Z"}), {}
+    settings({"bars.store=test/1d/AAA", "bars.store_root=" + store.root(), "bars.as_of=2026-01-15T00:00:00Z"}), {}
   );
   REQUIRE(data.series_.size() == 1);
   const auto& bars = data.series_[0].bars_;
@@ -175,7 +175,7 @@ TEST_CASE("replay store: as of an instant between the two fetches the first vers
   // replay.from and replay.to cut the bars read.
   const auto cut = replay::load(
     settings(
-      {"data.store=test/1d/AAA", "data.store_root=" + store.root(), "replay.from=2020-01-03", "replay.to=20200105"}
+      {"bars.store=test/1d/AAA", "bars.store_root=" + store.root(), "replay.from=2020-01-03", "replay.to=20200105"}
     ),
     {}
   );
@@ -186,7 +186,7 @@ TEST_CASE("replay store: a coordinate the store does not hold and one that is no
   const Store store;
   REQUIRE(store.error().empty());
   try {
-    replay::load(settings({"data.store=test/1d/ZZZ", "data.store_root=" + store.root()}), {});
+    replay::load(settings({"bars.store=test/1d/ZZZ", "bars.store_root=" + store.root()}), {});
     FAIL("a missing coordinate was read");
   } catch (const std::invalid_argument& e) {
     CHECK(
@@ -195,21 +195,21 @@ TEST_CASE("replay store: a coordinate the store does not hold and one that is no
     );
   }
   try {
-    replay::load(settings({"data.store=test/AAA", "data.store_root=" + store.root()}), {});
+    replay::load(settings({"bars.store=test/AAA", "bars.store_root=" + store.root()}), {});
     FAIL("a coordinate of two parts was read");
   } catch (const std::invalid_argument& e) {
     CHECK(std::string(e.what()) == "a store coordinate is source/interval/symbol, not 'test/AAA'");
   }
   try {
-    replay::load(settings({"data.store=test/1d/AAA", "data.store_root=" + store.root()}), {"BBB"});
+    replay::load(settings({"bars.store=test/1d/AAA", "bars.store_root=" + store.root()}), {"BBB"});
     FAIL("a symbol the store series does not hold was read");
   } catch (const std::invalid_argument& e) {
     CHECK(std::string(e.what()) == "the data has no symbol 'BBB'");
   }
-  CHECK_THROWS_AS(replay::load(settings({"data.store=test/1d/AAA"}), {}), std::invalid_argument);
+  CHECK_THROWS_AS(replay::load(settings({"bars.store=test/1d/AAA"}), {}), std::invalid_argument);
   // An instant DuckDB cannot read is DuckDB's error, never a quietly empty series.
   CHECK_THROWS_AS(
-    replay::load(settings({"data.store=test/1d/AAA", "data.store_root=" + store.root(), "data.as_of=yesterday'"}), {}),
+    replay::load(settings({"bars.store=test/1d/AAA", "bars.store_root=" + store.root(), "bars.as_of=yesterday'"}), {}),
     std::runtime_error
   );
 }

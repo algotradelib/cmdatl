@@ -1,5 +1,5 @@
 strategy = "dip.atls"
 
-[data]
+[bars]
 source = "wide"
 file = "wide-order.csv"

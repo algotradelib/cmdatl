@@ -8,3 +8,4 @@ wide-close.csv and kr-daily.csv are synthetic; kr-daily.csv gaps up every ninth 
 Only an atlc that still has `atlc run` and `atlc spec` (27b912a) can record them again.
 wide.toml read `fill = "open-prev-close"` when recorded; that fill is gone, and it now names `decision-close.hpp` as its market-price rule, which fills at the same prices.
 wide.json is the recording with the two caveats the rule adds (`market_price_rule`, `market_fills_by_rule`), and wide.args without `replay.fill`.
+On 2026-11-05 every `data.*` argument in the `.args` files and every `[data]` table in the `.toml` files was renamed `bars.*` and `[bars]` by hand, when the run spec's `[data]` table became `[bars]`; no report or error changed.

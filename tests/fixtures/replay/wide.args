@@ -1,5 +1,5 @@
-data.source=wide
-data.file=@DIR@/wide-close.csv
+bars.source=wide
+bars.file=@DIR@/wide-close.csv
 instrument.stock=BBB
 replay.from=20210201
 replay.to=20211130

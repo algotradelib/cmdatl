@@ -1,5 +1,5 @@
 strategy = "dip.atls"
 
-[data]
+[bars]
 store = "test/1d/ZZZ"
 store_root = "store"

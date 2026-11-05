@@ -1,6 +1,6 @@
 strategy = "dip.atls"
 
-[data]
+[bars]
 source = "csv"
 file = "bad-date.csv"
 symbol = "AAA"

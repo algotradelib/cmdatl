@@ -17,20 +17,20 @@ The words may come in any order.
 
 ```sh
 cmdatl strategy backtest dip.toml params.lookback=30 replay.cash=1e8
-cmdatl strategy backtest dip.atls data.file=bars.csv data.source=csv data.symbol=005930
+cmdatl strategy backtest dip.atls bars.file=bars.csv bars.source=csv bars.symbol=005930
 cmdatl strategy backtest dip.atls daily.toml instruments.stock=005930
 ```
 
 A relative path is read against the directory of the file that sets it, and against the working directory on the command line (as `--fills`).
 The program's path is made lexically normal (`a/../b.atls` is `b.atls`), while data paths keep their `..` for the system to resolve, through any link.
 A run spec given with a program may still name it with `strategy`, and then only the same file: the two paths are compared once both are lexically normal, so a link or a name in another case is another file.
-The shell does not expand a `~` inside a `KEY=VALUE` word: write `data.file=$HOME/bars.csv` or an absolute path.
+The shell does not expand a `~` inside a `KEY=VALUE` word: write `bars.file=$HOME/bars.csv` or an absolute path.
 The operator's file is never a setting: no setting changes the operator's limits.
 
 ## The format
 
 A run spec is TOML, read as TOML 1.0 reads it, with these limits:
-- keys are bare (letters, digits, `_`, `-`); dotted keys, inline tables and `[table]` headers flatten to the same names (`[data]` with `file = "x"` is `data.file`);
+- keys are bare (letters, digits, `_`, `-`); dotted keys, inline tables and `[table]` headers flatten to the same names (`[bars]` with `file = "x"` is `bars.file`);
 - values are strings, decimal numbers (`100_000`, `0.00015`, `1.5e-4`), `true`, `false`, and arrays of strings or numbers;
 - a number is read from its text, so cash and costs stay exact decimals: written out as a plain decimal, at most 18 digits without the leading zeros and at most 255 decimal places (`1e18` and `1e-256` are refused); hexadecimal, octal and binary integers, `inf` and `nan` are refused;
 - a value that must be whole (an `int` parameter, `slippage_ticks`) is written as an integer, since TOML reads `2.0` as a float;
@@ -38,7 +38,7 @@ A run spec is TOML, read as TOML 1.0 reads it, with these limits:
 - no string holds a control character once its escapes are read: `"C:\temp\new.csv"` holds a tab and a new line, so write a Windows path in single quotes (`'C:\temp\new.csv'`) or with forward slashes.
 
 Errors, each with the file and line:
-- an unknown key (including a misspelled one under `[build]` or `[orders]`), with the tables a spec has: `[data]`, `[instruments]`, `[replay]`, `[params]`, `[orders]`, `[build]`;
+- an unknown key (including a misspelled one under `[build]` or `[orders]`), with the tables a spec has: `[bars]`, `[instruments]`, `[replay]`, `[params]`, `[orders]`, `[build]`;
 - a key set twice, a table defined twice, or a name used both as a value and as a table, as TOML refuses them;
 - a value of the wrong type or outside its range, or a key that does not apply to the run (a CSV column mapping for wide tables, say).
 
@@ -47,11 +47,11 @@ A syntax error stops reading the file; past that, every error found is reported,
 ## The command line
 
 A value on the command line is typed by its key, never read as TOML:
-- a text, path, choice, offset or instant key takes the text as it is: `instruments.stock=005930` and `data.symbol=true` are strings;
+- a text, path, choice, offset or instant key takes the text as it is: `instruments.stock=005930` and `bars.symbol=true` are strings;
 - a number, count or fraction key takes the text as a decimal number, with the file's rules: `replay.cash=1e8`;
 - a boolean key takes `true` or `false`;
 - a date takes `YYYY-MM-DD` or `yyyymmdd`;
-- a list key takes one item (`data.symbols=AAA`) or a one-line TOML array of strings (`data.symbols=["AAA","BBB"]`, quoted for the shell);
+- a list key takes one item (`bars.symbols=AAA`) or a one-line TOML array of strings (`bars.symbols=["AAA","BBB"]`, quoted for the shell);
 - `params.NAME` takes a number, or `true` or `false`; then the program's type decides (`params.flag=1` is refused for a `bool`).
 
 `strategy` is not a setting on the command line: the program is the `.atls` word, or else the run spec's `strategy`.
@@ -65,38 +65,38 @@ A key given twice on the command line is an error.
 | --- | --- | --- | --- |
 | `strategy` | path | required unless a program is given | the program |
 
-### `[data]`: what is loaded
+### `[bars]`: what is loaded
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `data.source` | `"wide"`, `"csv"` or `"store"` | `"store"` when `data.store` is set, else `"wide"` | where the bars come from |
+| `bars.source` | `"wide"`, `"csv"` or `"store"` | `"store"` when `bars.store` is set, else `"wide"` | where the bars come from |
 
 `source = "wide"`: tables of one field each, a header and then rows of a yyyymmdd date and one cell per symbol (an empty cell, `NaN` or `nan` is missing), as Chan's book publishes them.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `data.file`, `data.close` | path | one is required | the closes (give one of the two) |
-| `data.open`, `data.high`, `data.low` | path | none | the other fields, with the closes' dates and columns; `data.open_point` needs all three |
-| `data.names` | path | the tables' headers | a file whose second line names the columns (Chan's `*_stocks.csv`) |
+| `bars.file`, `bars.close` | path | one is required | the closes (give one of the two) |
+| `bars.open`, `bars.high`, `bars.low` | path | none | the other fields, with the closes' dates and columns; `bars.open_point` needs all three |
+| `bars.names` | path | the tables' headers | a file whose second line names the columns (Chan's `*_stocks.csv`) |
 
-A row is a bar with open, high and low equal to its close, unless `data.open_point` reads the other tables.
+A row is a bar with open, high and low equal to its close, unless `bars.open_point` reads the other tables.
 
 `source = "csv"`: OHLCV rows, split on commas without quoting.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `data.file` or `data.files` | path, or a list of paths | one is required | one file, or one file per symbol |
-| `data.symbol` or `data.symbols` | string, or a list of strings | | the symbol of `data.file`, or of each of `data.files` |
-| `data.symbol_column` | string | | instead: the column naming each row's symbol |
-| `data.layout` | `"long"` or `"wide"` | `"long"` | `long`: rows of OHLCV; `wide`: a time column, then a column of closes per symbol (its header names the symbols) |
-| `data.time` | string | `"ts"` | the time column |
-| `data.time_format` | `"unix"`, `"unix_ms"`, `"yyyymmdd"` or `"iso"` | `"unix"` | seconds or milliseconds since 1970, a yyyymmdd date, or `YYYY-MM-DD` with an optional `HH:MM[:SS]` after `T` or a space and an optional `Z` or `+HH:MM`; a date that does not exist, a field out of range or anything after the time is refused |
-| `data.timezone` | `"UTC"`, `"Z"` or `"+HH:MM"` | `"UTC"` | the fixed offset of `yyyymmdd` times and of `iso` times that name none (a time's own `Z` or `+HH:MM` wins); a named zone (`Asia/Seoul`) is not read |
-| `data.stamp` | string | the `stamp` column if there is one, else `"close"` | `"open"` or `"close"` (bars stamped at their start or end), or a column holding one of them per row; a symbol's rows must share one stamp |
-| `data.interval` | `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"1d"`, `"1w"` or `"1mo"` | `"1d"` | the bars' interval |
-| `data.columns.open`, `data.columns.high`, `data.columns.low`, `data.columns.close`, `data.columns.volume` | string | `"open"`, `"high"`, `"low"`, `"close"`, `"volume"` | the long layout's columns |
+| `bars.file` or `bars.files` | path, or a list of paths | one is required | one file, or one file per symbol |
+| `bars.symbol` or `bars.symbols` | string, or a list of strings | | the symbol of `bars.file`, or of each of `bars.files` |
+| `bars.symbol_column` | string | | instead: the column naming each row's symbol |
+| `bars.layout` | `"long"` or `"wide"` | `"long"` | `long`: rows of OHLCV; `wide`: a time column, then a column of closes per symbol (its header names the symbols) |
+| `bars.time` | string | `"ts"` | the time column |
+| `bars.time_format` | `"unix"`, `"unix_ms"`, `"yyyymmdd"` or `"iso"` | `"unix"` | seconds or milliseconds since 1970, a yyyymmdd date, or `YYYY-MM-DD` with an optional `HH:MM[:SS]` after `T` or a space and an optional `Z` or `+HH:MM`; a date that does not exist, a field out of range or anything after the time is refused |
+| `bars.timezone` | `"UTC"`, `"Z"` or `"+HH:MM"` | `"UTC"` | the fixed offset of `yyyymmdd` times and of `iso` times that name none (a time's own `Z` or `+HH:MM` wins); a named zone (`Asia/Seoul`) is not read |
+| `bars.stamp` | string | the `stamp` column if there is one, else `"close"` | `"open"` or `"close"` (bars stamped at their start or end), or a column holding one of them per row; a symbol's rows must share one stamp |
+| `bars.interval` | `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"1d"`, `"1w"` or `"1mo"` | `"1d"` | the bars' interval |
+| `bars.columns.open`, `bars.columns.high`, `bars.columns.low`, `bars.columns.close`, `bars.columns.volume` | string | `"open"`, `"high"`, `"low"`, `"close"`, `"volume"` | the long layout's columns |
 
-A long file names its symbols one way: `data.symbol` with `data.file`, `data.symbols` with `data.files` (one per file), or `data.symbol_column`.
+A long file names its symbols one way: `bars.symbol` with `bars.file`, `bars.symbols` with `bars.files` (one per file), or `bars.symbol_column`.
 Every row has as many cells as the header.
 A time must lie in the years 1 to 9999 and inside what the platform's clock holds, less two days: about the years 1678 to 2262 where it counts nanoseconds, as on Linux; a time outside is refused, never wrapped.
 Rows outside `replay.from` and `replay.to` are dropped, a row with an empty close is skipped, a price that is not positive is refused with its line, and times must increase within a symbol.
@@ -107,9 +107,9 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `data.store` | `"SOURCE/INTERVAL/SYMBOL"`, or a list of them | required | the series read |
-| `data.store_root` | path | required | the store's directory |
-| `data.as_of` | instant: `"YYYY-MM-DD"`, optionally `THH:MM[:SS]` and `Z` or `+HH:MM` | the latest | read the latest version fetched at or before this instant |
+| `bars.store` | `"SOURCE/INTERVAL/SYMBOL"`, or a list of them | required | the series read |
+| `bars.store_root` | path | required | the store's directory |
+| `bars.as_of` | instant: `"YYYY-MM-DD"`, optionally `THH:MM[:SS]` and `Z` or `+HH:MM` | the latest | read the latest version fetched at or before this instant |
 
 A backtest of a store needs DuckDB (`[build]` below); a CSV or wide run does not.
 A run (`cmdatl run`) reads files, not a store.
@@ -143,7 +143,7 @@ A spec names data only: credentials never appear in it.
 
 A market order fills against the bar after its decision, at that bar's open, unless the run names a market-price rule.
 A limit order fills when that bar reaches its limit, whichever is set.
-`replay.fill` was removed: a spec naming it is refused, with a pointer to the rule and to `data.open_point`.
+`replay.fill` was removed: a spec naming it is refused, with a pointer to the rule and to `bars.open_point`.
 
 A market-price rule chooses the price of a market order, in place of the next bar's open.
 It is a C++ function in a header of your own, compiled into the driver with the program:
@@ -175,21 +175,21 @@ A function of the wrong signature fails the build with one line naming the expec
 | Data | `on_open` runs on | `on_close` runs on |
 | --- | --- | --- |
 | intraday bars (`1m` to `1h`) | the session's first bar, at its end; the program reads only its open | the first bar whose period holds the close: of start-stamped KRX minute bars the 15:29 bar, of end-stamped ones the bar stamped 15:30 |
-| daily bars with `data.open_point = true` | a point at the session's open: the day's open alone, stamped at the open | the day's bar, stamped at the close |
+| daily bars with `bars.open_point = true` | a point at the session's open: the day's open alone, stamped at the open | the day's bar, stamped at the close |
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `data.open_point` | boolean | `false` | each daily bar replayed as a point at the session's open and the day's bar at its close, on the market's date of its stamp (a midnight in any zone, or a session time); only for a program with `on_open` or `on_close`, and only on daily bars (wide tables need `data.open`, `data.high` and `data.low`); the US session is a fixed UTC-5, daylight saving not modelled |
+| `bars.open_point` | boolean | `false` | each daily bar replayed as a point at the session's open and the day's bar at its close, on the market's date of its stamp (a midnight in any zone, or a session time); only for a program with `on_open` or `on_close`, and only on daily bars (wide tables need `bars.open`, `bars.high` and `bars.low`); the US session is a fixed UTC-5, daylight saving not modelled |
 
-A program with `on_open` or `on_close` follows the market's session, stated by `replay.market` or inferred as for any replay, and on daily bars needs `data.open_point = true`: a daily bar is a whole session, and `on_open`'s targets would be replaced by `on_close`'s on the same bar.
+A program with `on_open` or `on_close` follows the market's session, stated by `replay.market` or inferred as for any replay, and on daily bars needs `bars.open_point = true`: a daily bar is a whole session, and `on_open`'s targets would be replaced by `on_close`'s on the same bar.
 On US intraday bars, the market stated or inferred, it is refused until the session follows daylight saving (Korean bars in a CSV need `replay.market = "kr"`, since a CSV's market is `us` by default).
-A replay in which such a program met no session's open or close fails, naming the market and the interval; the report gives `sessions_opened` and `sessions_closed`, and `caveats.open_points` when `data.open_point` is set.
+A replay in which such a program met no session's open or close fails, naming the market and the interval; the report gives `sessions_opened` and `sessions_closed`, and `caveats.open_points` when `bars.open_point` is set.
 With the decision-close rule, a target stated in `on_open` fills at the open it saw and one in `on_close` at the close it saw; without a rule, at the next bar's open.
 A fill is dated at the bar it fills against: an `on_close` exit at the next session's first bar, so the last session's exit does not fill.
-With `data.open_point` a day is two bars and two equity points, so set `replay.periods_per_year` to twice the trading days (504) for the annualized ratios.
+With `bars.open_point` a day is two bars and two equity points, so set `replay.periods_per_year` to twice the trading days (504) for the annualized ratios.
 A `DAY` order still resting at an open point (a rule that named no price there) expires with it, since a daily bar ends its session.
 
-A run (`cmdatl run`) takes neither a program with `on_open` or `on_close`, nor a market-price rule, nor `data.open_point`.
+A run (`cmdatl run`) takes neither a program with `on_open` or `on_close`, nor a market-price rule, nor `bars.open_point`.
 
 ### `[params]`
 
@@ -253,7 +253,7 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 | `rejection_reasons` | object | each rejection and refusal reason, with its count (refusals as `guard:REASON`) |
 | `pricing_refused` | integer | targets limit pricing did not submit ("Limit orders"); 0 with market orders |
 | `pricing_refusal_reasons` | object | each pricing refusal reason with its count, when nonzero: `no_basis_price`, `no_price_grid`, `price_not_representable`, `price_not_positive`, `net_not_representable` |
-| `caveats` | object | `gaps` (bars that did not follow their predecessor), `unfilled` (orders still queued at the end), `expired` (`DAY` orders withdrawn unfilled when their session ended, as they would expire live; on daily bars, after one bar), `unvalued_bars`, `multiple_instruments`, `cost_totals_incomplete`, `volume_ignored` (always true: fills are not capped by volume), `market_price_rule` and `market_fills_by_rule` (the rule named by `replay.fill_function` and the fills it priced, only when one is set), `open_points` (true with `data.open_point`), `lowest_cash` (the lowest cash a fill left, as a decimal string, when below zero) and `shorts_borrow_nothing` (always true) |
+| `caveats` | object | `gaps` (bars that did not follow their predecessor), `unfilled` (orders still queued at the end), `expired` (`DAY` orders withdrawn unfilled when their session ended, as they would expire live; on daily bars, after one bar), `unvalued_bars`, `multiple_instruments`, `cost_totals_incomplete`, `volume_ignored` (always true: fills are not capped by volume), `market_price_rule` and `market_fills_by_rule` (the rule named by `replay.fill_function` and the fills it priced, only when one is set), `open_points` (true with `bars.open_point`), `lowest_cash` (the lowest cash a fill left, as a decimal string, when below zero) and `shorts_borrow_nothing` (always true) |
 | `first_bar`, `last_bar` | string | the first and last recorded times, ISO 8601 in UTC; absent when nothing was replayed |
 
 A number is printed with ten significant digits; a figure the library leaves undefined (a return on zero equity, a ratio without variance) is null.

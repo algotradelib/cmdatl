@@ -401,7 +401,7 @@ TEST_CASE("replay decimals: plain decimals read exactly and an offset of 19 digi
   Scratch dir;
   const auto file = dir.write("bars.csv", flat_bars({1}));
   const auto s = settings(
-    {"data.source=csv", "data.file=" + file, "data.symbol=AAA", "replay.cash=100000", "replay.commission=0.00015"}
+    {"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "replay.cash=100000", "replay.commission=0.00015"}
   );
   const auto data = replay::load(s, {});
   CHECK(replay::replay_config(s, data).cash_ == atl::Decimal64::parse("100000"));
@@ -411,11 +411,11 @@ TEST_CASE("replay CSV: times are read as written or refused and never read diffe
   Scratch dir;
   const std::string long_header = "ts,open,high,low,close,volume\n";
   const auto load = [&dir](const std::string& csv, std::vector<std::string> args) {
-    args.push_back("data.source=csv");
-    args.push_back("data.file=" + dir.write("bars.csv", csv));
+    args.push_back("bars.source=csv");
+    args.push_back("bars.file=" + dir.write("bars.csv", csv));
     return replay::load(settings(args), {});
   };
-  const std::vector<std::string> iso{"data.symbol=AAA", "data.time_format=iso"};
+  const std::vector<std::string> iso{"bars.symbol=AAA", "bars.time_format=iso"};
   {
     const auto data =
       load(long_header + "2020-01-01T09:00:00+09:00,1,1,1,1,1\n2020-01-02T09:00+09:00,1,1,1,1,1\n", iso);
@@ -431,8 +431,8 @@ TEST_CASE("replay CSV: times are read as written or refused and never read diffe
   } catch (const std::invalid_argument& e) {
     CHECK(std::string(e.what()).find("this platform's clock") != std::string::npos);
   }
-  const std::vector<std::string> symbol{"data.symbol=AAA"};
-  const std::vector<std::string> wide{"data.layout=wide"};
+  const std::vector<std::string> symbol{"bars.symbol=AAA"};
+  const std::vector<std::string> wide{"bars.layout=wide"};
   const std::vector<std::tuple<std::string, std::vector<std::string>, std::string, std::string>> refused{
     {"no-day", iso, long_header + "2020-02-30,1,1,1,1,1\n", "bars.csv:2: not a date"},
     {"year", iso, long_header + "999999-01-01,1,1,1,1,1\n", "bars.csv:2: not a date"},
@@ -462,7 +462,7 @@ TEST_CASE("replay CSV: times are read as written or refused and never read diffe
 TEST_CASE("replay wide tables: dates must increase and the fill reads them") {
   Scratch dir;
   const auto s =
-    settings({"data.source=wide", "data.file=" + dir.write("close.csv", "date,A\n20200102,1\n20200101,2\n")});
+    settings({"bars.source=wide", "bars.file=" + dir.write("close.csv", "date,A\n20200102,1\n20200101,2\n")});
   try {
     replay::load(s, {});
     FAIL("decreasing dates were read");
@@ -470,7 +470,7 @@ TEST_CASE("replay wide tables: dates must increase and the fill reads them") {
     CHECK(std::string(e.what()) == dir.at("close.csv") + ":3: dates must increase");
   }
   const auto ok =
-    settings({"data.file=" + dir.write("ok.csv", "date,A,B\n20200101,1,\n20200102,2,NaN\n20200103,4,5\n")});
+    settings({"bars.file=" + dir.write("ok.csv", "date,A,B\n20200101,1,\n20200102,2,NaN\n20200103,4,5\n")});
   const auto data = replay::load(ok, {});
   CHECK(data.symbols_ == std::vector<std::string>{"A", "B"});
   // A row is a bar with open = high = low = close; a missing cell is no bar.
@@ -502,7 +502,7 @@ TEST_CASE("replay main: shorts go through only with replay.shorts true") {
   Scratch dir;
   const auto file = dir.write("bars.csv", flat_bars({100, 100, 100, 100, 100}));
   runtest::script().decisions_[1] = runtest::Decision{-1, "1", true};
-  const std::vector<std::string> base{"data.source=csv", "data.file=" + file, "data.symbol=AAA", "instrument.x=AAA"};
+  const std::vector<std::string> base{"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA"};
   auto shorts = base;
   shorts.push_back("replay.shorts=true");
   shorts.push_back("output.fills=" + dir.at("fills.csv"));
@@ -530,7 +530,7 @@ TEST_CASE("replay main: a market-price rule prices market orders and the report 
   const auto file = dir.write("bars.csv", flat_bars({100, 110, 120}));
   runtest::script().decisions_[2] = runtest::Decision{1, "1", true};
   const std::vector<std::string> args{
-    "data.source=csv", "data.file=" + file, "data.symbol=AAA", "instrument.x=AAA", "output.fills=" + dir.at("f.csv")
+    "bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "output.fills=" + dir.at("f.csv")
   };
   const auto plain = replay_main<runtest::Program>(args);
   REQUIRE(plain.exit_ == 0);
@@ -559,7 +559,7 @@ TEST_CASE("replay main: a limit never reached expires with its session and the l
     runtest::script().decisions_[bar] = runtest::Decision{1, "1", false};
   }
   const auto gaps = replay_main<runtest::Program>(
-    {"data.source=csv", "data.file=" + file, "data.symbol=AAA", "instrument.x=AAA", "orders.type=limit"}
+    {"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "orders.type=limit"}
   );
   INFO(gaps.err_);
   REQUIRE(gaps.exit_ == 0);
@@ -577,7 +577,7 @@ TEST_CASE("replay main: parameter bounds are checked against the final values an
   const FreshScript fresh;
   Scratch dir;
   const auto file = dir.write("bars.csv", flat_bars({100, 101, 102}));
-  const std::vector<std::string> base{"data.source=csv", "data.file=" + file, "data.symbol=AAA", "instrument.x=AAA"};
+  const std::vector<std::string> base{"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA"};
   auto raised = base;
   raised.push_back("param.exit=80");
   raised.push_back("param.entry=90");
@@ -606,7 +606,7 @@ TEST_CASE("replay main: the pricing refusals by reason and the refusals before a
   const FreshScript fresh;
   Scratch dir;
   const auto file = dir.write("bars.csv", flat_bars({100, 101, 102}));
-  const std::vector<std::string> base{"data.source=csv", "data.file=" + file, "data.symbol=AAA", "instrument.x=AAA"};
+  const std::vector<std::string> base{"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA"};
   runtest::script().refusals_.price_not_representable_ = 4;
   runtest::script().refusals_.no_basis_price_ = 1;
   const auto counted = replay_main<runtest::Program>(base);
@@ -626,8 +626,8 @@ TEST_CASE("replay main: the pricing refusals by reason and the refusals before a
   };
   const std::vector<std::pair<std::vector<std::string>, std::string>> refused{
     {{"orders.type=market", "orders.offset=0.001"}, "error: an offset prices a limit\n"},
-    {{"data.open_point=true"}, "error: data.open_point is for a program with on_open/on_close\n"},
-    {{"data.source=store", "data.store=test/1d/AAA"},
+    {{"bars.open_point=true"}, "error: bars.open_point is for a program with on_open/on_close\n"},
+    {{"bars.source=store", "bars.store=test/1d/AAA"},
       "error: this binary was built without DuckDB (cmdatl builds with it when a spec reads a store)\n"},
     {{"output.fills=" + dir.at("no/such/dir/fills.csv")},
       "error: cannot write " + dir.at("no/such/dir/fills.csv") + "\n"},
@@ -642,12 +642,12 @@ TEST_CASE("replay main: the pricing refusals by reason and the refusals before a
   CHECK(session.exit_ == 1);
   CHECK(
     session.err_ ==
-    "error: the program has on_open/on_close and a daily bar is a whole session: set data.open_point = true, or give "
+    "error: the program has on_open/on_close and a daily bar is a whole session: set bars.open_point = true, or give "
     "intraday bars\n"
   );
   // With open points but no session edge met, the replay fails instead of reporting a run that traded on nothing.
   auto open_points = base;
-  open_points.push_back("data.open_point=true");
+  open_points.push_back("bars.open_point=true");
   const auto missed = replay_main<runtest::SessionProgram>(open_points);
   CHECK(missed.exit_ == 1);
   CHECK(missed.err_.find("on_open never ran") != std::string::npos);
@@ -674,21 +674,21 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
     "\xff\xfe", "0.299999999999999999", "123456789012345678901234567890"
   };
   const std::vector<std::pair<std::string, std::vector<std::string>>> keys{
-    {"data.source", {"csv", "wide", "store", "junk"}},
-    {"data.layout", {"long", "wide", "x"}},
-    {"data.time", {"ts", "date", "nope"}},
-    {"data.time_format", {"unix", "unix_ms", "yyyymmdd", "iso", "x"}},
-    {"data.timezone", {"UTC", "Z", "+09:00", "-05:30", "+9:00", "", "+-1:00", "+99:99", "x"}},
-    {"data.interval", {"1m", "5m", "1h", "1d", "1w", "1mo", "2d"}},
-    {"data.stamp", {"open", "close", "stamp", "date", "nope"}},
-    {"data.symbol", {"AAA", "BBB", ""}},
-    {"data.symbols", {"AAA", "AAA,BBB", ""}},
-    {"data.symbol_column", {"symbol", "nope"}},
-    {"data.columns.close", {"close", "AAA", "nope"}},
+    {"bars.source", {"csv", "wide", "store", "junk"}},
+    {"bars.layout", {"long", "wide", "x"}},
+    {"bars.time", {"ts", "date", "nope"}},
+    {"bars.time_format", {"unix", "unix_ms", "yyyymmdd", "iso", "x"}},
+    {"bars.timezone", {"UTC", "Z", "+09:00", "-05:30", "+9:00", "", "+-1:00", "+99:99", "x"}},
+    {"bars.interval", {"1m", "5m", "1h", "1d", "1w", "1mo", "2d"}},
+    {"bars.stamp", {"open", "close", "stamp", "date", "nope"}},
+    {"bars.symbol", {"AAA", "BBB", ""}},
+    {"bars.symbols", {"AAA", "AAA,BBB", ""}},
+    {"bars.symbol_column", {"symbol", "nope"}},
+    {"bars.columns.close", {"close", "AAA", "nope"}},
     {"replay.from", {"2020-01-01", "20200102", "2020-13-01", "x", "00010101"}},
     {"replay.to", {"2020-01-03", "99991231", "2019-12-31", ""}},
     {"replay.fill", {"next-open", "close", "legs", "x"}},
-    {"data.open_point", {"true", "false", "x"}},
+    {"bars.open_point", {"true", "false", "x"}},
     {"replay.market", {"us", "kr", "x"}},
     {"replay.cash", {"100000", "1e5", "0", "-1", "x", "1e400"}},
     {"replay.commission", {"0", "0.001", "-1", "x"}},
@@ -749,23 +749,23 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
     const auto file = dir.write("f" + std::to_string(k % 4) + ".csv", text);
     std::vector<std::string> args;
     if (shape == 0) {
-      args = {"data.source=csv", "data.symbol=AAA"};
+      args = {"bars.source=csv", "bars.symbol=AAA"};
     } else if (shape == 1) {
-      args = {"data.source=wide"};
+      args = {"bars.source=wide"};
     }
-    args.push_back("data.file=" + file);
+    args.push_back("bars.file=" + file);
     for (const auto& [key, values] : keys) {
       if (chance(shape == 2 ? 25 : 6)) {
         args.push_back(key + "=" + pick(values));
       }
     }
     if (chance(10)) {
-      args.push_back("data.open=" + file);
-      args.push_back("data.high=" + file);
-      args.push_back("data.low=" + file);
+      args.push_back("bars.open=" + file);
+      args.push_back("bars.high=" + file);
+      args.push_back("bars.low=" + file);
     }
     if (chance(5)) {
-      args.push_back("data.names=" + file);
+      args.push_back("bars.names=" + file);
     }
     if (chance(3)) {
       args.push_back(pick(cells));
@@ -776,7 +776,7 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
       const auto data = replay::load(s, chance(30) ? std::vector<std::string>{"AAA"} : std::vector<std::string>{});
       const bool wide = data.series_.empty() && !data.close_.names_.empty();
       const auto market = replay::market_of(s);
-      const bool open_point = s.get_or("data.open_point", "false") == "true";
+      const bool open_point = s.get_or("bars.open_point", "false") == "true";
       const auto feed = wide ? replay::events(data, market, open_point) : replay::bar_events(data, market, open_point);
       (void)replay::replay_config(s, data);
       (void)replay::fill_model(s);

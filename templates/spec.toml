@@ -1,7 +1,7 @@
 # cmdatl strategy backtest @NAME@.toml
 strategy = "@NAME@.atls"
 
-[data]
+[bars]
 source = "csv"
 file = "bars.csv"                 # beside this spec, with the columns symbol,date,open,high,low,close,volume
 symbol_column = "symbol"

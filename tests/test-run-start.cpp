@@ -68,9 +68,9 @@ TEST_CASE("the market settings a run refuses before anything is built") {
   CHECK(!cmdatl::spec_refusal({"replay.market=kr"}));
   CHECK(cmdatl::spec_refusal({})->first == "replay.market");
   CHECK(cmdatl::spec_refusal({"replay.market=us"})->first == "replay.market");
-  CHECK(cmdatl::spec_refusal({"replay.market=kr", "data.store=kis/krx"})->first == "data.store");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.store=kis/krx"})->first == "bars.store");
   CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.shorts=true"})->first == "replay.shorts");
-  CHECK(cmdatl::spec_refusal({"replay.market=kr", "data.open_point=true"})->first == "data.open_point");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.open_point=true"})->first == "bars.open_point");
   // The last value wins, as atlc's settings read it.
   CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}));
 }
@@ -307,7 +307,7 @@ struct Shared {
     ) {
       spit(
         dir_.path() / (name + ".toml"),
-        "strategy = \"dip.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"" + data +
+        "strategy = \"dip.atls\"\n\n[bars]\nsource = \"csv\"\nfile = \"" + data +
           "\"\nsymbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n"
           "[replay]\ncash = 100000000\ncommission = 0.0005\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n"
       );
@@ -652,7 +652,7 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     spit(fixture.dir() / "legs.atls", "universe {}\non_open {\n  target(10);\n}\non_close {\n  target(0);\n}\n");
     spit(fixture.dir() / "bars.csv", dip_bars(60));
     const std::string spec =
-      "strategy = \"legs.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\n"
+      "strategy = \"legs.atls\"\n\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\n"
       "time = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n[replay]\nmarket = \"kr\"\n";
     const std::string orders = "\n[orders]\ntype = \"limit\"\noffset = 0.01\n";
     const auto legs_refused = [](const RunProcess& ran) {
@@ -665,7 +665,7 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     };
     spit(fixture.dir() / "legs.toml", spec + orders);
     legs_refused(run_process({(fixture.dir() / "legs.toml").string()}));
-    legs_refused(run_process({(fixture.dir() / "legs.toml").string(), "data.open_point=true"}));
+    legs_refused(run_process({(fixture.dir() / "legs.toml").string(), "bars.open_point=true"}));
     legs_refused(run_process({(fixture.dir() / "legs.atls").string(), "replay.market=kr"}));
     const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
     CHECK((!std::filesystem::exists(runs_dir) || std::filesystem::is_empty(runs_dir)));
@@ -697,7 +697,7 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     spit(fixture.dir() / "bars.csv", dip_bars(60));
     spit(
       fixture.dir() / "trail.toml",
-      "strategy = \"trail.atls\"\n\n[data]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\n"
+      "strategy = \"trail.atls\"\n\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\n"
       "time_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n[replay]\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n"
     );
     const auto ran = run_process({(fixture.dir() / "trail.toml").string()});

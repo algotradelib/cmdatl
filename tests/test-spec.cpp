@@ -192,7 +192,7 @@ Run run(const std::string& src, const sp::Program& program) {
 }
 
 /** @brief A spec of wide tables with only the closes. */
-const std::string WIDE_SPEC = "strategy = \"m.atls\"\n[data]\nfile = \"closes.csv\"\n";
+const std::string WIDE_SPEC = "strategy = \"m.atls\"\n[bars]\nfile = \"closes.csv\"\n";
 
 /**
  * @brief Whether a text holds another.
@@ -235,12 +235,15 @@ TEST_CASE("strategy reference run-spec serves cmdatl's own reference, which list
 TEST_CASE("values are checked key by key, each error at its file and line") {
   const std::vector<std::pair<std::string, std::string>> cases{
     {"stratgy = \"m.atls\"", "unknown setting `stratgy`"},
-    {"[data]\nsorce = \"csv\"", "unknown setting `data.sorce`"},
+    {"[bars]\nsorce = \"csv\"", "unknown setting `bars.sorce`"},
+    {"[data]\nfile = \"bars.csv\"", "`data.file` moved to `bars.file`: [data] is now [bars]"},
+    {"[data]\nopen_point = true", "`data.open_point` moved to `bars.open_point`"},
+    {"[data.columns]\nopen = \"Open\"", "`data.columns.open` moved to `bars.columns.open`"},
     {"[build]\ncache = \"x\"", "unknown setting `build.cache` ([build] takes duckdb and indicators)"},
     {"[orders]\nprice = \"last\"", "unknown setting `orders.price` ([orders] takes type and offset)"},
     {"[build]\nindicators = \"pairwise\"", "`build.indicators` is one of \"incremental\", \"naive\", \"exact\""},
     {"[build]\nalgotradelib = \"/opt/atl\"", "cmdatl builds against the algotradelib it was built with"},
-    {"[output]\nfills = \"f.csv\"", "tables: [data], [instruments], [replay], [params], [orders], [build]"},
+    {"[output]\nfills = \"f.csv\"", "tables: [bars], [instruments], [replay], [params], [orders], [build]"},
     {"[run]\nid = \"r0123456789ab\"", "unknown setting `run.id`"},
     {"[params.x]\ny = 1", "unknown setting `params.x.y`"},
     {"[params]\nlookback = \"20\"", "is a number or a boolean"},
@@ -251,20 +254,20 @@ TEST_CASE("values are checked key by key, each error at its file and line") {
     {"[replay]\nslippage_ticks = 1.5", "a whole number"},
     {"[replay]\nslippage_ticks = 2.0", "written as an integer"},
     {"[replay]\nshorts = \"yes\"", "`true` or `false`"},
-    {"[data]\nopen_point = \"yes\"", "`true` or `false`"},
+    {"[bars]\nopen_point = \"yes\"", "`true` or `false`"},
     {"[replay]\nfrom = 20230230", "a date"},
     {"[replay]\nfrom = \"2023-13-01\"", "a date"},
     {"[replay]\nmarket = \"jp\"", "one of \"us\", \"kr\""},
-    {"[data]\nstore = \"kis/1d\"", "is not a store coordinate"},
-    {"[data]\nstore = \"kis/2d/005930\"", "the interval is one of"},
-    {"[data]\nstore = [\"a/1d/x\", 3]", "a string or a list of strings"},
-    {"[data]\nas_of = \"2026-10-01 25:00\"", "an instant"},
-    {"[data]\nas_of = \"가나다라마\"", "an instant"},
-    {"[data]\nas_of = \"2026-10-01T05:00+가:00\"", "an instant"},
-    {"[data]\ntimezone = \"Asia/Seoul\"", "a fixed offset"},
-    {"[data]\ninterval = \"2h\"", "one of \"1m\""},
-    {"[data]\nfiles = [\"a,b.csv\"]", "holds a comma"},
-    {"[data]\nsymbol = \"\"", "a non-empty string"},
+    {"[bars]\nstore = \"kis/1d\"", "is not a store coordinate"},
+    {"[bars]\nstore = \"kis/2d/005930\"", "the interval is one of"},
+    {"[bars]\nstore = [\"a/1d/x\", 3]", "a string or a list of strings"},
+    {"[bars]\nas_of = \"2026-10-01 25:00\"", "an instant"},
+    {"[bars]\nas_of = \"가나다라마\"", "an instant"},
+    {"[bars]\nas_of = \"2026-10-01T05:00+가:00\"", "an instant"},
+    {"[bars]\ntimezone = \"Asia/Seoul\"", "a fixed offset"},
+    {"[bars]\ninterval = \"2h\"", "one of \"1m\""},
+    {"[bars]\nfiles = [\"a,b.csv\"]", "holds a comma"},
+    {"[bars]\nsymbol = \"\"", "a non-empty string"},
     {"strategy = 3", "`strategy` is a string, not 3"},
   };
   for (const auto& [src, says] : cases) {
@@ -334,14 +337,14 @@ TEST_CASE("decimals lose their exponent exactly and keep their text") {
   CHECK(value_of(parsed, "replay.cash") == "100000");
   CHECK(value_of(parsed, "replay.commission") == "0.00015");
   // Read from the file's text, wherever on its line the number sits.
-  const auto placed = spec("strategy = \"m.atls\"\n[data]\nsymbol = \"삼성전자\"; \n");
+  const auto placed = spec("strategy = \"m.atls\"\n[bars]\nsymbol = \"삼성전자\"; \n");
   CHECK(!placed.errors_.empty());
   const auto inline_table = spec("replay = { market = \"kr\", cash = 1_000_000.50, sell_tax = 0.002 }\n");
   REQUIRE(inline_table.errors_.empty());
   CHECK(value_of(inline_table, "replay.cash") == "1000000.5");
   CHECK(value_of(inline_table, "replay.sell_tax") == "0.002");
   const auto after_korean = spec(
-    "data = { symbol = \"삼성전자 우선주\", files = [\"가.csv\"] }\nreplay = { fill = \"next-open\", commission = 0.000_15 }\n"
+    "bars = { symbol = \"삼성전자 우선주\", files = [\"가.csv\"] }\nreplay = { fill = \"next-open\", commission = 0.000_15 }\n"
   );
   REQUIRE(after_korean.errors_.empty());
   CHECK(value_of(after_korean, "replay.commission") == "0.00015");
@@ -380,58 +383,58 @@ TEST_CASE("numbers that are not decimals are refused, as are dates and times wri
     CHECK(has(e, "write a date or a time as a string"));
   }
   // In an array too.
-  CHECK(has(one_error("[data]\nfiles = [\"a\", 0x10]\n"), "write a decimal number"));
+  CHECK(has(one_error("[bars]\nfiles = [\"a\", 0x10]\n"), "write a decimal number"));
 }
 
 TEST_CASE("what TOML holds is read by toml++: escapes, inline tables and multi-line strings") {
   const auto parsed = spec(
-    "strategy = \"m\\u002Eatls\"\n[data]\nsymbol = 'A'\ncolumns = { open = \"Open\", close = \"\"\"Close\"\"\" }\n"
+    "strategy = \"m\\u002Eatls\"\n[bars]\nsymbol = 'A'\ncolumns = { open = \"Open\", close = \"\"\"Close\"\"\" }\n"
   );
   REQUIRE(parsed.errors_.empty());
   CHECK(value_of(parsed, "strategy") == "/specs/m.atls");
-  CHECK(value_of(parsed, "data.columns.open") == "Open");
-  CHECK(value_of(parsed, "data.columns.close") == "Close");
+  CHECK(value_of(parsed, "bars.columns.open") == "Open");
+  CHECK(value_of(parsed, "bars.columns.close") == "Close");
   // File order, whatever toml++'s table order.
   REQUIRE(parsed.entries_.size() == 4);
-  CHECK(parsed.entries_[1].key_ == "data.symbol");
-  CHECK(parsed.entries_[2].key_ == "data.columns.open");
+  CHECK(parsed.entries_[1].key_ == "bars.symbol");
+  CHECK(parsed.entries_[2].key_ == "bars.columns.open");
 }
 
 TEST_CASE("decoded control characters are refused, with the advice for a Windows path") {
   for (
     const auto* src :
-    {"[data]\nfile = \"C:\\temp\\new.csv\"\n", "[data]\nfile = \"a\\u0000b\"\n", "[data]\nsymbol = \"A\\tB\"\n",
-      "[data]\nsymbol = \"A\\u007F\"\n", "[data]\nsymbols = [\"A\", \"B\\n\"]\n"}
+    {"[bars]\nfile = \"C:\\temp\\new.csv\"\n", "[bars]\nfile = \"a\\u0000b\"\n", "[bars]\nsymbol = \"A\\tB\"\n",
+      "[bars]\nsymbol = \"A\\u007F\"\n", "[bars]\nsymbols = [\"A\", \"B\\n\"]\n"}
   ) {
     const auto e = one_error(src);
     INFO(src << ": " << e);
     CHECK(has(e, "holds a control character"));
     CHECK(has(e, "single quotes or with forward slashes"));
   }
-  CHECK(spec("[data]\nfile = 'C:\\temp\\new.csv'\n").errors_.empty());
-  CHECK(has(cli_error(std::string("data.symbol=A\x01")), "control character (U+0001)"));
+  CHECK(spec("[bars]\nfile = 'C:\\temp\\new.csv'\n").errors_.empty());
+  CHECK(has(cli_error(std::string("bars.symbol=A\x01")), "control character (U+0001)"));
   // A word on the command line need not be UTF-8; a setting must be, as run.json holds it.
-  CHECK(has(cli_error("data.file=/data/caf\xe9.csv"), "`data.file` holds bytes that are not UTF-8"));
-  CHECK(has(cli_error("data.symbols=A\xc3"), "not UTF-8"));
-  CHECK(has(cli_error("data.symbol=\xed\xa0\x80"), "not UTF-8"));
-  CHECK(has(cli_error("data.symbol=\xc0\xaf"), "not UTF-8"));
-  CHECK(cli_error("data.symbol=caf\xc3\xa9 \xf0\x9f\x98\x80").empty());
+  CHECK(has(cli_error("bars.file=/data/caf\xe9.csv"), "`bars.file` holds bytes that are not UTF-8"));
+  CHECK(has(cli_error("bars.symbols=A\xc3"), "not UTF-8"));
+  CHECK(has(cli_error("bars.symbol=\xed\xa0\x80"), "not UTF-8"));
+  CHECK(has(cli_error("bars.symbol=\xc0\xaf"), "not UTF-8"));
+  CHECK(cli_error("bars.symbol=caf\xc3\xa9 \xf0\x9f\x98\x80").empty());
   CHECK(sp::valid_utf8("\xe2\x82\xac\xf4\x8f\xbf\xbf"));
   CHECK(!sp::valid_utf8("\xf4\x90\x80\x80"));
   CHECK(!sp::valid_utf8("\x80"));
-  CHECK(has(cli_error("data.files=[\"a\\tb\"]"), "control character (U+0009)"));
+  CHECK(has(cli_error("bars.files=[\"a\\tb\"]"), "control character (U+0009)"));
 }
 
 TEST_CASE("toml++ refuses what TOML forbids: keys and tables twice, a value and a table, characters") {
   const std::vector<std::pair<std::string, std::size_t>> cases{
     {"a = 1\na = 2", 2},
-    {"[data]\nfile = \"x\"\n[data]\n", 3},
-    {"[data]\ncolumns.open = \"o\"\n[data.columns]\nopen = \"p\"", 3},
-    {"data = \"x\"\n[data]\nfile = \"y\"", 2},
+    {"[bars]\nfile = \"x\"\n[bars]\n", 3},
+    {"[bars]\ncolumns.open = \"o\"\n[bars.columns]\nopen = \"p\"", 3},
+    {"bars = \"x\"\n[bars]\nfile = \"y\"", 2},
     {"a.b = 1\na.b.c = 2", 2},
-    {"data.file = \"x\"\n[data]\nsymbol = \"A\"", 2},
-    {"[data]\nsymbol\xc2\xa0= \"A\"", 2},
-    {"[data]\nsymbol = \"A\x01\"", 2},
+    {"bars.file = \"x\"\n[bars]\nsymbol = \"A\"", 2},
+    {"[bars]\nsymbol\xc2\xa0= \"A\"", 2},
+    {"[bars]\nsymbol = \"A\x01\"", 2},
     {"a = 1 # \x7f", 1},
     {"a = 1\r", 1},
     {"a = 012", 1},
@@ -455,7 +458,7 @@ TEST_CASE("toml++ refuses what TOML forbids: keys and tables twice, a value and 
   CHECK(has(one_error("\"\" = 1\n"), "keys are bare"));
   // A tab and a no-break space inside a string, CRLF line ends and comments.
   const auto spaced = spec(
-    "[data]\nsymbol = \"x\xc2\xa0y\"\t# a\xe3\x80\x80"
+    "[bars]\nsymbol = \"x\xc2\xa0y\"\t# a\xe3\x80\x80"
     "comment\r\nnames = 'n.csv'\n"
   );
   CHECK(spaced.errors_.empty());
@@ -468,8 +471,8 @@ TEST_CASE("outside ASCII outside strings and comments is refused before toml++ r
   // toml++ 3.4 reaches a path it marks unreachable on U+3001 and U+FE70 there; TOML allows neither there anyway.
   for (
     const auto* src :
-    {"[replay]\ncash = 1\xe3\x80\x81\n", "[data]\nsymbol\xe3\x80\x81 = 'A'\n",
-      "[data]\nsymbols = ['A', \xe3\x80\x81]\n", "[replay]\ncash = 1 \xef\xb9\xb0\n", "a\xc3\xa9 = 1\n"}
+    {"[replay]\ncash = 1\xe3\x80\x81\n", "[bars]\nsymbol\xe3\x80\x81 = 'A'\n",
+      "[bars]\nsymbols = ['A', \xe3\x80\x81]\n", "[replay]\ncash = 1 \xef\xb9\xb0\n", "a\xc3\xa9 = 1\n"}
   ) {
     INFO(src);
     const auto e = one_error(src);
@@ -477,12 +480,12 @@ TEST_CASE("outside ASCII outside strings and comments is refused before toml++ r
   }
   // In strings of every kind and in comments, with escaped quotes, it is read.
   const auto inside = spec(
-    "[data] # \xe3\x80\x81\nsymbol = \"\xe3\x80\x81\\\"\xef\xb9\xb0\"\nnames = '''\xe3\x80\x81'''\n"
+    "[bars] # \xe3\x80\x81\nsymbol = \"\xe3\x80\x81\\\"\xef\xb9\xb0\"\nnames = '''\xe3\x80\x81'''\n"
     "time = \"\"\"\xef\xb9\xb0\"\"\"\nstamp = '\xe3\x80\x81'\n"
   );
   CHECK(inside.errors_.empty());
-  CHECK(has(cli_error("data.symbols=[\xe3\x80\x81]"), "is not a TOML array"));
-  CHECK(cli_value("data.symbols=[\"\xe3\x80\x81\"]") == "\xe3\x80\x81");
+  CHECK(has(cli_error("bars.symbols=[\xe3\x80\x81]"), "is not a TOML array"));
+  CHECK(cli_value("bars.symbols=[\"\xe3\x80\x81\"]") == "\xe3\x80\x81");
   const auto refusal = cmdatl::config_detail::non_ascii_refusal("a = 1\nb = 2 \xe3\x80\x81\n");
   REQUIRE(refusal);
   CHECK(refusal->at_.line == 2);
@@ -491,13 +494,13 @@ TEST_CASE("outside ASCII outside strings and comments is refused before toml++ r
 
 TEST_CASE("values are normalized: paths against the spec's directory, lists, dates and counts") {
   const auto parsed = spec(
-    "strategy = \"../m.atls\"\n[data]\nfiles = [\"a.csv\", \"/abs/b.csv\"]\nstore = \"x/1d/y\"\n"
+    "strategy = \"../m.atls\"\n[bars]\nfiles = [\"a.csv\", \"/abs/b.csv\"]\nstore = \"x/1d/y\"\n"
     "as_of = \"2026-10-01T05:00:00Z\"\n[replay]\nfrom = \"2020-01-02\"\nto = 20201231\nslippage_ticks = 2\n"
   );
   REQUIRE(parsed.errors_.empty());
   CHECK(value_of(parsed, "strategy") == "/specs/../m.atls");
-  CHECK(value_of(parsed, "data.files") == "/specs/a.csv,/abs/b.csv");
-  CHECK(value_of(parsed, "data.store") == "x/1d/y");
+  CHECK(value_of(parsed, "bars.files") == "/specs/a.csv,/abs/b.csv");
+  CHECK(value_of(parsed, "bars.store") == "x/1d/y");
   CHECK(value_of(parsed, "replay.from") == "20200102");
   CHECK(value_of(parsed, "replay.to") == "20201231");
   CHECK(value_of(parsed, "replay.slippage_ticks") == "2");
@@ -543,8 +546,8 @@ TEST_CASE("the target among settings: a setting is a dotted key before its first
   CHECK(sp::is_setting("replay.cash=1e8"));
   CHECK(sp::is_setting("params.lookback=30"));
   CHECK(sp::is_setting("instruments.y=EWC"));
-  CHECK(sp::is_setting("data.file=a=b.csv"));
-  CHECK(sp::is_setting("data.columns.open=Open"));
+  CHECK(sp::is_setting("bars.file=a=b.csv"));
+  CHECK(sp::is_setting("bars.columns.open=Open"));
   CHECK(sp::is_setting("a.b="));
   CHECK(!sp::is_setting("dip.toml"));
   CHECK(!sp::is_setting("dip.atls"));
@@ -560,8 +563,8 @@ TEST_CASE("the target among settings: a setting is a dotted key before its first
 
 TEST_CASE("command-line values are typed by their key, never read as TOML values") {
   CHECK(cli_value("instruments.stock=005930") == "005930");
-  CHECK(cli_value("data.symbol=true") == "true");
-  CHECK(cli_value("data.symbol=005930") == "005930");
+  CHECK(cli_value("bars.symbol=true") == "true");
+  CHECK(cli_value("bars.symbol=005930") == "005930");
   CHECK(cli_value("replay.cash=1e8") == "100000000");
   CHECK(cli_value("replay.cash=1_000.50") == "1000.5");
   CHECK(cli_value("replay.commission=1.5e-4") == "0.00015");
@@ -570,11 +573,11 @@ TEST_CASE("command-line values are typed by their key, never read as TOML values
   CHECK(cli_value("replay.from=2020-01-02") == "20200102");
   CHECK(cli_value("replay.to=20201231") == "20201231");
   CHECK(cli_value("replay.market=kr") == "kr");
-  CHECK(cli_value("data.timezone=+09:00") == "+09:00");
-  CHECK(cli_value("data.as_of=2026-10-01T05:00Z") == "2026-10-01T05:00Z");
-  CHECK(cli_value("data.symbols=A") == "A");
-  CHECK(cli_value("data.symbols=[\"A\", \"B\"]") == "A,B");
-  CHECK(cli_value("data.store=[\"kis/1d/005930\"]") == "kis/1d/005930");
+  CHECK(cli_value("bars.timezone=+09:00") == "+09:00");
+  CHECK(cli_value("bars.as_of=2026-10-01T05:00Z") == "2026-10-01T05:00Z");
+  CHECK(cli_value("bars.symbols=A") == "A");
+  CHECK(cli_value("bars.symbols=[\"A\", \"B\"]") == "A,B");
+  CHECK(cli_value("bars.store=[\"kis/1d/005930\"]") == "kis/1d/005930");
   CHECK(cli_value("orders.offset=0.002") == "0.002");
   CHECK(cli_value("params.lookback=30") == "30");
   CHECK(cli_value("params.flag=true") == "true");
@@ -586,9 +589,9 @@ TEST_CASE("command-line values are typed by their key, never read as TOML values
   CHECK(has(cli_error("replay.shorts=yes"), "`true` or `false`"));
   CHECK(has(cli_error("replay.from=2020-02-30"), "a date"));
   CHECK(has(cli_error("orders.offset=2e-3"), "without an exponent"));
-  CHECK(has(cli_error("data.symbols=[\"A\", 3]"), "an array holds strings"));
-  CHECK(has(cli_error("data.symbols=[\"A\""), "is not a TOML array of strings"));
-  CHECK(has(cli_error("data.file="), "a non-empty string"));
+  CHECK(has(cli_error("bars.symbols=[\"A\", 3]"), "an array holds strings"));
+  CHECK(has(cli_error("bars.symbols=[\"A\""), "is not a TOML array of strings"));
+  CHECK(has(cli_error("bars.file="), "a non-empty string"));
   CHECK(has(cli_error("params.lookback=ten"), "is a number or a boolean, not \"ten\""));
   CHECK(has(cli_error("strategy.x=1"), "unknown setting `strategy.x`"));
   CHECK(has(cli_error("output.fills=/tmp/f.csv"), "unknown setting `output.fills`"));
@@ -598,8 +601,8 @@ TEST_CASE("command-line values are typed by their key, never read as TOML values
   // A relative path is read against the working directory.
   const ScratchDir dir;
   const InDir here(dir.path());
-  CHECK(cli_value("data.file=bars.csv") == (dir.path() / "bars.csv").string());
-  CHECK(cli_value("data.files=[\"a.csv\", \"/b.csv\"]") == (dir.path() / "a.csv").string() + ",/b.csv");
+  CHECK(cli_value("bars.file=bars.csv") == (dir.path() / "bars.csv").string());
+  CHECK(cli_value("bars.files=[\"a.csv\", \"/b.csv\"]") == (dir.path() / "a.csv").string() + ",/b.csv");
 }
 
 TEST_CASE("layers merge, the command line winning, and paths are read against the file that sets them") {
@@ -613,30 +616,30 @@ TEST_CASE("layers merge, the command line winning, and paths are read against th
   CHECK(r.arg("replay.cash") == std::optional<std::string>("8"));
   CHECK(r.arg("replay.shorts") == std::optional<std::string>("true"));
   CHECK(r.arg("param.lookback") == std::optional<std::string>("40"));
-  CHECK(r.arg("data.source") == std::optional<std::string>("wide"));
-  CHECK(r.arg("data.file") == std::optional<std::string>("/specs/closes.csv"));
+  CHECK(r.arg("bars.source") == std::optional<std::string>("wide"));
+  CHECK(r.arg("bars.file") == std::optional<std::string>("/specs/closes.csv"));
   CHECK(r.resolved_.indicators_ == "incremental");
   CHECK(!r.resolved_.store_);
-  // data.source first, then the settings in the order first given, then the parameters.
+  // bars.source first, then the settings in the order first given, then the parameters.
   REQUIRE(r.resolved_.args_.size() == 5);
-  CHECK(r.resolved_.args_.front().first == "data.source");
+  CHECK(r.resolved_.args_.front().first == "bars.source");
   CHECK(r.resolved_.args_.back().first == "param.lookback");
   // Odd directory names: quotes, non-ASCII and a backslash.
   const ScratchDir dir;
   const auto odd = dir.path() / "a dir \"q\" é 한 back\\slash";
   std::filesystem::create_directories(odd / "specs");
   std::filesystem::create_directories(dir.path() / "elsewhere");
-  spit(odd / "specs" / "s.toml", "strategy = '../programs/p.atls'\n[data]\nfile = 'closes.csv'\nopen = 'opens.csv'\n");
+  spit(odd / "specs" / "s.toml", "strategy = '../programs/p.atls'\n[bars]\nfile = 'closes.csv'\nopen = 'opens.csv'\n");
   const InDir here(dir.path() / "elsewhere");
   std::string program;
   const auto read = sp::read_file((odd / "specs" / "s.toml").string(), program);
   REQUIRE(read.errors_.empty());
   CHECK(program == (odd / "specs" / "../programs/p.atls").string());
-  const auto given = cli({"data.high=highs.csv"}, errors);
+  const auto given = cli({"bars.high=highs.csv"}, errors);
   const auto layered = resolve({read.entries_, given}, single());
   REQUIRE(layered.errors_.empty());
-  CHECK(layered.arg("data.file") == std::optional<std::string>((odd / "specs" / "closes.csv").string()));
-  CHECK(layered.arg("data.high") == std::optional<std::string>((dir.path() / "elsewhere" / "highs.csv").string()));
+  CHECK(layered.arg("bars.file") == std::optional<std::string>((odd / "specs" / "closes.csv").string()));
+  CHECK(layered.arg("bars.high") == std::optional<std::string>((dir.path() / "elsewhere" / "highs.csv").string()));
 }
 
 TEST_CASE("parameters are checked against the program, from the file and the command line") {
@@ -694,23 +697,23 @@ TEST_CASE("parameters are checked against the program, from the file and the com
 TEST_CASE("data keys belong to their source") {
   const auto p = single();
   const std::vector<std::pair<std::string, std::string>> cases{
-    {"[data]\nfile = \"c.csv\"\ncolumns.open = \"Open\"", "`data.columns.open` applies to data.source = \"csv\""},
-    {"[data]\nsource = \"csv\"\nfile = \"c.csv\"\nsymbol = \"A\"\nnames = \"n.csv\"",
-      "`data.names` applies to data.source = \"wide\""},
-    {"[data]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\nfile = \"c.csv\"",
-      "`data.file` applies to data.source = \"wide\" or \"csv\""},
-    {"[data]\nsource = \"wide\"\nfile = \"c.csv\"\nstore = \"a/1d/b\"",
-      "`data.store` applies to data.source = \"store\""},
-    {"[data]\nnames = \"n.csv\"", "give the closes"},
-    {"[data]\nfile = \"c.csv\"\nclose = \"c.csv\"", "name the same thing"},
-    {"[data]\nsource = \"csv\"", "give `data.file` or `data.files`"},
-    {"[data]\nsource = \"csv\"\nfile = \"c.csv\"", "give `data.symbol`"},
-    {"[data]\nsource = \"csv\"\nfiles = [\"a\", \"b\"]\nsymbols = \"A\"", "2 files and data.symbols 1 symbols"},
-    {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\nsymbol_column = \"s\"", "both name symbols"},
-    {"[data]\nsource = \"csv\"\nlayout = \"wide\"\nfile = \"c\"\nsymbol = \"A\"", "applies to data.layout = \"long\""},
-    {"[data]\nstore = \"a/1d/b\"", "give `data.store_root`"},
-    {"[data]\nsource = \"store\"\nstore_root = \"/s\"", "give `data.store`"},
-    {"[data]\nfile = \"c\"\n[replay]\nfrom = 20200102\nto = 20200101", "replay.from is after replay.to"},
+    {"[bars]\nfile = \"c.csv\"\ncolumns.open = \"Open\"", "`bars.columns.open` applies to bars.source = \"csv\""},
+    {"[bars]\nsource = \"csv\"\nfile = \"c.csv\"\nsymbol = \"A\"\nnames = \"n.csv\"",
+      "`bars.names` applies to bars.source = \"wide\""},
+    {"[bars]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\nfile = \"c.csv\"",
+      "`bars.file` applies to bars.source = \"wide\" or \"csv\""},
+    {"[bars]\nsource = \"wide\"\nfile = \"c.csv\"\nstore = \"a/1d/b\"",
+      "`bars.store` applies to bars.source = \"store\""},
+    {"[bars]\nnames = \"n.csv\"", "give the closes"},
+    {"[bars]\nfile = \"c.csv\"\nclose = \"c.csv\"", "name the same thing"},
+    {"[bars]\nsource = \"csv\"", "give `bars.file` or `bars.files`"},
+    {"[bars]\nsource = \"csv\"\nfile = \"c.csv\"", "give `bars.symbol`"},
+    {"[bars]\nsource = \"csv\"\nfiles = [\"a\", \"b\"]\nsymbols = \"A\"", "2 files and bars.symbols 1 symbols"},
+    {"[bars]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\nsymbol_column = \"s\"", "both name symbols"},
+    {"[bars]\nsource = \"csv\"\nlayout = \"wide\"\nfile = \"c\"\nsymbol = \"A\"", "applies to bars.layout = \"long\""},
+    {"[bars]\nstore = \"a/1d/b\"", "give `bars.store_root`"},
+    {"[bars]\nsource = \"store\"\nstore_root = \"/s\"", "give `bars.store`"},
+    {"[bars]\nfile = \"c\"\n[replay]\nfrom = 20200102\nto = 20200101", "replay.from is after replay.to"},
   };
   for (const auto& [src, says] : cases) {
     const auto r = run("strategy = \"m.atls\"\n" + src + "\n", p);
@@ -718,14 +721,14 @@ TEST_CASE("data keys belong to their source") {
     REQUIRE(r.errors_.size() == 1);
     CHECK(has(r.errors_.front(), says));
   }
-  const auto store = run("strategy = \"m.atls\"\n[data]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\n", p);
+  const auto store = run("strategy = \"m.atls\"\n[bars]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\n", p);
   REQUIRE(store.errors_.empty());
   CHECK(store.resolved_.store_);
-  CHECK(store.arg("data.source") == std::optional<std::string>("store"));
+  CHECK(store.arg("bars.source") == std::optional<std::string>("store"));
   const auto csv =
-    run("strategy = \"m.atls\"\n[data]\nsource = \"csv\"\nfiles = [\"a\", \"b\"]\nsymbols = [\"A\", \"B\"]\n", p);
+    run("strategy = \"m.atls\"\n[bars]\nsource = \"csv\"\nfiles = [\"a\", \"b\"]\nsymbols = [\"A\", \"B\"]\n", p);
   REQUIRE(csv.errors_.empty());
-  CHECK(csv.arg("data.symbols") == std::optional<std::string>("A,B"));
+  CHECK(csv.arg("bars.symbols") == std::optional<std::string>("A,B"));
 }
 
 TEST_CASE("open points match the program and the data") {
@@ -734,27 +737,27 @@ TEST_CASE("open points match the program and the data") {
   session.session_ = true;
   const auto plain = single();
   const std::vector<std::tuple<std::string, const sp::Program*, std::string>> cases{
-    {"[data]\nfile = \"c\"\n[replay]\nmarket = \"kr\"", &session, "set data.open_point = true"},
-    {"[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nlow = \"l\"\nopen_point = true", &plain,
+    {"[bars]\nfile = \"c\"\n[replay]\nmarket = \"kr\"", &session, "set bars.open_point = true"},
+    {"[bars]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nlow = \"l\"\nopen_point = true", &plain,
       "for a program with on_open or on_close"},
-    {"[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nopen_point = true\n[replay]\nmarket = \"kr\"", &session,
-      "needs `data.low`"},
-    {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1h\"\nopen_point = true\n[replay]\nmarket = \"kr\"",
+    {"[bars]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nopen_point = true\n[replay]\nmarket = \"kr\"", &session,
+      "needs `bars.low`"},
+    {"[bars]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1h\"\nopen_point = true\n[replay]\nmarket = \"kr\"",
       &session, "intraday bars are replayed as they are"},
-    {"[data]\nstore = [\"a/1d/b\", \"a/1m/c\"]\nstore_root = \"/s\"\nopen_point = true\n[replay]\nmarket = \"kr\"",
+    {"[bars]\nstore = [\"a/1d/b\", \"a/1m/c\"]\nstore_root = \"/s\"\nopen_point = true\n[replay]\nmarket = \"kr\"",
       &session, "intraday bars are replayed as they are"},
-    {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1m\"", &session,
+    {"[bars]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1m\"", &session,
       "for Korean bars, set replay.market"},
-    {"[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1m\"\n[replay]\nmarket = \"us\"", &session,
+    {"[bars]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1m\"\n[replay]\nmarket = \"us\"", &session,
       "daylight saving"},
-    {"[data]\nfile = \"c\"\n[replay]\nfill = \"next-open\"", &plain, "replay.fill was removed"},
-    {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"", &plain, "give both `replay.fill_header`"},
-    {"[data]\nfile = \"c\"\n[replay]\nfill_function = \"f\"", &plain, "give both `replay.fill_header`"},
-    {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"a-b\"", &plain,
+    {"[bars]\nfile = \"c\"\n[replay]\nfill = \"next-open\"", &plain, "replay.fill was removed"},
+    {"[bars]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"", &plain, "give both `replay.fill_header`"},
+    {"[bars]\nfile = \"c\"\n[replay]\nfill_function = \"f\"", &plain, "give both `replay.fill_header`"},
+    {"[bars]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"a-b\"", &plain,
       "give a C++ function's name"},
-    {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"1f\"", &plain,
+    {"[bars]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"1f\"", &plain,
       "give a C++ function's name"},
-    {"[data]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"f\"\n[orders]\ntype = \"limit\"",
+    {"[bars]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"f\"\n[orders]\ntype = \"limit\"",
       &plain, "prices market orders"},
   };
   for (const auto& [src, program, says] : cases) {
@@ -795,17 +798,17 @@ TEST_CASE("a program with session handlers takes intraday bars as they are, with
   session.mode_ = "universe";
   session.session_ = true;
   const auto r = run(
-    "strategy = \"m.atls\"\n[data]\nsource = \"csv\"\nfile = \"c\"\nsymbol_column = \"s\"\ninterval = \"1m\"\n"
+    "strategy = \"m.atls\"\n[bars]\nsource = \"csv\"\nfile = \"c\"\nsymbol_column = \"s\"\ninterval = \"1m\"\n"
     "[replay]\nmarket = \"kr\"\n",
     session
   );
   CHECK(r.errors_.empty());
   // The market need not be stated: daily tables with open points, and a store whose source says kr, run as given.
   const auto daily = run(
-    "strategy = \"m.atls\"\n[data]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nlow = \"l\"\nopen_point = true\n", session
+    "strategy = \"m.atls\"\n[bars]\nfile = \"c\"\nopen = \"o\"\nhigh = \"h\"\nlow = \"l\"\nopen_point = true\n", session
   );
   CHECK(daily.errors_.empty());
-  const auto store = run("strategy = \"m.atls\"\n[data]\nstore = \"kis/1m/005930\"\nstore_root = \"/s\"\n", session);
+  const auto store = run("strategy = \"m.atls\"\n[bars]\nstore = \"kis/1m/005930\"\nstore_root = \"/s\"\n", session);
   CHECK(store.errors_.empty());
 }
 
@@ -902,11 +905,11 @@ TEST_CASE("build paths: build.algotradelib refused, build.duckdb checked for CMa
   CHECK(has(one_error(WIDE_SPEC + "[build]\nalgotradelib = \"/a\"\n"), FILE_PATH + ":5: `build.algotradelib`"));
   CHECK(run(WIDE_SPEC + "[build]\nduckdb = '/a\"b'\n", p).errors_.empty());
   const auto store =
-    run("strategy = \"m.atls\"\n[data]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\n[build]\nduckdb = '/a$b'\n", p);
+    run("strategy = \"m.atls\"\n[bars]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\n[build]\nduckdb = '/a$b'\n", p);
   REQUIRE(store.errors_.size() == 1);
   CHECK(store.errors_.front().rfind(FILE_PATH + ":6: `build.duckdb`", 0) == 0);
   const auto found = run(
-    "strategy = \"m.atls\"\n[data]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\n[build]\nduckdb = 'duck'\nindicators = "
+    "strategy = \"m.atls\"\n[bars]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\n[build]\nduckdb = 'duck'\nindicators = "
     "\"exact\"\n",
     p
   );
@@ -923,13 +926,13 @@ TEST_CASE("the driver's arguments are bounded and only ever settings' keys") {
   universe.mode_ = "universe";
   const auto file = spec(WIDE_SPEC);
   std::vector<std::string> errors;
-  const auto huge = cli({"data.names=" + std::string(sp::MAX_VALUE, 'n')}, errors);
+  const auto huge = cli({"bars.names=" + std::string(sp::MAX_VALUE, 'n')}, errors);
   REQUIRE(errors.empty());
   const auto r = resolve({file.entries_, huge}, universe);
   REQUIRE(r.errors_.size() == 1);
   CHECK(has(r.errors_.front(), "is longer than 4096 bytes"));
   CHECK(r.errors_.front().rfind("the command line: ", 0) == 0);
-  const auto fits = cli({"data.names=/" + std::string(sp::MAX_VALUE - 1, 'n')}, errors);
+  const auto fits = cli({"bars.names=/" + std::string(sp::MAX_VALUE - 1, 'n')}, errors);
   CHECK(resolve({file.entries_, fits}, universe).errors_.empty());
   const auto long_key = cli({"instruments." + std::string(130, 'k') + "=A"}, errors);
   REQUIRE(errors.empty());
@@ -1213,7 +1216,7 @@ private:
 const std::vector<std::string> SEEDS{
   FAKE_SPEC,
   FAKE_SPEC + "[replay]\ncash = 1_000_000\ncommission = 1.5e-4\nfrom = \"2020-01-02\"\n[params]\nlookback = 10\n",
-  "strategy = 'dip.atls'\n[data]\nsource = \"csv\"\nfiles = [\"a.csv\", \"b.csv\"]\nsymbols = [\"A\", \"B\"]\n"
+  "strategy = 'dip.atls'\n[bars]\nsource = \"csv\"\nfiles = [\"a.csv\", \"b.csv\"]\nsymbols = [\"A\", \"B\"]\n"
   "[orders]\ntype = \"limit\"\noffset = 0.002\n",
   "strategy = 'dip.atls'\ndata = { store = [\"k/1d/A\"], store_root = 's', as_of = \"2026-01-01T09:00+09:00\" }\n"
   "build = { duckdb = 'd', indicators = \"exact\" }\n",
@@ -1224,10 +1227,10 @@ const std::vector<std::string> SEED_WORDS{
   "replay.cash=1e8",
   "params.lookback=30",
   "instruments.stock=005930",
-  "data.symbols=[\"A\",\"B\"]",
+  "bars.symbols=[\"A\",\"B\"]",
   "replay.from=2020-01-02",
   "orders.offset=0.01",
-  "data.file=bars.csv",
+  "bars.file=bars.csv",
   "replay.shorts=true",
 };
 

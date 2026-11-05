@@ -485,9 +485,9 @@ TEST_CASE("a run refuses each start condition in order, before anything is sent"
   };
   CHECK(spec_code(with("run.until=2024-04-01")) == std::make_pair(2, std::string("usage.bad_value")));
   CHECK(spec_code(with("replay.market=us")) == std::make_pair(2, std::string("spec.invalid")));
-  CHECK(spec_code(with("data.store=kis/krx")) == std::make_pair(2, std::string("spec.invalid")));
+  CHECK(spec_code(with("bars.store=kis/krx")) == std::make_pair(2, std::string("spec.invalid")));
   CHECK(spec_code(with("replay.shorts=true")) == std::make_pair(2, std::string("spec.invalid")));
-  CHECK(spec_code(with("data.open_point=true")) == std::make_pair(2, std::string("spec.invalid")));
+  CHECK(spec_code(with("bars.open_point=true")) == std::make_pair(2, std::string("spec.invalid")));
   CHECK(spec_code(with("param.bad=1")) == std::make_pair(5, std::string("program.invalid")));
   CHECK(spec_code(with("instrument.y=035720")) == std::make_pair(3, std::string("refused.symbol_not_allowed")));
   CHECK(
