@@ -1029,7 +1029,7 @@ TEST_CASE("an on_start block runs once, before the first bar", "[acceptance]") {
   CHECK(report.as_object().at("executions").as_int64() == 1);
 }
 
-TEST_CASE("a program's data {} reads its [data.NAME] file in time order with the bars", "[acceptance]") {
+TEST_CASE("a program's data {} reads its data file in time order with the bars", "[acceptance]") {
   const auto equip = equipment();
   if (!equip) {
     SKIP(UNEQUIPPED);
@@ -1050,13 +1050,17 @@ TEST_CASE("a program's data {} reads its [data.NAME] file in time order with the
     times.push_back(line.substr(0, line.find(',')));
   }
   REQUIRE(times.size() == 30);
-  spit(at("level.csv"), "ts,level\n" + times[9] + ",1\n" + times[19] + ",0\n");
+  // And one after the last bar, inside the replay: fed and counted, though no bar decides on it.
+  spit(
+    at("level.csv"),
+    "ts,level\n" + times[9] + ",1\n" + times[19] + ",0\n" + std::to_string(std::stoll(times[29]) + 3600) + ",1\n"
+  );
   spit(at("follow.atls"), "data { real level; }\non_bar {\n  target(level);\n}\n");
   const std::string base =
     "strategy = 'follow.atls'\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n";
   spit(at("follow.toml"), base + "[data.level]\nfile = \"level.csv\"\n");
   const auto report = report_of({at("follow.toml")});
-  CHECK(report.as_object().at("records").as_int64() == 2);
+  CHECK(report.as_object().at("records").as_int64() == 3);
   CHECK(report.as_object().at("executions").as_int64() == 2);
   // Unmapped, the run is refused before anything is built.
   spit(at("unmapped.toml"), base);

@@ -1760,6 +1760,8 @@ int main(int argc, char** argv, Fills fills_of) {
         feed_rows_until(event.period_end_);
         engine.feed(event);
       }
+      // Values after the last bar but inside the replay are fed too: nothing decides on them, and the count says so.
+      feed_rows_until(std::nullopt);
     } else {
       for (const auto& event : feed) {
         engine.feed(event);
