@@ -32,6 +32,39 @@ cmdatl::replay::Settings settings_of(const std::vector<std::string>& args) {
 }
 
 /**
+ * @brief The program's data values for the run's mock vendor; none for a program without `data {}`, or from an atlc
+ *   that states no `atls_reads_data` (a template, so such a program never names `atls_data`).
+ * @tparam P The program.
+ * @param s The settings.
+ * @param symbols The run's symbols.
+ * @param market The market, for the instruments' ids.
+ * @return The values, in time order.
+ */
+template <typename P>
+std::vector<cmdatl::driver::DataPoint> data_points(
+  const replay::Settings& s, const std::vector<std::string>& symbols, const std::string& market
+) {
+  std::vector<cmdatl::driver::DataPoint> points;
+  if constexpr (replay::reads_data<P>::value) {
+    for (const auto& row : replay::load_data(s, P::atls_data(), symbols)) {
+      cmdatl::driver::DataPoint point;
+      point.at_ = row.known_at_;
+      point.name_ = row.name_;
+      if (row.symbol_) {
+        point.instrument_ = replay::instrument_of(*row.symbol_, market).id_;
+      }
+      point.value_ = row.value_;
+      points.push_back(std::move(point));
+    }
+  } else {
+    static_cast<void>(s);
+    static_cast<void>(symbols);
+    static_cast<void>(market);
+  }
+  return points;
+}
+
+/**
  * @brief The market's inputs, as `cmdatl::replay::main` reads them: the data, its events by the replay's own dispatch,
  *   regrouped per instrument; the instruments, the cash and the costs.
  * @param args The run's arguments.
@@ -82,18 +115,7 @@ cmdatl::driver::Loaded load(const std::vector<std::string>& args) {
     }
     series.bars_.push_back(event.bar_);
   }
-  if constexpr (replay::reads_data<Program>::value) {
-    for (const auto& row : replay::load_data(s, Program::atls_data(), data.symbols_)) {
-      cmdatl::driver::DataPoint point;
-      point.at_ = row.known_at_;
-      point.name_ = row.name_;
-      if (row.symbol_) {
-        point.instrument_ = replay::instrument_of(*row.symbol_, market).id_;
-      }
-      point.value_ = row.value_;
-      loaded.data_.push_back(std::move(point));
-    }
-  }
+  loaded.data_ = data_points<Program>(s, data.symbols_, market);
   return loaded;
 }
 
