@@ -38,7 +38,7 @@ A run spec is TOML, read as TOML 1.0 reads it, with these limits:
 - no string holds a control character once its escapes are read: `"C:\temp\new.csv"` holds a tab and a new line, so write a Windows path in single quotes (`'C:\temp\new.csv'`) or with forward slashes.
 
 Errors, each with the file and line:
-- an unknown key (including a misspelled one under `[build]` or `[orders]`), with the tables a spec has: `[bars]`, `[instruments]`, `[replay]`, `[params]`, `[orders]`, `[build]`;
+- an unknown key (including a misspelled one under `[build]` or `[orders]`), with the tables a spec has: `[bars]`, `[data.NAME]`, `[instruments]`, `[replay]`, `[params]`, `[orders]`, `[build]`;
 - a key set twice, a table defined twice, or a name used both as a value and as a table, as TOML refuses them;
 - a value of the wrong type or outside its range, or a key that does not apply to the run (a CSV column mapping for wide tables, say).
 
@@ -114,6 +114,39 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 A backtest of a store needs DuckDB (`[build]` below); a CSV or wide run does not.
 A run (`cmdatl run`) reads files, not a store.
 A spec names data only: credentials never appear in it.
+
+### `[data.NAME]`: the program's data values
+
+A program with `data {}` reads values from outside the bars; each name it declares is mapped to a file in its own table, `[data.NAME]`, and a name the program does not declare is refused.
+
+```toml
+[data.announced]
+file = "data/earnannFile.csv"
+layout = "wide"
+time = "Date"
+time_format = "yyyymmdd"
+timezone = "UTC"
+```
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `data.NAME.file` | path | required | the file |
+| `data.NAME.layout` | `"long"` or `"wide"` | `"long"` | `long`: a time column and a value column; `wide`: a time column, then a column per symbol (its header names the symbols) |
+| `data.NAME.column` | string | `NAME` | the long layout's value column |
+| `data.NAME.symbol_column` | string | | the long layout's symbol column; without it a value is for every instrument |
+| `data.NAME.time` | string | `"ts"` | the time column |
+| `data.NAME.time_format`, `data.NAME.timezone` | as `bars.time_format` and `bars.timezone` | `"unix"`, `"UTC"` | how its times read |
+| `data.NAME.max_age` | `"<n>m"`, `"<n>h"` or `"<n>d"` | none | a value older than this, with nothing newer, reads as undefined |
+
+- **The time is when the value became known**, not the date it describes: the program reads a value only from then on, and at a bar the latest known by its end.
+  A date alone is known at its midnight in `timezone`: that is your statement that the value was available then, which cmdatl cannot check.
+- A value is a number; an empty cell or `NaN` is undefined, anything else is refused with its file and line.
+- Symbols the run does not trade are skipped; a symbol it trades that a wide file or a symbol column lacks is refused, and so is a blank symbol.
+  A program with `instruments {}` reads one value for the program: a wide file or a symbol column is refused.
+- Rows at one instant keep their file's order; with `max_age`, a value at exactly the expiry replaces the old one before it expires.
+- Values through `replay.to`'s day are read; values before `replay.from` are kept, so the first bar reads the latest known.
+- The report counts the values fed (`records`, expiries included), for a program with `data {}` only.
+- A run reads each value at its first poll at or after its time.
 
 ### `[instruments]`: names to symbols
 
