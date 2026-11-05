@@ -7,6 +7,7 @@
 // broker until the runner has confirmed every order it sent, since a closing pass only sends its cancellations.
 
 #include <algotradelib/live>
+#include <algotradelib/mock>
 #include <algotradelib/runner>
 #include <algotradelib/strategy>
 
@@ -87,6 +88,18 @@ inline constexpr int FINAL_ROUNDS = 10;
 inline constexpr std::chrono::minutes FINAL_STEP{1};
 
 /** @brief What the wiring is told: fixed by the driver from the operator's file and the market, never by a run's arguments. */
+/** @brief One value of the program's `data {}`, published at `at_`, as the run's mock vendor releases it. */
+struct DataPoint {
+  /** @brief When it was published: the loop receives it at its first data poll at or after this. */
+  std::chrono::system_clock::time_point at_;
+  /** @brief The value's index in the program's `data {}`. */
+  std::size_t name_{0};
+  /** @brief The instrument it is for; empty for every instrument. */
+  std::optional<atl::InstrumentId> instrument_;
+  /** @brief The value; NaN is undefined. */
+  double value_{0};
+};
+
 struct Wiring {
   /** @brief The run's instruments. */
   std::vector<atl::InstrumentId> universe_;
@@ -108,6 +121,8 @@ struct Wiring {
   std::chrono::nanoseconds owed_order_limit_{std::chrono::minutes(10)};
   /** @brief The venue an order is sent to. */
   atl::Venue default_route_{atl::Venue::UNSPECIFIED};
+  /** @brief The program's data values, read by the loop's data poll (`schedule_.data_`); empty without `data {}`. */
+  std::vector<DataPoint> data_;
 };
 
 /** @brief How the wiring ended, and the loop's report when the loop ran. */
@@ -217,6 +232,19 @@ Traded trade_on_rails(
   loop.set_closing_wait(wiring.closing_wait_);
   loop.set_owed_order_limit(wiring.owed_order_limit_);
   loop.set_session_window(wiring.window_);
+  if constexpr (decltype(bound)::takes_records) {
+    // The run's mock vendor: each value released at the first data poll at or after its time, stamped by the loop.
+    using Record = typename decltype(bound)::DataRecord;
+    std::vector<typename atl::mock::DataFeed<Record>::Entry> entries;
+    for (const auto& point : wiring.data_) {
+      Record record;
+      record.name_ = point.name_;
+      record.instrument_ = point.instrument_;
+      record.value_ = point.value_;
+      entries.emplace_back(point.at_, record);
+    }
+    loop.set_data_poll(atl::mock::DataFeed<Record>(std::move(entries)));
+  }
   if (!on_ready()) {
     traded.outcome_ = Outcome::NOT_STARTED;
     traded.detail_ = "the run did not start";

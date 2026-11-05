@@ -243,7 +243,8 @@ TEST_CASE("values are checked key by key, each error at its file and line") {
     {"[orders]\nprice = \"last\"", "unknown setting `orders.price` ([orders] takes type and offset)"},
     {"[build]\nindicators = \"pairwise\"", "`build.indicators` is one of \"incremental\", \"naive\", \"exact\""},
     {"[build]\nalgotradelib = \"/opt/atl\"", "cmdatl builds against the algotradelib it was built with"},
-    {"[output]\nfills = \"f.csv\"", "tables: [bars], [instruments], [replay], [params], [orders], [build]"},
+    {"[output]\nfills = \"f.csv\"",
+      "tables: [bars], [data.NAME], [instruments], [replay], [params], [orders], [build]"},
     {"[run]\nid = \"r0123456789ab\"", "unknown setting `run.id`"},
     {"[params.x]\ny = 1", "unknown setting `params.x.y`"},
     {"[params]\nlookback = \"20\"", "is a number or a boolean"},
@@ -834,6 +835,72 @@ TEST_CASE("instruments match the program") {
   const auto r = resolve({file.entries_, line}, named);
   REQUIRE(r.errors_.empty());
   CHECK(r.arg("instrument.y") == std::optional<std::string>("005930"));
+}
+
+TEST_CASE("data values map to files checked against the program") {
+  auto program = single();
+  program.data_ = {"level"};
+  const auto ok =
+    run(WIDE_SPEC + "[data.level]\nfile = \"level.csv\"\ntime_format = \"yyyymmdd\"\nmax_age = \"35d\"\n", program);
+  REQUIRE(ok.errors_.empty());
+  CHECK(ok.arg("data.level.time_format") == std::optional<std::string>("yyyymmdd"));
+  CHECK(ok.arg("data.level.max_age") == std::optional<std::string>("35d"));
+  REQUIRE(ok.arg("data.level.file"));
+  CHECK(ok.arg("data.level.file")->back() != '/');
+  // Unmapped, undeclared, and a program without data {}.
+  CHECK(has(run(WIDE_SPEC, program).errors_.front(), "reads data `level`: map it to a file"));
+  const auto other = run(WIDE_SPEC + "[data.level]\nfile = \"a.csv\"\n[data.vix]\nfile = \"b.csv\"\n", program).errors_;
+  REQUIRE(other.size() == 1);
+  CHECK(has(other[0], "no data `vix` (it reads level)"));
+  CHECK(has(run(WIDE_SPEC + "[data.vix]\nfile = \"b.csv\"\n", single()).errors_.front(), "has no data {}"));
+  // A wide file names its columns by symbol; a named program reads one value for the program.
+  CHECK(has(
+    run(WIDE_SPEC + "[data.level]\nfile = \"a.csv\"\nlayout = \"wide\"\ncolumn = \"v\"\n", program).errors_.front(),
+    "remove `data.level.column`"
+  ));
+  sp::Program named;
+  named.mode_ = "named";
+  named.instruments_ = {"y", "x"};
+  named.data_ = {"level"};
+  CHECK(has(
+    run(
+      WIDE_SPEC + "[instruments]\ny = \"A\"\nx = \"B\"\n[data.level]\nfile = \"a.csv\"\nsymbol_column = \"s\"\n", named
+    )
+      .errors_.front(),
+    "reads one value of `level` for the program"
+  ));
+  for (const auto* age : {"35", "0d", "1y", "d", "1.5h", "999999999d"}) {
+    INFO(age);
+    CHECK(has(
+      run(WIDE_SPEC + "[data.level]\nfile = \"a.csv\"\nmax_age = \"" + age + "\"\n", program).errors_.front(),
+      "a whole number then m, h or d"
+    ));
+  }
+  // Keys of the wrong shape or kind.
+  CHECK(has(one_error("[data.level]\nlayout = \"tall\""), "one of \"long\", \"wide\""));
+  CHECK(has(one_error("[data.level]\ntimezone = \"Asia/Seoul\""), "a fixed offset"));
+  CHECK(has(one_error("[data.level]\nfiles = \"a.csv\""), "[data.NAME] takes file, layout"));
+  CHECK(has(one_error("[data]\nsorce = \"csv\""), "unknown setting `data.sorce`"));
+  // A data value named like an old bar key's last part is still a data value.
+  auto file = single();
+  file.data_ = {"file"};
+  CHECK(run(WIDE_SPEC + "[data.file]\nfile = \"a.csv\"\n", file).errors_.empty());
+}
+
+TEST_CASE("atlc check --info's data names are read in order and an atlc without them reads as none") {
+  const std::string base =
+    "{\"atlc_info\":1,\"status\":\"ok\",\"atlc\":\"x\",\"diagnostics\":[],\"program\":{\"path\":\"/p/m.atls\","
+    "\"struct\":\"M\",\"mode\":\"single\",\"instruments\":[],\"session\":false,\"params\":[]";
+  const auto with = sp::read_info(
+    base + ",\"data\":[{\"name\":\"b\",\"type\":\"real\"},{\"name\":\"a\",\"type\":\"real\"}]}}", "/p/m.atls"
+  );
+  REQUIRE(with);
+  CHECK(with->program_.data_ == std::vector<std::string>{"b", "a"});
+  const auto without = sp::read_info(base + "}}", "/p/m.atls");
+  REQUIRE(without);
+  CHECK(without->program_.data_.empty());
+  CHECK(!sp::read_info(base + ",\"data\":[{\"name\":\"b\",\"type\":\"int\"}]}}", "/p/m.atls"));
+  CHECK(!sp::read_info(base + ",\"data\":[{\"name\":\"a b\",\"type\":\"real\"}]}}", "/p/m.atls"));
 }
 
 TEST_CASE("orders are checked on their text, across the file and the command line") {

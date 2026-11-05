@@ -155,11 +155,56 @@ inline const std::vector<Key>& keys() {
 }
 
 /**
- * @brief The documented key named `name`.
+ * @brief The keys of one `[data.NAME]` table, which maps a value of the program's `data {}` to a file.
+ * @return The keys, named without their `data.NAME.` prefix.
+ */
+inline const std::vector<Key>& data_keys() {
+  static const std::vector<Key> table{
+    {"file", Kind::PATH, {}, {}},
+    {"layout", Kind::CHOICE, {}, {"long", "wide"}},
+    {"column", Kind::TEXT, {}, {}},
+    {"symbol_column", Kind::TEXT, {}, {}},
+    {"time", Kind::TEXT, {}, {}},
+    {"time_format", Kind::CHOICE, {}, {"unix", "unix_ms", "yyyymmdd", "iso"}},
+    {"timezone", Kind::OFFSET, {}, {}},
+    {"max_age", Kind::TEXT, {}, {}},
+  };
+  return table;
+}
+
+inline bool bare(std::string_view text);
+
+/**
+ * @brief Splits `data.NAME.KEY` into its data name and key.
+ * @param name The flattened name.
+ * @return NAME and KEY, or nothing when `name` has another shape or NAME is not bare.
+ */
+inline std::optional<std::pair<std::string, std::string>> data_name_key(const std::string& name) {
+  if (name.rfind("data.", 0) != 0) {
+    return std::nullopt;
+  }
+  const auto rest = name.substr(5);
+  const auto dot = rest.find('.');
+  if (dot == std::string::npos || !bare(rest.substr(0, dot)) || rest.find('.', dot + 1) != std::string::npos) {
+    return std::nullopt;
+  }
+  return std::make_pair(rest.substr(0, dot), rest.substr(dot + 1));
+}
+
+/**
+ * @brief The documented key named `name`: one of `keys()`, or `data.NAME.KEY` with KEY one of `data_keys()`.
  * @param name The name.
  * @return The key, or null.
  */
 inline const Key* known(const std::string& name) {
+  if (const auto split = data_name_key(name)) {
+    for (const auto& key : data_keys()) {
+      if (key.name_ == split->second) {
+        return &key;
+      }
+    }
+    return nullptr;
+  }
   for (const auto& key : keys()) {
     if (key.name_ == name) {
       return &key;
@@ -880,12 +925,14 @@ inline std::optional<Error> check(Entry& e) {
     std::string hint;
     if (e.key_.find('.') == std::string::npos || table == "bars" || table == "replay") {
       hint = "";
+    } else if (table == "data") {
+      hint = " ([data.NAME] takes file, layout, column, symbol_column, time, time_format, timezone and max_age)";
     } else if (table == "build") {
       hint = " ([build] takes duckdb and indicators)";
     } else if (table == "orders") {
       hint = " ([orders] takes type and offset)";
     } else {
-      hint = " (tables: [bars], [instruments], [replay], [params], [orders], [build])";
+      hint = " (tables: [bars], [data.NAME], [instruments], [replay], [params], [orders], [build])";
     }
     return Error::at(at, "unknown setting `" + e.key_ + "`" + hint);
   }
@@ -1112,6 +1159,30 @@ enum class ParamType {
   BOOL,
 };
 
+/**
+ * @brief Reads a `max_age`: a whole number of minutes, hours or days (`"90m"`, `"36h"`, `"35d"`).
+ * @param text The text.
+ * @return The age in seconds, or nothing when it is not one, zero, or longer than 100 years.
+ */
+inline std::optional<long long> max_age_seconds(const std::string& text) {
+  if (text.size() < 2 || text.size() > 8) {
+    return std::nullopt;
+  }
+  long long n = 0;
+  for (std::size_t i = 0; i + 1 < text.size(); ++i) {
+    if (text[i] < '0' || text[i] > '9') {
+      return std::nullopt;
+    }
+    n = n * 10 + (text[i] - '0');
+  }
+  const char unit = text.back();
+  const long long per = unit == 'm' ? 60 : unit == 'h' ? 3600 : unit == 'd' ? 86400 : 0;
+  if (per == 0 || n == 0 || n * per > 100LL * 366 * 86400) {
+    return std::nullopt;
+  }
+  return n * per;
+}
+
 /** @brief What the checks need from the program, as `atlc check --info` gives it. */
 struct Program {
   /** @brief The program, absolute. */
@@ -1126,6 +1197,8 @@ struct Program {
   bool session_{false};
   /** @brief Each parameter's name and type. */
   std::vector<std::pair<std::string, ParamType>> params_;
+  /** @brief The names in `data {}`, in order; empty without it (or from an atlc that reports none). */
+  std::vector<std::string> data_;
 };
 
 /** @brief The settings checked against their program: the build's settings and the driver's arguments. */
@@ -1492,6 +1565,59 @@ inline std::vector<Error> resolve(
         "a program without instruments {} or universe {} trades one symbol: [instruments] holds at most one"
       )
     );
+  }
+
+  // Data: each value of the program's `data {}` mapped to a file, and nothing else mapped.
+  std::vector<std::string> mapped;
+  for (const auto& e : merged) {
+    if (const auto split = data_name_key(e.key_)) {
+      if (std::find(mapped.begin(), mapped.end(), split->first) == mapped.end()) {
+        mapped.push_back(split->first);
+        if (std::find(program.data_.begin(), program.data_.end(), split->first) == program.data_.end()) {
+          errors.push_back(
+            Error::at(
+              e.origin_,
+              program.data_.empty() ?
+                "the program has no data {}: remove [data." + split->first + "]" :
+                "the program has no data `" + split->first + "` (it reads " + join(program.data_, ", ") + ")"
+            )
+          );
+        }
+      }
+    }
+  }
+  for (const auto& n : program.data_) {
+    const auto* file = get("data." + n + ".file");
+    if (file == nullptr) {
+      errors.push_back(
+        Error::nowhere("the program reads data `" + n + "`: map it to a file, `file = \"...\"` in [data." + n + "]")
+      );
+      continue;
+    }
+    const auto* layout = get("data." + n + ".layout");
+    const bool wide = layout != nullptr && layout->value_.text() == "wide";
+    for (const auto* key : {"column", "symbol_column"}) {
+      if (const auto* e = get("data." + n + "." + key); e != nullptr && wide) {
+        errors.push_back(
+          Error::at(e->origin_, "a wide data file names its columns by symbol: remove `" + e->key_ + "`")
+        );
+      }
+    }
+    const bool per_instrument = wide || get("data." + n + ".symbol_column") != nullptr;
+    if (per_instrument && program.mode_ == "named") {
+      errors.push_back(
+        Error::at(
+          file->origin_,
+          "a program with instruments {} reads one value of `" + n +
+            "` for the program: give a file with a time and a value column, no symbols"
+        )
+      );
+    }
+    if (const auto* e = get("data." + n + ".max_age"); e != nullptr && !max_age_seconds(e->value_.text())) {
+      errors.push_back(
+        Error::at(e->origin_, "`" + e->key_ + "` is a whole number then m, h or d (\"90m\", \"36h\", \"35d\")")
+      );
+    }
   }
 
   // Parameters.
@@ -2130,6 +2256,23 @@ inline std::optional<Info> read_info(const std::string& text, const std::string&
         ParamType::REAL :
         ParamType::BOOL
     );
+  }
+  if (const auto* data = facts.if_contains("data")) {
+    if (!data->is_array() || data->as_array().size() > MAX_ARGS) {
+      return std::nullopt;
+    }
+    for (const auto& value : data->as_array()) {
+      const auto* entry = value.if_object();
+      const auto* value_name = entry == nullptr ? nullptr : entry->if_contains("name");
+      const auto* type = entry == nullptr ? nullptr : entry->if_contains("type");
+      if (
+        value_name == nullptr || !value_name->is_string() || !bare(value_name->as_string()) ||
+        value_name->as_string().size() > 64 || type == nullptr || !type->is_string() || type->as_string() != "real"
+      ) {
+        return std::nullopt;
+      }
+      p.data_.emplace_back(value_name->as_string());
+    }
   }
   return info;
 }

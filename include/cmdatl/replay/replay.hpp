@@ -10,15 +10,18 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -1234,6 +1237,222 @@ inline std::vector<atl::strategy::BarEvent> events(const Data& data, const std::
  * @param data The data, for its symbols.
  * @return The configuration.
  */
+/**
+ * @brief Whether `Strategy` reads data (`atls_reads_data`, which atlc states for every program); a strategy that
+ *   does not state it has no `data {}`.
+ */
+template <typename Strategy, typename = void>
+struct reads_data : std::false_type {};
+
+/** @brief A strategy that states `atls_reads_data`. */
+template <typename Strategy>
+struct reads_data<Strategy, std::void_t<decltype(Strategy::atls_reads_data)>>
+: std::bool_constant<Strategy::atls_reads_data> {};
+
+/** @brief One value of a program's `data {}`, read from its `[data.NAME]` file. */
+struct DataRow {
+  /** @brief When it became known. */
+  std::chrono::system_clock::time_point known_at_;
+  /** @brief The value's index in the program's `data {}`. */
+  std::size_t name_{0};
+  /** @brief The symbol it is for; empty for every instrument. */
+  std::optional<std::string> symbol_;
+  /** @brief The value; NaN is undefined. */
+  double value_{0};
+};
+
+/**
+ * @brief A `max_age`: a whole number then `m`, `h` or `d` (`"90m"`, `"36h"`, `"35d"`).
+ * @param text The text.
+ * @return The age in seconds.
+ * @throws std::invalid_argument for anything else, zero, or more than 100 years.
+ */
+inline long long max_age_of(const std::string& text) {
+  long long n = 0;
+  bool digits = text.size() >= 2 && text.size() <= 8;
+  for (std::size_t i = 0; digits && i + 1 < text.size(); ++i) {
+    digits = text[i] >= '0' && text[i] <= '9';
+    n = n * 10 + (text[i] - '0');
+  }
+  const char unit = text.empty() ? ' ' : text.back();
+  const long long per = unit == 'm' ? 60 : unit == 'h' ? 3600 : unit == 'd' ? 86400 : 0;
+  if (!digits || per == 0 || n == 0 || n * per > 100LL * 366 * 86400) {
+    throw std::invalid_argument("max_age is a whole number then m, h or d, not '" + text + "'");
+  }
+  return n * per;
+}
+
+/**
+ * @brief A data value's cell: a number, or undefined when empty or `NaN`.
+ * @param cell The cell.
+ * @param where The file and line, for errors.
+ * @return The value.
+ */
+inline double data_value_of(std::string cell, const std::string& where) {
+  trim(cell);
+  if (cell.empty() || cell == "NaN" || cell == "nan" || cell == "NA") {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  char* end = nullptr;
+  const double value = std::strtod(cell.c_str(), &end);
+  if (end != cell.c_str() + cell.size() || !std::isfinite(value)) {
+    throw std::invalid_argument(where + ": '" + cell + "' is not a number");
+  }
+  return value;
+}
+
+/**
+ * @brief Reads every value of the program's `data {}` from its `[data.NAME]` file, in time order.
+ *
+ * A long file has a time column and a value column (`column`, the name by default), and per instrument a symbol
+ * column; a wide file has a time column and one column per symbol. Rows at one instant keep their file's order.
+ * Symbols the run does not trade are skipped; a symbol the run trades that a per-instrument file lacks is refused.
+ * With `max_age`, an undefined value follows each value that nothing newer replaced by then. Values after
+ * `replay.to`'s day are dropped; values before `replay.from` are kept, as the latest known at the first bar.
+ *
+ * @param s The settings.
+ * @param names The program's data names, in order.
+ * @param symbols The run's symbols.
+ * @return The values.
+ */
+inline std::vector<DataRow> load_data(
+  const Settings& s, const std::vector<std::string>& names, const std::vector<std::string>& symbols
+) {
+  std::vector<DataRow> out;
+  for (std::size_t k = 0; k < names.size(); ++k) {
+    const auto prefix = "data." + names[k] + ".";
+    const auto path = s.need(prefix + "file");
+    const bool wide = s.get_or(prefix + "layout", "long") == "wide";
+    const auto time_col = s.get_or(prefix + "time", "ts");
+    const auto format = s.get_or(prefix + "time_format", "unix");
+    const long offset = offset_of(s.get_or(prefix + "timezone", "UTC"));
+    const auto symbol_col = s.get(prefix + "symbol_column");
+    std::ifstream file(path);
+    if (!file.is_open()) {
+      throw std::runtime_error("cannot open " + path);
+    }
+    std::string line;
+    std::getline(file, line);
+    trim(line);
+    const auto header = split_line(line);
+    auto col = [&header, &path](const std::string& name) -> std::size_t {
+      const auto it = std::find(header.begin(), header.end(), name);
+      if (it == header.end()) {
+        throw std::invalid_argument(path + ": no column '" + name + "'");
+      }
+      return static_cast<std::size_t>(it - header.begin());
+    };
+    const std::size_t t = col(time_col);
+    // The columns read, each with its symbol (empty for a value for every instrument).
+    std::vector<std::pair<std::size_t, std::optional<std::string>>> columns;
+    std::optional<std::size_t> symbol_at;
+    if (wide) {
+      for (std::size_t c = 0; c < header.size(); ++c) {
+        if (c != t && std::find(symbols.begin(), symbols.end(), header[c]) != symbols.end()) {
+          columns.emplace_back(c, header[c]);
+        }
+      }
+    } else {
+      columns.emplace_back(col(s.get_or(prefix + "column", names[k])), std::nullopt);
+      if (symbol_col) {
+        symbol_at = col(*symbol_col);
+      }
+    }
+    std::vector<std::string> seen;
+    for (const auto& [c, symbol] : columns) {
+      if (symbol) {
+        seen.push_back(*symbol);
+      }
+    }
+    std::size_t row = 1;
+    while (std::getline(file, line)) {
+      ++row;
+      trim(line);
+      if (line.empty()) {
+        continue;
+      }
+      const auto cells = split_line(line);
+      const auto where = path + ":" + std::to_string(row);
+      if (cells.size() != header.size()) {
+        throw std::invalid_argument(
+          where + ": " + std::to_string(cells.size()) + " cells, the header has " + std::to_string(header.size())
+        );
+      }
+      const auto at = time_of(cells[t], format, offset, where);
+      std::optional<std::string> row_symbol;
+      if (symbol_at) {
+        auto cell = cells[*symbol_at];
+        trim(cell);
+        if (cell.empty()) {
+          throw std::invalid_argument(where + ": no symbol");
+        }
+        if (std::find(symbols.begin(), symbols.end(), cell) == symbols.end()) {
+          continue;
+        }
+        if (std::find(seen.begin(), seen.end(), cell) == seen.end()) {
+          seen.push_back(cell);
+        }
+        row_symbol = cell;
+      }
+      for (const auto& [c, symbol] : columns) {
+        out.push_back(DataRow{at, k, symbol ? symbol : row_symbol, data_value_of(cells[c], where)});
+      }
+    }
+    if (wide || symbol_at) {
+      for (const auto& symbol : symbols) {
+        if (std::find(seen.begin(), seen.end(), symbol) == seen.end()) {
+          throw std::invalid_argument(path + " has no value for " + symbol + ", which the run trades");
+        }
+      }
+    }
+  }
+  std::stable_sort(out.begin(), out.end(), [](const DataRow& a, const DataRow& b) {
+    return a.known_at_ < b.known_at_;
+  });
+  // Expiries: each (name, symbol) value is undefined `max_age` after it, unless a newer one came by then.
+  std::vector<DataRow> expiries;
+  for (std::size_t k = 0; k < names.size(); ++k) {
+    const auto age = s.get("data." + names[k] + ".max_age");
+    if (!age) {
+      continue;
+    }
+    const auto seconds = max_age_of(*age);
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      if (out[i].name_ != k || std::isnan(out[i].value_)) {
+        continue;
+      }
+      const auto expiry = out[i].known_at_ + std::chrono::seconds(seconds);
+      bool replaced = false;
+      for (std::size_t j = i + 1; j < out.size() && !(expiry < out[j].known_at_); ++j) {
+        if (out[j].name_ == k && out[j].symbol_ == out[i].symbol_) {
+          replaced = true;
+          break;
+        }
+      }
+      if (!replaced) {
+        expiries.push_back(DataRow{expiry, k, out[i].symbol_, std::numeric_limits<double>::quiet_NaN()});
+      }
+    }
+  }
+  out.insert(out.end(), expiries.begin(), expiries.end());
+  std::stable_sort(out.begin(), out.end(), [](const DataRow& a, const DataRow& b) {
+    return a.known_at_ < b.known_at_;
+  });
+  if (const auto to = s.get("replay.to")) {
+    const auto end = epoch_plus(day_seconds(parse_date(*to)) + 86400LL, "replay.to");
+    out.erase(
+      std::remove_if(
+        out.begin(), out.end(),
+        [&end](const DataRow& r) {
+          return !(r.known_at_ < end);
+        }
+      ),
+      out.end()
+    );
+  }
+  return out;
+}
+
 inline atl::backtest::ReplayConfig replay_config(const Settings& s, const Data& data) {
   const auto market = market_of(s);
   atl::backtest::ReplayConfig replay;
@@ -1373,12 +1592,13 @@ struct SessionFacts {
  * @param r The report.
  * @param pricing The targets limit pricing did not submit.
  * @param session What a session program met; empty for any other.
+ * @param reads_data Whether the program has `data {}`: the report then counts the records fed.
  * @return The JSON text, one field per line.
  */
 template <typename Refusals>
 std::string report_json(
   const atl::backtest::ReplayResult& result, const atl::backtest::Report& r, const Refusals& pricing,
-  const SessionFacts& session = {}
+  const SessionFacts& session = {}, bool reads_data = false
 ) {
   std::ostringstream o;
   auto opt = [](const auto& value) {
@@ -1386,6 +1606,9 @@ std::string report_json(
   };
   o << "{\n";
   o << "  \"bars\": " << r.bars_ << ",\n";
+  if (reads_data) {
+    o << "  \"records\": " << result.records_ << ",\n";
+  }
   o << "  \"executions\": " << r.executions_ << ",\n";
   o << "  \"opening_equity\": " << quoted(r.opening_equity_.str()) << ",\n";
   o << "  \"closing_equity\": " << quoted(r.closing_equity_.str()) << ",\n";
@@ -1518,8 +1741,29 @@ int main(int argc, char** argv, Fills fills_of) {
       periods = std::stod(*p);
     }
     atl::backtest::Backtester<Strategy> engine(std::move(strategy), config, fills);
-    for (const auto& event : feed) {
-      engine.feed(event);
+    if constexpr (reads_data<Strategy>::value) {
+      // Records and bars in time order, a record before the bars of its instant.
+      const auto rows = load_data(s, Strategy::atls_data(), data.symbols_);
+      std::size_t next = 0;
+      const auto feed_rows_until = [&](std::optional<std::chrono::system_clock::time_point> until) {
+        for (; next < rows.size() && (!until || !(*until < rows[next].known_at_)); ++next) {
+          typename Strategy::data_type record;
+          record.name_ = rows[next].name_;
+          if (rows[next].symbol_) {
+            record.instrument_ = instrument_of(*rows[next].symbol_, market).id_;
+          }
+          record.value_ = rows[next].value_;
+          engine.feed(atl::strategy::DataEvent<typename Strategy::data_type>{rows[next].known_at_, record});
+        }
+      };
+      for (const auto& event : feed) {
+        feed_rows_until(event.period_end_);
+        engine.feed(event);
+      }
+    } else {
+      for (const auto& event : feed) {
+        engine.feed(event);
+      }
     }
     engine.finish();
     const auto result = engine.result();
@@ -1546,7 +1790,9 @@ int main(int argc, char** argv, Fills fills_of) {
     if (const auto path = s.get("output.fills")) {
       write_fills(result, *path);
     }
-    std::cout << report_json(result, report, engine.strategy().pricing_refusals(), session);
+    std::cout << report_json(
+      result, report, engine.strategy().pricing_refusals(), session, reads_data<Strategy>::value
+    );
     std::cout.flush();
     return std::cout ? 0 : 1;
   } catch (const std::exception& e) {

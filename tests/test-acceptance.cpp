@@ -1028,3 +1028,43 @@ TEST_CASE("an on_start block runs once, before the first bar", "[acceptance]") {
   CHECK(report.as_object().at("halted").is_null());
   CHECK(report.as_object().at("executions").as_int64() == 1);
 }
+
+TEST_CASE("a program's data {} reads its [data.NAME] file in time order with the bars", "[acceptance]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const ScratchDir dir;
+  const auto at = [&dir](const std::string& file) {
+    return (dir.path() / file).string();
+  };
+  const auto bars = walk_csv(walk(30));
+  spit(at("bars.csv"), bars);
+  // The bars' own times: the value 1 is known with the 10th bar, 0 with the 20th.
+  std::vector<std::string> times;
+  std::istringstream lines(bars);
+  std::string line;
+  std::getline(lines, line);
+  while (std::getline(lines, line)) {
+    times.push_back(line.substr(0, line.find(',')));
+  }
+  REQUIRE(times.size() == 30);
+  spit(at("level.csv"), "ts,level\n" + times[9] + ",1\n" + times[19] + ",0\n");
+  spit(at("follow.atls"), "data { real level; }\non_bar {\n  target(level);\n}\n");
+  const std::string base =
+    "strategy = 'follow.atls'\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n";
+  spit(at("follow.toml"), base + "[data.level]\nfile = \"level.csv\"\n");
+  const auto report = report_of({at("follow.toml")});
+  CHECK(report.as_object().at("records").as_int64() == 2);
+  CHECK(report.as_object().at("executions").as_int64() == 2);
+  // Unmapped, the run is refused before anything is built.
+  spit(at("unmapped.toml"), base);
+  const auto unmapped = backtest({at("unmapped.toml")});
+  CHECK(unmapped.exit_ == 2);
+  CHECK(unmapped.out_.find("reads data `level`") != std::string::npos);
+  // A program without data {} reports no records.
+  spit(at("buy.atls"), "on_bar {\n  target(1);\n}\n");
+  spit(at("buy.toml"), "strategy = 'buy.atls'\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n");
+  CHECK(!report_of({at("buy.toml")}).as_object().contains("records"));
+}

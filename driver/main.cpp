@@ -82,6 +82,18 @@ cmdatl::driver::Loaded load(const std::vector<std::string>& args) {
     }
     series.bars_.push_back(event.bar_);
   }
+  if constexpr (replay::reads_data<Program>::value) {
+    for (const auto& row : replay::load_data(s, Program::atls_data(), data.symbols_)) {
+      cmdatl::driver::DataPoint point;
+      point.at_ = row.known_at_;
+      point.name_ = row.name_;
+      if (row.symbol_) {
+        point.instrument_ = replay::instrument_of(*row.symbol_, market).id_;
+      }
+      point.value_ = row.value_;
+      loaded.data_.push_back(std::move(point));
+    }
+  }
   return loaded;
 }
 

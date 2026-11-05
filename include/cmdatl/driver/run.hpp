@@ -131,6 +131,8 @@ struct Loaded {
   atl::backtest::NextBarFillModel fills_;
   /** @brief The opening cash, in won. */
   atl::Decimal64 cash_;
+  /** @brief The program's data values, in time order; empty without `data {}`. */
+  std::vector<DataPoint> data_;
 };
 
 /** @brief The driver's own argument, and the replay's, as given. */
@@ -613,6 +615,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
     wiring.schedule_.holdings_ = STEP;
     wiring.schedule_.working_orders_ = STEP;
     wiring.schedule_.buying_power_ = STEP;
+    wiring.schedule_.data_ = STEP;
+    wiring.data_ = loaded.data_;
     wiring.bar_count_ = static_cast<int>(std::max<std::size_t>(warmup, 1));
     wiring.maximum_portfolio_age_ = std::chrono::seconds(config.limits_.portfolio_age_);
     wiring.window_ = settings.session_;

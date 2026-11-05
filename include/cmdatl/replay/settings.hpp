@@ -42,9 +42,50 @@ public:
       if (eq == std::string::npos) {
         throw std::invalid_argument("expected key=value, got '" + arg + "'");
       }
-      s.items_.emplace_back(arg.substr(0, eq), arg.substr(eq + 1));
+      const auto key = arg.substr(0, eq);
+      if (moved_to_bars(key)) {
+        throw std::invalid_argument("`" + key + "` moved to `bars." + key.substr(5) + "`: [data] is now [bars]");
+      }
+      s.items_.emplace_back(key, arg.substr(eq + 1));
     }
     return s;
+  }
+
+  /**
+   * @brief Whether `key` is a bar key under its old name, `data.*`, from before `[data]` became `[bars]`.
+   * @param key The key.
+   * @return Whether it is one; `data.NAME.KEY` of a program's data is not.
+   */
+  static bool moved_to_bars(const std::string& key) {
+    static const std::vector<std::string> old{
+      "source",
+      "file",
+      "close",
+      "open",
+      "high",
+      "low",
+      "names",
+      "files",
+      "symbol",
+      "symbols",
+      "symbol_column",
+      "layout",
+      "time",
+      "time_format",
+      "timezone",
+      "stamp",
+      "interval",
+      "store",
+      "store_root",
+      "as_of",
+      "open_point",
+      "columns.open",
+      "columns.high",
+      "columns.low",
+      "columns.close",
+      "columns.volume",
+    };
+    return key.rfind("data.", 0) == 0 && std::find(old.begin(), old.end(), key.substr(5)) != old.end();
   }
 
   /**

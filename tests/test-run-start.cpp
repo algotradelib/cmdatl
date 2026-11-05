@@ -21,6 +21,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -1005,3 +1006,58 @@ TEST_CASE("the README's quick start runs on the example paper account and its ru
   CHECK(filled_events == placed_events);
 }
 #endif
+
+TEST_CASE("a run reads the program's data {} as its backtest does and keeps the rails", "[acceptance][runs]") {
+  const auto equipment = run_equipment();
+  if (!equipment) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const auto write = [](const std::filesystem::path& dir) {
+    spit(dir / "follow.atls", "data { real level; }\non_bar {\n  target(level);\n}\n");
+    spit(dir / "bars.csv", dip_bars(60));
+    // Known at midnight UTC of the 10th and 30th bar's dates, before those days' closes.
+    std::vector<std::string> dates;
+    std::istringstream lines(dip_bars(60));
+    std::string line;
+    std::getline(lines, line);
+    while (std::getline(lines, line)) {
+      const auto first = line.find(',');
+      dates.push_back(line.substr(first + 1, line.find(',', first + 1) - first - 1));
+    }
+    spit(dir / "level.csv", "date,level\n" + dates[9] + ",1\n" + dates[29] + ",0\n");
+    spit(
+      dir / "follow.toml",
+      "strategy = \"follow.atls\"\n\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\n"
+      "time = \"date\"\ntime_format = \"iso\"\n\n[data.level]\nfile = \"level.csv\"\ntime = \"date\"\ntime_format = \"iso\"\n\n"
+      "[instruments]\nstock = \"005930\"\n\n[replay]\ncash = 100000000\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\n"
+      "offset = 0.01\n"
+    );
+  };
+  {
+    const PaperFixture fixture(run_operator());
+    const RunEquipped equipped(equipment->first, equipment->second);
+    fixture.arm();
+    write(fixture.dir());
+    const auto spec = (fixture.dir() / "follow.toml").string();
+    const auto backtest = fixture.json({"strategy", "backtest", spec});
+    INFO(backtest.out_);
+    REQUIRE(backtest.exit_ == 0);
+    const auto report = reply_of(backtest.out_).at("report").as_object();
+    CHECK(report.at("records").as_int64() == 2);
+    CHECK(report.at("executions").as_int64() == 2);
+    const auto ran = run_process({spec});
+    INFO(ran.out_);
+    INFO(ran.err_);
+    REQUIRE(ran.exit_ == 0);
+    CHECK(ran.reply_.at("executions") == report.at("executions"));
+  }
+  {
+    // Not armed: refused before anything is built, as any other run.
+    const PaperFixture fixture(run_operator());
+    const RunEquipped equipped(equipment->first, equipment->second);
+    write(fixture.dir());
+    const auto unarmed = run_process({(fixture.dir() / "follow.toml").string()});
+    CHECK(unarmed.exit_ == 3);
+    CHECK(run_code(unarmed) == "refused.not_armed");
+  }
+}

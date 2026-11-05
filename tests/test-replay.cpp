@@ -7,8 +7,11 @@
 #include "./run-strategy.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <atomic>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -459,6 +462,98 @@ TEST_CASE("replay CSV: times are read as written or refused and never read diffe
   }
 }
 
+TEST_CASE("replay settings: an old data.* bar key is refused with its new name and a data value's key is not") {
+  CHECK_THROWS_WITH(
+    settings({"bars.file=a.csv", "data.timezone=+09:00"}),
+    "`data.timezone` moved to `bars.timezone`: [data] is now [bars]"
+  );
+  CHECK_THROWS_WITH(
+    settings({"data.columns.open=Open"}), "`data.columns.open` moved to `bars.columns.open`: [data] is now [bars]"
+  );
+  CHECK(
+    settings({"data.file.file=a.csv", "data.vix.time=Date"}).get("data.file.file") ==
+    std::optional<std::string>("a.csv")
+  );
+}
+
+TEST_CASE("replay data: long and wide files in time order per instrument or for every one") {
+  Scratch dir;
+  const auto at = [](const replay::DataRow& r) {
+    return replay::iso(r.known_at_);
+  };
+  SECTION("a long file, market-wide; an empty cell or NaN is undefined") {
+    const auto file = dir.write("vix.csv", "Date,vix\n20200103,14\n20200102,\n20200106,NaN\n");
+    const auto rows = replay::load_data(
+      settings({"data.vix.file=" + file, "data.vix.time=Date", "data.vix.time_format=yyyymmdd"}), {"vix"}, {"A"}
+    );
+    REQUIRE(rows.size() == 3);
+    CHECK(at(rows[0]) == "2020-01-02T00:00:00Z");
+    CHECK(std::isnan(rows[0].value_));
+    CHECK(rows[1].value_ == 14);
+    CHECK(!rows[1].symbol_);
+    CHECK(std::isnan(rows[2].value_));
+  }
+  SECTION("a wide file: one value per traded symbol, others skipped; a traded symbol missing is refused") {
+    const auto file = dir.write("flags.csv", "Date,A,B,C\n20200102,0,1,1\n");
+    const auto rows = replay::load_data(
+      settings({"data.f.file=" + file, "data.f.layout=wide", "data.f.time=Date", "data.f.time_format=yyyymmdd"}), {"f"},
+      {"A", "B"}
+    );
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].symbol_ == std::optional<std::string>("A"));
+    CHECK(rows[1].symbol_ == std::optional<std::string>("B"));
+    CHECK(rows[1].value_ == 1);
+    CHECK_THROWS_WITH(
+      replay::load_data(
+        settings({"data.f.file=" + file, "data.f.layout=wide", "data.f.time=Date", "data.f.time_format=yyyymmdd"}),
+        {"f"}, {"A", "D"}
+      ),
+      Catch::Matchers::ContainsSubstring("has no value for D")
+    );
+  }
+  SECTION("a symbol column; a blank symbol or a cell that is not a number is refused") {
+    const auto file = dir.write("s.csv", "ts,symbol,score\n10,A,1\n20,B,2\n30,Z,3\n");
+    const auto rows = replay::load_data(
+      settings({"data.score.file=" + file, "data.score.symbol_column=symbol"}), {"score"}, {"A", "B"}
+    );
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[1].symbol_ == std::optional<std::string>("B"));
+    const auto blank = dir.write("b.csv", "ts,symbol,score\n10,,1\n");
+    CHECK_THROWS_WITH(
+      replay::load_data(settings({"data.score.file=" + blank, "data.score.symbol_column=symbol"}), {"score"}, {"A"}),
+      Catch::Matchers::ContainsSubstring("no symbol")
+    );
+    const auto text = dir.write("t.csv", "ts,score\n10,high\n");
+    CHECK_THROWS_WITH(
+      replay::load_data(settings({"data.score.file=" + text}), {"score"}, {"A"}),
+      Catch::Matchers::ContainsSubstring("'high' is not a number")
+    );
+  }
+  SECTION("max_age: an undefined value after each value nothing newer replaced in time; a value at the expiry wins") {
+    const auto file = dir.write("m.csv", "ts,m\n0,1\n60,2\n200,3\n");
+    const auto rows = replay::load_data(settings({"data.m.file=" + file, "data.m.max_age=1m"}), {"m"}, {"A"});
+    // 0 replaced at 60 exactly; 60 expires at 120; 200 expires at 260.
+    REQUIRE(rows.size() == 5);
+    CHECK(rows[2].known_at_ == std::chrono::system_clock::time_point{} + std::chrono::seconds(120));
+    CHECK(std::isnan(rows[2].value_));
+    CHECK(rows[3].value_ == 3);
+    CHECK(std::isnan(rows[4].value_));
+  }
+  SECTION("values through replay.to's day are kept, later ones dropped; earlier ones are kept") {
+    const auto file = dir.write("r.csv", "Date,r\n20191231,1\n20200102,2\n20200103,3\n");
+    const auto rows = replay::load_data(
+      settings(
+        {"data.r.file=" + file, "data.r.time=Date", "data.r.time_format=yyyymmdd", "replay.from=20200102",
+          "replay.to=20200102"}
+      ),
+      {"r"}, {"A"}
+    );
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].value_ == 1);
+    CHECK(rows[1].value_ == 2);
+  }
+}
+
 TEST_CASE("replay wide tables: dates must increase and the fill reads them") {
   Scratch dir;
   const auto s =
@@ -698,7 +793,18 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
     {"replay.shorts", {"true", "false", "x"}},
     {"instrument.x", {"AAA", "BBB", "ZZZ"}},
   };
+  // A program's data value `x`, read from the same file.
+  const std::vector<std::pair<std::string, std::vector<std::string>>> data_keys{
+    {"data.x.layout", {"long", "wide", "x"}},
+    {"data.x.column", {"close", "x", "AAA", "nope"}},
+    {"data.x.symbol_column", {"symbol", "AAA", "nope"}},
+    {"data.x.time", {"ts", "date", "nope"}},
+    {"data.x.time_format", {"unix", "unix_ms", "yyyymmdd", "iso", "x"}},
+    {"data.x.timezone", {"UTC", "+09:00", "+99:99", "x"}},
+    {"data.x.max_age", {"1d", "90m", "36h", "0d", "1y", "", "99999999d", "x"}},
+  };
   std::size_t read = 0;
+  std::size_t data_read = 0;
   std::size_t refused = 0;
   std::size_t replayed = 0;
   // CMDATL_TEST_SWEEP names a longer sweep, as the sanitizer runs take.
@@ -791,8 +897,28 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
     } catch (const std::exception&) {
       ++refused;
     }
+    try {
+      // Settings that fit the file's shape, then changed at random.
+      std::vector<std::string> with{"data.x.file=" + file};
+      if (shape == 0) {
+        with.push_back("data.x.column=close");
+      } else if (shape == 1) {
+        with.insert(with.end(), {"data.x.layout=wide", "data.x.time=date", "data.x.time_format=yyyymmdd"});
+      }
+      for (const auto& [key, values] : data_keys) {
+        if (chance(shape == 2 ? 30 : 8)) {
+          with.push_back(key + "=" + pick(values));
+        }
+      }
+      (void)replay::load_data(
+        settings(with), {"x"}, chance(50) ? std::vector<std::string>{"AAA"} : std::vector<std::string>{"AAA", "BBB"}
+      );
+      ++data_read;
+    } catch (const std::exception&) {
+    }
   }
-  INFO("read " << read << ", refused " << refused << ", replayed " << replayed);
+  INFO("read " << read << ", refused " << refused << ", replayed " << replayed << ", data read " << data_read);
+  CHECK(data_read > static_cast<std::size_t>(count / 30));
   CHECK(read > static_cast<std::size_t>(count / 20));
   CHECK(refused > static_cast<std::size_t>(count / 20));
   CHECK(replayed > static_cast<std::size_t>(count / 30));
