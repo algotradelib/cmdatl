@@ -136,16 +136,15 @@ timezone = "UTC"
 | `data.NAME.symbol_column` | string | | the long layout's symbol column; without it a value is for every instrument |
 | `data.NAME.time` | string | `"ts"` | the time column |
 | `data.NAME.time_format`, `data.NAME.timezone` | as `bars.time_format` and `bars.timezone` | `"unix"`, `"UTC"` | how its times read |
-| `data.NAME.max_age` | `"<n>m"`, `"<n>h"` or `"<n>d"` | none | a value older than this, with nothing newer, reads as undefined |
 
 - **The time is when the value became known**, not the date it describes: the program reads a value only from then on, and at a bar the latest known by its end.
   A date alone is known at its midnight in `timezone`: that is your statement that the value was available then, which cmdatl cannot check.
 - A value is a number; an empty cell or `NaN` is undefined, anything else is refused with its file and line.
 - Symbols the run does not trade are skipped; a symbol it trades that a wide file or a symbol column lacks is refused, and so is a blank symbol.
   A program with `instruments {}` reads one value for the program: a wide file or a symbol column is refused.
-- Rows at one instant keep their file's order; with `max_age`, a value at exactly the expiry replaces the old one before it expires.
+- Rows at one instant keep their file's order: the later row is the newer value.
 - Values through `replay.to`'s day are read; values before `replay.from` are kept, so the first bar reads the latest known.
-- The report counts the values fed (`records`, expiries included), for a program with `data {}` only.
+- The report counts the values fed (`records`), for a program with `data {}` only.
 - A run reads each value at its first poll at or after its time.
 
 ### `[instruments]`: names to symbols

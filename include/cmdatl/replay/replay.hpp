@@ -1262,27 +1262,6 @@ struct DataRow {
 };
 
 /**
- * @brief A `max_age`: a whole number then `m`, `h` or `d` (`"90m"`, `"36h"`, `"35d"`).
- * @param text The text.
- * @return The age in seconds.
- * @throws std::invalid_argument for anything else, zero, or more than 100 years.
- */
-inline long long max_age_of(const std::string& text) {
-  long long n = 0;
-  bool digits = text.size() >= 2 && text.size() <= 8;
-  for (std::size_t i = 0; digits && i + 1 < text.size(); ++i) {
-    digits = text[i] >= '0' && text[i] <= '9';
-    n = n * 10 + (text[i] - '0');
-  }
-  const char unit = text.empty() ? ' ' : text.back();
-  const long long per = unit == 'm' ? 60 : unit == 'h' ? 3600 : unit == 'd' ? 86400 : 0;
-  if (!digits || per == 0 || n == 0 || n * per > 100LL * 366 * 86400) {
-    throw std::invalid_argument("max_age is a whole number then m, h or d, not '" + text + "'");
-  }
-  return n * per;
-}
-
-/**
  * @brief A data value's cell: a number, or undefined when empty or `NaN`.
  * @param cell The cell.
  * @param where The file and line, for errors.
@@ -1307,8 +1286,7 @@ inline double data_value_of(std::string cell, const std::string& where) {
  * A long file has a time column and a value column (`column`, the name by default), and per instrument a symbol
  * column; a wide file has a time column and one column per symbol. Rows at one instant keep their file's order.
  * Symbols the run does not trade are skipped; a symbol the run trades that a per-instrument file lacks is refused.
- * With `max_age`, an undefined value follows each value that nothing newer replaced by then. Values after
- * `replay.to`'s day are dropped; values before `replay.from` are kept, as the latest known at the first bar.
+ * Values after `replay.to`'s day are dropped; values before `replay.from` are kept, as the latest known at the first bar.
  *
  * @param s The settings.
  * @param names The program's data names, in order.
@@ -1406,35 +1384,6 @@ inline std::vector<DataRow> load_data(
       }
     }
   }
-  std::stable_sort(out.begin(), out.end(), [](const DataRow& a, const DataRow& b) {
-    return a.known_at_ < b.known_at_;
-  });
-  // Expiries: each (name, symbol) value is undefined `max_age` after it, unless a newer one came by then.
-  std::vector<DataRow> expiries;
-  for (std::size_t k = 0; k < names.size(); ++k) {
-    const auto age = s.get("data." + names[k] + ".max_age");
-    if (!age) {
-      continue;
-    }
-    const auto seconds = max_age_of(*age);
-    for (std::size_t i = 0; i < out.size(); ++i) {
-      if (out[i].name_ != k || std::isnan(out[i].value_)) {
-        continue;
-      }
-      const auto expiry = out[i].known_at_ + std::chrono::seconds(seconds);
-      bool replaced = false;
-      for (std::size_t j = i + 1; j < out.size() && !(expiry < out[j].known_at_); ++j) {
-        if (out[j].name_ == k && out[j].symbol_ == out[i].symbol_) {
-          replaced = true;
-          break;
-        }
-      }
-      if (!replaced) {
-        expiries.push_back(DataRow{expiry, k, out[i].symbol_, std::numeric_limits<double>::quiet_NaN()});
-      }
-    }
-  }
-  out.insert(out.end(), expiries.begin(), expiries.end());
   std::stable_sort(out.begin(), out.end(), [](const DataRow& a, const DataRow& b) {
     return a.known_at_ < b.known_at_;
   });

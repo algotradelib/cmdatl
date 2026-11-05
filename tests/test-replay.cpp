@@ -529,16 +529,6 @@ TEST_CASE("replay data: long and wide files in time order per instrument or for 
       Catch::Matchers::ContainsSubstring("'high' is not a number")
     );
   }
-  SECTION("max_age: an undefined value after each value nothing newer replaced in time; a value at the expiry wins") {
-    const auto file = dir.write("m.csv", "ts,m\n0,1\n60,2\n200,3\n");
-    const auto rows = replay::load_data(settings({"data.m.file=" + file, "data.m.max_age=1m"}), {"m"}, {"A"});
-    // 0 replaced at 60 exactly; 60 expires at 120; 200 expires at 260.
-    REQUIRE(rows.size() == 5);
-    CHECK(rows[2].known_at_ == std::chrono::system_clock::time_point{} + std::chrono::seconds(120));
-    CHECK(std::isnan(rows[2].value_));
-    CHECK(rows[3].value_ == 3);
-    CHECK(std::isnan(rows[4].value_));
-  }
   SECTION("values through replay.to's day are kept, later ones dropped; earlier ones are kept") {
     const auto file = dir.write("r.csv", "Date,r\n20191231,1\n20200102,2\n20200103,3\n");
     const auto rows = replay::load_data(
@@ -801,7 +791,6 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
     {"data.x.time", {"ts", "date", "nope"}},
     {"data.x.time_format", {"unix", "unix_ms", "yyyymmdd", "iso", "x"}},
     {"data.x.timezone", {"UTC", "+09:00", "+99:99", "x"}},
-    {"data.x.max_age", {"1d", "90m", "36h", "0d", "1y", "", "99999999d", "x"}},
   };
   std::size_t read = 0;
   std::size_t data_read = 0;

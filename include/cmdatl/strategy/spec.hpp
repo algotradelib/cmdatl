@@ -167,7 +167,6 @@ inline const std::vector<Key>& data_keys() {
     {"time", Kind::TEXT, {}, {}},
     {"time_format", Kind::CHOICE, {}, {"unix", "unix_ms", "yyyymmdd", "iso"}},
     {"timezone", Kind::OFFSET, {}, {}},
-    {"max_age", Kind::TEXT, {}, {}},
   };
   return table;
 }
@@ -926,7 +925,7 @@ inline std::optional<Error> check(Entry& e) {
     if (e.key_.find('.') == std::string::npos || table == "bars" || table == "replay") {
       hint = "";
     } else if (table == "data") {
-      hint = " ([data.NAME] takes file, layout, column, symbol_column, time, time_format, timezone and max_age)";
+      hint = " ([data.NAME] takes file, layout, column, symbol_column, time, time_format and timezone)";
     } else if (table == "build") {
       hint = " ([build] takes duckdb and indicators)";
     } else if (table == "orders") {
@@ -1158,30 +1157,6 @@ enum class ParamType {
   REAL,
   BOOL,
 };
-
-/**
- * @brief Reads a `max_age`: a whole number of minutes, hours or days (`"90m"`, `"36h"`, `"35d"`).
- * @param text The text.
- * @return The age in seconds, or nothing when it is not one, zero, or longer than 100 years.
- */
-inline std::optional<long long> max_age_seconds(const std::string& text) {
-  if (text.size() < 2 || text.size() > 8) {
-    return std::nullopt;
-  }
-  long long n = 0;
-  for (std::size_t i = 0; i + 1 < text.size(); ++i) {
-    if (text[i] < '0' || text[i] > '9') {
-      return std::nullopt;
-    }
-    n = n * 10 + (text[i] - '0');
-  }
-  const char unit = text.back();
-  const long long per = unit == 'm' ? 60 : unit == 'h' ? 3600 : unit == 'd' ? 86400 : 0;
-  if (per == 0 || n == 0 || n * per > 100LL * 366 * 86400) {
-    return std::nullopt;
-  }
-  return n * per;
-}
 
 /** @brief What the checks need from the program, as `atlc check --info` gives it. */
 struct Program {
@@ -1611,11 +1586,6 @@ inline std::vector<Error> resolve(
           "a program with instruments {} reads one value of `" + n +
             "` for the program: give a file with a time and a value column, no symbols"
         )
-      );
-    }
-    if (const auto* e = get("data." + n + ".max_age"); e != nullptr && !max_age_seconds(e->value_.text())) {
-      errors.push_back(
-        Error::at(e->origin_, "`" + e->key_ + "` is a whole number then m, h or d (\"90m\", \"36h\", \"35d\")")
       );
     }
   }

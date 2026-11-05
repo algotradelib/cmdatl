@@ -840,11 +840,9 @@ TEST_CASE("instruments match the program") {
 TEST_CASE("data values map to files checked against the program") {
   auto program = single();
   program.data_ = {"level"};
-  const auto ok =
-    run(WIDE_SPEC + "[data.level]\nfile = \"level.csv\"\ntime_format = \"yyyymmdd\"\nmax_age = \"35d\"\n", program);
+  const auto ok = run(WIDE_SPEC + "[data.level]\nfile = \"level.csv\"\ntime_format = \"yyyymmdd\"\n", program);
   REQUIRE(ok.errors_.empty());
   CHECK(ok.arg("data.level.time_format") == std::optional<std::string>("yyyymmdd"));
-  CHECK(ok.arg("data.level.max_age") == std::optional<std::string>("35d"));
   REQUIRE(ok.arg("data.level.file"));
   CHECK(ok.arg("data.level.file")->back() != '/');
   // Unmapped, undeclared, and a program without data {}.
@@ -869,13 +867,6 @@ TEST_CASE("data values map to files checked against the program") {
       .errors_.front(),
     "reads one value of `level` for the program"
   ));
-  for (const auto* age : {"35", "0d", "1y", "d", "1.5h", "999999999d"}) {
-    INFO(age);
-    CHECK(has(
-      run(WIDE_SPEC + "[data.level]\nfile = \"a.csv\"\nmax_age = \"" + age + "\"\n", program).errors_.front(),
-      "a whole number then m, h or d"
-    ));
-  }
   // Keys of the wrong shape or kind.
   CHECK(has(one_error("[data.level]\nlayout = \"tall\""), "one of \"long\", \"wide\""));
   CHECK(has(one_error("[data.level]\ntimezone = \"Asia/Seoul\""), "a fixed offset"));
