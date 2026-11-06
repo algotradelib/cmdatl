@@ -87,10 +87,11 @@ public:
   EchoOff(const EchoOff&) = delete;
   EchoOff& operator=(const EchoOff&) = delete;
 
-  /** @brief Restores the saved state. */
+  /** @brief Restores the saved state, again if a signal interrupts the call. */
   ~EchoOff() {
     if (restore_) {
-      ::tcsetattr(fd_, TCSANOW, &saved_);
+      while (::tcsetattr(fd_, TCSANOW, &saved_) != 0 && errno == EINTR) {
+      }
     }
   }
 
@@ -111,14 +112,41 @@ private:
 #endif
 
 /**
+ * @brief Discards what is typed and not yet read on a terminal, so an answer cut short (a secret half typed when a
+ *   signal arrives) is not left for the shell to read and show.
+ * @param fd The descriptor; nothing happens unless it is a terminal.
+ */
+inline void discard_input(int fd) {
+#if defined(_WIN32)
+  (void)fd;
+#else
+  if (::isatty(fd) != 0) {
+    while (::tcflush(fd, TCIFLUSH) != 0 && errno == EINTR) {
+    }
+  }
+#endif
+}
+
+/**
  * @brief Reads up to a line break or the end of input, a byte at a time, waking every 100 ms to check for SIGINT,
  *   SIGTERM or SIGHUP, so a signal that arrives just before the read cannot leave it waiting.
  * @param fd The descriptor.
  * @param whole Whether to read to the end of input instead of to a line break.
- * @return The read.
+ * @return The read; on a terminal, an interrupted or failed read discards what was typed and not read.
  */
 inline LineRead read_input(int fd, bool whole) {
   LineRead result;
+#if !defined(_WIN32)
+  struct Discard {
+    int fd_;
+    const LineRead& result_;
+    ~Discard() {
+      if (result_.status_ == ReadStatus::INTERRUPTED || result_.status_ == ReadStatus::FAILED) {
+        discard_input(fd_);
+      }
+    }
+  } discard{fd, result};
+#endif
 #if defined(_WIN32)
   (void)fd;
   (void)whole;
@@ -198,6 +226,7 @@ inline LineRead ask(int fd, std::ostream& prompts, const std::string& prompt, bo
   prompts << prompt << std::flush;
   if (!quiet.on()) {
     prompts << "\n";
+    discard_input(fd);
     return {};
   }
   return read_input(fd, false);
