@@ -6,3 +6,4 @@ bars.time_format=iso
 bars.open_point=true
 replay.market=us
 replay.cash=1000000
+replay.fill=decision-close

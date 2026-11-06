@@ -19,7 +19,7 @@
   "rejection_reasons": {},
   "pricing_refused": 0,
   "pricing_refusal_reasons": {},
-  "caveats": {"gaps": 0, "unfilled": 0, "expired": 0, "unvalued_bars": 0, "multiple_instruments": false, "cost_totals_incomplete": false, "volume_ignored": true, "lowest_cash": null, "shorts_borrow_nothing": true, "market_price_rule": "decision_close", "market_fills_by_rule": 26},
+  "caveats": {"gaps": 0, "unfilled": 0, "expired": 0, "unvalued_bars": 0, "multiple_instruments": false, "cost_totals_incomplete": false, "volume_ignored": true, "lowest_cash": null, "shorts_borrow_nothing": true, "market_price_rule": "decision-close", "market_fills_by_rule": 26},
   "first_bar": "2021-02-01T00:00:00Z",
   "last_bar": "2021-11-30T00:00:00Z"
 }

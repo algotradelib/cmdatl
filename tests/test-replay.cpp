@@ -635,6 +635,29 @@ TEST_CASE("replay main: a market-price rule prices market orders and the report 
   );
 }
 
+TEST_CASE("replay main: replay.fill names the library's decision-close rule, and nothing else") {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", flat_bars({100, 110, 120}));
+  runtest::script().decisions_[2] = runtest::Decision{1, "1", true};
+  std::vector<std::string> args{
+    "bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "output.fills=" + dir.at("f.csv"),
+    "replay.fill=decision-close"
+  };
+  const auto ruled = replay_main<runtest::Program>(args);
+  INFO(ruled.err_);
+  REQUIRE(ruled.exit_ == 0);
+  // Decided on the second bar, filled against the third at the second's close.
+  CHECK(slurp(dir.at("f.csv")).find("AAA,buy,1,110,") != std::string::npos);
+  CHECK(
+    ruled.out_.find(", \"market_price_rule\": \"decision-close\", \"market_fills_by_rule\": 1}") != std::string::npos
+  );
+  args.back() = "replay.fill=next-close";
+  const auto unknown = replay_main<runtest::Program>(args);
+  CHECK(unknown.exit_ == 1);
+  CHECK(unknown.err_ == "error: replay.fill: 'next-close' is neither next-open nor decision-close\n");
+}
+
 TEST_CASE("replay main: a limit never reached expires with its session and the last is still queued") {
   const FreshScript fresh;
   Scratch dir;

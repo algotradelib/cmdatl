@@ -71,6 +71,12 @@ inline std::optional<std::pair<std::string, std::string>> spec_refusal(const std
       std::string("replay.shorts"), std::string("a run keeps the sellable check on: remove [replay] shorts")
     );
   }
+  if (atlc_value(args, "replay.fill").value_or("next-open") != "next-open") {
+    return std::make_pair(
+      std::string("replay.fill"),
+      std::string("a market-price rule prices a backtest's fills; a run's fills are the market's: remove [replay] fill")
+    );
+  }
   if (atlc_value(args, "bars.open_point").value_or("false") == "true") {
     return std::make_pair(
       std::string("bars.open_point"),

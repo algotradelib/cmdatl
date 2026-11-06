@@ -487,8 +487,8 @@ TEST_CASE(
     // The driver's own bytes and arguments: a stand-in records both, then runs the driver cmdatl built.
     const auto structure = struct_of(equip->atlc_, (examples / (std::string(name) + ".atls")).string());
     REQUIRE(!structure.empty());
-    // The universe example prices market orders by its decision-close rule, so its driver is built with it.
-    const auto driver = backtest_driver(structure, std::string(name) == "universe" ? "decision_close" : "");
+    // The universe example's decision-close rule is the library's, named by an argument: no driver of its own.
+    const auto driver = backtest_driver(structure);
     REQUIRE(!driver.empty());
     const auto stand_in = dir.path() / (std::string(name) + ".sh");
     spit(
@@ -722,8 +722,19 @@ TEST_CASE("the replay fixtures recorded from atlc run are strategy backtest's by
   const auto fixture = [&dir](const std::string& file) {
     return with_dir(slurp(replay_fixtures() / file), dir.path().string());
   };
-  // The wide tables at the decision close (the fixture's market-price rule), and limits on the KRX grid with their fills.
+  // The wide tables at the decision close (`replay.fill`), and limits on the KRX grid with their fills.
   REQUIRE(report_of({at("wide.toml")}) == boost::json::parse(fixture("wide.json")));
+  // The same price by a header rule of one's own: the same report but for the rule's name, the header's function.
+  auto by_header = slurp(at("wide.toml"));
+  const std::string preset = "fill = \"decision-close\"\n";
+  REQUIRE(by_header.find(preset) != std::string::npos);
+  by_header.replace(
+    by_header.find(preset), preset.size(), "fill_header = \"decision-close.hpp\"\nfill_function = \"decision_close\"\n"
+  );
+  spit(dir.path() / "wide-header.toml", by_header);
+  auto header_report = boost::json::parse(fixture("wide.json"));
+  header_report.as_object()["caveats"].as_object()["market_price_rule"] = "decision_close";
+  REQUIRE(report_of({at("wide-header.toml")}) == header_report);
   REQUIRE(
     report_of({at("limit.toml"), "--fills", at("limit-cmdatl.csv")}) == boost::json::parse(fixture("limit.json"))
   );
@@ -733,15 +744,13 @@ TEST_CASE("the replay fixtures recorded from atlc run are strategy backtest's by
   const auto driver = backtest_driver(structure);
   REQUIRE(!driver.empty());
   check_replay_includes(driver);
-  // The wide spec's rule makes a shape of its own.
+  // A header rule makes a shape of its own; `replay.fill` does not.
   const auto ruled = backtest_driver(structure, "decision_close");
   REQUIRE(!ruled.empty());
   CHECK(ruled != driver);
   for (const auto* name : {"wide", "limit"}) {
     INFO(name);
-    const auto recorded = through_stand_in(
-      dir.path(), name, std::string(name) == "wide" ? ruled : driver, {at(std::string(name) + ".toml")}
-    );
+    const auto recorded = through_stand_in(dir.path(), name, driver, {at(std::string(name) + ".toml")});
     CHECK(recorded.exit_ == 0);
     CHECK(recorded.out_ == fixture(std::string(name) + ".json"));
     CHECK(recorded.args_ == lines_of(fixture(std::string(name) + ".args")));

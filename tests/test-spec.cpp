@@ -259,6 +259,8 @@ TEST_CASE("values are checked key by key, each error at its file and line") {
     {"[replay]\nfrom = 20230230", "a date"},
     {"[replay]\nfrom = \"2023-13-01\"", "a date"},
     {"[replay]\nmarket = \"jp\"", "one of \"us\", \"kr\""},
+    {"[replay]\nfill = \"legs\"", "one of \"next-open\", \"decision-close\""},
+    {"[replay]\nfill = \"open-prev-close\"", "one of \"next-open\", \"decision-close\""},
     {"[bars]\nstore = \"kis/1d\"", "is not a store coordinate"},
     {"[bars]\nstore = \"kis/2d/005930\"", "the interval is one of"},
     {"[bars]\nstore = [\"a/1d/x\", 3]", "a string or a list of strings"},
@@ -751,7 +753,10 @@ TEST_CASE("open points match the program and the data") {
       "for Korean bars, set replay.market"},
     {"[bars]\nsource = \"csv\"\nfile = \"c\"\nsymbol = \"A\"\ninterval = \"1m\"\n[replay]\nmarket = \"us\"", &session,
       "daylight saving"},
-    {"[bars]\nfile = \"c\"\n[replay]\nfill = \"next-open\"", &plain, "replay.fill was removed"},
+    {"[bars]\nfile = \"c\"\n[replay]\nfill = \"decision-close\"\nfill_header = \"r.hpp\"\nfill_function = \"f\"",
+      &plain, "give one of the two"},
+    {"[bars]\nfile = \"c\"\n[replay]\nfill = \"decision-close\"\n[orders]\ntype = \"limit\"", &plain,
+      "`replay.fill` = \"decision-close\" prices market orders"},
     {"[bars]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"", &plain, "give both `replay.fill_header`"},
     {"[bars]\nfile = \"c\"\n[replay]\nfill_function = \"f\"", &plain, "give both `replay.fill_header`"},
     {"[bars]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"a-b\"", &plain,
@@ -779,10 +784,15 @@ TEST_CASE("a market-price rule is a build setting, never a driver argument") {
   CHECK(has(r.resolved_.fill_header_, "rules/close.hpp"));
   CHECK_FALSE(r.arg("replay.fill_header"));
   CHECK_FALSE(r.arg("replay.fill_function"));
-  // The bar rewrite is gone, and so is replay.fill.
-  const auto old = run(WIDE_SPEC + "[replay]\nfill = \"open-prev-close\"\n", plain);
-  REQUIRE(old.errors_.size() == 1);
-  CHECK(has(old.errors_.front(), "replay.fill was removed"));
+  // replay.fill names the library's rule, a driver argument that builds nothing.
+  const auto preset = run(WIDE_SPEC + "[replay]\nfill = \"decision-close\"\n", plain);
+  REQUIRE(preset.errors_.empty());
+  CHECK(preset.arg("replay.fill") == std::optional<std::string>("decision-close"));
+  CHECK(preset.resolved_.fill_header_.empty());
+  // Stated as the default, it goes with a header rule.
+  const auto stated =
+    run(WIDE_SPEC + "[replay]\nfill = \"next-open\"\nfill_header = \"r.hpp\"\nfill_function = \"f\"\n", plain);
+  CHECK(stated.errors_.empty());
 }
 
 TEST_CASE("a market-price rule comes from the spec file, not the command line") {

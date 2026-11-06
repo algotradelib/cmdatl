@@ -141,7 +141,7 @@ inline const std::vector<Key>& keys() {
     {"replay.min_commission", Kind::NUMBER, {}, {}, 0, false},
     {"replay.sell_tax", Kind::NUMBER, {}, {}, 0, false},
     {"replay.slippage_ticks", Kind::COUNT, {}, {}},
-    {"replay.fill", Kind::TEXT, {}, {}},
+    {"replay.fill", Kind::CHOICE, {}, {"next-open", "decision-close"}},
     {"replay.fill_header", Kind::PATH, {}, {}},
     {"replay.fill_function", Kind::TEXT, {}, {}},
     {"replay.shorts", Kind::BOOL, {}, {}},
@@ -1340,19 +1340,26 @@ inline std::vector<Error> resolve(
     const auto* e = get(key);
     return e == nullptr ? Error::nowhere(message) : Error::at(e->origin_, message);
   };
-  // replay.fill is gone: the price is the default (the next bar's open) or a market-price rule, and when a program
-  // decides is the program's (on_open and on_close follow the session; bars.open_point for daily bars).
-  if (const auto* e = get("replay.fill")) {
-    const auto value = e->value_.text();
-    std::string instead =
-      "a market order fills at the next bar's open, or at the price a rule names: remove it, and give "
-      "`replay.fill_header` and `replay.fill_function` (a decision-close rule for the textbook close)";
-    if (value == "next-open") {
-      instead = "it was the default: remove the key";
-    } else if (value == "legs") {
-      instead = "on_open and on_close follow the session: remove it, and set `bars.open_point = true` for daily bars";
+  // replay.fill names a rule the library ships, and a header one of one's own: one rule per backtest.
+  if (const auto* e = get("replay.fill"); e != nullptr && e->value_.text() != "next-open") {
+    if (get("replay.fill_header") != nullptr || get("replay.fill_function") != nullptr) {
+      errors.push_back(
+        Error::at(
+          e->origin_,
+          "`replay.fill` = \"" + e->value_.text() +
+            "\" and `replay.fill_header` both price market orders: give one of the two"
+        )
+      );
     }
-    errors.push_back(Error::at(e->origin_, "replay.fill was removed; " + instead));
+    if (text("orders.type").value_or("market") == "limit") {
+      errors.push_back(
+        Error::at(
+          e->origin_,
+          "`replay.fill` = \"" + e->value_.text() +
+            "\" prices market orders, and orders.type = \"limit\" sends none: remove it or use market orders"
+        )
+      );
+    }
   }
   // The market-price rule: a header and the function it declares, both or neither.
   const auto* fill_header = get("replay.fill_header");

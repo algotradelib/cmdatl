@@ -72,6 +72,8 @@ TEST_CASE("the market settings a run refuses before anything is built") {
   CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.store=kis/krx"})->first == "bars.store");
   CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.shorts=true"})->first == "replay.shorts");
   CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.open_point=true"})->first == "bars.open_point");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.fill=decision-close"})->first == "replay.fill");
+  CHECK(!cmdatl::spec_refusal({"replay.market=kr", "replay.fill=next-open"}));
   // The last value wins, as atlc's settings read it.
   CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}));
 }
@@ -686,6 +688,13 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     const auto plain_message = std::string(plain.reply_.at("error").as_object().at("message").as_string());
     // Refused at the spec (a rule with limit orders) or by the run (a rule at all): either names the rule.
     CHECK(plain_message.find("rule") != std::string::npos);
+    // So is the library's rule, named on the command line: refused by the check the run's driver repeats.
+    spit(fixture.dir() / "preset.toml", "strategy = \"plain.atls\"\n" + spec.substr(spec.find('\n')));
+    const auto preset = run_process({(fixture.dir() / "preset.toml").string(), "replay.fill=decision-close"});
+    INFO(preset.out_);
+    CHECK(preset.exit_ == 2);
+    CHECK(run_code(preset) == "spec.invalid");
+    CHECK(preset.reply_.at("key").as_string() == "replay.fill");
   }
   {
     // A program with on_fill: the build succeeds and the driver refuses it, exit 5.
