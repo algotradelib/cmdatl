@@ -251,7 +251,8 @@ int main(int argc, char** argv) {
 - It prints the report on stdout, or one `error:` line on stderr and exits 1.
 - It includes algotradelib and nothing else of cmdatl: compile with `-I<prefix>/include` and `-I` the directory given to `--emit-runtime` (here `.`, for the `atls/` headers the strategy includes), beside algotradelib's own flags, and with `-ffp-contract=off` on GCC for cmdatl's numbers.
 - To read a Parquet store, define `CMDATL_DUCKDB` and link DuckDB's C library.
-- To price market orders by your own rule, pass a third argument that returns the fill model to use, as a run spec's `fill_header` under `[replay]` does: `cmdatl::replay::main<atls::Dip>(argc, argv, [](auto model) { return model.with_market_price("decision_close", decision_close); })`.
+- It reads `replay.fill=decision-close` as a run spec's `fill` under `[replay]`.
+  To price market orders by your own rule, pass a third argument that returns the fill model to use, as a run spec's `fill_header` does: `cmdatl::replay::main<atls::Dip>(argc, argv, [](auto model) { return model.with_market_price("typical_price", typical_price); })`.
 
 ## Guides and skills
 

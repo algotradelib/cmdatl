@@ -168,31 +168,32 @@ timezone = "UTC"
 | `replay.min_commission` | number, 0 or more | 0 | the least commission of a fill |
 | `replay.sell_tax` | number, 0 or more | 0 | the tax, a rate of each sell's value |
 | `replay.slippage_ticks` | whole number, 0 to 1e9 | 0 | slippage, in ticks |
-| `replay.fill_header` | path, in the spec file only | none | a C++ header declaring a market-price rule (below); with `replay.fill_function` |
+| `replay.fill` | `"next-open"` or `"decision-close"` | `"next-open"` | the price of a market order (below) |
+| `replay.fill_header` | path, in the spec file only | none | a C++ header declaring a market-price rule of your own (below); with `replay.fill_function` |
 | `replay.fill_function` | a C++ name, such as `decision_close` or `rules::decision_close`, in the spec file only | none | the rule the header declares; with `replay.fill_header` |
 | `replay.shorts` | boolean | `false` | whether a position may go below zero; no borrow is modelled |
 | `replay.periods_per_year` | number above 0 | 252 | bars a year, for the annualized Sharpe ratio |
 
-A market order fills against the bar after its decision, at that bar's open, unless the run names a market-price rule.
-A limit order fills when that bar reaches its limit, whichever is set.
-`replay.fill` was removed: a spec naming it is refused, with a pointer to the rule and to `bars.open_point`.
+A market order fills against the bar after its decision, at the price `replay.fill` names:
 
-A market-price rule chooses the price of a market order, in place of the next bar's open.
-It is a C++ function in a header of your own, compiled into the driver with the program:
+| `fill` | A market order fills at | As in |
+| --- | --- | --- |
+| `next-open` | that bar's open | backtrader's and backtesting.py's default |
+| `decision-close` | the price it was decided on: the close of the bar the program decided on (the open in `on_open` with `bars.open_point`), or the quote; with no price yet, that bar's open | backtrader's cheat-on-close, backtesting.py's `trade_on_close` |
 
-```cpp
-// decision-close.hpp: the textbook convention, a market order fills at the close it was decided on.
-#pragma once
-#include <algotradelib/backtest>
-inline std::optional<algotradelib::Decimal64> decision_close(const algotradelib::backtest::MarketPriceInput& in) {
-  return in.decision_price_ ? in.decision_price_ : in.next_.bar_.open_;
-}
-```
+`decision-close` is the textbook convention, and optimistic: the program trades at a price it has already seen, which a market cannot give, since a closing-auction order is sent before the closing price is known.
+The price is the instrument's last one when the program decided, so it can be days old after a gap in that instrument's data.
+It is the library's `MarketPrice::DECISION_CLOSE`; the report's `caveats` name it (`market_price_rule`) and count its fills (`market_fills_by_rule`).
+A limit order fills when that bar reaches its limit, whatever `fill` says.
+`fill` is a driver argument: changing it builds nothing, and it may be given on the command line (`replay.fill=decision-close`).
+Other than `next-open`, it needs market orders (with `orders.type = "limit"` it is refused) and no rule of your own.
+
+A market-price rule of your own chooses any other price: a C++ function in a header of your own, compiled into the driver with the program, such as the fill bar's typical price (`examples/typical-price.hpp`):
 
 ```toml
 [replay]
-fill_header = "decision-close.hpp"
-fill_function = "decision_close"
+fill_header = "typical-price.hpp"
+fill_function = "typical_price"
 ```
 
 The function gets the order (`order_`), the price it was decided on (`decision_price_`: the close of the bar, or the quote, the program decided on; empty when it had none), when it was decided (`decided_at_`), the bar the order fills against (`next_`) and the price grid (`rule_`), and returns a price, or nothing to leave a day order for a later bar of its session.
@@ -216,12 +217,12 @@ A function of the wrong signature fails the build with one line naming the expec
 A program with `on_open` or `on_close` follows the market's session, stated by `replay.market` or inferred as for any replay, and on daily bars needs `bars.open_point = true`: a daily bar is a whole session, and `on_open`'s targets would be replaced by `on_close`'s on the same bar.
 On US intraday bars, the market stated or inferred, it is refused until the session follows daylight saving (Korean bars in a CSV need `replay.market = "kr"`, since a CSV's market is `us` by default).
 A replay in which such a program met no session's open or close fails, naming the market and the interval; the report gives `sessions_opened` and `sessions_closed`, and `caveats.open_points` when `bars.open_point` is set.
-With the decision-close rule, a target stated in `on_open` fills at the open it saw and one in `on_close` at the close it saw; without a rule, at the next bar's open.
+With `fill = "decision-close"`, a target stated in `on_open` fills at the open it saw and one in `on_close` at the close it saw; with `next-open`, at the next bar's open.
 A fill is dated at the bar it fills against: an `on_close` exit at the next session's first bar, so the last session's exit does not fill.
 With `bars.open_point` a day is two bars and two equity points, so set `replay.periods_per_year` to twice the trading days (504) for the annualized ratios.
 A `DAY` order still resting at an open point (a rule that named no price there) expires with it, since a daily bar ends its session.
 
-A run (`cmdatl run`) takes neither a program with `on_open` or `on_close`, nor a market-price rule, nor `bars.open_point`.
+A run (`cmdatl run`) takes neither a program with `on_open` or `on_close`, nor `replay.fill` other than `next-open`, nor a market-price rule of your own, nor `bars.open_point`: a run's orders fill at the market.
 
 ### `[params]`
 
