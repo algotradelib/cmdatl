@@ -23,6 +23,7 @@ If `env` says anything else, stop and ask: this guide covers paper only.
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
 The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed` or `<stem>.release`, or the account's state directory.
 A missing armed file (`refused.not_armed`) is the operator's decision: quote it and ask.
+Broker logins are the operator's too: `cmdatl auth status` lists them, masked, and sends nothing; never run `cmdatl auth login` or `cmdatl auth logout`, and never ask for or handle a key or secret.
 
 ## Read first
 
