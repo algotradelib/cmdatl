@@ -4,11 +4,14 @@
 
 #include "support.hpp"
 
+#include <algorithm>
 #include <cerrno>
 #include <csignal>
+#include <iterator>
 #include <map>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -42,6 +45,8 @@ public:
   auth::StoreStatus fail_{auth::StoreStatus::OK};
   /** @brief An answer only `put` gives, unless `OK`. */
   auth::StoreStatus fail_put_{auth::StoreStatus::OK};
+  /** @brief An answer only `get` gives, unless `OK`. */
+  auth::StoreStatus fail_get_{auth::StoreStatus::OK};
   /** @brief How many times `put` was called. */
   int puts_{0};
 
@@ -63,8 +68,8 @@ public:
   }
 
   auth::StoreAnswer get(const std::string& name) override {
-    if (fail_ != auth::StoreStatus::OK) {
-      return {fail_, {}, "test"};
+    if (fail_ != auth::StoreStatus::OK || fail_get_ != auth::StoreStatus::OK) {
+      return {fail_ != auth::StoreStatus::OK ? fail_ : fail_get_, {}, "test"};
     }
     const auto found = items_.find(name);
     if (found == items_.end()) {
@@ -331,6 +336,14 @@ TEST_CASE("auth login answers a locked or failing store, and no store at all") {
   put_locked.fail_put_ = auth::StoreStatus::LOCKED;
   CHECK(code(login_with(put_locked, "kis", "demo", kis_document())) == "auth.store_locked");
   CHECK(put_locked.items_.empty());
+  // A store that fails while storing cannot say whether it stored: the reply does not claim nothing changed.
+  MemoryStore put_failing;
+  put_failing.fail_put_ = auth::StoreStatus::UNAVAILABLE;
+  const auto uncertain = login_with(put_failing, "kis", "demo", kis_document());
+  CHECK(code(uncertain) == "auth.no_store");
+  const auto message = std::string(uncertain.body_.at("error").at("message").as_string());
+  CHECK(message.find("did not confirm") != std::string::npos);
+  CHECK(message.find("nothing changed") == std::string::npos);
 
   std::ostringstream prompts;
   const Input in(kis_document());
@@ -379,6 +392,15 @@ TEST_CASE("auth status shows the stored logins masked, and which variables are s
 
   CHECK(code(auth::status({std::string("nobroker"), std::nullopt}, &store)) == "usage.bad_value");
   CHECK(code(auth::status({std::nullopt, std::string("paper")}, &store)) == "usage.bad_value");
+
+  store.fail_get_ = auth::StoreStatus::LOCKED;
+  reply = auth::status({}, &store);
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(reply.body_.at("logins").as_array()[0].at("locked").as_bool());
+  CHECK_FALSE(reply.body_.at("logins").as_array()[0].as_object().contains("key"));
+  store.fail_get_ = auth::StoreStatus::UNAVAILABLE;
+  CHECK(code(auth::status({}, &store)) == "auth.no_store");
+  store.fail_get_ = auth::StoreStatus::OK;
 
   store.fail_ = auth::StoreStatus::LOCKED;
   CHECK(code(auth::status({}, &store)) == "auth.store_locked");
@@ -434,6 +456,8 @@ public:
     REQUIRE(pid_ >= 0);
     if (pid_ == 0) {
       cmdatl::handle_signals();
+      termios before{};
+      ::tcgetattr(0, &before);
       FileStore store(dir);
       Reply reply;
       if (logout) {
@@ -443,7 +467,28 @@ public:
       }
       termios now{};
       const bool echo = ::tcgetattr(0, &now) == 0 && (now.c_lflag & ECHO) != 0;
-      std::cerr << "\n[echo " << (echo ? "on" : "off") << "] [code " << code(reply) << "]\n" << std::flush;
+      const bool same = now.c_iflag == before.c_iflag && now.c_oflag == before.c_oflag &&
+        now.c_cflag == before.c_cflag && now.c_lflag == before.c_lflag &&
+        std::equal(std::begin(now.c_cc), std::end(now.c_cc), std::begin(before.c_cc));
+      // What a later reader of the terminal (the shell) would get: typed bytes the login left unread.
+      termios raw = now;
+      raw.c_lflag &= ~static_cast<tcflag_t>(ICANON | ECHO);
+      raw.c_cc[VMIN] = 0;
+      raw.c_cc[VTIME] = 0;
+      ::tcsetattr(0, TCSANOW, &raw);
+      std::size_t left = 0;
+      pollfd ready{0, POLLIN, 0};
+      while (::poll(&ready, 1, 200) > 0) {
+        char byte = 0;
+        if (::read(0, &byte, 1) != 1) {
+          break;
+        }
+        ++left;
+      }
+      std::cerr
+        << "\n[echo " << (echo ? "on" : "off") << "] [termios " << (same ? "same" : "changed") << "] [left " << left
+        << "] [code " << code(reply) << "]\n"
+        << std::flush;
       std::_Exit(static_cast<int>(reply.exit_));
     }
   }
@@ -706,9 +751,53 @@ TEST_CASE("auth login on a terminal stops on a signal or the end of input, echo 
       child.signal(how == "sigint" ? SIGINT : (how == "sigterm" ? SIGTERM : SIGHUP));
     }
     CHECK(child.finish() == 130);
-    CHECK(child.transcript().find("[echo on]") != std::string::npos);
+    CHECK(child.transcript().find("[echo on] [termios same] [left 0]") != std::string::npos);
     CHECK(child.transcript().find("[code interrupted]") != std::string::npos);
     CHECK(std::filesystem::is_empty(dir.path()));
+  }
+  SECTION("a secret half typed when a signal arrives is discarded, not left for the shell") {
+    for (const int sig : {SIGTERM, SIGINT, SIGHUP}) {
+      INFO(sig);
+      const ScratchDir dir;
+      TerminalLogin child(dir.path(), request);
+      REQUIRE(child.wait_for("App key: "));
+      child.type(KEY);
+      REQUIRE(child.wait_for("Secret key: "));
+      child.press(SECRET);
+      // The bytes reach the terminal's input queue before the signal; the login has not read them (no line break).
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      child.signal(sig);
+      CHECK(child.finish() == 130);
+      CHECK(child.transcript().find("[echo on] [termios same] [left 0]") != std::string::npos);
+      CHECK(child.transcript().find(SECRET) == std::string::npos);
+      CHECK(std::filesystem::is_empty(dir.path()));
+    }
+  }
+  SECTION("the end of input at a hidden prompt") {
+    const ScratchDir dir;
+    TerminalLogin child(dir.path(), request);
+    REQUIRE(child.wait_for("App key: "));
+    child.type(KEY);
+    REQUIRE(child.wait_for("Secret key: "));
+    child.press("\x04");
+    CHECK(child.finish() == 1);
+    CHECK(child.transcript().find("[echo on] [termios same]") != std::string::npos);
+    CHECK(child.transcript().find("[code auth.no_answer]") != std::string::npos);
+    CHECK(std::filesystem::is_empty(dir.path()));
+  }
+  SECTION("a signal at a visible prompt and at a choice") {
+    for (const bool choice : {false, true}) {
+      INFO(choice);
+      const ScratchDir dir;
+      TerminalLogin child(dir.path(), choice ? auth::LoginRequest{} : request);
+      REQUIRE(child.wait_for(choice ? "Choose 1-3: " : "App key: "));
+      child.press("half");
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      child.signal(SIGTERM);
+      CHECK(child.finish() == 130);
+      CHECK(child.transcript().find("[echo on] [termios same] [left 0]") != std::string::npos);
+      CHECK(std::filesystem::is_empty(dir.path()));
+    }
   }
   SECTION("the end of input at a prompt") {
     const ScratchDir dir;

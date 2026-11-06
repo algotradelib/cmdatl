@@ -128,9 +128,18 @@ inline json::object login_row(const Broker& broker, bool demo, const json::objec
  * @param kind The store's kind.
  * @param status How it answered.
  * @param detail Why.
+ * @param change Whether it failed storing or removing, so whether the change happened is not known.
  * @return The reply.
  */
-inline Reply store_failure(const std::string& kind, StoreStatus status, const std::string& detail) {
+inline Reply store_failure(
+  const std::string& kind, StoreStatus status, const std::string& detail, bool change = false
+) {
+  if (change && status == StoreStatus::UNAVAILABLE) {
+    return error_reply(
+      Exit::FAILED, "auth.no_store", "the " + kind + " did not confirm the change (" + detail + ")",
+      "cmdatl auth status shows what is stored"
+    );
+  }
   if (status == StoreStatus::LOCKED) {
     return error_reply(
       Exit::FAILED, "auth.store_locked",
@@ -227,11 +236,6 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
   const Broker* broker = nullptr;
   if (request.broker_) {
     broker = find_broker(*request.broker_);
-    if (broker == nullptr) {
-      return error_reply(
-        Exit::USAGE, "usage.bad_value", "no broker " + *request.broker_, "the brokers are: " + broker_names()
-      );
-    }
   } else if (terminal) {
     std::vector<std::string> choices;
     for (const auto& entry : brokers()) {
@@ -262,9 +266,6 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
       );
     }
   } else if (request.env_) {
-    if (*request.env_ != "demo" && *request.env_ != "real") {
-      return error_reply(Exit::USAGE, "usage.bad_value", "--env is demo or real");
-    }
     demo = *request.env_ == "demo";
   } else if (terminal) {
     std::size_t chosen = 0;
@@ -367,7 +368,7 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
   }
   const auto stored = store->put(name, text);
   if (stored.status_ != StoreStatus::OK) {
-    return store_failure(store->kind(), stored.status_, stored.detail_);
+    return store_failure(store->kind(), stored.status_, stored.detail_, true);
   }
   Reply reply;
   reply.body_ = login_row(*broker, demo, canonical, store->kind());
@@ -456,6 +457,9 @@ inline Reply status(const LoginFilter& filter, CredentialStore* store) {
     if (found.status_ == StoreStatus::NOT_FOUND) {
       continue;
     }
+    if (found.status_ == StoreStatus::UNAVAILABLE) {
+      return store_failure(store->kind(), found.status_, found.detail_);
+    }
     json::object row;
     if (found.status_ == StoreStatus::OK) {
       boost::system::error_code ec;
@@ -533,7 +537,7 @@ inline Reply logout(const LoginFilter& filter, int in, std::ostream& prompts, Cr
     return error_reply(Exit::FAILED, "auth.not_found", "no stored login " + name + "; nothing changed");
   }
   if (removed.status_ != StoreStatus::OK) {
-    return store_failure(store->kind(), removed.status_, removed.detail_);
+    return store_failure(store->kind(), removed.status_, removed.detail_, true);
   }
   Reply reply;
   reply.body_["removed"] = name;
