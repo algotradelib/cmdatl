@@ -62,8 +62,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"file.unwritable", Exit::FAILED, false, "check the directory and its permissions"},
     {"usage.bad_value", Exit::USAGE, false, "cmdatl COMMAND --help shows what each argument takes"},
     {"auth.no_store", Exit::FAILED, false,
-      "a login needs the system's credential store: the operator can install one (libsecret and a Secret Service on "
-      "Linux)"},
+      "a login needs the system's credential store: in this version, the macOS keychain only"},
     {"auth.store_locked", Exit::FAILED, false,
       "the operator can approve or unlock it from a local graphical login session: cmdatl auth status there once"},
     {"auth.not_found", Exit::FAILED, false, "cmdatl auth status lists the stored logins"},

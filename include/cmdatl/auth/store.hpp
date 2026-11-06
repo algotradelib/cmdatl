@@ -50,7 +50,7 @@ public:
 
   /**
    * @brief Names the store, for `auth status`.
-   * @return `keychain` or `secret-service`.
+   * @return `keychain`.
    */
   virtual std::string kind() const = 0;
 

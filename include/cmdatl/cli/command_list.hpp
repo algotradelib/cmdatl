@@ -135,9 +135,9 @@ inline std::vector<Command> command_list() {
       "broker's fields (KIS: app key, app secret, account number, product code; Kiwoom: app key, secret key;\n"
       "Toss: client id, client secret), secrets without echo. --with-secret reads the broker's JSON credential\n"
       "document from standard input instead. The document is checked with the library's loaders and kept in the\n"
-      "macOS keychain or the Secret Service, one login per broker and environment. Nothing is sent to the broker:\n"
-      "the key is first used, and so first checked, by a demo or real run. Without a terminal nothing is asked.\n"
-      "A macOS keychain dialog is the system's: a signal does not dismiss it."
+      "macOS keychain (no other store in this version), one login per broker and environment. Nothing is sent to\n"
+      "the broker: the key is first used, and so first checked, by a demo or real run. Without a terminal nothing\n"
+      "is asked. A macOS keychain dialog is the system's: a signal does not dismiss it."
     )
     .option("broker", "NAME", "kis, kiwoom or toss; asked on a terminal when not given")
     .option("env", "ENV", "demo or real, for a broker with a demo; asked on a terminal when not given")
@@ -147,7 +147,7 @@ inline std::vector<Command> command_list() {
     .returns("environment", "demo or real")
     .returns("key", "the key, masked")
     .returns("account", "the account number, masked, for a broker whose login has one (KIS)")
-    .returns("store", "keychain or secret-service")
+    .returns("store", "keychain")
     .returns("checked", "false: the broker has not seen the login")
     .returns("replaced", "whether a stored login was replaced")
     .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
@@ -168,7 +168,7 @@ inline std::vector<Command> command_list() {
     .example("cmdatl auth status --broker kis --env demo")
     .option("broker", "NAME", "only this broker's logins")
     .option("env", "ENV", "only demo or only real logins")
-    .returns("store", "keychain or secret-service, or null where cmdatl has no credential store")
+    .returns("store", "keychain, or null where cmdatl has no credential store")
     .returns(
       "logins",
       "one per stored login: broker, environment, key (masked), account (masked, KIS), store, checked, and locked "

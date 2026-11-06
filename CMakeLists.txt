@@ -167,21 +167,9 @@ add_dependencies(cmdatl_core cmdatl_driver_files)
 target_compile_definitions(cmdatl_core INTERFACE CMDATL_ALGOTRADELIB_DIR="${algotradelib_DIR}")
 target_link_libraries(cmdatl_core INTERFACE algotradelib::algotradelib CLI11::CLI11 cmdatl_toml)
 target_compile_definitions(cmdatl_core INTERFACE CMDATL_VERSION="${PROJECT_VERSION}")
-# The credential store `cmdatl auth` keeps logins in: the macOS keychain, or the Secret Service through libsecret on
-# Linux when it is installed (without it, auth login refuses with auth.no_store).
+# The credential store `cmdatl auth` keeps logins in: the macOS keychain (no other store in this version).
 if(APPLE)
   target_link_libraries(cmdatl_core INTERFACE "-framework Security" "-framework CoreFoundation")
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  find_package(PkgConfig QUIET)
-  if(PkgConfig_FOUND)
-    pkg_check_modules(CMDATL_LIBSECRET IMPORTED_TARGET libsecret-1)
-  endif()
-  if(CMDATL_LIBSECRET_FOUND)
-    target_link_libraries(cmdatl_core INTERFACE PkgConfig::CMDATL_LIBSECRET)
-    target_compile_definitions(cmdatl_core INTERFACE CMDATL_LIBSECRET=1)
-  else()
-    message(STATUS "cmdatl: libsecret-1 not found; auth login will have no credential store")
-  endif()
 endif()
 
 add_executable(cmdatl src/main.cpp)

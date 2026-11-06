@@ -6,7 +6,6 @@
 #include "../system/terminal.hpp"
 #include "./brokers.hpp"
 #include "./keychain.hpp"
-#include "./secret_service.hpp"
 #include "./store.hpp"
 
 #include <algorithm>
@@ -40,7 +39,7 @@ struct LoginFilter {
   std::optional<std::string> env_;
 };
 
-#if !defined(__APPLE__) && !defined(CMDATL_LIBSECRET)
+#if !defined(__APPLE__)
 /**
  * @brief Whether the session can show a dialog; no store on this platform, so never.
  * @return False.
@@ -60,16 +59,13 @@ inline bool interaction_allowed(int fd) {
 }
 
 /**
- * @brief The system's credential store: the macOS keychain, or the Secret Service on Linux when cmdatl was built
- *   with libsecret.
+ * @brief The system's credential store: the macOS keychain; none elsewhere in this version.
  * @param interaction Whether the store may show its own dialogs.
  * @return The store, or null where there is none.
  */
 inline std::unique_ptr<CredentialStore> open_store(bool interaction) {
 #if defined(__APPLE__)
   return std::make_unique<KeychainStore>(interaction);
-#elif defined(CMDATL_LIBSECRET)
-  return std::make_unique<SecretServiceStore>(interaction);
 #else
   (void)interaction;
   return nullptr;
@@ -154,8 +150,7 @@ inline Reply store_failure(const std::string& kind, StoreStatus status, const st
 inline Reply no_store_reply() {
   return error_reply(
     Exit::FAILED, "auth.no_store", "this cmdatl has no credential store, so no login can be kept; nothing changed",
-    "on Linux, install libsecret (libsecret-1-dev) and a Secret Service (GNOME Keyring or KWallet), then build cmdatl "
-    "again"
+    "logins are kept in the macOS keychain; other systems have no store in this version"
   );
 }
 
