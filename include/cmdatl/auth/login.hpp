@@ -403,12 +403,32 @@ inline bool matches(const std::string& name, const LoginFilter& filter, const Br
 }
 
 /**
+ * @brief The refusal of a filter naming no broker cmdatl has, or an environment other than demo or real.
+ * @param filter The filter.
+ * @return The refusal, or none.
+ */
+inline std::optional<Reply> filter_problem(const LoginFilter& filter) {
+  if (filter.broker_ && find_broker(*filter.broker_) == nullptr) {
+    return error_reply(
+      Exit::USAGE, "usage.bad_value", "no broker " + *filter.broker_, "the brokers are: " + broker_names()
+    );
+  }
+  if (filter.env_ && *filter.env_ != "demo" && *filter.env_ != "real") {
+    return error_reply(Exit::USAGE, "usage.bad_value", "--env is demo or real");
+  }
+  return std::nullopt;
+}
+
+/**
  * @brief `auth status`: the stored logins, masked, and which brokers' environment variables are set. Sends nothing.
  * @param filter Which logins.
  * @param store The credential store, or null where there is none.
  * @return The reply.
  */
 inline Reply status(const LoginFilter& filter, CredentialStore* store) {
+  if (auto problem = filter_problem(filter)) {
+    return std::move(*problem);
+  }
   Reply reply;
   json::object variables;
   for (const auto& broker : brokers()) {
@@ -469,6 +489,9 @@ inline Reply status(const LoginFilter& filter, CredentialStore* store) {
  * @return The reply.
  */
 inline Reply logout(const LoginFilter& filter, int in, std::ostream& prompts, CredentialStore* store) {
+  if (auto problem = filter_problem(filter)) {
+    return std::move(*problem);
+  }
   if (store == nullptr) {
     return no_store_reply();
   }

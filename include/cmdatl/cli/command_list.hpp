@@ -175,6 +175,7 @@ inline std::vector<Command> command_list() {
       "when the store would not open it"
     )
     .returns("environment_variables", "per broker, which of its environment variables are set (names only)")
+    .error("usage.bad_value")
     .error("auth.no_store")
     .error("auth.store_locked")
     .runs([](const Invocation& invocation, const Table&, Output&) {

@@ -377,6 +377,9 @@ TEST_CASE("auth status shows the stored logins masked, and which variables are s
   const auth::LoginFilter only_toss{std::string("toss"), std::nullopt};
   CHECK(auth::status(only_toss, &store).body_.at("logins").as_array().size() == 1);
 
+  CHECK(code(auth::status({std::string("nobroker"), std::nullopt}, &store)) == "usage.bad_value");
+  CHECK(code(auth::status({std::nullopt, std::string("paper")}, &store)) == "usage.bad_value");
+
   store.fail_ = auth::StoreStatus::LOCKED;
   CHECK(code(auth::status({}, &store)) == "auth.store_locked");
   reply = auth::status({}, nullptr);
@@ -397,6 +400,7 @@ TEST_CASE("auth logout removes one login, and asks which only on a terminal") {
   CHECK(store.items_.count("kis/demo") == 0);
   CHECK(code(auth::logout({std::string("kiwoom"), std::nullopt}, in.fd(), prompts, &store)) == "auth.not_found");
   CHECK(code(auth::logout({}, in.fd(), prompts, nullptr)) == "auth.no_store");
+  CHECK(code(auth::logout({std::string("kis"), std::string("x")}, in.fd(), prompts, &store)) == "usage.bad_value");
   CHECK(prompts.str().empty());
 }
 
