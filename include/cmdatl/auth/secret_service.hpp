@@ -26,8 +26,17 @@ namespace secret_detail {
  */
 inline const SecretSchema* schema() {
   static const SecretSchema value = {
-    "org.algotradelib.cmdatl", SECRET_SCHEMA_NONE,
-    {{"login", SECRET_SCHEMA_ATTRIBUTE_STRING}, {nullptr, SECRET_SCHEMA_ATTRIBUTE_STRING}}
+    "org.algotradelib.cmdatl",
+    SECRET_SCHEMA_NONE,
+    {{"login", SECRET_SCHEMA_ATTRIBUTE_STRING}, {nullptr, SECRET_SCHEMA_ATTRIBUTE_STRING}},
+    0,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
   };
   return &value;
 }
