@@ -30,7 +30,8 @@ const std::map<std::string, std::set<std::string>> ALLOWED{
   {"strategy", {"core", "system", "account"}},
   {"replay", {}},
   {"driver", {"core", "system", "paper", "account", "orders", "replay"}},
-  {"cli", {"core", "system", "paper", "account", "orders", "strategy"}},
+  {"auth", {"core", "system"}},
+  {"cli", {"core", "system", "paper", "account", "orders", "strategy", "auth"}},
 };
 
 struct Directive {

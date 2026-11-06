@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../account/reads.hpp"
+#include "../auth/login.hpp"
 #include "../core/table.hpp"
 #include "../orders/orders.hpp"
 #include "../strategy/backtest.hpp"
@@ -123,6 +124,77 @@ inline std::vector<Command> command_list() {
     .returns("modes", "the trading modes this build offers")
     .runs([](const Invocation&, const Table&, Output&) {
       return env_reply();
+    }));
+
+  add(make_command({"auth", "login"}, "Broker logins", "keep a broker's key and secret in the system's credential store")
+    .example("cmdatl auth login")
+    .example("cmdatl auth login --broker kis --env demo")
+    .example("cmdatl auth login --broker toss --with-secret --force")
+    .describe(
+      "Asks on a terminal for what is not given: the broker, demo or real (for a broker with a demo), and the\n"
+      "broker's fields (KIS: app key, app secret, account number, product code; Kiwoom: app key, secret key;\n"
+      "Toss: client id, client secret), secrets without echo. --with-secret reads the broker's JSON credential\n"
+      "document from standard input instead. The document is checked with the library's loaders and kept in the\n"
+      "macOS keychain or the Secret Service, one login per broker and environment. Nothing is sent to the broker:\n"
+      "the key is first used, and so first checked, by a demo or real run. Without a terminal nothing is asked.\n"
+      "A macOS keychain dialog is the system's: a signal does not dismiss it."
+    )
+    .option("broker", "NAME", "kis, kiwoom or toss; asked on a terminal when not given")
+    .option("env", "ENV", "demo or real, for a broker with a demo; asked on a terminal when not given")
+    .flag("with-secret", "read the broker's credential document as JSON from standard input")
+    .flag("force", "replace a stored login for the same broker and environment without asking")
+    .returns("broker", "the broker")
+    .returns("environment", "demo or real")
+    .returns("key", "the key, masked")
+    .returns("account", "the account number, masked, for a broker whose login has one (KIS)")
+    .returns("store", "keychain or secret-service")
+    .returns("checked", "false: the broker has not seen the login")
+    .returns("replaced", "whether a stored login was replaced")
+    .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
+    .error("usage.bad_value")
+    .error("usage.missing_argument")
+    .error("auth.no_store")
+    .error("auth.store_locked")
+    .error("auth.exists")
+    .error("auth.bad_document")
+    .error("auth.not_confirmed")
+    .error("auth.no_answer")
+    .error("interrupted")
+    .runs([](const Invocation& invocation, const Table&, Output& output) {
+      return auth::login_command(invocation, output);
+    }));
+  add(make_command({"auth", "status"}, "Broker logins", "the stored logins, masked; sends nothing")
+    .example("cmdatl auth status")
+    .example("cmdatl auth status --broker kis --env demo")
+    .option("broker", "NAME", "only this broker's logins")
+    .option("env", "ENV", "only demo or only real logins")
+    .returns("store", "keychain or secret-service, or null where cmdatl has no credential store")
+    .returns(
+      "logins",
+      "one per stored login: broker, environment, key (masked), account (masked, KIS), store, checked, and locked "
+      "when the store would not open it"
+    )
+    .returns("environment_variables", "per broker, which of its environment variables are set (names only)")
+    .error("auth.no_store")
+    .error("auth.store_locked")
+    .runs([](const Invocation& invocation, const Table&, Output&) {
+      return auth::status_command(invocation);
+    }));
+  add(make_command({"auth", "logout"}, "Broker logins", "remove a stored login")
+    .example("cmdatl auth logout --broker kis --env demo")
+    .option("broker", "NAME", "the login's broker")
+    .option("env", "ENV", "demo or real")
+    .returns("removed", "the login removed, such as kis/demo")
+    .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
+    .error("usage.bad_value")
+    .error("usage.missing_argument")
+    .error("auth.no_store")
+    .error("auth.store_locked")
+    .error("auth.not_found")
+    .error("auth.no_answer")
+    .error("interrupted")
+    .runs([](const Invocation& invocation, const Table&, Output& output) {
+      return auth::logout_command(invocation, output);
     }));
 
   add(make_command({"order", "plan"}, "Trade", "what would be sent; gives a plan id")

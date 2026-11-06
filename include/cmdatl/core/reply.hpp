@@ -586,6 +586,14 @@ public:
   }
 
   /**
+   * @brief stderr, for a command's questions to the person at a terminal (never the reply).
+   * @return The stream.
+   */
+  std::ostream& err() noexcept {
+    return err_;
+  }
+
+  /**
    * @brief How the caller asked to see replies.
    * @return The rendering.
    */
