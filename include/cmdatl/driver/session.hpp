@@ -164,6 +164,15 @@ public:
   }
 
   /**
+   * @brief Names the run's latched stop: once it says a stop was asked for (a disarm, a lost lock, a closed output, the
+   *   end), every later placement is refused here, even one the runner sends before it takes the stop up.
+   * @param stopping Whether a stop is latched.
+   */
+  void set_stopping(std::function<bool()> stopping) {
+    stopping_ = std::move(stopping);
+  }
+
+  /**
    * @brief Whether the order ids this boundary cancelled include one.
    * @param order_id The broker's order id.
    * @return Whether it cancelled it.
@@ -202,8 +211,11 @@ public:
     const auto phase = closed_ ? atl::strategy::MarketPhase::UNKNOWN : phase_now();
     // A stop noted since the last step refuses at once: the guard withdraws at the next step, and nothing new goes out
     // meanwhile.
-    const auto reason =
-      interrupted() ? std::optional<std::string>("signal") : placement_refusal(policy_, closed_, order, mark, phase);
+    const auto reason = interrupted() ?
+      std::optional<std::string>("signal") :
+      stopping_ && stopping_() ?
+      std::optional<std::string>("stopping") :
+      placement_refusal(policy_, closed_, order, mark, phase);
     if (reason) {
       tell("refused", order, "", *reason);
       atl::BrokerError error;
@@ -297,6 +309,7 @@ private:
   std::function<std::chrono::system_clock::time_point()> now_;
   std::function<void(const PlacementEvent&)> observer_;
   std::set<std::string> cancelled_;
+  std::function<bool()> stopping_;
   bool closed_{false};
 };
 

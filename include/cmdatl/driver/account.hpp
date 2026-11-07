@@ -406,6 +406,25 @@ int run_account(
         }
       }
     }
+    // The trading calendar, read before anything starts: the loop decides the phase from it, and a first read failing
+    // after the start would cost the first decision until its next read, hours later. The client keeps what it read.
+    {
+      const auto calendar = market.calendar(atl::Country::KR, std::nullopt);
+      if (!calendar) {
+        return run_error(
+          base, Exit::FAILED, "run.reference_unreadable",
+          "the trading calendar could not be read: " + calendar.error().message_,
+          "nothing was sent; start the run again"
+        );
+      }
+      const auto today = atl::strategy::SessionWindow::krx().local_date(now());
+      if (!calendar.value().is_trading_day(today)) {
+        return run_error(
+          base, Exit::FAILED, "run.reference_unreadable", "the trading calendar does not cover today",
+          "nothing was sent; start the run again"
+        );
+      }
+    }
     atl::runner::FileJournal journal(journal_path, scope);
     if (!journal.open()) {
       return run_error(
@@ -450,12 +469,16 @@ int run_account(
           line["order_id"] = event.order_id_;
           ++placed;
         } else {
-          ++(event.reason_ == "signal" ? signal_refused : session_refused);
+          // Refused because the run is stopping: the stop's doing, not a refused order.
+          ++(event.reason_ == "signal" || event.reason_ == "stopping" ? signal_refused : session_refused);
           line["reason"] = event.reason_;
         }
         guard.emit(std::move(line));
       }
     );
+    guarded.set_stopping([&stop]() {
+      return stop.intent().has_value();
+    });
     LastReads reads;
     RecordingSession<GuardedSession<Inner, Market>> session(guarded, run.symbols_, now, reads);
     std::optional<std::chrono::steady_clock::time_point> heartbeat;

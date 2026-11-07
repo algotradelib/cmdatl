@@ -579,12 +579,15 @@ int run_main(int argc, char** argv, Load load, Make make) {
           ledger.seen_.insert(placed.order_id_);
         } else {
           // A placement refused because the run is stopping is the stop's doing, not a refused order.
-          ++(placed.reason_ == "signal" ? signal_refused : session_refused);
+          ++(placed.reason_ == "signal" || placed.reason_ == "stopping" ? signal_refused : session_refused);
           event["reason"] = placed.reason_;
         }
         guard.emit(std::move(event));
       }
     );
+    session.set_stopping([&stop]() {
+      return stop.intent().has_value();
+    });
     std::optional<std::chrono::steady_clock::time_point> heartbeat;
     const auto after_step = [&]() {
 #if defined(CMDATL_RUN_TEST_HOOKS)
