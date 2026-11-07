@@ -83,13 +83,13 @@ inline std::string login_name(const Broker& broker, bool demo) {
 }
 
 /**
- * @brief A value masked for display: its first four characters, then `****`; only `****` for a value shorter than
+ * @brief A value masked for display: its first two characters, then `****`; only `****` for a value shorter than
  *   eight characters.
  * @param value The value.
  * @return The masked text.
  */
 inline std::string masked(const std::string& value) {
-  return value.size() >= 8 ? value.substr(0, 4) + "****" : std::string("****");
+  return value.size() >= 8 ? value.substr(0, 2) + "****" : std::string("****");
 }
 
 /**

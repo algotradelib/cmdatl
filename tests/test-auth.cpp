@@ -240,8 +240,8 @@ TEST_CASE("auth login stores each broker's canonical document, masked in the rep
   );
   CHECK(reply.body_.at("broker").as_string() == "kis");
   CHECK(reply.body_.at("environment").as_string() == "demo");
-  CHECK(reply.body_.at("key").as_string() == "KEY-****");
-  CHECK(reply.body_.at("account").as_string() == "1234****");
+  CHECK(reply.body_.at("key").as_string() == "KE****");
+  CHECK(reply.body_.at("account").as_string() == "12****");
   CHECK(reply.body_.at("checked").as_bool() == false);
   CHECK(reply.body_.at("replaced").as_bool() == false);
 
@@ -379,8 +379,8 @@ TEST_CASE("auth status shows the stored logins masked, and which variables are s
   const auto& logins = reply.body_.at("logins").as_array();
   REQUIRE(logins.size() == 2);
   CHECK(logins[0].at("broker").as_string() == "kis");
-  CHECK(logins[0].at("key").as_string() == "KEY-****");
-  CHECK(logins[0].at("account").as_string() == "1234****");
+  CHECK(logins[0].at("key").as_string() == "KE****");
+  CHECK(logins[0].at("account").as_string() == "12****");
   CHECK(logins[0].at("checked").as_bool() == false);
   CHECK(logins[1].at("broker").as_string() == "toss");
   CHECK(logins[1].at("environment").as_string() == "real");
