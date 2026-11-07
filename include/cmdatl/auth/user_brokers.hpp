@@ -21,6 +21,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -501,6 +502,65 @@ inline BrokerLookup lookup_broker(const std::string& name) {
   found.found_ = BrokerFound::FOLDER;
   found.folder_ = std::move(broker);
   return found;
+#endif
+}
+
+/** @brief A broker folder's files as read once: what a driver's build compiles, whatever the folder holds later. */
+struct AdapterSnapshot {
+  /** @brief The broker's name. */
+  std::string name_;
+  /** @brief The folder, absolute. */
+  std::string folder_;
+  /** @brief Each file's path relative to the folder, and its bytes, sorted by path. */
+  std::vector<std::pair<std::string, std::string>> files_;
+};
+
+/**
+ * @brief Reads a broker folder's files, each checked again through the descriptor it is read from, within the bounds.
+ * @param broker The folder, found by `lookup_broker`.
+ * @param out The files read.
+ * @param problem Why not.
+ * @return `FOLDER`, `INVALID` or `UNSAFE`.
+ */
+inline BrokerFound snapshot_folder(const UserBroker& broker, AdapterSnapshot& out, std::string& problem) {
+#if defined(_WIN32)
+  (void)broker;
+  (void)out;
+  problem = "broker folders are read on macOS and Linux only in this version";
+  return BrokerFound::INVALID;
+#else
+  std::vector<AdapterFile> files;
+  const auto listed = list_folder(broker.folder_, files, problem);
+  if (listed != BrokerFound::FOLDER) {
+    return listed;
+  }
+  AdapterSnapshot snapshot;
+  snapshot.name_ = broker.entry_.name_;
+  snapshot.folder_ = broker.folder_.string();
+  std::uint64_t total = 0;
+  for (const auto& file : files) {
+    const auto path = broker.folder_ / file.relative_;
+    ScopedFd fd(open_lifted(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
+    struct stat info{};
+    if (fd.get() < 0 || ::fstat(fd.get(), &info) != 0) {
+      problem = path.string() + " cannot be opened";
+      return BrokerFound::INVALID;
+    }
+    if (const auto reason = untrusted(path, info, false)) {
+      problem = *reason;
+      return BrokerFound::UNSAFE;
+    }
+    std::string bytes;
+    const auto read = read_whole(fd.get(), static_cast<std::size_t>(MAX_ADAPTER_BYTES - total), bytes);
+    if (read.status_ != FileRead::Status::OK) {
+      problem = path.string() + " was not read: " + read.text(static_cast<std::size_t>(MAX_ADAPTER_BYTES - total));
+      return BrokerFound::INVALID;
+    }
+    total += bytes.size();
+    snapshot.files_.emplace_back(file.relative_, std::move(bytes));
+  }
+  out = std::move(snapshot);
+  return BrokerFound::FOLDER;
 #endif
 }
 

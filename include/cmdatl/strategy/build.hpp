@@ -11,6 +11,7 @@
 // executes the build it asked for, and a backtest's replay never holds the lock.
 
 #include "../account/account.hpp"
+#include "../auth/user_brokers.hpp"
 #include "../core/reply.hpp"
 #include "../system/files.hpp"
 #include "../system/process.hpp"
@@ -437,9 +438,27 @@ struct Request {
   std::string fill_header_{};
   /** @brief The market-price rule's function (`replay.fill_function`), a C++ name the header declares. */
   std::string fill_function_{};
-  /** @brief The broker a run's driver trades (`kis`), or empty for the mock market. */
+  /** @brief The broker a run's driver trades (`kis`), or empty for the mock market or a broker folder. */
   std::string broker_{};
+  /** @brief A broker folder's files, read once, compiled into the driver as `adapter/`; none for no folder. */
+  std::optional<auth::AdapterSnapshot> adapter_{};
 };
+
+/**
+ * @brief A broker folder's fingerprint: 16 hex digits of a hash of each file's path and bytes, each framed by its
+ *   length. It tells one version of a folder from another for the build cache; it is not a signature.
+ * @param snapshot The folder's files.
+ * @return The fingerprint.
+ */
+inline std::string adapter_digest(const auth::AdapterSnapshot& snapshot) {
+  std::string framed;
+  for (const auto& [relative, bytes] : snapshot.files_) {
+    framed += std::to_string(relative.size()) + ":" + relative + ";" + std::to_string(bytes.size()) + ":" + bytes + ";";
+  }
+  char digest[17];
+  std::snprintf(digest, sizeof(digest), "%016llx", static_cast<unsigned long long>(fnv1a(framed)));
+  return digest;
+}
 
 /**
  * @brief The driver's `program.hpp`: the generated strategy as `Program`, and `program_fills`, which gives the fill
@@ -574,6 +593,13 @@ inline std::optional<Reply> build_driver(
   if (!request.broker_.empty()) {
     extra.push_back("broker=" + request.broker_);
   }
+  // A broker folder's driver: its name, where it was read, and its files' fingerprint, so an edited adapter is another
+  // shape.
+  if (request.adapter_) {
+    extra.push_back(
+      "adapter=" + request.adapter_->name_ + ";" + request.adapter_->folder_ + ";" + adapter_digest(*request.adapter_)
+    );
+  }
   if (store) {
     extra.push_back("store");
     if (duckdb_root) {
@@ -682,6 +708,12 @@ inline std::optional<Reply> build_driver(
     inputs[backtest_file ? path.substr(backtest_prefix.size()) : path] = std::move(text);
   }
   inputs["program.hpp"] = program_header(request);
+  // The broker folder's files as read once: the bytes the checks saw are the bytes compiled.
+  if (request.adapter_) {
+    for (const auto& [relative, bytes] : request.adapter_->files_) {
+      inputs["adapter/" + relative] = bytes;
+    }
+  }
   for (const auto& [relative, text] : inputs) {
     if (write_if_changed(src / relative, text) == Written::FAILED) {
       return error_reply(
@@ -720,6 +752,9 @@ inline std::optional<Reply> build_driver(
     };
     if (!request.broker_.empty()) {
       configure.push_back("-DCMDATL_DRIVER_BROKER=" + request.broker_);
+    }
+    if (request.adapter_) {
+      configure.push_back("-DCMDATL_DRIVER_ADAPTER=" + request.adapter_->name_);
     }
     if (store) {
       configure.push_back("-DCMDATL_STORE=ON");

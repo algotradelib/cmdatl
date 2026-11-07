@@ -2,14 +2,20 @@
 // the wall clock replaced by the mock market's (each slice of a wait moves the market), each run in a forked child
 // with a fixture operator file naming a KIS demo account, its stdout captured, under a watchdog.
 
+#include "broker-folders.hpp"
 #include "paper-support.hpp"
 #include "run-strategy.hpp"
 #include "support.hpp"
+
+// A broker folder's adapter over the library's mock broker (`tests/fixtures/adapters/mockbroker`), as a run's driver
+// includes one before the folder's part of the run.
+#include "adapter/adapter.hpp"
 
 #include <cmdatl/account/operator.hpp>
 #include <cmdatl/driver/account.hpp>
 #include <cmdatl/driver/clock.hpp>
 #include <cmdatl/driver/session.hpp>
+#include <cmdatl/driver/user_account.hpp>
 #include <cmdatl/strategy/runs.hpp>
 #include <cmdatl/system/credential_pipe.hpp>
 #include <cmdatl/system/process.hpp>
@@ -97,7 +103,8 @@ std::vector<json::object> events_of(const Ran& ran, const std::string& kind) {
 Ran run_account_child(
   const PaperFixture& fixture,
   const std::function<void(atl::mock::Market&, atl::mock::MockClient&, atl::BlockingSession<atl::mock::MockClient>&)>&
-    before = {}
+    before = {},
+  bool scrubbed = false
 ) {
   const auto reply_path = fixture.dir() / "account.reply";
   std::fflush(nullptr);
@@ -164,8 +171,17 @@ Ran run_account_child(
         }
       );
     };
-    const int code =
-      cmdatl::driver::run_account(run, *snapshot.config_, runtest::Program(run.ids_), session, session, make_clock);
+    int code = 0;
+    if (scrubbed) {
+      // As a broker folder's run trades: the adapter's errors scrubbed, an exception's text not shown.
+      run.opaque_errors_ = true;
+      cmdatl::driver::ScrubbedSession<atl::BlockingSession<atl::mock::MockClient>> opaque(session);
+      code =
+        cmdatl::driver::run_account(run, *snapshot.config_, runtest::Program(run.ids_), opaque, opaque, make_clock);
+    } else {
+      code =
+        cmdatl::driver::run_account(run, *snapshot.config_, runtest::Program(run.ids_), session, session, make_clock);
+    }
     std::fflush(nullptr);
     ::_exit(code);
   }
@@ -194,6 +210,117 @@ Ran run_account_child(
     start = end + 1;
   }
   return ran;
+}
+
+/**
+ * @brief Parses a reply written on a child's stdout: its last line.
+ * @param path The file.
+ * @return The reply.
+ */
+json::object last_reply(const std::filesystem::path& path) {
+  const auto text = slurp(path);
+  INFO("stdout: " << text);
+  auto end = text.find_last_not_of('\n');
+  REQUIRE(end != std::string::npos);
+  const auto start = text.rfind('\n', end);
+  return json::parse(text.substr(start == std::string::npos ? 0 : start + 1, end + 1)).as_object();
+}
+
+/**
+ * @brief The broker folder's `identify` in a child, on the fixture's operator file and a login, on a fresh mock market.
+ * @param fixture The fixture.
+ * @param login The login.
+ * @param number Set to the account the run would trade, when it is not refused.
+ * @return The reply when refused, else an empty object.
+ */
+json::object identify_child(const PaperFixture& fixture, const std::string& login, std::string& number) {
+  const auto out = fixture.dir() / "identify.out";
+  std::fflush(nullptr);
+  const pid_t pid = ::fork();
+  REQUIRE(pid >= 0);
+  if (pid == 0) {
+    ::alarm(60);
+    const int fd = ::open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    ::dup2(fd, STDOUT_FILENO);
+    ::close(fd);
+    const auto series = runtest::bars_of("005930", 10, atl::BarInterval::ONE_DAY);
+    atl::mock::MarketSettings settings;
+    atl::mock::Market market({series}, settings);
+    cmdatl_adapter::market() = &market;
+    const auto snapshot = cmdatl::load_operator_config();
+    if (snapshot.state_ != cmdatl::ConfigSnapshot::State::OK) {
+      ::_exit(90);
+    }
+    auto effective = *snapshot.config_;
+    std::string market_data;
+    cmdatl::driver::UserAccountBroker broker;
+    const auto refused =
+      broker.identify(json::object{{"env", "mockbroker"}}, *snapshot.config_, {login}, effective, market_data);
+    if (!refused) {
+      std::printf("%s\n", json::serialize(json::object{{"number", effective.number_}}).c_str());
+    }
+    std::fflush(nullptr);
+    ::_exit(refused ? *refused : 0);
+  }
+  int status = 0;
+  REQUIRE(::waitpid(pid, &status, 0) == pid);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status) != 90);
+  auto reply = last_reply(out);
+  if (WEXITSTATUS(status) == 0) {
+    number = std::string(reply.at("number").as_string());
+    return {};
+  }
+  return reply;
+}
+
+/**
+ * @brief Runs a built account driver with a login on descriptor 3 and the fixture's operator file.
+ * @param fixture The fixture.
+ * @param driver The driver.
+ * @param login The login.
+ * @return The exit and the reply.
+ */
+std::pair<int, json::object> driver_child(
+  const PaperFixture& fixture, const std::string& driver, const std::string& login
+) {
+  const auto out = fixture.dir() / "driver.out";
+  std::fflush(nullptr);
+  const pid_t pid = ::fork();
+  REQUIRE(pid >= 0);
+  if (pid == 0) {
+    ::alarm(60);
+    const int fd = ::open(out.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    ::dup2(fd, STDOUT_FILENO);
+    ::close(fd);
+    const auto payload = cmdatl::sys::frame_credentials({login});
+    if (!payload || cmdatl::sys::stage_credentials(*payload) != 0) {
+      ::_exit(91);
+    }
+    ::setenv("CMDATL_CONFIG", fixture.config().c_str(), 1);
+    ::execl(driver.c_str(), driver.c_str(), "run.id=r0123456789ab", "replay.market=kr", static_cast<char*>(nullptr));
+    ::_exit(92);
+  }
+  int status = 0;
+  REQUIRE(::waitpid(pid, &status, 0) == pid);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status) < 90);
+  return {WEXITSTATUS(status), last_reply(out)};
+}
+
+/**
+ * @brief The operator's file for a broker folder's real account.
+ * @param broker The folder's name.
+ * @param number The account's number, or empty for none.
+ * @return The text.
+ */
+std::string folder_config(const std::string& broker, const std::string& number = "") {
+  std::string text = "[account]\nbroker = \"" + broker + "\"\nenv = \"real\"\n";
+  if (!number.empty()) {
+    text += "number = \"" + number + "\"\n";
+  }
+  return text +
+    "\n[limits]\nsymbols = [\"005930\"]\nposition = { \"005930\" = 100 }\norder_value = 5000000\ndaily_orders = 3\n";
 }
 
 /**
@@ -506,6 +633,42 @@ TEST_CASE("a run on a KIS account reads its own login, and on demo the real one 
   CHECK(documents[1].empty());
 }
 
+TEST_CASE("a run on a broker folder's account reads its own login only, and never a data vendor's or a missing demo") {
+  const BrokerHome home;
+  home.folder("acme", BROKER_TOML);
+  home.folder("vendor", VENDOR_TOML);
+  PaperFixture fixture;
+  Logins store;
+  std::vector<std::string> documents;
+  const auto code = [&]() {
+    const auto snapshot = cmdatl::load_operator_config();
+    REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
+    const auto refused = cmdatl::runs::read_run_logins(*snapshot.config_, &store, documents);
+    return refused ? std::string(refused->body_.at("error").as_object().at("code").as_string()) : std::string();
+  };
+  fixture.write_config(folder_config("acme"));
+  CHECK(code() == "auth.not_found");
+  store.items_["acme/real"] = "{\"appKey\":\"k\"}";
+  store.asked_.clear();
+  CHECK(code().empty());
+  CHECK(store.asked_ == std::vector<std::string>{"acme/real"});
+  CHECK(documents == std::vector<std::string>{"{\"appKey\":\"k\"}"});
+
+  fixture.write_config(folder_config("vendor"));
+  CHECK(code() == "unsupported.broker");
+  auto text = folder_config("vendor");
+  text.replace(text.find("env = \"real\""), 12, "env = \"demo\"");
+  fixture.write_config(text);
+  CHECK(code() == "unsupported.broker");
+  home.folder("plain", "display = \"P\"\n[[fields]]\nname = \"k\"\nprompt = \"K\"\n");
+  text = folder_config("plain");
+  text.replace(text.find("env = \"real\""), 12, "env = \"demo\"");
+  fixture.write_config(text);
+  CHECK(code() == "config.invalid");
+  fixture.write_config(folder_config("missing"));
+  CHECK(code() == "adapter.not_found");
+}
+
 TEST_CASE("the account and order commands refuse a KIS account, and the reply names it kis-demo") {
   PaperFixture fixture;
   fixture.write_config(kis_config());
@@ -573,5 +736,82 @@ TEST_CASE("an account run whose calendar cannot be read at start refuses before 
   CHECK(code_of(ran) == "run.reference_unreadable");
   CHECK(events_of(ran, "start").empty());
   CHECK(!std::filesystem::exists(kis_account_dir(fixture) / "journal.jsonl"));
+}
+TEST_CASE("a broker folder's run checks the login the adapter connects with against the operator file") {
+  PaperFixture fixture;
+  std::string number;
+  fixture.write_config(folder_config("mockbroker"));
+  CHECK(identify_child(fixture, R"({"account":"acct-1"})", number).empty());
+  CHECK(number == "acct-1");
+
+  // A demo login on a real account, an account no journal can be kept under, and a login the adapter cannot use.
+  CHECK(
+    identify_child(fixture, R"({"account":"acct-1","demo":true})", number).at("error").at("code") ==
+    "auth.account_mismatch"
+  );
+  CHECK(identify_child(fixture, R"({"account":"../x"})", number).at("error").at("code") == "auth.account_mismatch");
+  CHECK(identify_child(fixture, R"({"account":""})", number).at("error").at("code") == "auth.account_mismatch");
+  const auto failed = identify_child(fixture, R"({"fail":"SECRET-TOKEN-123"})", number);
+  CHECK(failed.at("error").at("code") == "auth.account_mismatch");
+  CHECK(json::serialize(failed).find("SECRET-TOKEN-123") == std::string::npos);
+
+  // The operator file's number is a pin.
+  fixture.write_config(folder_config("mockbroker", "acct-2"));
+  CHECK(identify_child(fixture, R"({"account":"acct-1"})", number).at("error").at("code") == "auth.account_mismatch");
+  CHECK(identify_child(fixture, R"({"account":"acct-2"})", number).empty());
+}
+
+TEST_CASE("a broker folder's run shows none of the adapter's error text") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  one_decision();
+  const auto ran = run_account_child(
+    fixture,
+    [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+      atl::BrokerError error;
+      error.category_ = atl::ErrorCategory::HTTP;
+      error.http_status_ = 401;
+      error.broker_code_ = "E401";
+      error.message_ = "GET /api/calendar?api_token=SECRET-TOKEN-123 answered 401";
+      client.fail_next(atl::mock::Call::CALENDAR, error);
+    },
+    true
+  );
+  CHECK(ran.exit_ == 1);
+  CHECK(code_of(ran) == "run.reference_unreadable");
+  const auto text = json::serialize(ran.reply_);
+  CHECK(text.find("SECRET-TOKEN-123") == std::string::npos);
+  CHECK(text.find("HTTP 401, code E401") != std::string::npos);
+  CHECK(text.find("its text is not shown") != std::string::npos);
+  CHECK(slurp(fixture.dir() / "account.stderr").find("SECRET-TOKEN-123") == std::string::npos);
+}
+
+TEST_CASE("a broker folder's driver refuses a client that states none of what a run reads, and another broker's file") {
+  PaperFixture fixture;
+  fixture.write_config(folder_config("limited"));
+  fixture.arm();
+  auto [exit, reply] = driver_child(fixture, CMDATL_DRIVER_LIMITED, R"({"account":"a"})");
+  CHECK(exit == 1);
+  CHECK(reply.at("error").at("code") == "unsupported.capability");
+  const auto& missing = reply.at("missing").as_array();
+  CHECK(missing.size() == 3);
+  CHECK(json::serialize(missing).find("has_calendar") != std::string::npos);
+  CHECK(json::serialize(missing).find("has_working_orders") != std::string::npos);
+  CHECK(json::serialize(missing).find("has_reference_data") != std::string::npos);
+
+  // A driver built for one broker folder never trades another broker's account.
+  fixture.write_config(folder_config("mockbroker"));
+  std::tie(exit, reply) = driver_child(fixture, CMDATL_DRIVER_LIMITED, R"({"account":"a"})");
+  CHECK(reply.at("error").at("code") == "unsupported.broker");
+  fixture.write_config(kis_config());
+  std::tie(exit, reply) = driver_child(fixture, CMDATL_DRIVER_LIMITED, R"({"account":"a"})");
+  CHECK(reply.at("error").at("code") == "unsupported.broker");
+
+  // Over the mock broker in another process the fixture has no market: connect throws, and its text is not shown.
+  fixture.write_config(folder_config("mockbroker"));
+  std::tie(exit, reply) = driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"SECRET-TOKEN-123"})");
+  CHECK(reply.at("error").at("code") == "auth.account_mismatch");
+  CHECK(json::serialize(reply).find("SECRET-TOKEN-123") == std::string::npos);
 }
 #endif

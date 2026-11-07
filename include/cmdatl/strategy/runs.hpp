@@ -122,7 +122,8 @@ private:
 /**
  * @brief Reads the logins a run on a broker's account needs, in this process (the store's access list names `cmdatl`):
  *   the account's (`<broker>/<env>`), then on a KIS demo account the real login, read only for market data (a KIS demo
- *   host refuses reference data and the calendar); an empty document for none.
+ *   host refuses reference data and the calendar); an empty document for none. A broker folder's run reads its own
+ *   login only, and is refused for a data vendor's folder or a demo account its broker does not have.
  * @param config The operator's file, for a broker's account.
  * @param store The credential store, or null where the system has none.
  * @param documents Set to the documents, in that order.
@@ -131,14 +132,31 @@ private:
 inline std::optional<Reply> read_run_logins(
   const OperatorConfig& config, auth::CredentialStore* store, std::vector<std::string>& documents
 ) {
-  const auto* broker = auth::find_broker(config.broker_);
+  const auto found = auth::lookup_broker(config.broker_);
+  const auto* broker = found.broker();
   if (broker == nullptr) {
-    return error_reply(Exit::FAILED, "unsupported.broker", "cmdatl run does not trade " + config.broker_);
+    return auth::broker_refusal(found);
+  }
+  const bool demo = config.env_ == "demo";
+  if (found.folder_ && found.folder_->data_only_) {
+    return error_reply(
+      Exit::FAILED, "unsupported.broker",
+      "the broker folder " + config.broker_ + " is a data vendor's (data_only): it has no account to trade",
+      "use it as a backtest's [bars] source"
+    );
+  }
+  if (found.folder_ && demo && !broker->has_demo_) {
+    return error_reply(
+      Exit::FAILED, "config.invalid",
+      config.broker_ +
+        " has no demo environment (its broker.toml says so): the operator file's account.env must be "
+        "real",
+      "the operator writes env = \"real\" in [account], or trades another account"
+    );
   }
   if (store == nullptr) {
     return auth::no_store_reply();
   }
-  const bool demo = config.env_ == "demo";
   const auto read =
     [&store](const std::string& name, const std::string& message, const std::string& login, std::string& out) {
       const auto answer = store->get(name);
@@ -174,7 +192,10 @@ inline std::optional<Reply> read_run_logins(
       return refused;
     }
   }
-  documents = {std::move(account), std::move(market)};
+  documents = {std::move(account)};
+  if (!found.folder_) {
+    documents.push_back(std::move(market));
+  }
   return std::nullopt;
 }
 
@@ -321,8 +342,27 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     };
     request.fill_header_ = resolved.fill_header_;
     request.fill_function_ = resolved.fill_function_;
-    if (broker) {
+    if (broker && auth::find_broker(config.broker_) != nullptr) {
       request.broker_ = config.broker_;
+    } else if (broker) {
+      // A broker folder: its files read once, checked again, and compiled as read.
+      const auto found = auth::lookup_broker(config.broker_);
+      std::string problem;
+      auth::AdapterSnapshot snapshot;
+      if (!found.folder_) {
+        return auth::broker_refusal(found);
+      }
+      const auto read = auth::snapshot_folder(*found.folder_, snapshot, problem);
+      if (read != auth::BrokerFound::FOLDER) {
+        auth::BrokerLookup failed;
+        failed.found_ = read;
+        failed.problem_ = problem;
+        return auth::broker_refusal(failed);
+      }
+      output.progress(
+        "cmdatl: compiling the broker folder " + snapshot.folder_ + " (" + build::adapter_digest(snapshot) + ")"
+      );
+      request.adapter_ = std::move(snapshot);
     }
     const auto progress = [&output](const std::string& line) {
       output.progress(line);

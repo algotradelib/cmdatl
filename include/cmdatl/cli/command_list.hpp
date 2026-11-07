@@ -137,9 +137,12 @@ inline std::vector<Command> command_list() {
       "document from standard input instead. The document is checked with the library's loaders and kept in the\n"
       "macOS keychain (no other store in this version), one login per broker and environment. Nothing is sent to\n"
       "the broker: the key is first used, and so first checked, by a demo or real run. Without a terminal nothing\n"
-      "is asked. A macOS keychain dialog is the system's: a signal does not dismiss it."
+      "is asked. A macOS keychain dialog is the system's: a signal does not dismiss it.\n"
+      "A broker or data vendor cmdatl was not built for is a folder the operator installs in\n"
+      "$XDG_CONFIG_HOME/cmdatl/brokers/NAME (else ~/.config/cmdatl/brokers/NAME): its broker.toml says what is\n"
+      "asked, and its document is stored unchecked, read by the folder's adapter at a run or a backtest."
     )
-    .option("broker", "NAME", "kis, kiwoom or toss; asked on a terminal when not given")
+    .option("broker", "NAME", "kis, kiwoom, toss or a broker folder's name; asked on a terminal when not given")
     .option("env", "ENV", "demo or real, for a broker with a demo; asked on a terminal when not given")
     .flag("with-secret", "read the broker's credential document as JSON from standard input")
     .flag("force", "replace a stored login for the same broker and environment without asking")
@@ -147,6 +150,7 @@ inline std::vector<Command> command_list() {
     .returns("environment", "demo or real")
     .returns("key", "the key, masked")
     .returns("account", "the account number, masked, for a broker whose login has one (KIS)")
+    .returns("adapter", "a broker folder's login: the folder (no field of the login is shown)")
     .returns("store", "keychain")
     .returns("checked", "false: the broker has not seen the login")
     .returns("replaced", "whether a stored login was replaced")
@@ -159,6 +163,8 @@ inline std::vector<Command> command_list() {
     .error("auth.bad_document")
     .error("auth.not_confirmed")
     .error("auth.no_answer")
+    .error("adapter.invalid")
+    .error("adapter.unsafe")
     .error("interrupted")
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return auth::login_command(invocation, output);
@@ -172,7 +178,8 @@ inline std::vector<Command> command_list() {
     .returns(
       "logins",
       "one per stored login: broker, environment, key (masked), account (masked, KIS), store, checked, and locked "
-      "when the store would not open it"
+      "when the store would not open it; a broker folder's login shows adapter (the folder, null when it no longer "
+      "reads) and no field"
     )
     .returns("environment_variables", "per broker, which of its environment variables are set (names only)")
     .error("usage.bad_value")

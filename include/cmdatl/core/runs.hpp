@@ -24,6 +24,18 @@ inline bool valid_run_id(const std::string& text) {
 }
 
 /**
+ * @brief Whether a text can name an account: 1 to 64 letters, digits, `_` or `-`, so it is one safe path component (the
+ *   account's directory) and one field of the journal's scope.
+ * @param text The text.
+ * @return Whether it can.
+ */
+inline bool account_number_text(const std::string& text) {
+  return !text.empty() && text.size() <= 64 && std::all_of(text.begin(), text.end(), [](char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+  });
+}
+
+/**
  * @brief Whether a name can be a broker folder's (`<config>/cmdatl/brokers/<name>/`): a lowercase letter, then at most
  *   31 lowercase letters, digits or `-`, and not a name cmdatl itself gives a meaning (`paper`, the built-in brokers
  *   `kis`, `kiwoom` and `toss`, and the bar sources `csv`, `wide` and `store`).

@@ -281,11 +281,32 @@ if(CMDATL_BUILD_TESTS)
   target_include_directories(driver-no-data-facts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts)
   target_compile_definitions(driver-no-data-facts PRIVATE TOML_HEADER_ONLY=1)
   target_link_libraries(driver-no-data-facts PRIVATE cmdatl_core)
+  # The account drivers, compiled here as a run's build compiles them: a KIS account's, and a broker folder's against a
+  # fixture adapter over the library's mock broker and one whose client states none of what a run reads at its start
+  # (it must compile, and refuse at start).
+  add_executable(driver-kis driver/main.cpp)
+  target_include_directories(driver-kis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts)
+  target_compile_definitions(driver-kis PRIVATE TOML_HEADER_ONLY=1 CMDATL_DRIVER_KIS=1)
+  target_link_libraries(driver-kis PRIVATE cmdatl_core)
+  foreach(adapter IN ITEMS mockbroker limited)
+    add_executable(driver-adapter-${adapter} driver/main.cpp)
+    target_include_directories(driver-adapter-${adapter} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/${adapter}
+    )
+    target_compile_definitions(driver-adapter-${adapter} PRIVATE
+      TOML_HEADER_ONLY=1 CMDATL_DRIVER_USER=1 CMDATL_ADAPTER_NAME="${adapter}"
+    )
+    target_link_libraries(driver-adapter-${adapter} PRIVATE cmdatl_core)
+  endforeach()
   add_executable(test-runs tests/test-runs.cpp tests/test-account-run.cpp)
+  target_include_directories(test-runs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/mockbroker)
   target_link_libraries(test-runs PRIVATE cmdatl_core Catch2::Catch2WithMain)
-  add_dependencies(test-runs cmdatl fake-atlc hold-lock)
+  add_dependencies(test-runs cmdatl fake-atlc hold-lock driver-adapter-limited driver-adapter-mockbroker)
   target_compile_definitions(test-runs PRIVATE
     CMDATL_RUN_TEST_HOOKS
+    CMDATL_ADAPTER_NAME="mockbroker"
+    CMDATL_DRIVER_LIMITED="$<TARGET_FILE:driver-adapter-limited>"
+    CMDATL_DRIVER_MOCKBROKER="$<TARGET_FILE:driver-adapter-mockbroker>"
     CMDATL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     CMDATL_BINARY="$<TARGET_FILE:cmdatl>"
     CMDATL_FAKE_ATLC="$<TARGET_FILE:fake-atlc>"

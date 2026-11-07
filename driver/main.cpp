@@ -7,6 +7,11 @@
 #include <cmdatl/replay/replay.hpp>
 #if defined(CMDATL_DRIVER_KIS)
 #include <cmdatl/driver/kis_account.hpp>
+#elif defined(CMDATL_DRIVER_USER)
+// A broker folder's adapter, copied into the build by cmdatl run, before the folder's part of the run.
+#include "adapter/adapter.hpp"
+
+#include <cmdatl/driver/user_account.hpp>
 #endif
 
 #include <stdexcept>
@@ -149,6 +154,15 @@ int main(int argc, char** argv) {
 #if defined(CMDATL_DRIVER_KIS)
   // A KIS account: the bars come from the broker, so only the symbols and the strategy are read from the arguments.
   return cmdatl::driver::kis_account_main<Program>(
+    argc, argv,
+    [](const std::vector<std::string>& args) {
+      return replay::symbols_of<Program>(settings_of(args));
+    },
+    make
+  );
+#elif defined(CMDATL_DRIVER_USER)
+  // A broker folder's account: as a KIS account, through the folder's adapter.
+  return cmdatl::driver::user_account_main<Program>(
     argc, argv,
     [](const std::vector<std::string>& args) {
       return replay::symbols_of<Program>(settings_of(args));

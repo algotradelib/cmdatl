@@ -38,10 +38,17 @@ target_include_directories(driver SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/thi
 target_compile_definitions(driver PRIVATE TOML_HEADER_ONLY=1)
 target_link_libraries(driver PRIVATE algotradelib::algotradelib)
 # A run on a broker's account: the driver compiles that broker's client (`kis`), never named by a run's arguments.
+# A broker folder's account: its adapter is copied into this source directory as adapter/, and named by
+# CMDATL_DRIVER_ADAPTER (a folder's name, [a-z][a-z0-9-]*, checked by cmdatl).
 if(CMDATL_DRIVER_BROKER STREQUAL "kis")
   target_compile_definitions(driver PRIVATE CMDATL_DRIVER_KIS=1)
 elseif(CMDATL_DRIVER_BROKER)
   message(FATAL_ERROR "CMDATL_DRIVER_BROKER must be kis or empty, not ${CMDATL_DRIVER_BROKER}")
+elseif(CMDATL_DRIVER_ADAPTER)
+  if(NOT CMDATL_DRIVER_ADAPTER MATCHES "^[a-z][a-z0-9-]*$")
+    message(FATAL_ERROR "CMDATL_DRIVER_ADAPTER must be a broker folder's name, not ${CMDATL_DRIVER_ADAPTER}")
+  endif()
+  target_compile_definitions(driver PRIVATE CMDATL_DRIVER_USER=1 CMDATL_ADAPTER_NAME="${CMDATL_DRIVER_ADAPTER}")
 endif()
 # As atlc compiles its exported strategies: no floating-point contraction on GCC.
 target_compile_options(driver PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)

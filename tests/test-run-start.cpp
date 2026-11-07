@@ -217,7 +217,7 @@ TEST_CASE("the table's run command: arguments, codes and the schema version") {
     CHECK(std::find(run->errors_.begin(), run->errors_.end(), code) != run->errors_.end());
   }
   CHECK(cmdatl::check_table(table).empty());
-  CHECK(cmdatl::SCHEMA_VERSION == 11);
+  CHECK(cmdatl::SCHEMA_VERSION == 12);
 }
 
 // --- Processes, against the real atlc and algotradelib ---

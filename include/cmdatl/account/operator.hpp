@@ -339,10 +339,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
     return refuse(account->source(), "[account] needs number, the account's number");
   }
   if (text) {
-    const bool plain = !text->empty() && text->size() <= 64 && std::all_of(text->begin(), text->end(), [](char c) {
-      return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
-    });
-    if (!plain) {
+    if (!account_number_text(*text)) {
       return refuse(account->get("number")->source(), "account.number must be 1 to 64 of letters, digits, '_' or '-'");
     }
     if (config.broker_ == "kis" && !kis_account_number(*text)) {

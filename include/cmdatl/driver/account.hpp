@@ -103,7 +103,16 @@ struct AccountRun {
   std::string market_data_{"own"};
   /** @brief The account's directory: its lock and journal. */
   std::string account_dir_;
+  /**
+   * @brief Whether an exception's text is left out of the replies: a broker folder's adapter is not cmdatl's code, and
+   *   its text could carry a credential (its errors' text is replaced before the run sees it, `user_account.hpp`).
+   */
+  bool opaque_errors_{false};
 };
+
+/** @brief What a reply says of an exception whose text is not shown. */
+inline constexpr const char* OPAQUE_EXCEPTION =
+  "the broker folder's adapter threw an exception; its text is not shown, since it could carry a credential";
 
 /** @brief The last answers the boundary forwarded, for the heartbeat: the loop's own reads, never a call of its own. */
 struct LastReads {
@@ -548,7 +557,7 @@ int run_account(
         [] {}, diagnostics
       );
     } catch (const std::exception& error) {
-      thrown = error.what();
+      thrown = run.opaque_errors_ ? OPAQUE_EXCEPTION : error.what();
     }
     (void)write_line(diagnostics.str(), STDERR_FILENO);
     if (!thrown.empty() && !trading) {
@@ -667,10 +676,11 @@ int run_account(
     );
     return write_run_reply(body, exit);
   } catch (const std::exception& error) {
+    const char* text = run.opaque_errors_ ? OPAQUE_EXCEPTION : error.what();
     if (trading) {
-      return run_error(base, Exit::UNKNOWN, "unknown.internal", error.what(), ACCOUNT_UNKNOWN_NEXT);
+      return run_error(base, Exit::UNKNOWN, "unknown.internal", text, ACCOUNT_UNKNOWN_NEXT);
     }
-    return run_error(base, Exit::FAILED, "internal.error", error.what());
+    return run_error(base, Exit::FAILED, "internal.error", text);
   }
 }
 
