@@ -68,7 +68,7 @@ enum class Kind {
   BOOL,
   /** @brief A date: `"YYYY-MM-DD"`, or yyyymmdd as a number or a string. */
   DATE,
-  /** @brief An instant: `"YYYY-MM-DD"`, optionally with `THH:MM[:SS]` and an offset. */
+  /** @brief An instant: `"YYYY-MM-DD"`, optionally with `THH:MM[:SS[.ffffff]]` and an offset. */
   INSTANT,
   /** @brief A fixed offset from UTC: `"UTC"`, `"Z"` or `"+HH:MM"`. */
   OFFSET,
@@ -801,8 +801,8 @@ inline bool offset_text(const std::string& s) {
 }
 
 /**
- * @brief Whether a text is an instant: `YYYY-MM-DD`, optionally `THH:MM[:SS]` (or a space for the `T`) and `Z` or
- *   `+HH:MM`.
+ * @brief Whether a text is an instant: `YYYY-MM-DD`, optionally `THH:MM[:SS[.ffffff]]` (or a space for the `T`) and
+ *   `Z` or `+HH:MM`.
  * @param s The text.
  * @return Whether it is.
  */
