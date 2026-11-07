@@ -319,6 +319,9 @@ TEST_CASE("a login is the operator file's account only with the same number, pro
   CHECK(kis_account_mismatch("12345678-01", false, "12345678", "01", true));
   CHECK(kis_account_mismatch("12345678-01", true, "12345678", "22", true));
   CHECK(kis_account_mismatch("12345678-01", true, "87654321", "01", true));
+  // No number in the operator file: the login decides the account; the environment must still agree.
+  CHECK(!kis_account_mismatch("", true, "87654321", "01", true));
+  CHECK(kis_account_mismatch("", false, "87654321", "01", true));
 }
 
 TEST_CASE("the credentials' framing: two documents round trip, and anything else is refused") {
@@ -403,7 +406,7 @@ TEST_CASE("the wall clock waits in slices, returns early once on a signal, and w
   CHECK(t == std::chrono::steady_clock::time_point{} + std::chrono::seconds(16));
 }
 
-TEST_CASE("the operator file takes a KIS account: demo by default, real written out, no [paper], a canonical number") {
+TEST_CASE("the operator file takes a KIS account: demo by default, real written out, no [paper], a number optional") {
   PaperFixture fixture;
   fixture.write_config(kis_config());
   auto snapshot = cmdatl::load_operator_config();
@@ -417,6 +420,13 @@ TEST_CASE("the operator file takes a KIS account: demo by default, real written 
   snapshot = cmdatl::load_operator_config();
   REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
   CHECK(snapshot.config_->env_ == "real");
+  auto unnamed = kis_config();
+  unnamed.erase(unnamed.find("number = "), std::string("number = \"12345678-01\"\n").size());
+  fixture.write_config(unnamed);
+  snapshot = cmdatl::load_operator_config();
+  REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
+  CHECK(snapshot.config_->number_.empty());
+  CHECK(snapshot.config_->account_name() == "kis-demo");
   fixture.write_config(kis_config() + "\n[paper]\nbars = \"bars.csv\"\ncash = 1\nstart = \"2024-03-25T09:00\"\n");
   snapshot = cmdatl::load_operator_config();
   CHECK(snapshot.state_ != cmdatl::ConfigSnapshot::State::OK);

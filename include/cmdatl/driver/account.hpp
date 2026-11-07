@@ -63,7 +63,7 @@ inline constexpr const char* ACCOUNT_UNKNOWN_NEXT =
 /**
  * @brief Whether a login is the operator file's account: the account number and product code as `12345678-01`, and the
  *   environment.
- * @param number The operator file's `[account] number`.
+ * @param number The operator file's `[account] number`, or empty when it names none (the login decides).
  * @param demo Whether the operator file's environment is demo.
  * @param account_number The login's account number.
  * @param product_code The login's product code.
@@ -78,7 +78,7 @@ inline std::optional<std::string> kis_account_mismatch(
     return std::string("the login is a ") + (login_demo ? "demo" : "real") +
       " login, and the operator file's account is " + (demo ? "demo" : "real");
   }
-  if (account_number + "-" + product_code != number) {
+  if (!number.empty() && account_number + "-" + product_code != number) {
     return "the login's account is not the operator file's account.number " + number;
   }
   return std::nullopt;

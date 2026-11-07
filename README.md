@@ -212,7 +212,7 @@ A demo account (모의투자) is the default, and the code is the same for a rea
 [account]
 broker = "kis"
 env = "demo" # the default; "real" only when written out
-number = "12345678-01" # the account and its product code
+# number = "12345678-01" # optional: the login names the account; written, it must match the login
 ```
 
 ```sh
@@ -224,6 +224,7 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
 - The run is real time: it reads the account on the wall clock during the market's hours, as a person's program would, and lasts until it is stopped.
 - A KIS demo host refuses reference data and the holiday calendar, so a demo run reads market data with the real login, through a session with no account, which cannot place an order.
   Without a real login a demo run refuses to start.
+- The account is the login's (one login per broker and environment); a `number` in `[account]` pins it, and a login for another account is then refused before anything connects.
 - The logins are read from the keychain by `cmdatl` and handed to the run on a pipe, never on its command line or in its environment.
 - The run spec names the symbols in `[instruments]` and takes no `[bars]`: the bars come from the broker, daily, with one more than the program's warm-up.
 - It reads the trading calendar before it starts and refuses when it cannot (nothing is sent).

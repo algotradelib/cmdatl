@@ -108,6 +108,9 @@ int kis_account_main(int argc, char** argv, Symbols symbols_of, Make make) {
   ) {
     return run_error(base, Exit::FAILED, "auth.account_mismatch", *mismatch);
   }
+  // The account the run trades: the login's, which the operator file's number, when given, has just matched.
+  auto effective = config;
+  effective.number_ = account.account_number_ + "-" + account.product_code_;
   std::optional<atl::kis::KisConfig> market_config;
   if (demo) {
     atl::kis::KisConfig real;
@@ -183,7 +186,7 @@ int kis_account_main(int argc, char** argv, Symbols symbols_of, Make make) {
       );
     }
   }
-  const auto dir = account_dir(config);
+  const auto dir = account_dir(effective);
   if (!dir) {
     return run_error(
       base, Exit::FAILED, "state.unavailable", "neither XDG_STATE_HOME nor HOME names an absolute directory"
@@ -216,9 +219,9 @@ int kis_account_main(int argc, char** argv, Symbols symbols_of, Make make) {
       Session market(
         std::make_shared<atl::kis::KisBlockingClient>(tls, std::move(*market_config), paced), atl::kis::KisAccount{}
       );
-      return run_account(run, config, std::move(*strategy), session, market, make_clock);
+      return run_account(run, effective, std::move(*strategy), session, market, make_clock);
     }
-    return run_account(run, config, std::move(*strategy), session, session, make_clock);
+    return run_account(run, effective, std::move(*strategy), session, session, make_clock);
   } catch (const std::exception& error) {
     return run_error(base, Exit::FAILED, "internal.error", error.what());
   }

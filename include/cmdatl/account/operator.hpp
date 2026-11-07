@@ -123,7 +123,7 @@ struct OperatorConfig {
   std::string broker_;
   /** @brief The environment: `paper` for the paper broker, else `demo` or `real`. */
   std::string env_;
-  /** @brief The account's number. */
+  /** @brief The account's number; empty for a KIS account whose login names it (the run fills it from the login). */
   std::string number_;
   /** @brief The limits. */
   Limits limits_;
@@ -153,7 +153,7 @@ struct OperatorConfig {
    * @return The scope.
    */
   std::string scope() const {
-    return broker_ + ":" + env_ + ":" + number_;
+    return number_.empty() ? broker_ + ":" + env_ : broker_ + ":" + env_ + ":" + number_;
   }
 
   /**
@@ -161,7 +161,7 @@ struct OperatorConfig {
    * @return The name.
    */
   std::string account_name() const {
-    return broker_ + "-" + env_ + "-" + number_;
+    return number_.empty() ? broker_ + "-" + env_ : broker_ + "-" + env_ + "-" + number_;
   }
 
   /**
@@ -506,22 +506,27 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (auto bad = string_of(*account, "number", "account.number", text)) {
     return bad;
   }
-  if (!text) {
+  if (!text && config.broker_ == "kis") {
+    // The login names the account: one login per broker and environment, so the number is a pin, not a need.
+    config.number_.clear();
+  } else if (!text) {
     return refuse(account->source(), "[account] needs number, the account's number");
   }
-  const bool plain = !text->empty() && text->size() <= 64 && std::all_of(text->begin(), text->end(), [](char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
-  });
-  if (!plain) {
-    return refuse(account->get("number")->source(), "account.number must be 1 to 64 of letters, digits, '_' or '-'");
+  if (text) {
+    const bool plain = !text->empty() && text->size() <= 64 && std::all_of(text->begin(), text->end(), [](char c) {
+      return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+    });
+    if (!plain) {
+      return refuse(account->get("number")->source(), "account.number must be 1 to 64 of letters, digits, '_' or '-'");
+    }
+    if (config.broker_ == "kis" && !kis_account_number(*text)) {
+      return refuse(
+        account->get("number")->source(),
+        "account.number for KIS is the eight-digit account and the two-digit product code, as \"12345678-01\""
+      );
+    }
+    config.number_ = *text;
   }
-  if (config.broker_ == "kis" && !kis_account_number(*text)) {
-    return refuse(
-      account->get("number")->source(),
-      "account.number for KIS is the eight-digit account and the two-digit product code, as \"12345678-01\""
-    );
-  }
-  config.number_ = *text;
 
   const toml::table* limits = nullptr;
   if (auto bad = table_of(root, "limits", limits)) {
