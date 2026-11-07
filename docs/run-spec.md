@@ -187,7 +187,7 @@ The price is the instrument's last one when the program decided, so it can be da
 It is the library's `MarketPrice::DECISION_CLOSE`; the report's `caveats` name it (`market_price_rule`) and count its fills (`market_fills_by_rule`).
 `next-close` is a price convention, not a closing-order simulation: the fill keeps the bar's timing (stamped at the bar's end, charged on its trading date, a `DAY` order expiring with its session).
 That timing holds for intraday bars inside one session and for daily trading-date bars; a close-stamped daily bar from a date alone is taken at its midnight in `bars.timezone` (by default UTC, 09:00 KST), so without `bars.open_point` its close is credited at an instant before the session closed.
-On weekly, monthly or yearly bars an order it would price halts the replay: the report's `halted` names `next_close_bar_too_long`, and fills before it stay.
+On weekly or monthly bars (`bars.interval = "1w"` or `"1mo"`) an order it would price halts the replay: the report's `halted` names `next_close_bar_too_long`, and fills before it stay.
 It is the library's `MarketPrice::NEXT_CLOSE`, named and counted in `caveats` as `decision-close` is.
 A limit order fills when that bar reaches its limit, whatever `fill` says.
 `fill` is a driver argument: changing it builds nothing, and it may be given on the command line (`replay.fill=decision-close`).

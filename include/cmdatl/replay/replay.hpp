@@ -40,9 +40,9 @@
  * cmdatl, so a project's own `main` can include it beside `atlc build`'s header.
  *
  * Fills: a market order fills against the bar after its decision, at that bar's open, at the price it was decided on
- * (`replay.fill = decision-close`), at that bar's close (`replay.fill = next-close`; a weekly or longer bar halts the
- * replay), or at the price of a rule of one's own (`replay.fill_header` and `replay.fill_function`, compiled into the
- * driver); a wide table's row is a bar with open = high = low = close, so on closes alone the open is the next close.
+ * (`replay.fill = decision-close`), at that bar's close (`replay.fill = next-close`; an order it would price on a
+ * weekly or monthly bar halts the replay), or at the price of a rule of one's own (`replay.fill_header` and
+ * `replay.fill_function`, compiled into the driver); a wide table's row is a bar with open = high = low = close, so on closes alone the open is the next close.
  *
  * Sessions: the replay's session window is the market's (`kr` 09:00-15:30 KST, `us` 09:30-16:00 at UTC-5).
  * `bars.open_point` replays each daily bar as two bars, a point at the session's open (its open alone) and the day's
