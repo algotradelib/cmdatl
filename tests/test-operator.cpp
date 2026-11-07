@@ -117,7 +117,9 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
   const std::vector<Refused> cases{
     {"no [account]", "[limits]\n" + ConfigParts{}.limits_ + "[paper]\n" + ConfigParts{}.paper_, "config.invalid", 0},
     {"a broker that is a number", with("broker = 1\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
-    {"kis", with("broker = \"kis\"\nnumber = \"x\"\n", "", ""), "unsupported.broker", 2},
+    {"kis with a number not 12345678-01", with("broker = \"kis\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},
+    {"kis with an unknown env", with("broker = \"kis\"\nenv = \"paper\"\nnumber = \"12345678-01\"\n", "", ""),
+      "config.invalid", 3},
     {"kiwoom", with("broker = \"kiwoom\"\nnumber = \"x\"\n", "", ""), "unsupported.broker", 2},
     {"toss", with("broker = \"toss\"\nnumber = \"x\"\n", "", ""), "unsupported.broker", 2},
     {"an unknown broker", with("broker = \"paperx\"\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
@@ -493,7 +495,7 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
     CHECK(body.at("config").as_object().at("error").as_object().at("line").as_int64() == 1);
     CHECK(body.at("atlc").as_object().at("error").as_object().at("code").as_string() == "config.invalid");
     // An unsupported broker reads as invalid for backtest, and as itself in env's config.
-    fixture.write_config(with("broker = \"kis\"\nnumber = \"x\"\n", "", ""));
+    fixture.write_config(with("broker = \"kiwoom\"\nnumber = \"x\"\n", "", ""));
     CHECK(code_of(fixture.json({"strategy", "backtest", "s.toml"}).out_) == "config.invalid");
     CHECK(env().at("config").as_object().at("error").as_object().at("code").as_string() == "unsupported.broker");
   }
@@ -515,7 +517,7 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
     CHECK(body.at("atlc").as_object().at("source").as_string() == "config");
     CHECK(body.at("atlc").as_object().at("version").as_string() == "0.0.0-9000");
     CHECK(body.at("account").as_object().at("number").as_string() == "paper-0001");
-    CHECK(body.at("modes") == boost::json::array{"paper"});
+    CHECK(body.at("modes") == boost::json::array{"paper", "kis"});
     CHECK(body.at("schema_version").as_int64() == cmdatl::SCHEMA_VERSION);
     CHECK(body.at("paper").as_object().at("cash").as_string() == "100000000");
     CHECK(body.at("capabilities").as_object().at("clock").as_bool());
