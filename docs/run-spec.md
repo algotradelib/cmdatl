@@ -120,10 +120,10 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 | `bars.store_root` | path | required | the store the bars are written into, as for `"store"` |
 
 - `replay.market` is required: it gives the instruments' country, which the adapter is asked for.
-- The symbols come from `[instruments]`; a symbol holding `/`, `\`, `=`, `,` or a control character, or being `.` or `..`, is refused before anything is fetched.
+- The symbols come from `[instruments]`; a symbol holding `/`, `\`, `=`, `,`, a glob character (`*?[]{}`) or a control character, or being `.` or `..`, is refused before anything is fetched.
 - The store is written as `labs`-style fetchers write it: `source=NAME`, every version kept, a bar appended only when it is new or changed, under the series directory's `.lock`.
-- The replay reads the store as of the fetch (`fetched_at`) and from its first bar, so a later fetch by another writer and an older history already in the store are left out; `replay.from` and `replay.to` narrow it further.
-- The reply's `fetched` gives `fetched_at` and, per symbol, the bars fetched and those new to the store: `bars.source = "store"` with `bars.as_of` at that instant replays the same version offline.
+- The replay is exactly the bars this fetch received (a later fetch by another writer and an older history already in the store are left out); `replay.from` and `replay.to` narrow it further, and a symbol answered with no bars is refused (`fetch.failed`).
+- The reply's `fetched` gives `fetched_at` and, per symbol, the bars fetched, those new to the store and the first and last date: `bars.source = "store"` with `bars.as_of` at that instant and `replay.from`/`replay.to` at that range replays them offline (exactly, for one symbol).
 - Prices are raw (not adjusted), each within `DECIMAL(18,4)`, and the history is the vendor's as of the fetch, revisions included: it is not what was known on each day.
 - An adapter's error is reported by its category, HTTP status and code (`fetch.failed`), never by its text, which could carry a credential.
 

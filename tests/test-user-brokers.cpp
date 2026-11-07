@@ -6,6 +6,7 @@
 #include "broker-folders.hpp"
 #include "support.hpp"
 
+#include <cstdlib>
 #include <map>
 #include <sstream>
 #include <string>
@@ -202,6 +203,20 @@ TEST_CASE("a broker folder another user could change is refused, at any depth an
     REQUIRE(::mkfifo((folder / "pipe").c_str(), 0600) == 0);
     CHECK(unsafe());
   }
+#if defined(__APPLE__)
+  SECTION("an access control list granting write, the mode bits unchanged") {
+    const auto file = folder / "adapter.hpp";
+    REQUIRE(std::system(("/bin/chmod +a 'everyone allow write' '" + file.string() + "'").c_str()) == 0);
+    struct stat info{};
+    REQUIRE(::lstat(file.c_str(), &info) == 0);
+    CHECK((info.st_mode & 0022) == 0);
+    CHECK(unsafe());
+  }
+  SECTION("an access control list on brokers/ granting a file's addition") {
+    REQUIRE(std::system(("/bin/chmod +a 'everyone allow add_file' '" + home.brokers().string() + "'").c_str()) == 0);
+    CHECK(unsafe());
+  }
+#endif
   const auto reply = auth::broker_refusal(auth::lookup_broker("vendor"));
   CHECK(code(reply) == "adapter.unsafe");
   CHECK(reply.exit_ == Exit::FAILED);
@@ -255,7 +270,7 @@ TEST_CASE("broker.toml is read strictly, each refusal at its line") {
     {"no prompt", "display = \"x\"\n[[fields]]\nname = \"k\"\n", "2:"},
     {"a control character", "display = \"x\\u001b[2J\"\n" + field, "1:"},
     {"a secret default", "display = \"x\"\n" + field + "secret = true\ndefault = \"d\"\n", "2:"},
-    {"a secret masked", "display = \"x\"\n" + field + "secret = true\nmasked = true\n", "2:"},
+    {"a masked key (a folder's status shows no field)", "display = \"x\"\n" + field + "masked = true\n", "5:"},
     {"an empty default", "display = \"x\"\n" + field + "default = \"\"\n", "5:"},
     {"not TOML", "display = \n", "1:"},
   };

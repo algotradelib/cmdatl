@@ -768,6 +768,17 @@ TEST_CASE(
   REQUIRE(ran.exit_ == 0);
   CHECK(reply_of(ran.out_).at("report") == first);
 
+  // Fewer bars than the store holds: the replay is exactly this fetch's bars.
+  ran = backtest({at("vendor.toml"), "bars.count=20"});
+  REQUIRE(ran.exit_ == 0);
+  CHECK(reply_of(ran.out_).at("report").at("bars").as_int64() == 20);
+
+  // No bars at all: refused, never replaced by the bars the store already holds.
+  spit(at("login.json"), "{\"api_token\":\"empty-1\"}");
+  ran = backtest({at("vendor.toml")});
+  CHECK(code_of(ran.out_) == "fetch.failed");
+  CHECK(ran.out_.find("no bars") != std::string::npos);
+
   // A token the vendor answers 401 with, in its text: the reply names the status, never the token.
   spit(at("login.json"), "{\"api_token\":\"fail-SECRET-987\"}");
   ran = backtest({at("vendor.toml")});

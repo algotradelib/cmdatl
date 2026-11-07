@@ -2,7 +2,8 @@
 
 // A broker folder's adapter for tests: a data vendor on the library's DataOnlyTraits, serving a fixed daily history
 // (200 bars from 2024-01-01, prices to the cent) of any symbol, the last `count` of them. A login whose token starts
-// with `fail` is answered with an HTTP 401 whose text holds the token, as a vendor putting its token in a URL would.
+// with `fail` is answered with an HTTP 401 whose text holds the token, as a vendor putting its token in a URL would;
+// one starting with `empty` is answered with no bars.
 
 #include <algotradelib/broker>
 
@@ -103,6 +104,12 @@ struct algotradelib::BrokerTraits<fixture_vendor::Client> : algotradelib::DataOn
       return Result<BarSeries>(error);
     }
     BarSeries series;
+    if (client.token_.rfind("empty", 0) == 0) {
+      series.instrument_ = query.instrument_;
+      series.interval_ = query.interval_;
+      series.adjusted_ = query.adjusted_;
+      return Result<BarSeries>(series);
+    }
     series.instrument_ = query.instrument_;
     series.interval_ = query.interval_;
     series.stamp_ = BarStamp::OPEN;

@@ -34,6 +34,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -785,6 +786,41 @@ TEST_CASE("a broker folder's run shows none of the adapter's error text") {
   CHECK(text.find("HTTP 401, code E401") != std::string::npos);
   CHECK(text.find("its text is not shown") != std::string::npos);
   CHECK(slurp(fixture.dir() / "account.stderr").find("SECRET-TOKEN-123") == std::string::npos);
+}
+
+TEST_CASE("a broker folder's refused placement shows neither the adapter's text nor a long code") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  one_decision();
+  const auto ran = run_account_child(
+    fixture,
+    [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+      atl::BrokerError error;
+      error.category_ = atl::ErrorCategory::INVALID_ARGUMENT;
+      error.reached_broker_ = true;
+      error.broker_code_ = "https://vendor/error?api_token=SECRET-TOKEN-456";
+      error.message_ = "refused for token SECRET-TOKEN-456";
+      client.fail_next(atl::mock::Call::PLACE, error, 5);
+      // Nothing comes to rest, so the run is stopped after its first decision by a signal of its own.
+      std::thread([] {
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+        ::kill(::getpid(), SIGINT);
+      }).detach();
+    },
+    true
+  );
+  std::string text = json::serialize(ran.reply_);
+  for (const auto& event : ran.events_) {
+    text += json::serialize(event);
+  }
+  INFO(text);
+  // The placement reached the adapter and was refused: its event names a reason, never the long code.
+  const auto refused = events_of(ran, "refused");
+  REQUIRE(!refused.empty());
+  CHECK(refused.front().at("reason").as_string() == "broker");
+  CHECK(text.find("SECRET-TOKEN-456") == std::string::npos);
+  CHECK(slurp(fixture.dir() / "account.stderr").find("SECRET-TOKEN-456") == std::string::npos);
 }
 
 TEST_CASE("a broker folder's driver refuses a client that states none of what a run reads, and another broker's file") {

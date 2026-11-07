@@ -45,7 +45,7 @@ struct StoredSeries {
 
 /**
  * @brief Whether a symbol can be one directory of the store: not empty, `.` or `..`, and holding no `/`, `\`, `=`, `,`,
- *   control character or NUL (`005930.KO` and `^GSPC` can).
+ *   glob character (`*?[]{}`), control character or NUL (`005930.KO` and `^GSPC` can).
  * @param symbol The symbol.
  * @return Whether it can.
  */
@@ -55,7 +55,9 @@ inline bool store_symbol(const std::string& symbol) {
   }
   return std::none_of(symbol.begin(), symbol.end(), [](char c) {
     const auto u = static_cast<unsigned char>(c);
-    return u < 0x20 || u == 0x7f || c == '/' || c == '\\' || c == '=' || c == ',';
+    // A glob character would turn the store reader's path into a pattern over other symbols.
+    return u < 0x20 || u == 0x7f || c == '/' || c == '\\' || c == '=' || c == ',' || c == '*' || c == '?' || c == '[' ||
+      c == ']' || c == '{' || c == '}';
   });
 }
 

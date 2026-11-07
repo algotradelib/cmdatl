@@ -15,6 +15,7 @@
 #include "./brokers.hpp"
 
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -29,6 +30,10 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
+
+#if defined(__APPLE__)
+#include <sys/acl.h>
 #endif
 
 namespace cmdatl {
@@ -128,8 +133,39 @@ inline std::optional<std::filesystem::path> brokers_root() {
 
 #if !defined(_WIN32)
 /**
- * @brief Why an entry of a broker folder cannot be trusted: not the user's, writable by group or others, or not the
- *   kind expected (a link, a device, a FIFO).
+ * @brief Whether an entry carries an access control list that allows anything: on macOS an ACL can grant another user
+ *   write access while the mode bits show none (on Linux a POSIX ACL's grants show in the group bits). Deny entries are
+ *   harmless; any allow entry, or an ACL that cannot be read, counts.
+ * @param path The entry, not followed through a link.
+ * @return Whether it does.
+ */
+inline bool acl_allows(const std::filesystem::path& path) {
+#if defined(__APPLE__)
+  errno = 0;
+  acl_t acl = ::acl_get_link_np(path.c_str(), ACL_TYPE_EXTENDED);
+  if (acl == nullptr) {
+    return errno != ENOENT;
+  }
+  bool allows = false;
+  acl_entry_t entry = nullptr;
+  for (int id = ACL_FIRST_ENTRY; ::acl_get_entry(acl, id, &entry) == 0; id = ACL_NEXT_ENTRY) {
+    acl_tag_t tag{};
+    if (::acl_get_tag_type(entry, &tag) != 0 || tag != ACL_EXTENDED_DENY) {
+      allows = true;
+      break;
+    }
+  }
+  ::acl_free(acl);
+  return allows;
+#else
+  (void)path;
+  return false;
+#endif
+}
+
+/**
+ * @brief Why an entry of a broker folder cannot be trusted: not the user's, writable by group or others, an access
+ *   control list allowing access, or not the kind expected (a link, a device, a FIFO).
  * @param path The entry, for the message.
  * @param info Its `lstat`.
  * @param directory Whether a directory is expected (else a regular file).
@@ -146,6 +182,9 @@ inline std::optional<std::string> untrusted(
   }
   if ((info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
     return path.string() + " is writable by its group or others";
+  }
+  if (acl_allows(path)) {
+    return path.string() + " has an access control list allowing access (ls -le shows it; chmod -N removes it)";
   }
   return std::nullopt;
 }
@@ -368,7 +407,7 @@ inline std::optional<std::string> read_broker_toml(const std::string& name, cons
     if (field == nullptr) {
       return at(refuse(node.source(), "each of fields must be a table, not " + type_name(node)));
     }
-    if (auto bad = config_detail::only_keys(*field, "fields", {"name", "prompt", "secret", "masked", "default"})) {
+    if (auto bad = config_detail::only_keys(*field, "fields", {"name", "prompt", "secret", "default"})) {
       return at(*bad);
     }
     BrokerField out;
@@ -401,15 +440,12 @@ inline std::optional<std::string> read_broker_toml(const std::string& name, cons
     if (auto bad = flag_of(*field, "secret", "fields.secret", out.secret_)) {
       return at(*bad);
     }
-    if (auto bad = flag_of(*field, "masked", "fields.masked", out.shown_masked_)) {
-      return at(*bad);
-    }
     value = std::nullopt;
     if (auto bad = text_of(*field, "default", "fields.default", false, value)) {
       return at(*bad);
     }
-    if (out.secret_ && (out.shown_masked_ || value)) {
-      return at(refuse(field->source(), "a secret field is never shown and has no default: remove masked and default"));
+    if (out.secret_ && value) {
+      return at(refuse(field->source(), "a secret field has no default: remove it"));
     }
     out.default_ = value;
     broker.entry_.fields_.push_back(std::move(out));

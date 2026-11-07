@@ -125,7 +125,7 @@ TEST_CASE("the store writer appends a version only where a bar is new or changed
     closes(root, {"bars.as_of=" + replay::utc_instant(T0 + 2)}) == std::vector<std::string>{"100", "110", "102", "103"}
   );
   CHECK(closes(root, {"bars.as_of=" + replay::utc_instant(T0)}) == std::vector<std::string>{"100", "101", "102"});
-  // The fetch's snapshot: as of it, from its first bar, an older history in the store left out.
+  // As of a version and from a date, as `bars.source = "store"` reproduces a fetch offline.
   CHECK(
     closes(root, {"bars.as_of=" + replay::utc_instant(T0 + 3), "replay.from=2024-01-02"}) ==
     std::vector<std::string>{"101", "102", "103"}
@@ -144,7 +144,7 @@ TEST_CASE(
   CHECK(closes(root) == std::vector<std::string>{"100"});
 
   auto bad = series_of(0, {"100"});
-  for (const auto* symbol : {"../x", "a/b", "a,b", "a=b", "..", ""}) {
+  for (const auto* symbol : {"../x", "a/b", "a,b", "a=b", "..", "", "A*", "a?", "[x]", "{a,b}"}) {
     INFO(symbol);
     bad.instrument_.symbol_ = symbol;
     CHECK_THROWS_AS(replay::store_series(root.str(), "vendor", "1d", bad, T0 + 10), std::invalid_argument);

@@ -2,12 +2,13 @@
 
 // A backtest on a broker folder's history (`bars.source = "<name>"`): the backtest driver, built with the folder's
 // adapter, connects with the login `strategy backtest` hands it, fetches each symbol's last `count` bars, writes them
-// into the store as one version (`store_write.hpp`), then replays that version: the store read as of the fetch, from
-// its first bar, so a later revision by another writer and an older history already in the store are outside it.
+// into the store as one version (`store_write.hpp`), then replays exactly the bars it received (written as a CSV beside
+// its outcome), never a later revision by another writer or an older history already in the store.
 //
 // The adapter's error text is never written: its category, HTTP status and code are (a vendor may put its token in a
 // URL). cmdatl's wiring calls only `connect` and `bars`, and builds no trading session.
 
+#include "./adapter_text.hpp"
 #include "./replay.hpp"
 #include "./settings.hpp"
 #include "./store_write.hpp"
@@ -18,7 +19,9 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
@@ -27,63 +30,6 @@
 
 namespace cmdatl {
 namespace replay {
-
-/**
- * @brief An error's category, as a word.
- * @param category The category.
- * @return The word.
- */
-inline const char* category_word(atl::ErrorCategory category) {
-  switch (category) {
-    case atl::ErrorCategory::CANCELLED:
-      return "cancelled";
-    case atl::ErrorCategory::TRANSPORT:
-      return "transport";
-    case atl::ErrorCategory::HTTP:
-      return "http";
-    case atl::ErrorCategory::AUTHENTICATION:
-      return "authentication";
-    case atl::ErrorCategory::RATE_LIMIT:
-      return "rate_limit";
-    case atl::ErrorCategory::PROTOCOL:
-      return "protocol";
-    case atl::ErrorCategory::INVALID_ARGUMENT:
-      return "invalid_argument";
-  }
-  return "unknown";
-}
-
-/**
- * @brief A broker code as shown: a short printable one, else none (the adapter sets it, and it is not cmdatl's).
- * @param code The code.
- * @return It, or empty.
- */
-inline std::string shown_code(const std::string& code) {
-  const bool shown = !code.empty() && code.size() <= 32 && std::all_of(code.begin(), code.end(), [](char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' ||
-      c == '.';
-  });
-  return shown ? code : std::string();
-}
-
-/**
- * @brief What is shown of a broker folder adapter's error: its category, HTTP status and broker code, and whether it
- *   reached the broker; never its text.
- * @param error The error.
- * @return The text.
- */
-inline std::string adapter_error_text(const atl::BrokerError& error) {
-  std::string out = std::string("the broker folder's adapter answered ") + category_word(error.category_);
-  if (error.http_status_ != 0) {
-    out += ", HTTP " + std::to_string(error.http_status_);
-  }
-  const auto code = shown_code(error.broker_code_);
-  if (!code.empty()) {
-    out += ", code " + code;
-  }
-  out += error.reached_broker_ ? " (it reached the broker)" : " (before reaching the broker)";
-  return out + "; its text is not shown";
-}
 
 /**
  * @brief An instant as UTC text DuckDB reads as a TIMESTAMPTZ, to the microsecond.
@@ -141,6 +87,21 @@ inline std::optional<std::string> fetched_problem(const atl::BarSeries& series, 
 }
 
 /**
+ * @brief Appends a fetched series to the replay's CSV: one row per bar, as the CSV loader reads a long file.
+ * @param csv The CSV so far.
+ * @param series The series.
+ */
+inline void append_csv(std::string& csv, const atl::BarSeries& series) {
+  const char* stamp = series.stamp_ == atl::BarStamp::CLOSE ? "close" : "open";
+  for (const auto& bar : series.bars_) {
+    const auto ts = std::chrono::duration_cast<std::chrono::seconds>(bar.timestamp_.time_since_epoch()).count();
+    csv += series.instrument_.symbol_ + "," + std::to_string(ts) + "," + stamp + "," +
+      (bar.open_ ? bar.open_->str() : std::string()) + "," + bar.high_.str() + "," + bar.low_.str() + "," +
+      bar.close_.str() + "," + bar.volume_.str() + "\n";
+  }
+}
+
+/**
  * @brief Writes the fetch's outcome where `strategy backtest` reads it.
  * @param path The file.
  * @param outcome The outcome.
@@ -185,7 +146,9 @@ int fetch_main(int argc, char** argv, Fills fills_of, Connect connect, const std
     } else if (const auto v = take("fetch.interval")) {
       interval = *v;
     } else if (const auto v = take("fetch.count")) {
-      count = std::atoi(v->c_str());
+      char* end = nullptr;
+      const long parsed = std::strtol(v->c_str(), &end, 10);
+      count = end != v->c_str() && *end == '\0' && parsed > 0 && parsed <= 100000 ? static_cast<int>(parsed) : 0;
     } else if (const auto v = take("fetch.outcome")) {
       outcome_path = *v;
     } else {
@@ -237,7 +200,8 @@ int fetch_main(int argc, char** argv, Fills fills_of, Connect connect, const std
     std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
   outcome["fetched_at"] = utc_instant(fetched_at);
   json::array stored;
-  long long first = 0;
+  // The bars received, as a CSV the replay reads: exactly this fetch's bars, never another version or symbol's.
+  std::string replayed = "symbol,ts,stamp,open,high,low,close,volume\n";
   try {
     // The adapter's exceptions are not cmdatl's: only that one was thrown is written.
     auto connection = [&]() -> std::optional<decltype(connect(*login))> {
@@ -286,11 +250,13 @@ int fetch_main(int argc, char** argv, Fills fills_of, Connect connect, const std
       if (const auto problem = fetched_problem(series, query)) {
         return failed({{"symbol", symbol}, {"message", *problem}});
       }
+      // No history is no backtest: never replaced by bars an earlier fetch left in the store.
+      if (series.bars_.empty()) {
+        return failed({{"symbol", symbol}, {"message", "the broker folder's adapter answered no bars"}});
+      }
 #if defined(CMDATL_DUCKDB)
       const auto written = store_series(root, source, interval, series, fetched_at);
-      if (written.rows_ > 0 && (first == 0 || written.first_ < first)) {
-        first = written.first_;
-      }
+      append_csv(replayed, series);
       stored.emplace_back(
         json::object{
           {"symbol", symbol},
@@ -302,7 +268,6 @@ int fetch_main(int argc, char** argv, Fills fills_of, Connect connect, const std
         }
       );
 #else
-      (void)first;
       return failed({{"message", "this driver was built without DuckDB, which writes the store"}});
 #endif
     }
@@ -315,25 +280,28 @@ int fetch_main(int argc, char** argv, Fills fills_of, Connect connect, const std
     std::cerr << "error: the fetch's outcome cannot be written to " << outcome_path << '\n';
     return 1;
   }
-  // The replay of this version: the store as of the fetch, from its first bar (or a later replay.from).
-  std::string coordinates;
-  for (const auto& symbol : symbols) {
-    coordinates += (coordinates.empty() ? "" : ",") + source + "/" + interval + "/" + symbol;
-  }
-  args.push_back("bars.store=" + coordinates);
-  args.push_back("bars.as_of=" + utc_instant(fetched_at));
-  if (first > 0) {
-    std::optional<std::string> from;
-    for (const auto& arg : args) {
-      if (arg.rfind("replay.from=", 0) == 0) {
-        from = arg.substr(12);
-      }
-    }
-    const auto start = utc_date(first);
-    if (!from || *from < start) {
-      args.push_back("replay.from=" + start);
+  // The replay of exactly the bars received, written beside the outcome file; the store keeps them as a version.
+  const auto csv = std::filesystem::path(outcome_path).parent_path() / "fetched.csv";
+  {
+    std::ofstream out(csv, std::ios::trunc);
+    out << replayed;
+    out.flush();
+    if (!out) {
+      std::cerr << "error: the fetched bars cannot be written to " << csv.string() << '\n';
+      return 1;
     }
   }
+  std::vector<std::string> kept;
+  for (const auto& arg : args) {
+    if (arg.rfind("bars.source=", 0) != 0 && arg.rfind("bars.store_root=", 0) != 0) {
+      kept.push_back(arg);
+    }
+  }
+  args = std::move(kept);
+  args.push_back("bars.source=csv");
+  args.push_back("bars.file=" + csv.string());
+  args.push_back("bars.symbol_column=symbol");
+  args.push_back("bars.interval=" + interval);
   std::vector<std::string> owned{"driver"};
   owned.insert(owned.end(), args.begin(), args.end());
   std::vector<char*> raw;

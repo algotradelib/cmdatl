@@ -15,7 +15,7 @@
 // generic run is never compiled for it. The adapter's error text is replaced before the run sees it (`ScrubbedSession`)
 // and an exception's is not shown: either could carry a credential (a vendor that puts its token in a URL).
 
-#include "../replay/fetch.hpp"
+#include "../replay/adapter_text.hpp"
 #include "./account_main.hpp"
 
 #include <algotradelib/broker>
@@ -45,7 +45,7 @@ namespace json = boost::json;
 
 /**
  * @brief A broker folder's session as the run sees it: every call forwarded, every error's text replaced by
- *   `replay::adapter_error_text`.
+ *   `replay::adapter_error_text`, its code kept only when short and plain (`replay::shown_code`), its request id cleared.
  * @tparam Inner The adapter's session.
  */
 template <typename Inner>
@@ -123,7 +123,11 @@ private:
   template <typename T>
   static atl::Result<T> scrub(atl::Result<T> answer) {
     if (!answer) {
-      answer.error().message_ = replay::adapter_error_text(answer.error());
+      // The whole error normalized here: the boundary and the events read its code as a refusal's reason.
+      auto& error = answer.error();
+      error.message_ = replay::adapter_error_text(error);
+      error.broker_code_ = replay::shown_code(error.broker_code_);
+      error.request_id_.clear();
     }
     return answer;
   }
