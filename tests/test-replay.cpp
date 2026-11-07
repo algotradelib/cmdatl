@@ -652,10 +652,98 @@ TEST_CASE("replay main: replay.fill names the library's decision-close rule, and
   CHECK(
     ruled.out_.find(", \"market_price_rule\": \"decision-close\", \"market_fills_by_rule\": 1}") != std::string::npos
   );
-  args.back() = "replay.fill=next-close";
+  args.back() = "replay.fill=close";
   const auto unknown = replay_main<runtest::Program>(args);
   CHECK(unknown.exit_ == 1);
-  CHECK(unknown.err_ == "error: replay.fill: 'next-close' is neither next-open nor decision-close\n");
+  CHECK(unknown.err_ == "error: replay.fill: 'close' is not next-open, decision-close or next-close\n");
+}
+
+/**
+ * @brief An OHLCV CSV like `flat_bars`, each day's open 100 + 10 d and its close 105 + 10 d.
+ * @param days How many days.
+ * @return The file's text.
+ */
+std::string rising_bars(int days) {
+  std::string text = "ts,open,high,low,close,volume\n";
+  for (int day = 0; day < days; ++day) {
+    const auto open = std::to_string(100 + 10 * day);
+    const auto close = std::to_string(105 + 10 * day);
+    text += std::to_string(1577836800 + 86400 * static_cast<long long>(day)) + "," + open + "," + close + "," + open +
+      "," + close + ",1000\n";
+  }
+  return text;
+}
+
+/** @brief The session program, having met both session edges, as one whose on_open and on_close ran. */
+struct EdgeProgram : runtest::SessionProgram {
+  using SessionProgram::SessionProgram;
+  std::size_t session_opens() const {
+    return 1;
+  }
+  std::size_t session_closes() const {
+    return 1;
+  }
+};
+
+TEST_CASE("replay main: replay.fill = next-close fills at the close of the bar after the decision") {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", rising_bars(4));
+  runtest::script().decisions_[2] = runtest::Decision{1, "1", true};
+  std::vector<std::string> args{
+    "bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "output.fills=" + dir.at("f.csv"),
+    "replay.fill=next-close"
+  };
+  const auto ruled = replay_main<runtest::Program>(args);
+  INFO(ruled.err_);
+  REQUIRE(ruled.exit_ == 0);
+  // Decided on the second bar, filled against the third at its close, not its open (120).
+  CHECK(
+    slurp(dir.at("f.csv")) == "at,symbol,side,quantity,price,commission,tax\n2020-01-03T00:00:00Z,AAA,buy,1,125,0,0\n"
+  );
+  CHECK(ruled.out_.find(", \"market_price_rule\": \"next-close\", \"market_fills_by_rule\": 1}") != std::string::npos);
+  // On weekly bars the close has no session to date it by: the library halts the replay, and the report says why.
+  args.push_back("bars.interval=1w");
+  const auto weekly = replay_main<runtest::Program>(args);
+  INFO(weekly.err_);
+  REQUIRE(weekly.exit_ == 0);
+  CHECK(field(weekly.out_, "executions") == "0");
+  CHECK(field(weekly.out_, "halted").rfind("\"next_close_bar_too_long: ", 0) == 0);
+}
+
+TEST_CASE("replay main: next-close on open points fills a close's order at the next open and an open's at its close") {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", rising_bars(3));
+  // Bars in order: the first day's open point and day, then the second's: decided at the first day's close (bar 2),
+  // then at the second day's open point (bar 3).
+  runtest::script().decisions_[2] = runtest::Decision{1, "1", true};
+  runtest::script().decisions_[3] = runtest::Decision{2, "1", true};
+  const std::vector<std::string> base{
+    "bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "output.fills=" + dir.at("f.csv"),
+    "bars.open_point=true"
+  };
+  auto args = base;
+  args.push_back("replay.fill=next-close");
+  const auto ruled = replay_main<EdgeProgram>(args);
+  INFO(ruled.err_);
+  REQUIRE(ruled.exit_ == 0);
+  // The open point's close is its open; the day's close is the session's (21:00 UTC under the default US window).
+  CHECK(
+    slurp(dir.at("f.csv")) ==
+    "at,symbol,side,quantity,price,commission,tax\n2020-01-02T14:30:00Z,AAA,buy,1,110,0,0\n"
+    "2020-01-02T21:00:00Z,AAA,buy,1,115,0,0\n"
+  );
+  CHECK(ruled.out_.find(", \"market_price_rule\": \"next-close\", \"market_fills_by_rule\": 2,") != std::string::npos);
+  // At the next open, the open's order fills at the day's open.
+  const auto plain = replay_main<EdgeProgram>(base);
+  INFO(plain.err_);
+  REQUIRE(plain.exit_ == 0);
+  CHECK(
+    slurp(dir.at("f.csv")) ==
+    "at,symbol,side,quantity,price,commission,tax\n2020-01-02T14:30:00Z,AAA,buy,1,110,0,0\n"
+    "2020-01-02T21:00:00Z,AAA,buy,1,110,0,0\n"
+  );
 }
 
 TEST_CASE("replay main: a limit never reached expires with its session and the last is still queued") {
@@ -795,7 +883,7 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
     {"bars.columns.close", {"close", "AAA", "nope"}},
     {"replay.from", {"2020-01-01", "20200102", "2020-13-01", "x", "00010101"}},
     {"replay.to", {"2020-01-03", "99991231", "2019-12-31", ""}},
-    {"replay.fill", {"next-open", "close", "legs", "x"}},
+    {"replay.fill", {"next-open", "next-close", "close", "legs", "x"}},
     {"bars.open_point", {"true", "false", "x"}},
     {"replay.market", {"us", "kr", "x"}},
     {"replay.cash", {"100000", "1e5", "0", "-1", "x", "1e400"}},

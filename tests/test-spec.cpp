@@ -259,8 +259,8 @@ TEST_CASE("values are checked key by key, each error at its file and line") {
     {"[replay]\nfrom = 20230230", "a date"},
     {"[replay]\nfrom = \"2023-13-01\"", "a date"},
     {"[replay]\nmarket = \"jp\"", "one of \"us\", \"kr\""},
-    {"[replay]\nfill = \"legs\"", "one of \"next-open\", \"decision-close\""},
-    {"[replay]\nfill = \"open-prev-close\"", "one of \"next-open\", \"decision-close\""},
+    {"[replay]\nfill = \"legs\"", "one of \"next-open\", \"decision-close\", \"next-close\""},
+    {"[replay]\nfill = \"open-prev-close\"", "one of \"next-open\", \"decision-close\", \"next-close\""},
     {"[bars]\nstore = \"kis/1d\"", "is not a store coordinate"},
     {"[bars]\nstore = \"kis/2d/005930\"", "the interval is one of"},
     {"[bars]\nstore = [\"a/1d/x\", 3]", "a string or a list of strings"},
@@ -757,6 +757,10 @@ TEST_CASE("open points match the program and the data") {
       &plain, "give one of the two"},
     {"[bars]\nfile = \"c\"\n[replay]\nfill = \"decision-close\"\n[orders]\ntype = \"limit\"", &plain,
       "`replay.fill` = \"decision-close\" prices market orders"},
+    {"[bars]\nfile = \"c\"\n[replay]\nfill = \"next-close\"\nfill_header = \"r.hpp\"\nfill_function = \"f\"", &plain,
+      "`replay.fill` = \"next-close\" and `replay.fill_header` both price market orders"},
+    {"[bars]\nfile = \"c\"\n[replay]\nfill = \"next-close\"\n[orders]\ntype = \"limit\"", &plain,
+      "`replay.fill` = \"next-close\" prices market orders"},
     {"[bars]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"", &plain, "give both `replay.fill_header`"},
     {"[bars]\nfile = \"c\"\n[replay]\nfill_function = \"f\"", &plain, "give both `replay.fill_header`"},
     {"[bars]\nfile = \"c\"\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"a-b\"", &plain,
@@ -789,6 +793,10 @@ TEST_CASE("a market-price rule is a build setting, never a driver argument") {
   REQUIRE(preset.errors_.empty());
   CHECK(preset.arg("replay.fill") == std::optional<std::string>("decision-close"));
   CHECK(preset.resolved_.fill_header_.empty());
+  const auto next_close = run(WIDE_SPEC + "[replay]\nfill = \"next-close\"\n", plain);
+  REQUIRE(next_close.errors_.empty());
+  CHECK(next_close.arg("replay.fill") == std::optional<std::string>("next-close"));
+  CHECK(next_close.resolved_.fill_header_.empty());
   // Stated as the default, it goes with a header rule.
   const auto stated =
     run(WIDE_SPEC + "[replay]\nfill = \"next-open\"\nfill_header = \"r.hpp\"\nfill_function = \"f\"\n", plain);

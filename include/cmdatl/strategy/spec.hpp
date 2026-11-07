@@ -141,7 +141,7 @@ inline const std::vector<Key>& keys() {
     {"replay.min_commission", Kind::NUMBER, {}, {}, 0, false},
     {"replay.sell_tax", Kind::NUMBER, {}, {}, 0, false},
     {"replay.slippage_ticks", Kind::COUNT, {}, {}},
-    {"replay.fill", Kind::CHOICE, {}, {"next-open", "decision-close"}},
+    {"replay.fill", Kind::CHOICE, {}, {"next-open", "decision-close", "next-close"}},
     {"replay.fill_header", Kind::PATH, {}, {}},
     {"replay.fill_function", Kind::TEXT, {}, {}},
     {"replay.shorts", Kind::BOOL, {}, {}},

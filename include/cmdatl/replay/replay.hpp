@@ -40,9 +40,9 @@
  * cmdatl, so a project's own `main` can include it beside `atlc build`'s header.
  *
  * Fills: a market order fills against the bar after its decision, at that bar's open, at the price it was decided on
- * (`replay.fill = decision-close`), or at the price of a rule of one's own (`replay.fill_header` and
- * `replay.fill_function`, compiled into the driver); a wide table's row is a bar with open = high = low = close, so on
- * closes alone the open is the next close.
+ * (`replay.fill = decision-close`), at that bar's close (`replay.fill = next-close`; a weekly or longer bar halts the
+ * replay), or at the price of a rule of one's own (`replay.fill_header` and `replay.fill_function`, compiled into the
+ * driver); a wide table's row is a bar with open = high = low = close, so on closes alone the open is the next close.
  *
  * Sessions: the replay's session window is the market's (`kr` 09:00-15:30 KST, `us` 09:30-16:00 at UTC-5).
  * `bars.open_point` replays each daily bar as two bars, a point at the session's open (its open alone) and the day's
@@ -1425,7 +1425,7 @@ inline atl::backtest::ReplayConfig replay_config(const Settings& s, const Data& 
  *   one's own is the driver's, `program_fills`).
  * @param s The settings.
  * @return The fill model.
- * @throws std::invalid_argument if `replay.fill` is neither `next-open` nor `decision-close`.
+ * @throws std::invalid_argument if `replay.fill` is not `next-open`, `decision-close` or `next-close`.
  */
 inline atl::backtest::NextBarFillModel fill_model(const Settings& s) {
   const auto rate = decimal_of(s.get_or("replay.commission", "0"), "replay.commission");
@@ -1445,8 +1445,10 @@ inline atl::backtest::NextBarFillModel fill_model(const Settings& s) {
   const auto fill = s.get_or("replay.fill", "next-open");
   if (fill == "decision-close") {
     model = model.with_market_price(atl::backtest::MarketPrice::DECISION_CLOSE);
+  } else if (fill == "next-close") {
+    model = model.with_market_price(atl::backtest::MarketPrice::NEXT_CLOSE);
   } else if (fill != "next-open") {
-    throw std::invalid_argument("replay.fill: '" + fill + "' is neither next-open nor decision-close");
+    throw std::invalid_argument("replay.fill: '" + fill + "' is not next-open, decision-close or next-close");
   }
   return model;
 }

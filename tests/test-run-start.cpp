@@ -73,6 +73,7 @@ TEST_CASE("the market settings a run refuses before anything is built") {
   CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.shorts=true"})->first == "replay.shorts");
   CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.open_point=true"})->first == "bars.open_point");
   CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.fill=decision-close"})->first == "replay.fill");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.fill=next-close"})->first == "replay.fill");
   CHECK(!cmdatl::spec_refusal({"replay.market=kr", "replay.fill=next-open"}));
   // The last value wins, as atlc's settings read it.
   CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}));
