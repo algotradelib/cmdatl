@@ -206,7 +206,7 @@ TEST_CASE("no skill names a command that is not built and every error code the d
   families.erase("file");
   families.erase("run");
   const std::set<std::string> extensions{
-    "toml", "atls", "csv", "md", "json", "jsonl", "armed", "release", "stop", "lock"
+    "toml", "atls", "csv", "md", "json", "jsonl", "armed", "release", "stop", "lock", "hpp"
   };
   const std::regex token("`([a-z_]+)\\.([a-z_]+)`");
   const std::regex reference("`cmdatl ([a-z][a-z ]*[a-z])");

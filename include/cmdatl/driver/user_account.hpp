@@ -15,6 +15,7 @@
 // generic run is never compiled for it. The adapter's error text is replaced before the run sees it (`ScrubbedSession`)
 // and an exception's is not shown: either could carry a credential (a vendor that puts its token in a URL).
 
+#include "../replay/fetch.hpp"
 #include "./account_main.hpp"
 
 #include <algotradelib/broker>
@@ -43,56 +44,8 @@ namespace atl = algotradelib;
 namespace json = boost::json;
 
 /**
- * @brief An error's category, as a word.
- * @param category The category.
- * @return The word.
- */
-inline const char* category_word(atl::ErrorCategory category) {
-  switch (category) {
-    case atl::ErrorCategory::CANCELLED:
-      return "cancelled";
-    case atl::ErrorCategory::TRANSPORT:
-      return "transport";
-    case atl::ErrorCategory::HTTP:
-      return "http";
-    case atl::ErrorCategory::AUTHENTICATION:
-      return "authentication";
-    case atl::ErrorCategory::RATE_LIMIT:
-      return "rate_limit";
-    case atl::ErrorCategory::PROTOCOL:
-      return "protocol";
-    case atl::ErrorCategory::INVALID_ARGUMENT:
-      return "invalid_argument";
-  }
-  return "unknown";
-}
-
-/**
- * @brief What is shown of an adapter's error: its category, HTTP status and broker code (a short printable one), and
- *   whether it reached the broker; never its text.
- * @param error The error.
- * @return The text.
- */
-inline std::string opaque_error_text(const atl::BrokerError& error) {
-  std::string out = std::string("the broker folder's adapter answered ") + category_word(error.category_);
-  if (error.http_status_ != 0) {
-    out += ", HTTP " + std::to_string(error.http_status_);
-  }
-  const auto& code = error.broker_code_;
-  const bool shown = !code.empty() && code.size() <= 32 && std::all_of(code.begin(), code.end(), [](char c) {
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-' ||
-      c == '.';
-  });
-  if (shown) {
-    out += ", code " + code;
-  }
-  out += error.reached_broker_ ? " (it reached the broker)" : " (before reaching the broker)";
-  return out + "; its text is not shown";
-}
-
-/**
  * @brief A broker folder's session as the run sees it: every call forwarded, every error's text replaced by
- *   `opaque_error_text`.
+ *   `replay::adapter_error_text`.
  * @tparam Inner The adapter's session.
  */
 template <typename Inner>
@@ -170,7 +123,7 @@ private:
   template <typename T>
   static atl::Result<T> scrub(atl::Result<T> answer) {
     if (!answer) {
-      answer.error().message_ = opaque_error_text(answer.error());
+      answer.error().message_ = replay::adapter_error_text(answer.error());
     }
     return answer;
   }

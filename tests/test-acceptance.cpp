@@ -1,3 +1,4 @@
+#include "./broker-folders.hpp"
 #include "./paper-support.hpp"
 #include "./support.hpp"
 
@@ -703,6 +704,88 @@ TEST_CASE("a store backtest links DuckDB from build.duckdb or DUCKDB_ROOT alone"
     REQUIRE(ran.exit_ == 0);
     CHECK(reply_of(ran.out_).at("report") == expected);
   }
+}
+#endif
+
+#if defined(CMDATL_TEST_DUCKDB)
+TEST_CASE(
+  "a backtest on a broker folder's history fetches into the store, replays that version, and shows no token",
+  "[acceptance]"
+) {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const ScopedVariable root("DUCKDB_ROOT", std::string(CMDATL_TEST_DUCKDB));
+  const BrokerHome home;
+  const std::filesystem::path fixture = std::string(CMDATL_SOURCE_DIR) + "/tests/fixtures/adapters/vendor/adapter";
+  home.folder("fixture", slurp(fixture / "broker.toml"), slurp(fixture / "adapter.hpp"));
+  const ScratchDir dir;
+  REQUIRE(run({"strategy", "new", "dip", "--dir", dir.path().string()}).exit_ == 0);
+  const auto at = [&dir](const std::string& file) {
+    return (dir.path() / file).string();
+  };
+  spit(
+    at("vendor.toml"),
+    "strategy = 'dip.atls'\n[bars]\nsource = 'fixture'\ncount = 150\nstore_root = 'store'\n[instruments]\nstock = "
+    "'AAA'\n[replay]\nmarket = 'us'\n"
+  );
+  spit(at("login.json"), "{\"api_token\":\"T-0123456789\"}");
+  const ScopedVariable login("CMDATL_TEST_FETCH_LOGIN", at("login.json"));
+  auto ran = backtest({at("vendor.toml")});
+  INFO(ran.out_ << "\n" << ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  auto reply = reply_of(ran.out_);
+  CHECK(reply.at("report").at("bars").as_int64() == 150);
+  const auto& fetched = reply.at("fetched").as_object();
+  CHECK(fetched.at("source").as_string() == "fixture");
+  const auto& series = fetched.at("series").as_array().at(0).as_object();
+  CHECK(series.at("symbol").as_string() == "AAA");
+  CHECK(series.at("rows").as_int64() == 150);
+  CHECK(series.at("new_rows").as_int64() == 150);
+  CHECK(std::filesystem::exists(at("store/bars/source=fixture/interval=1d/symbol=AAA/bars.parquet")));
+  CHECK(ran.out_.find("T-0123456789") == std::string::npos);
+  CHECK(ran.err_.find("T-0123456789") == std::string::npos);
+  const auto first = reply.at("report");
+
+  // The same history again: nothing new in the store, the same report.
+  ran = backtest({at("vendor.toml")});
+  REQUIRE(ran.exit_ == 0);
+  reply = reply_of(ran.out_);
+  CHECK(reply.at("fetched").at("series").as_array().at(0).at("new_rows").as_int64() == 0);
+  CHECK(reply.at("report") == first);
+
+  // The version replayed again from the store alone, as the reply says.
+  const std::string as_of(reply.at("fetched").at("fetched_at").as_string());
+  spit(
+    at("again.toml"),
+    "strategy = 'dip.atls'\n[bars]\nstore = 'fixture/1d/AAA'\nstore_root = 'store'\nas_of = '" + as_of.substr(0, 10) +
+      "T23:59:59Z'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
+  );
+  ran = backtest({at("again.toml")});
+  INFO(ran.out_);
+  REQUIRE(ran.exit_ == 0);
+  CHECK(reply_of(ran.out_).at("report") == first);
+
+  // A token the vendor answers 401 with, in its text: the reply names the status, never the token.
+  spit(at("login.json"), "{\"api_token\":\"fail-SECRET-987\"}");
+  ran = backtest({at("vendor.toml")});
+  CHECK(ran.exit_ == 1);
+  CHECK(code_of(ran.out_) == "fetch.failed");
+  CHECK(ran.out_.find("HTTP 401") != std::string::npos);
+  CHECK(ran.out_.find("SECRET-987") == std::string::npos);
+  CHECK(ran.err_.find("SECRET-987") == std::string::npos);
+
+  // No login, no folder, and a spec without what the fetch needs.
+  spit(
+    at("other.toml"),
+    "strategy = 'dip.atls'\n[bars]\nsource = 'nofolder'\ncount = 5\nstore_root = 'store'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
+  );
+  CHECK(code_of(backtest({at("other.toml")}).out_) == "adapter.not_found");
+  CHECK(code_of(backtest({at("vendor.toml"), "bars.count=0"}).out_) == "spec.invalid");
+  std::filesystem::remove(at("login.json"));
+  CHECK(code_of(backtest({at("vendor.toml")}).out_) == "auth.not_found");
 }
 #endif
 

@@ -38,6 +38,15 @@ target_compile_options(driver PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off
 
 # A store backtest: DuckDB's prebuilt C library, from CMDATL_DUCKDB_DIR alone when cmdatl names it (`build.duckdb`), else
 # DUCKDB_ROOT, then the system's paths; the executable finds the library by an rpath to its directory.
+# A broker folder's history: its adapter is copied into this source directory as adapter/, and named by
+# CMDATL_DRIVER_ADAPTER (a folder's name, checked by cmdatl); the fetch writes the store, so DuckDB is linked too.
+if(CMDATL_DRIVER_ADAPTER)
+  if(NOT CMDATL_DRIVER_ADAPTER MATCHES "^[a-z][a-z0-9-]*$")
+    message(FATAL_ERROR "CMDATL_DRIVER_ADAPTER must be a broker folder's name, not ${CMDATL_DRIVER_ADAPTER}")
+  endif()
+  target_compile_definitions(driver PRIVATE CMDATL_FETCH_ADAPTER=1)
+endif()
+
 if(CMDATL_STORE)
   if(CMDATL_DUCKDB_DIR)
     set(cmdatl_duckdb_hints PATHS "${CMDATL_DUCKDB_DIR}" PATH_SUFFIXES include lib NO_DEFAULT_PATH)

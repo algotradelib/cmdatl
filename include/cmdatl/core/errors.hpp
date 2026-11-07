@@ -79,6 +79,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"adapter.invalid", Exit::FAILED, false, "the broker folder is refused as it stands: the operator fixes it"},
     {"adapter.unsafe", Exit::FAILED, false,
       "another user could change the broker folder: the operator makes it theirs and not writable by others"},
+    {"fetch.failed", Exit::FAILED, false,
+      "the broker folder's adapter did not serve the bars: check the login with cmdatl auth status, then fetch again"},
     {"unsupported.capability", Exit::FAILED, false,
       "the broker folder's client does not state what a run needs; nothing was sent: trade it another way"},
     {"unsupported.broker", Exit::FAILED, false,

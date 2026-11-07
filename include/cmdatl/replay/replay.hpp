@@ -875,6 +875,21 @@ public:
     return out;
   }
 
+  /**
+   * @brief Runs a statement whose result is not read (a table made, rows inserted, a file copied).
+   * @param sql The statement.
+   * @throws std::runtime_error With DuckDB's message.
+   */
+  void exec(const std::string& sql) {
+    duckdb_result result;
+    const bool failed = duckdb_query(connection_, sql.c_str(), &result) == DuckDBError;
+    const std::string message = failed ? duckdb_result_error(&result) : "";
+    duckdb_destroy_result(&result);
+    if (failed) {
+      throw std::runtime_error("duckdb: " + message);
+    }
+  }
+
 private:
   duckdb_database database_{nullptr};
   duckdb_connection connection_{nullptr};

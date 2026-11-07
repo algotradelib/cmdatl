@@ -242,7 +242,7 @@ if(CMDATL_BUILD_TESTS)
     )
     # The replay module's store loader: its own executable, whose one translation unit defines CMDATL_DUCKDB, so no
     # inline definition without the store is mixed with it.
-    add_executable(test-replay-store tests/test-replay-store.cpp)
+    add_executable(test-replay-store tests/test-replay-store.cpp tests/test-store-write.cpp)
     target_link_libraries(test-replay-store PRIVATE algotradelib::algotradelib Catch2::Catch2WithMain ${CMDATL_TEST_DUCKDB_LIBRARY})
     target_include_directories(test-replay-store PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_include_directories(test-replay-store SYSTEM PRIVATE ${CMDATL_TEST_DUCKDB})
@@ -250,6 +250,17 @@ if(CMDATL_BUILD_TESTS)
     target_compile_options(test-replay-store PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)
     set_target_properties(test-replay-store PROPERTIES BUILD_RPATH ${CMDATL_TEST_DUCKDB})
     add_test(NAME test-replay-store COMMAND test-replay-store)
+    # The backtest driver that fetches through a broker folder's adapter (here a fixture data vendor), compiled as a
+    # backtest's build compiles it.
+    add_executable(backtest-adapter-vendor driver/backtest/main.cpp)
+    target_include_directories(backtest-adapter-vendor PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/vendor
+    )
+    target_include_directories(backtest-adapter-vendor SYSTEM PRIVATE ${CMDATL_TEST_DUCKDB})
+    target_compile_definitions(backtest-adapter-vendor PRIVATE CMDATL_DUCKDB=1 CMDATL_FETCH_ADAPTER=1)
+    target_link_libraries(backtest-adapter-vendor PRIVATE algotradelib::algotradelib ${CMDATL_TEST_DUCKDB_LIBRARY})
+    set_target_properties(backtest-adapter-vendor PROPERTIES BUILD_RPATH ${CMDATL_TEST_DUCKDB})
   endif()
   # The replay module with hand-written programs and files written by the test, as the drivers build it: no
   # floating-point contraction on GCC.

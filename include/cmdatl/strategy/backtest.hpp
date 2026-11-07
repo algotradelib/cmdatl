@@ -4,8 +4,10 @@
 // once per program shape (`build.hpp`, a driver whose main is `cmdatl::replay::main`), a copy of it run with the
 // settings as its arguments, and its report returned unchanged.
 
+#include "../auth/login.hpp"
 #include "../core/reply.hpp"
 #include "../core/table.hpp"
+#include "../system/credential_pipe.hpp"
 #include "../system/files.hpp"
 #include "../system/process.hpp"
 #include "./build.hpp"
@@ -60,6 +62,60 @@ inline std::optional<Reply> replay_outcome(const ChildResult& ran, json::object&
 }
 
 #if !defined(_WIN32)
+/**
+ * @brief A login staged on descriptor 3 for one child, closed in this process when its owner goes, on every path; it
+ *   never stages over a descriptor 3 it did not open.
+ */
+class StagedLogin {
+public:
+  StagedLogin() = default;
+  StagedLogin(const StagedLogin&) = delete;
+  StagedLogin& operator=(const StagedLogin&) = delete;
+
+  /** @brief Closes descriptor 3 if this staged it. */
+  ~StagedLogin() {
+    if (staged_) {
+      ::close(sys::CREDENTIAL_FD);
+    }
+  }
+
+  /**
+   * @brief Stages a login.
+   * @param document The login.
+   * @return 0, `EBUSY` when descriptor 3 is already open, or the error number.
+   */
+  int stage(const std::string& document) {
+    if (::fcntl(sys::CREDENTIAL_FD, F_GETFD) != -1) {
+      return EBUSY;
+    }
+    const auto payload = sys::frame_credentials({document});
+    const int error = payload ? sys::stage_credentials(*payload) : EMSGSIZE;
+    staged_ = error == 0;
+    return error;
+  }
+
+private:
+  bool staged_{false};
+};
+
+/**
+ * @brief Reads a backtest's outcome file written by the fetch: one JSON object.
+ * @param path The file.
+ * @return It, or none.
+ */
+inline std::optional<json::object> read_fetch_outcome(const std::filesystem::path& path) {
+  std::string text;
+  if (!build::read_file(path, text) || text.size() > (1u << 20)) {
+    return std::nullopt;
+  }
+  boost::system::error_code ec;
+  auto parsed = json::parse(text, ec);
+  if (ec || !parsed.is_object()) {
+    return std::nullopt;
+  }
+  return std::move(parsed.as_object());
+}
+
 /** @brief A backtest's scratch directory, made under the cache and removed with everything in it when this ends. */
 class ScratchCopy {
 public:
@@ -137,6 +193,58 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   if (auto refused = check_given(given, atlc.path_, output, false, checked)) {
     return std::move(*refused);
   }
+  // A broker folder's history: the folder found, its login read, its files read once to be compiled as read.
+  const auto& fetching = checked.resolved_.fetch_source_;
+  std::optional<auth::AdapterSnapshot> adapter;
+  std::string login;
+  if (!fetching.empty()) {
+    const auto found = auth::lookup_broker(fetching);
+    if (found.found_ != auth::BrokerFound::FOLDER) {
+      return auth::broker_refusal(found);
+    }
+    const auto name = auth::login_name(found.folder_->entry_, false);
+    auth::StoreAnswer answer;
+    std::string kind = "store";
+    bool hooked = false;
+#if defined(CMDATL_RUN_TEST_HOOKS)
+    // Test builds only: the login from a file, and the system's store never opened.
+    if (const auto file = variable("CMDATL_TEST_FETCH_LOGIN")) {
+      hooked = true;
+      answer.status_ = build::read_file(*file, answer.value_) ? auth::StoreStatus::OK : auth::StoreStatus::NOT_FOUND;
+    }
+#endif
+    if (!hooked) {
+      const auto store = auth::open_store(auth::interaction_allowed(0));
+      if (store == nullptr) {
+        return auth::no_store_reply();
+      }
+      kind = store->kind();
+      answer = store->get(name);
+    }
+    if (answer.status_ == auth::StoreStatus::NOT_FOUND) {
+      return error_reply(
+        Exit::FAILED, "auth.not_found", "no login " + name + " in the credential store: the backtest fetches with it",
+        "the operator runs cmdatl auth login --broker " + fetching
+      );
+    }
+    if (answer.status_ != auth::StoreStatus::OK) {
+      return auth::store_failure(kind, answer.status_, answer.detail_);
+    }
+    login = answer.value_;
+    auth::AdapterSnapshot snapshot;
+    std::string problem;
+    const auto read = auth::snapshot_folder(*found.folder_, snapshot, problem);
+    if (read != auth::BrokerFound::FOLDER) {
+      auth::BrokerLookup failed;
+      failed.found_ = read;
+      failed.problem_ = problem;
+      return auth::broker_refusal(failed);
+    }
+    output.progress(
+      "cmdatl: fetching through the broker folder " + snapshot.folder_ + " (" + build::adapter_digest(snapshot) + ")"
+    );
+    adapter = std::move(snapshot);
+  }
   std::vector<std::string> argv;
   std::optional<ScratchCopy> scratch;
 #if defined(CMDATL_RUN_TEST_HOOKS)
@@ -170,6 +278,7 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     request.duckdb_ = checked.resolved_.duckdb_;
     request.fill_header_ = checked.resolved_.fill_header_;
     request.fill_function_ = checked.resolved_.fill_function_;
+    request.adapter_ = adapter;
     const auto progress = [&output](const std::string& line) {
       output.progress(line);
     };
@@ -181,17 +290,64 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     }
     argv.push_back((scratch->path() / "driver").string());
   }
+  std::filesystem::path outcome;
   for (const auto& [key, value] : checked.resolved_.args_) {
-    argv.push_back(key + "=" + value);
+    // A broker folder's history is read from the store it is fetched into; how many bars and of which interval are
+    // the fetch's.
+    if (!fetching.empty() && key == "bars.source") {
+      argv.push_back("bars.source=store");
+    } else if (!fetching.empty() && (key == "bars.count" || key == "bars.interval")) {
+      argv.push_back("fetch." + key.substr(5) + "=" + value);
+    } else {
+      argv.push_back(key + "=" + value);
+    }
+  }
+  if (!fetching.empty()) {
+    outcome = (scratch ? scratch->path() : std::filesystem::temp_directory_path()) / "fetch.json";
+    argv.push_back("fetch.source=" + fetching);
+    argv.push_back("fetch.outcome=" + outcome.string());
   }
   std::string fills;
   if (invocation.has("fills")) {
     fills = std::filesystem::absolute(invocation.get("fills")).string();
     argv.push_back("output.fills=" + fills);
   }
+  // The login on descriptor 3 for the driver only, staged after the build (no build child inherits it) and closed here
+  // once the driver has ended, on every path.
+  StagedLogin staged;
+  if (!fetching.empty()) {
+    if (const int error = staged.stage(login)) {
+      return error_reply(
+        Exit::FAILED, "replay.failed",
+        "the login could not be handed to the driver: " + std::string(std::strerror(error))
+      );
+    }
+  }
   const auto ran = run_child(argv, [&output](const std::string& line) {
     output.progress(line);
   });
+  std::optional<json::object> fetched;
+  if (!fetching.empty()) {
+    fetched = read_fetch_outcome(outcome);
+    if (ran.kind_ == ChildResult::Kind::FINISHED && !ran.signaled_ && ran.code_ == 3) {
+      std::string message = "the fetch through " + fetching + " failed";
+      const json::object* error = nullptr;
+      if (fetched && fetched->contains("error") && fetched->at("error").is_object()) {
+        error = &fetched->at("error").as_object();
+      }
+      if (error != nullptr && error->contains("message") && error->at("message").is_string()) {
+        message += ": " + std::string(error->at("message").as_string());
+      }
+      auto reply = error_reply(
+        Exit::FAILED, "fetch.failed", message,
+        "check the login (cmdatl auth status) and the broker folder; bars already fetched stay in the store"
+      );
+      if (fetched) {
+        reply.body_["fetched"] = std::move(*fetched);
+      }
+      return reply;
+    }
+  }
   json::object report;
   if (auto failed = replay_outcome(ran, report)) {
     return std::move(*failed);
@@ -204,6 +360,13 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   reply.body_["atlc"] = atlc.version_;
   if (!fills.empty()) {
     reply.body_["fills"] = fills;
+  }
+  if (fetched) {
+    // The history is the vendor's as of the fetch, revisions included; `source = "store"` with this `as_of` replays it.
+    (*fetched)["caveat"] =
+      "the bars are the broker folder's history as of fetched_at, revised values included: replay "
+      "this version with bars.source = \"store\" and bars.as_of = fetched_at";
+    reply.body_["fetched"] = std::move(*fetched);
   }
   return reply;
 #endif

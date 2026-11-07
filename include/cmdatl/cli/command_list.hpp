@@ -346,6 +346,11 @@ inline std::vector<Command> command_list() {
     .returns("settings_given", "the KEY=VALUE settings given (the spec's and the program's own values are not listed)")
     .returns("atlc", "atlc's version")
     .returns("fills", "the fills file, absolute, when asked")
+    .returns(
+      "fetched",
+      "with bars.source naming a broker folder: the source, fetched_at, and per symbol the bars fetched, those new to "
+      "the store, the first and last date and the file"
+    )
     .returns("errors", "on a settings or program failure: the diagnostics, with file and line")
     .returns("stderr", "on a failure atlc, the build or the replay reported: its last stderr lines")
     .exits(PROGRAM_EXITS)
@@ -363,6 +368,13 @@ inline std::vector<Command> command_list() {
     .error("unavailable.platform")
     .error("config.missing")
     .error("config.invalid")
+    .error("adapter.not_found")
+    .error("adapter.invalid")
+    .error("adapter.unsafe")
+    .error("auth.no_store")
+    .error("auth.store_locked")
+    .error("auth.not_found")
+    .error("fetch.failed")
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return backtest_reply(invocation, output);
     }));

@@ -69,7 +69,7 @@ A key given twice on the command line is an error.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `bars.source` | `"wide"`, `"csv"` or `"store"` | `"store"` when `bars.store` is set, else `"wide"` | where the bars come from |
+| `bars.source` | `"wide"`, `"csv"`, `"store"` or a broker folder's name | `"store"` when `bars.store` is set, else `"wide"` | where the bars come from |
 
 `source = "wide"`: tables of one field each, a header and then rows of a yyyymmdd date and one cell per symbol (an empty cell, `NaN` or `nan` is missing), as Chan's book publishes them.
 
@@ -111,8 +111,24 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 | `bars.store_root` | path | required | the store's directory |
 | `bars.as_of` | instant: `"YYYY-MM-DD"`, optionally `THH:MM[:SS]` and `Z` or `+HH:MM` | the latest | read the latest version fetched at or before this instant |
 
-A backtest of a store needs DuckDB (`[build]` below); a CSV or wide run does not.
-A run (`cmdatl run`) reads files, not a store.
+`source = "NAME"`, a broker folder's name (README, "Your own broker or data vendor"): the backtest fetches each symbol's last bars through the folder's adapter, with the login `cmdatl auth login --broker NAME` stored (`NAME/real`), writes them into the store as one version, then replays that version.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `bars.count` | whole number, 1 to 100000 | required | the last bars of each symbol fetched (an adapter may refuse more than its broker serves; fewer may come back) |
+| `bars.interval` | as for `"csv"` | `"1d"` | the bars' interval |
+| `bars.store_root` | path | required | the store the bars are written into, as for `"store"` |
+
+- `replay.market` is required: it gives the instruments' country, which the adapter is asked for.
+- The symbols come from `[instruments]`; a symbol holding `/`, `\`, `=`, `,` or a control character, or being `.` or `..`, is refused before anything is fetched.
+- The store is written as `labs`-style fetchers write it: `source=NAME`, every version kept, a bar appended only when it is new or changed, under the series directory's `.lock`.
+- The replay reads the store as of the fetch (`fetched_at`) and from its first bar, so a later fetch by another writer and an older history already in the store are left out; `replay.from` and `replay.to` narrow it further.
+- The reply's `fetched` gives `fetched_at` and, per symbol, the bars fetched and those new to the store: `bars.source = "store"` with `bars.as_of` at that instant replays the same version offline.
+- Prices are raw (not adjusted), each within `DECIMAL(18,4)`, and the history is the vendor's as of the fetch, revisions included: it is not what was known on each day.
+- An adapter's error is reported by its category, HTTP status and code (`fetch.failed`), never by its text, which could carry a credential.
+
+A backtest of a store or of a broker folder needs DuckDB (`[build]` below); a CSV or wide run does not.
+A run (`cmdatl run`) reads files, not a store or a broker folder.
 A spec names data only: credentials never appear in it.
 
 ### `[data.NAME]`: the program's data values

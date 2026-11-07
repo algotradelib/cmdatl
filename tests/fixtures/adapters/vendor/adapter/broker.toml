@@ -1,0 +1,7 @@
+display = "A fixture vendor"
+data_only = true
+
+[[fields]]
+name = "api_token"
+prompt = "API token: "
+secret = true

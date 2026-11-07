@@ -105,6 +105,10 @@ inline const std::vector<Key>& keys() {
   static const std::vector<std::string> csv{"csv"};
   static const std::vector<std::string> wide{"wide"};
   static const std::vector<std::string> store{"store"};
+  // A broker folder's name as bars.source: the bars fetched through its adapter into the store.
+  static const std::vector<std::string> folder{"folder"};
+  static const std::vector<std::string> csv_or_folder{"csv", "folder"};
+  static const std::vector<std::string> store_or_folder{"store", "folder"};
   static const std::vector<Key> table{
     {"strategy", Kind::PATH, {}, {}},
     {"bars.source", Kind::CHOICE, {}, {"wide", "csv", "store"}},
@@ -123,14 +127,15 @@ inline const std::vector<Key>& keys() {
     {"bars.time_format", Kind::CHOICE, csv, {"unix", "unix_ms", "yyyymmdd", "iso"}},
     {"bars.timezone", Kind::OFFSET, csv, {}},
     {"bars.stamp", Kind::TEXT, csv, {}},
-    {"bars.interval", Kind::CHOICE, csv, INTERVALS},
+    {"bars.interval", Kind::CHOICE, csv_or_folder, INTERVALS},
     {"bars.columns.open", Kind::TEXT, csv, {}},
     {"bars.columns.high", Kind::TEXT, csv, {}},
     {"bars.columns.low", Kind::TEXT, csv, {}},
     {"bars.columns.close", Kind::TEXT, csv, {}},
     {"bars.columns.volume", Kind::TEXT, csv, {}},
     {"bars.store", Kind::COORDINATES, store, {}},
-    {"bars.store_root", Kind::PATH, store, {}},
+    {"bars.store_root", Kind::PATH, store_or_folder, {}},
+    {"bars.count", Kind::COUNT, folder, {}},
     {"bars.as_of", Kind::INSTANT, store, {}},
     {"bars.open_point", Kind::BOOL, {}, {}},
     {"replay.from", Kind::DATE, {}, {}},
@@ -1008,11 +1013,16 @@ inline std::optional<Error> check(Entry& e) {
       ) {
         return std::nullopt;
       }
+      // bars.source also names a broker folder, whose adapter fetches the bars (found when the backtest starts).
+      const bool source = e.key_ == "bars.source";
+      if (source && e.value_.type_ == Value::Type::STR && user_broker_name(e.value_.text_)) {
+        return std::nullopt;
+      }
       std::string list;
       for (const auto& choice : choices) {
         list += (list.empty() ? "" : ", ") + ("\"" + choice + "\"");
       }
-      return bad("one of " + list);
+      return bad("one of " + list + (source ? " or a broker folder's name" : ""));
     }
     case Kind::NUMBER: {
       const auto* key = known(e.key_);
@@ -1180,8 +1190,10 @@ struct Program {
 struct Resolved {
   /** @brief `incremental`, `naive` or `exact`. */
   std::string indicators_{"incremental"};
-  /** @brief Whether the run reads a store, so needs DuckDB. */
+  /** @brief Whether the run reads a store, so needs DuckDB (a broker folder's history is fetched into one). */
   bool store_{false};
+  /** @brief The broker folder whose adapter fetches the bars (`bars.source`), or empty. */
+  std::string fetch_source_;
   /** @brief `build.duckdb`, absolute, or empty. */
   std::string duckdb_;
   /** @brief `market` or `limit`. */
@@ -1243,19 +1255,24 @@ inline std::vector<Error> resolve(
     return out;
   };
 
-  // The data source, and the keys that belong to it.
+  // The data source, and the keys that belong to it; a broker folder's keys are listed under `folder`.
   const auto source = text("bars.source").value_or(get("bars.store") != nullptr ? "store" : "wide");
+  const bool folder = user_broker_name(source);
+  const std::string applies_as = folder ? "folder" : source;
   for (const auto& e : merged) {
     const auto* k = known(e.key_);
     if (
       k != nullptr && !k->sources_.empty() &&
-      std::find(k->sources_.begin(), k->sources_.end(), source) == k->sources_.end()
+      std::find(k->sources_.begin(), k->sources_.end(), applies_as) == k->sources_.end()
     ) {
+      auto list = quoted_list(k->sources_, " or ");
+      const auto at = list.find("\"folder\"");
+      if (at != std::string::npos) {
+        list.replace(at, 8, "a broker folder's name");
+      }
       errors.push_back(
         Error::at(
-          e.origin_,
-          "`" + e.key_ + "` applies to bars.source = " + quoted_list(k->sources_, " or ") + ", and this run reads \"" +
-            source + "\""
+          e.origin_, "`" + e.key_ + "` applies to bars.source = " + list + ", and this run reads \"" + source + "\""
         )
       );
     }
@@ -1280,6 +1297,24 @@ inline std::vector<Error> resolve(
         errors.push_back(
           Error::at(e.origin_, "`" + e.key_ + "`: a run on a broker's account reads its bars from the broker")
         );
+      }
+    }
+  } else if (folder) {
+    // The bars of a broker folder's history: how many, where they are kept, and the market they are quoted in.
+    for (const auto* k : {"bars.count", "bars.store_root", "replay.market"}) {
+      if (get(k) == nullptr) {
+        errors.push_back(
+          Error::nowhere(
+            "the run fetches its bars through the broker folder " + source + " (bars.source = \"" + source +
+            "\"): give `" + k + "`"
+          )
+        );
+      }
+    }
+    if (const auto* e = get("bars.count")) {
+      const auto n = e->value_.number_;
+      if (!(n >= 1 && n <= 100000)) {
+        errors.push_back(Error::at(e->origin_, "`bars.count` is 1 to 100000 bars"));
       }
     }
   } else if (source == "wide") {
@@ -1682,7 +1717,8 @@ inline std::vector<Error> resolve(
     out.args_.emplace_back(key, e.value_.text());
   }
   out.args_.insert(out.args_.end(), params.begin(), params.end());
-  out.store_ = source == "store";
+  out.store_ = source == "store" || folder;
+  out.fetch_source_ = folder ? source : std::string();
   // DuckDB's directory reaches CMake only for a store run, so only then must it be one CMake can take.
   if (const auto* e = get("build.duckdb"); e != nullptr && out.store_) {
     if (const auto refused = cmake_refuses(e->value_.text(), "build.duckdb")) {
