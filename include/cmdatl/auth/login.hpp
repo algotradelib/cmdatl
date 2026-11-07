@@ -7,6 +7,7 @@
 #include "./brokers.hpp"
 #include "./keychain.hpp"
 #include "./store.hpp"
+#include "./user_brokers.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -93,8 +94,29 @@ inline std::string masked(const std::string& value) {
 }
 
 /**
- * @brief The reply's row for a stored login: broker, environment, the key masked, the account masked where the
- *   broker has one, the store, and `checked: false` (the broker has not seen it).
+ * @brief The row of a broker folder's login: broker, environment, the folder (or null when it no longer reads), the
+ *   store and `checked: false`; no field of the document, whose schema may have changed since the login.
+ * @param name The broker's name.
+ * @param demo Whether it is the demo environment.
+ * @param folder The folder, or none.
+ * @param store The store's kind.
+ * @return The row.
+ */
+inline json::object folder_login_row(
+  const std::string& name, bool demo, const std::optional<std::string>& folder, const std::string& store
+) {
+  json::object row;
+  row["broker"] = name;
+  row["environment"] = demo ? "demo" : "real";
+  row["adapter"] = folder ? json::value(*folder) : json::value(nullptr);
+  row["store"] = store;
+  row["checked"] = false;
+  return row;
+}
+
+/**
+ * @brief The reply's row for a stored login of a built-in broker: broker, environment, the key masked, the account
+ *   masked where the broker has one, the store, and `checked: false` (the broker has not seen it).
  * @param broker The broker.
  * @param demo Whether it is the demo environment.
  * @param document The canonical document.
@@ -204,8 +226,19 @@ inline Reply bad_document(const std::string& problem) {
 }
 
 /**
+ * @brief Where an unknown broker's message points: the built-in brokers and the folders' directory.
+ * @return The text.
+ */
+inline std::string brokers_hint() {
+  const auto root = brokers_root();
+  return "the brokers are: " + broker_names() + ", or a folder installed in " +
+    (root ? root->string() : std::string("<config>/cmdatl/brokers"));
+}
+
+/**
  * @brief `auth login`: asks for what was not given (on a terminal), checks the document locally with the library's
- *   loaders, and stores it. Sends nothing to a broker.
+ *   loaders (a broker folder's is stored unchecked: its adapter reads it at the run), and stores it. Sends nothing to
+ *   a broker.
  * @param request What was given.
  * @param in Standard input.
  * @param prompts Where questions go (stderr).
@@ -214,15 +247,20 @@ inline Reply bad_document(const std::string& problem) {
  */
 inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, CredentialStore* store) {
   // The flags given are checked first, so a wrong one is reported as such wherever cmdatl runs.
-  if (request.broker_ && find_broker(*request.broker_) == nullptr) {
-    return error_reply(
-      Exit::USAGE, "usage.bad_value", "no broker " + *request.broker_, "the brokers are: " + broker_names()
-    );
+  std::optional<BrokerLookup> named;
+  if (request.broker_) {
+    named = lookup_broker(*request.broker_);
+    if (named->found_ == BrokerFound::NOT_FOUND) {
+      return error_reply(Exit::USAGE, "usage.bad_value", named->problem_, brokers_hint());
+    }
+    if (named->broker() == nullptr) {
+      return broker_refusal(*named);
+    }
   }
   if (request.env_ && *request.env_ != "demo" && *request.env_ != "real") {
     return error_reply(Exit::USAGE, "usage.bad_value", "--env is demo or real");
   }
-  if (request.broker_ && request.env_ && *request.env_ == "demo" && !find_broker(*request.broker_)->has_demo_) {
+  if (named && request.env_ && *request.env_ == "demo" && !named->broker()->has_demo_) {
     return error_reply(
       Exit::USAGE, "usage.bad_value", *request.broker_ + " has no demo environment; its logins are real",
       "leave out --env, or give --env real"
@@ -234,12 +272,21 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
   const bool terminal = sys::is_terminal(in);
 
   const Broker* broker = nullptr;
-  if (request.broker_) {
-    broker = find_broker(*request.broker_);
+  // The folders offered on a terminal, after the built-in brokers; kept while `broker` points into them.
+  std::vector<BrokerLookup> folders;
+  if (named) {
+    broker = named->broker();
   } else if (terminal) {
     std::vector<std::string> choices;
     for (const auto& entry : brokers()) {
       choices.push_back(entry.display_ + " (" + entry.name_ + ")");
+    }
+    for (const auto& name : user_broker_names()) {
+      auto found = lookup_broker(name);
+      if (found.found_ == BrokerFound::FOLDER) {
+        choices.push_back(found.folder_->entry_.display_ + " (" + name + ", a broker folder)");
+        folders.push_back(std::move(found));
+      }
     }
     std::size_t chosen = 0;
     const auto read = sys::choose(in, prompts, "Which broker?", choices, std::nullopt, chosen);
@@ -249,11 +296,10 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
     if (read.status_ != sys::ReadStatus::OK) {
       return no_answer(read.status_);
     }
-    broker = &brokers()[chosen];
+    broker = chosen < brokers().size() ? &brokers()[chosen] : folders[chosen - brokers().size()].broker();
   } else {
     return error_reply(
-      Exit::USAGE, "usage.missing_argument", "--broker is needed when standard input is not a terminal",
-      "the brokers are: " + broker_names()
+      Exit::USAGE, "usage.missing_argument", "--broker is needed when standard input is not a terminal", brokers_hint()
     );
   }
 
@@ -357,11 +403,13 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
     return bad_document(*problem);
   }
   const auto text = json::serialize(canonical);
-  try {
-    broker->read_(text, "stored login " + name);
-  } catch (const std::exception& e) {
-    // The library's messages name the source and the field, never a value.
-    return bad_document(e.what());
+  if (broker->read_ != nullptr) {
+    try {
+      broker->read_(text, "stored login " + name);
+    } catch (const std::exception& e) {
+      // The library's messages name the source and the field, never a value.
+      return bad_document(e.what());
+    }
   }
   if (interrupted()) {
     return interrupted_auth();
@@ -371,7 +419,15 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
     return store_failure(store->kind(), stored.status_, stored.detail_, true);
   }
   Reply reply;
-  reply.body_ = login_row(*broker, demo, canonical, store->kind());
+  if (broker->read_ == nullptr) {
+    const auto folder = brokers_root();
+    reply.body_ = folder_login_row(
+      broker->name_, demo, folder ? std::optional<std::string>((*folder / broker->name_).string()) : std::nullopt,
+      store->kind()
+    );
+  } else {
+    reply.body_ = login_row(*broker, demo, canonical, store->kind());
+  }
   reply.body_["replaced"] = exists;
   return reply;
 }
@@ -380,22 +436,25 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
  * @brief Whether a login's name passes a filter, and its broker and environment.
  * @param name The login's name (`kis/demo`).
  * @param filter The filter.
- * @param broker Where its broker goes.
+ * @param broker Where its broker's name goes: a built-in broker's, or a name a broker folder can have (whether the
+ *   folder is there or not, so a login outlives its folder in `auth status` and `auth logout`).
  * @param demo Where its environment goes.
- * @return Whether it is a login of a known broker that passes.
+ * @return Whether it is such a login and passes.
  */
-inline bool matches(const std::string& name, const LoginFilter& filter, const Broker*& broker, bool& demo) {
+inline bool matches(const std::string& name, const LoginFilter& filter, std::string& broker, bool& demo) {
   const auto slash = name.find('/');
   if (slash == std::string::npos) {
     return false;
   }
-  broker = find_broker(name.substr(0, slash));
+  broker = name.substr(0, slash);
   const auto environment = name.substr(slash + 1);
-  if (broker == nullptr || (environment != "demo" && environment != "real")) {
+  if (
+    (find_broker(broker) == nullptr && !user_broker_name(broker)) || (environment != "demo" && environment != "real")
+  ) {
     return false;
   }
   demo = environment == "demo";
-  return (!filter.broker_ || *filter.broker_ == broker->name_) && (!filter.env_ || *filter.env_ == environment);
+  return (!filter.broker_ || *filter.broker_ == broker) && (!filter.env_ || *filter.env_ == environment);
 }
 
 /**
@@ -404,10 +463,8 @@ inline bool matches(const std::string& name, const LoginFilter& filter, const Br
  * @return The refusal, or none.
  */
 inline std::optional<Reply> filter_problem(const LoginFilter& filter) {
-  if (filter.broker_ && find_broker(*filter.broker_) == nullptr) {
-    return error_reply(
-      Exit::USAGE, "usage.bad_value", "no broker " + *filter.broker_, "the brokers are: " + broker_names()
-    );
+  if (filter.broker_ && find_broker(*filter.broker_) == nullptr && !user_broker_name(*filter.broker_)) {
+    return error_reply(Exit::USAGE, "usage.bad_value", "no broker " + *filter.broker_, brokers_hint());
   }
   if (filter.env_ && *filter.env_ != "demo" && *filter.env_ != "real") {
     return error_reply(Exit::USAGE, "usage.bad_value", "--env is demo or real");
@@ -448,9 +505,22 @@ inline Reply status(const LoginFilter& filter, CredentialStore* store) {
     return store_failure(store->kind(), listed.status_, listed.detail_);
   }
   for (const auto& name : listed.names_) {
-    const Broker* broker = nullptr;
+    std::string broker_name;
     bool demo = false;
-    if (!matches(name, filter, broker, demo)) {
+    if (!matches(name, filter, broker_name, demo)) {
+      continue;
+    }
+    const auto* broker = find_broker(broker_name);
+    if (broker == nullptr) {
+      // A broker folder's login: its document is not read, only whether the folder still reads.
+      const auto folder = lookup_broker(broker_name);
+      rows.emplace_back(folder_login_row(
+        broker_name, demo,
+        folder.found_ == BrokerFound::FOLDER ?
+          std::optional<std::string>(folder.folder_->folder_.string()) :
+          std::nullopt,
+        store->kind()
+      ));
       continue;
     }
     const auto found = store->get(name);
@@ -500,7 +570,7 @@ inline Reply logout(const LoginFilter& filter, int in, std::ostream& prompts, Cr
   }
   std::vector<std::string> names;
   for (const auto& name : listed.names_) {
-    const Broker* broker = nullptr;
+    std::string broker;
     bool demo = false;
     if (matches(name, filter, broker, demo)) {
       names.push_back(name);

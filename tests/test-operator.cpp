@@ -122,7 +122,7 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
       "config.invalid", 3},
     {"kiwoom", with("broker = \"kiwoom\"\nnumber = \"x\"\n", "", ""), "unsupported.broker", 2},
     {"toss", with("broker = \"toss\"\nnumber = \"x\"\n", "", ""), "unsupported.broker", 2},
-    {"an unknown broker", with("broker = \"paperx\"\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
+    {"a broker no folder can be named", with("broker = \"paper_x\"\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
     {"no broker", with("number = \"x\"\n", "", ""), "config.invalid", 0},
     {"env demo on paper", with("broker = \"paper\"\nenv = \"demo\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},
     {"env real on paper", with("broker = \"paper\"\nenv = \"real\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},

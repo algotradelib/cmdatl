@@ -41,7 +41,8 @@ struct Broker {
   /** @brief The environment variables the library's `from_env()` reads for it, named in `auth status`. */
   std::vector<std::string> env_vars_;
   /**
-   * @brief Reads a canonical document with the library's loaders, as a run will.
+   * @brief Reads a canonical document with the library's loaders, as a run will; null for a broker folder, whose
+   *   document is stored unchecked and read by its adapter at the run.
    * @throws std::runtime_error with the library's message (the field, never its value).
    */
   void (*read_)(const std::string& text, const std::string& origin){nullptr};
@@ -109,8 +110,8 @@ inline std::string broker_names() {
 }
 
 /**
- * @brief Makes a document canonical: only the broker's fields, each a string, and for a broker with a demo,
- *   `demo` set from the environment chosen.
+ * @brief Makes a document canonical: only the broker's fields, each a string (a broker folder's defaults written in),
+ *   and for a broker with a demo, `demo` set from the environment chosen.
  * @param broker The broker.
  * @param demo Whether the login is for the demo environment (false for a broker without one).
  * @param document The document as given.
@@ -152,6 +153,11 @@ inline std::optional<std::string> canonical_document(
     if (value == nullptr) {
       if (!field.default_) {
         return "the field " + field.json_ + " is missing";
+      }
+      // A built-in broker's loader gives its own default; a folder's document is read by nothing before the run, so
+      // the default is written into it.
+      if (broker.read_ == nullptr) {
+        out[field.json_] = *field.default_;
       }
       continue;
     }

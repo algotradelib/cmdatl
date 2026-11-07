@@ -390,7 +390,9 @@ TEST_CASE("auth status shows the stored logins masked, and which variables are s
   const auth::LoginFilter only_toss{std::string("toss"), std::nullopt};
   CHECK(auth::status(only_toss, &store).body_.at("logins").as_array().size() == 1);
 
-  CHECK(code(auth::status({std::string("nobroker"), std::nullopt}, &store)) == "usage.bad_value");
+  CHECK(code(auth::status({std::string("No_Broker"), std::nullopt}, &store)) == "usage.bad_value");
+  // A name a broker folder can have is a filter whether or not the folder is installed: no login matches it here.
+  CHECK(auth::status({std::string("nobroker"), std::nullopt}, &store).body_.at("logins").as_array().empty());
   CHECK(code(auth::status({std::nullopt, std::string("paper")}, &store)) == "usage.bad_value");
 
   store.fail_get_ = auth::StoreStatus::LOCKED;

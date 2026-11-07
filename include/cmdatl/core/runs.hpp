@@ -24,6 +24,24 @@ inline bool valid_run_id(const std::string& text) {
 }
 
 /**
+ * @brief Whether a name can be a broker folder's (`<config>/cmdatl/brokers/<name>/`): a lowercase letter, then at most
+ *   31 lowercase letters, digits or `-`, and not a name cmdatl itself gives a meaning (`paper`, the built-in brokers
+ *   `kis`, `kiwoom` and `toss`, and the bar sources `csv`, `wide` and `store`).
+ * @param name The name.
+ * @return Whether it can.
+ */
+inline bool user_broker_name(const std::string& name) {
+  static const std::vector<std::string> reserved{"paper", "kis", "kiwoom", "toss", "csv", "wide", "store"};
+  if (name.empty() || name.size() > 32 || name[0] < 'a' || name[0] > 'z') {
+    return false;
+  }
+  const bool plain = std::all_of(name.begin(), name.end(), [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+  });
+  return plain && std::find(reserved.begin(), reserved.end(), name) == reserved.end();
+}
+
+/**
  * @brief The last value of an atlc argument.
  * @param args atlc's arguments.
  * @param key The key.
