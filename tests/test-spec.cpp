@@ -510,6 +510,10 @@ TEST_CASE("values are normalized: paths against the spec's directory, lists, dat
   CHECK(sp::instant_text("2026-10-01"));
   CHECK(sp::instant_text("2026-10-01 05:00"));
   CHECK(sp::instant_text("2026-10-01T05:00:00+09:00"));
+  CHECK(sp::instant_text("2026-11-07T14:46:59.102422Z"));
+  CHECK(sp::instant_text("2026-11-07T14:46:59.1Z"));
+  CHECK(!sp::instant_text("2026-11-07T14:46:59.1234567Z"));
+  CHECK(!sp::instant_text("2026-11-07T14:46:59.Z"));
   CHECK(!sp::instant_text("2026-10-01T5:00"));
   CHECK(!sp::instant_text("2026/10/01"));
   CHECK(!sp::instant_text("2026-10-01T05:00+9"));

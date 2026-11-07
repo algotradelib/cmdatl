@@ -32,9 +32,9 @@ namespace cmdatl {
 namespace replay {
 
 /**
- * @brief An instant as UTC text DuckDB reads as a TIMESTAMPTZ, to the microsecond.
+ * @brief An instant as UTC text, to the microsecond, as `bars.as_of` takes it and DuckDB reads it.
  * @param us Unix microseconds.
- * @return `YYYY-MM-DD HH:MM:SS.ffffff+00`.
+ * @return `YYYY-MM-DDTHH:MM:SS.ffffffZ`.
  */
 inline std::string utc_instant(std::int64_t us) {
   const std::time_t seconds = static_cast<std::time_t>(us / 1000000);
@@ -42,7 +42,7 @@ inline std::string utc_instant(std::int64_t us) {
   ::gmtime_r(&seconds, &parts);
   char text[40];
   std::snprintf(
-    text, sizeof text, "%04d-%02d-%02d %02d:%02d:%02d.%06lld+00", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday,
+    text, sizeof text, "%04d-%02d-%02dT%02d:%02d:%02d.%06lldZ", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday,
     parts.tm_hour, parts.tm_min, parts.tm_sec, static_cast<long long>(us % 1000000)
   );
   return text;

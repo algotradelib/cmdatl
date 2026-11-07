@@ -758,10 +758,11 @@ TEST_CASE(
 
   // The version replayed again from the store alone, as the reply says.
   const std::string as_of(reply.at("fetched").at("fetched_at").as_string());
+  // The reply's own instant, as it is: the store held nothing else for this series, so the history is the same.
   spit(
     at("again.toml"),
-    "strategy = 'dip.atls'\n[bars]\nstore = 'fixture/1d/AAA'\nstore_root = 'store'\nas_of = '" + as_of.substr(0, 10) +
-      "T23:59:59Z'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
+    "strategy = 'dip.atls'\n[bars]\nstore = 'fixture/1d/AAA'\nstore_root = 'store'\nas_of = '" + as_of +
+      "'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
   );
   ran = backtest({at("again.toml")});
   INFO(ran.out_);

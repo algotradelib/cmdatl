@@ -144,7 +144,7 @@ TEST_CASE(
   CHECK(closes(root) == std::vector<std::string>{"100"});
 
   auto bad = series_of(0, {"100"});
-  for (const auto* symbol : {"../x", "a/b", "a,b", "a=b", "..", "", "A*", "a?", "[x]", "{a,b}"}) {
+  for (const auto* symbol : {"../x", "a/b", "a,b", "a=b", "..", "", "A*", "a?", "[x]", "{a,b}", "AAA ", " AAA"}) {
     INFO(symbol);
     bad.instrument_.symbol_ = symbol;
     CHECK_THROWS_AS(replay::store_series(root.str(), "vendor", "1d", bad, T0 + 10), std::invalid_argument);

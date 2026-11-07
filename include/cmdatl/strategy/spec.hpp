@@ -829,8 +829,20 @@ inline bool instant_text(const std::string& s) {
       (field[0] - '0') * 10 + (field[1] - '0') <= max;
   };
   const auto fields = split(clock, ':');
+  // Seconds may carry up to six fraction digits: a fetch's `fetched_at` is to the microsecond.
+  const auto seconds = [&two](const std::string& field) {
+    const auto point = field.find('.');
+    if (point == std::string::npos) {
+      return two(field, 59);
+    }
+    const auto fraction = field.substr(point + 1);
+    return two(field.substr(0, point), 59) && !fraction.empty() && fraction.size() <= 6 &&
+      std::all_of(fraction.begin(), fraction.end(), [](char c) {
+        return c >= '0' && c <= '9';
+      });
+  };
   const bool clock_ok = (fields.size() == 2 || fields.size() == 3) && two(fields[0], 23) && two(fields[1], 59) &&
-    (fields.size() == 2 || two(fields[2], 59));
+    (fields.size() == 2 || seconds(fields[2]));
   return clock_ok && (zone.empty() || offset_text(zone));
 }
 
@@ -1102,7 +1114,7 @@ inline std::optional<Error> check(Entry& e) {
     }
     case Kind::INSTANT: {
       if (e.value_.type_ != Value::Type::STR || !instant_text(e.value_.text_)) {
-        return bad("an instant, \"YYYY-MM-DD\" or \"YYYY-MM-DDTHH:MM[:SS]\" with an optional offset");
+        return bad("an instant, \"YYYY-MM-DD\" or \"YYYY-MM-DDTHH:MM[:SS[.ffffff]]\" with an optional offset");
       }
       return std::nullopt;
     }

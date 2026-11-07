@@ -53,6 +53,10 @@ inline bool store_symbol(const std::string& symbol) {
   if (symbol.empty() || symbol == "." || symbol == ".." || symbol.size() > 64) {
     return false;
   }
+  // A space at either end would not survive the replay's CSV, which trims its cells.
+  if (symbol.front() == ' ' || symbol.back() == ' ') {
+    return false;
+  }
   return std::none_of(symbol.begin(), symbol.end(), [](char c) {
     const auto u = static_cast<unsigned char>(c);
     // A glob character would turn the store reader's path into a pattern over other symbols.

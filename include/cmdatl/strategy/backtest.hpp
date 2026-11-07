@@ -364,8 +364,8 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   if (fetched) {
     // The history is the vendor's as of the fetch, revisions included; `source = "store"` with this `as_of` replays it.
     (*fetched)["caveat"] = std::string("the bars are the broker folder's history as of fetched_at, revised values ") +
-      "included; bars.source = \"store\" with bars.as_of = fetched_at, and replay.from and replay.to at each symbol's " +
-      "first and last date, replays them offline";
+      "included; bars.source = \"store\" with bars.as_of = fetched_at reads the store as it stood after this fetch, " +
+      "which can hold bars this fetch did not return (an older history, or bars an earlier fetch had)";
     reply.body_["fetched"] = std::move(*fetched);
   }
   return reply;

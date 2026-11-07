@@ -109,7 +109,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 | --- | --- | --- | --- |
 | `bars.store` | `"SOURCE/INTERVAL/SYMBOL"`, or a list of them | required | the series read |
 | `bars.store_root` | path | required | the store's directory |
-| `bars.as_of` | instant: `"YYYY-MM-DD"`, optionally `THH:MM[:SS]` and `Z` or `+HH:MM` | the latest | read the latest version fetched at or before this instant |
+| `bars.as_of` | instant: `"YYYY-MM-DD"`, optionally `THH:MM[:SS[.ffffff]]` and `Z` or `+HH:MM` | the latest | read the latest version fetched at or before this instant |
 
 `source = "NAME"`, a broker folder's name (README, "Your own broker or data vendor"): the backtest fetches each symbol's last bars through the folder's adapter, with the login `cmdatl auth login --broker NAME` stored (`NAME/real`), writes them into the store as one version, then replays that version.
 
@@ -120,10 +120,11 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 | `bars.store_root` | path | required | the store the bars are written into, as for `"store"` |
 
 - `replay.market` is required: it gives the instruments' country, which the adapter is asked for.
-- The symbols come from `[instruments]`; a symbol holding `/`, `\`, `=`, `,`, a glob character (`*?[]{}`) or a control character, or being `.` or `..`, is refused before anything is fetched.
+- The symbols come from `[instruments]`; a symbol holding `/`, `\`, `=`, `,`, a glob character (`*?[]{}`), a control character or a space at either end, or being `.` or `..`, is refused before anything is fetched.
 - The store is written as `labs`-style fetchers write it: `source=NAME`, every version kept, a bar appended only when it is new or changed, under the series directory's `.lock`.
 - The replay is exactly the bars this fetch received (a later fetch by another writer and an older history already in the store are left out); `replay.from` and `replay.to` narrow it further, and a symbol answered with no bars is refused (`fetch.failed`).
-- The reply's `fetched` gives `fetched_at` and, per symbol, the bars fetched, those new to the store and the first and last date: `bars.source = "store"` with `bars.as_of` at that instant and `replay.from`/`replay.to` at that range replays them offline (exactly, for one symbol).
+- The reply's `fetched` gives `fetched_at` (to the microsecond) and, per symbol, the bars fetched, those new to the store and the first and last date.
+  `bars.source = "store"` with `bars.as_of = fetched_at` reads the store as it stood after the fetch: every bar's latest version up to that instant, which can include bars this fetch did not return (an older history, or bars an earlier fetch had and this one did not); it is the same history only when the store held nothing else for those series.
 - Prices are raw (not adjusted), each within `DECIMAL(18,4)`, and the history is the vendor's as of the fetch, revisions included: it is not what was known on each day.
 - An adapter's error is reported by its category, HTTP status and code (`fetch.failed`), never by its text, which could carry a credential.
 
