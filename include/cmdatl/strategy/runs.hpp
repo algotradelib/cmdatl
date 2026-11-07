@@ -9,10 +9,12 @@
 
 #include "../account/account.hpp"
 #include "../account/operator.hpp"
+#include "../auth/login.hpp"
 #include "../core/errors.hpp"
 #include "../core/reply.hpp"
 #include "../core/runs.hpp"
 #include "../core/table.hpp"
+#include "../system/credential_pipe.hpp"
 #include "../system/files.hpp"
 #include "../system/process.hpp"
 #include "./atlc.hpp"
@@ -118,6 +120,63 @@ private:
 #endif
 
 /**
+ * @brief Reads the logins a run on a broker's account needs, in this process (the store's access list names `cmdatl`):
+ *   the account's (`<broker>/<env>`), then on a KIS demo account the real login, read only for market data (a KIS demo
+ *   host refuses reference data and the calendar); an empty document for none.
+ * @param config The operator's file, for a broker's account.
+ * @param documents Set to the documents, in that order.
+ * @return The refusal, or nothing.
+ */
+inline std::optional<Reply> read_run_logins(const OperatorConfig& config, std::vector<std::string>& documents) {
+  const auto* broker = auth::find_broker(config.broker_);
+  if (broker == nullptr) {
+    return error_reply(Exit::FAILED, "unsupported.broker", "cmdatl run does not trade " + config.broker_);
+  }
+  auto store = auth::open_store(auth::interaction_allowed(0));
+  if (!store) {
+    return auth::no_store_reply();
+  }
+  const bool demo = config.env_ == "demo";
+  const auto read =
+    [&store](const std::string& name, const std::string& message, const std::string& login, std::string& out) {
+      const auto answer = store->get(name);
+      if (answer.status_ == auth::StoreStatus::OK) {
+        out = answer.value_;
+        return std::optional<Reply>();
+      }
+      if (answer.status_ == auth::StoreStatus::NOT_FOUND) {
+        return std::optional<Reply>(error_reply(Exit::FAILED, "auth.not_found", message, "the operator runs " + login));
+      }
+      return std::optional<Reply>(auth::store_failure(store->kind(), answer.status_, answer.detail_));
+    };
+  std::string account;
+  const auto own = auth::login_name(*broker, demo);
+  if (
+    auto refused = read(
+      own, "no login " + own + " in the credential store",
+      "cmdatl auth login --broker " + config.broker_ + " --env " + config.env_, account
+    )
+  ) {
+    return refused;
+  }
+  std::string market;
+  if (config.broker_ == "kis" && demo) {
+    if (
+      auto refused = read(
+        auth::login_name(*broker, false),
+        "a run on a KIS demo account reads market data with the real login (a demo host refuses reference data and the "
+        "calendar), and there is none; it is only read, never traded",
+        "cmdatl auth login --broker kis --env real", market
+      )
+    ) {
+      return refused;
+    }
+  }
+  documents = {std::move(account), std::move(market)};
+  return std::nullopt;
+}
+
+/**
  * @brief `run TARGET [KEY=VALUE]...`; see the file comment. Returns only when the driver could not be started.
  * @param invocation The arguments.
  * @param snapshot The operator's file, read and `OK`.
@@ -132,6 +191,7 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
   return error_reply(Exit::FAILED, "unavailable.platform", "runs run on macOS and Linux only in this version");
 #else
   const auto& config = *snapshot.config_;
+  const bool broker = config.broker_ != "paper";
   GivenSettings given;
   if (auto refused = sort_words(target_and_settings(invocation), given)) {
     return std::move(*refused);
@@ -160,7 +220,7 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       );
     }
     CheckedSettings checked;
-    if (auto refused = check_given(given, atlc.path_, output, true, checked)) {
+    if (auto refused = check_given(given, atlc.path_, output, true, checked, broker)) {
       return std::move(*refused);
     }
     const auto& resolved = checked.resolved_;
@@ -232,6 +292,12 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
         Exit::REFUSED, "refused.not_armed", "the operator's armed file does not exist", next_for("refused.not_armed")
       );
     }
+    std::vector<std::string> logins;
+    if (broker) {
+      if (auto refused = read_run_logins(config, logins)) {
+        return std::move(*refused);
+      }
+    }
     const auto id = new_run_id();
     if (!id) {
       return error_reply(Exit::FAILED, "run.failed", "no random bytes for the run's id", next_for("run.failed"), true);
@@ -252,6 +318,9 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     };
     request.fill_header_ = resolved.fill_header_;
     request.fill_function_ = resolved.fill_function_;
+    if (broker) {
+      request.broker_ = config.broker_;
+    }
     const auto progress = [&output](const std::string& line) {
       output.progress(line);
     };
@@ -290,8 +359,24 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       ::sigprocmask(SIG_SETMASK, &before, nullptr);
       return interrupted_reply();
     }
+    // A broker's logins on descriptor 3, staged last so no build child inherited them.
+    if (broker) {
+      const auto payload = sys::frame_credentials(logins);
+      const int staged = payload ? sys::stage_credentials(*payload) : EMSGSIZE;
+      if (staged != 0) {
+        ::sigprocmask(SIG_SETMASK, &before, nullptr);
+        return error_reply(
+          Exit::FAILED, "run.failed",
+          "the logins could not be handed to the driver: " + std::string(std::strerror(staged)), next_for("run.failed"),
+          true
+        );
+      }
+    }
     ::execve(driver.c_str(), argv.data(), envp.data());
     const int error = errno;
+    if (broker) {
+      ::close(sys::CREDENTIAL_FD);
+    }
     ::sigprocmask(SIG_SETMASK, &before, nullptr);
     return error_reply(
       Exit::FAILED, "run.failed", "the driver could not be started: " + std::string(std::strerror(error)),

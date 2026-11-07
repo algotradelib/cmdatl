@@ -37,6 +37,12 @@ target_include_directories(driver SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/thi
 # toml++ is used header-only, as cmdatl itself uses it.
 target_compile_definitions(driver PRIVATE TOML_HEADER_ONLY=1)
 target_link_libraries(driver PRIVATE algotradelib::algotradelib)
+# A run on a broker's account: the driver compiles that broker's client (`kis`), never named by a run's arguments.
+if(CMDATL_DRIVER_BROKER STREQUAL "kis")
+  target_compile_definitions(driver PRIVATE CMDATL_DRIVER_KIS=1)
+elseif(CMDATL_DRIVER_BROKER)
+  message(FATAL_ERROR "CMDATL_DRIVER_BROKER must be kis or empty, not ${CMDATL_DRIVER_BROKER}")
+endif()
 # As atlc compiles its exported strategies: no floating-point contraction on GCC.
 target_compile_options(driver PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)
 target_link_options(driver PRIVATE

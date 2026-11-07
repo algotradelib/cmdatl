@@ -19,15 +19,18 @@
 
 #include <boost/json.hpp>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -201,6 +204,112 @@ private:
   atl::mock::Market* market_;
   std::chrono::system_clock::time_point bound_;
   std::function<void()> after_step_;
+};
+
+/**
+ * @brief A run's clock on a broker's account: the wall clock. A wait sleeps in slices of at most one second and calls
+ *   `after_slice` after each, and the first wait during which a signal arrives returns at the end of that slice, so
+ *   the loop takes up the stop within about a second; later waits (the closing wait, finalization) run their length.
+ *
+ * Copies share their state, as the loop and the journal each hold the clock.
+ */
+class WallClock {
+public:
+  /** @brief How long one slice of a wait sleeps at most. */
+  static constexpr std::chrono::seconds SLICE{1};
+
+  /**
+   * @brief Builds the clock on the system's clocks.
+   * @param after_slice Called after every slice (the heartbeat and the guard); may be empty.
+   */
+  explicit WallClock(std::function<void()> after_slice)
+  : WallClock(
+      std::move(after_slice),
+      [] {
+        return std::chrono::system_clock::now();
+      },
+      [] {
+        return std::chrono::steady_clock::now();
+      },
+      [](std::chrono::nanoseconds duration) {
+        std::this_thread::sleep_for(duration);
+      },
+      [] {
+        return interrupted();
+      }
+    ) {}
+
+  /**
+   * @brief Builds the clock on given clocks, for tests.
+   * @param after_slice Called after every slice; may be empty.
+   * @param now The wall clock.
+   * @param monotonic The steady clock.
+   * @param sleep Sleeps for a duration.
+   * @param signalled Whether a stop signal has arrived.
+   */
+  WallClock(
+    std::function<void()> after_slice, std::function<std::chrono::system_clock::time_point()> now,
+    std::function<std::chrono::steady_clock::time_point()> monotonic,
+    std::function<void(std::chrono::nanoseconds)> sleep, std::function<bool()> signalled
+  )
+  : state_(std::make_shared<State>()) {
+    state_->after_slice_ = std::move(after_slice);
+    state_->now_ = std::move(now);
+    state_->monotonic_ = std::move(monotonic);
+    state_->sleep_ = std::move(sleep);
+    state_->signalled_ = std::move(signalled);
+  }
+
+  /**
+   * @brief The wall clock.
+   * @return It.
+   */
+  std::chrono::system_clock::time_point now() const {
+    return state_->now_();
+  }
+
+  /**
+   * @brief The steady clock.
+   * @return It.
+   */
+  std::chrono::steady_clock::time_point monotonic_now() const {
+    return state_->monotonic_();
+  }
+
+  /**
+   * @brief Sleeps for `duration` in slices, calling `after_slice` after each; returns early once, at the end of the
+   *   first slice after which a signal is seen.
+   * @param duration How long to wait.
+   */
+  void wait_for(std::chrono::nanoseconds duration) {
+    auto& st = *state_;
+    const auto until = st.monotonic_() + std::chrono::duration_cast<std::chrono::steady_clock::duration>(duration);
+    do {
+      const auto left = std::chrono::duration_cast<std::chrono::nanoseconds>(until - st.monotonic_());
+      const auto slice = std::min<std::chrono::nanoseconds>(std::max(left, std::chrono::nanoseconds::zero()), SLICE);
+      if (slice > std::chrono::nanoseconds::zero()) {
+        st.sleep_(slice);
+      }
+      if (st.after_slice_) {
+        st.after_slice_();
+      }
+      if (!st.woke_ && st.signalled_()) {
+        st.woke_ = true;
+        return;
+      }
+    } while (st.monotonic_() < until);
+  }
+
+private:
+  struct State {
+    std::function<void()> after_slice_;
+    std::function<std::chrono::system_clock::time_point()> now_;
+    std::function<std::chrono::steady_clock::time_point()> monotonic_;
+    std::function<void(std::chrono::nanoseconds)> sleep_;
+    std::function<bool()> signalled_;
+    bool woke_{false};
+  };
+  std::shared_ptr<State> state_;
 };
 
 } // namespace driver

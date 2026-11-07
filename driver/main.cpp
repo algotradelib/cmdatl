@@ -5,6 +5,9 @@
 
 #include <cmdatl/driver/run.hpp>
 #include <cmdatl/replay/replay.hpp>
+#if defined(CMDATL_DRIVER_KIS)
+#include <cmdatl/driver/kis_account.hpp>
+#endif
 
 #include <stdexcept>
 #include <string>
@@ -143,5 +146,16 @@ Program make(const std::vector<std::string>& args, const std::vector<atl::Instru
  * @return The run's exit.
  */
 int main(int argc, char** argv) {
+#if defined(CMDATL_DRIVER_KIS)
+  // A KIS account: the bars come from the broker, so only the symbols and the strategy are read from the arguments.
+  return cmdatl::driver::kis_account_main<Program>(
+    argc, argv,
+    [](const std::vector<std::string>& args) {
+      return replay::symbols_of<Program>(settings_of(args));
+    },
+    make
+  );
+#else
   return cmdatl::driver::run_main<Program>(argc, argv, load, make);
+#endif
 }

@@ -369,6 +369,16 @@ public:
   static Opened open(const ConfigSnapshot& snapshot, Output& output, const std::function<bool()>& interrupted) {
     Opened opened;
     const auto& config = *snapshot.config_;
+    if (config.broker_ != "paper") {
+      // The account and order commands trade the paper desk; a broker's account is traded by `cmdatl run` only.
+      opened.refusal_ = error_reply(
+        Exit::FAILED, "unsupported.broker",
+        "the account and order commands trade the paper broker in this version; a " + config.broker_ +
+          " account is traded by cmdatl run",
+        "read the account in the broker's own app, or run a strategy with cmdatl run"
+      );
+      return opened;
+    }
     const auto dir = account_dir(config);
     if (!dir) {
       opened.refusal_ = error_reply(

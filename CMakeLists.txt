@@ -281,7 +281,7 @@ if(CMDATL_BUILD_TESTS)
   target_include_directories(driver-no-data-facts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts)
   target_compile_definitions(driver-no-data-facts PRIVATE TOML_HEADER_ONLY=1)
   target_link_libraries(driver-no-data-facts PRIVATE cmdatl_core)
-  add_executable(test-runs tests/test-runs.cpp)
+  add_executable(test-runs tests/test-runs.cpp tests/test-account-run.cpp)
   target_link_libraries(test-runs PRIVATE cmdatl_core Catch2::Catch2WithMain)
   add_dependencies(test-runs cmdatl fake-atlc hold-lock)
   target_compile_definitions(test-runs PRIVATE

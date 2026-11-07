@@ -123,6 +123,10 @@ struct Wiring {
   atl::Venue default_route_{atl::Venue::UNSPECIFIED};
   /** @brief The program's data values, read by the loop's data poll (`schedule_.data_`); empty without `data {}`. */
   std::vector<DataPoint> data_;
+  /** @brief How many times the finalization stage reads the broker before it gives up. */
+  int final_rounds_{FINAL_ROUNDS};
+  /** @brief The wait before each finalization read. */
+  std::chrono::nanoseconds final_step_{FINAL_STEP};
 };
 
 /** @brief How the wiring ended, and the loop's report when the loop ran. */
@@ -160,11 +164,14 @@ struct counts_pricing_refusals<
  * unknown outcome.
  * @tparam Strategy The strategy type.
  * @tparam Session The session type, with `close()` stopping later placements.
+ * @tparam MarketData The market-data session type.
  * @tparam Clock The clock: `now()`, `monotonic_now()` and `wait_for(duration)`.
  * @tparam Ready A callable returning `bool`: whether to start the loop (false ends with `NOT_STARTED`, nothing sent).
  * @tparam Rests A callable returning `bool`: whether the broker's own list shows no working order.
  * @tparam Closed A callable, called when the session has been closed to placements.
  * @param session The session.
+ * @param market_data The session reference data, quotes, bars and the calendar are read from: `session` itself, or one
+ *   that cannot trade.
  * @param journal The run's journal, already opened as the process's one writer.
  * @param strategy The strategy, configured.
  * @param wiring The settings.
@@ -176,9 +183,12 @@ struct counts_pricing_refusals<
  * @param err Where the recovery and the loop's report are printed for the operator.
  * @return How it ended.
  */
-template <typename Strategy, typename Session, typename Clock, typename Ready, typename Rests, typename Closed>
+template <
+  typename Strategy, typename Session, typename MarketData, typename Clock, typename Ready, typename Rests,
+  typename Closed
+>
 Traded trade_on_rails(
-  Session& session, atl::runner::FileJournal& journal, Strategy strategy, const Wiring& wiring,
+  Session& session, MarketData& market_data, atl::runner::FileJournal& journal, Strategy strategy, const Wiring& wiring,
   atl::runner::StopSource& stop, Clock clock, Ready&& on_ready, Rests&& nothing_rests, Closed&& on_closed,
   std::ostream& err
 ) {
@@ -210,7 +220,7 @@ Traded trade_on_rails(
   (void)recovery;
   // Lot size and price grid, once: no order can be priced without them, and the loop does not poll them.
   for (const auto& instrument : wiring.universe_) {
-    auto reference = session.instrument(instrument);
+    auto reference = market_data.instrument(instrument);
     if (!reference) {
       traded.outcome_ = Outcome::REFERENCE_UNREADABLE;
       traded.detail_ = "reference data for " + instrument.symbol_ + ": " + reference.error().message_;
@@ -219,7 +229,9 @@ Traded trade_on_rails(
     bound.context().set_instrument(std::move(reference.value()));
   }
   // The journal resolves recovered instruments; the currencies let the guard read buying power.
-  atl::live::SessionSource<Session, atl::runner::FileJournal> source(session, wiring.universe_);
+  atl::live::SessionSource<Session, atl::runner::FileJournal, MarketData> source(
+    session, market_data, wiring.universe_
+  );
   source.set_journal(journal);
   source.set_bar_query(atl::BarInterval::ONE_DAY, wiring.bar_count_);
   source.set_buying_power_currencies({atl::Currency::krw()});
@@ -287,9 +299,9 @@ Traded trade_on_rails(
   const auto settled = [&]() {
     return bound.obligations().empty() && nothing_rests() && !bound.local_failure();
   };
-  while (!settled() && traded.final_rounds_ < FINAL_ROUNDS && !bound.local_failure()) {
+  while (!settled() && traded.final_rounds_ < wiring.final_rounds_ && !bound.local_failure()) {
     ++traded.final_rounds_;
-    shared_clock.wait_for(FINAL_STEP);
+    shared_clock.wait_for(wiring.final_step_);
     (void)source.poll(atl::runner::PollKind::HOLDINGS, bound);
     (void)source.poll(atl::runner::PollKind::WORKING_ORDERS, bound);
   }
@@ -309,6 +321,38 @@ Traded trade_on_rails(
   }
   traded.outcome_ = Outcome::CLEAN;
   return traded;
+}
+
+/**
+ * @brief `trade_on_rails` with the market data read through the trading session itself.
+ * @tparam Strategy The strategy type.
+ * @tparam Session The session type.
+ * @tparam Clock The clock.
+ * @tparam Ready Called before the loop.
+ * @tparam Rests Whether nothing rests.
+ * @tparam Closed Called once the session is closed.
+ * @param session The session.
+ * @param journal The run's journal.
+ * @param strategy The strategy.
+ * @param wiring The settings.
+ * @param stop The stop source.
+ * @param clock The clock.
+ * @param on_ready Called once before the loop.
+ * @param nothing_rests Whether the broker's list shows no working order.
+ * @param on_closed Called once the session is closed to placements.
+ * @param err Where the recovery and the loop's report go.
+ * @return How it ended.
+ */
+template <typename Strategy, typename Session, typename Clock, typename Ready, typename Rests, typename Closed>
+Traded trade_on_rails(
+  Session& session, atl::runner::FileJournal& journal, Strategy strategy, const Wiring& wiring,
+  atl::runner::StopSource& stop, Clock clock, Ready&& on_ready, Rests&& nothing_rests, Closed&& on_closed,
+  std::ostream& err
+) {
+  return trade_on_rails(
+    session, session, journal, std::move(strategy), wiring, stop, clock, std::forward<Ready>(on_ready),
+    std::forward<Rests>(nothing_rests), std::forward<Closed>(on_closed), err
+  );
 }
 
 } // namespace driver

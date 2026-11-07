@@ -119,9 +119,9 @@ struct OperatorConfig {
   std::string dir_;
   /** @brief The `atlc` key, absolute, or empty. */
   std::string atlc_;
-  /** @brief The broker: `paper`. */
+  /** @brief The broker: `paper` or `kis`. */
   std::string broker_;
-  /** @brief The environment: `paper`. */
+  /** @brief The environment: `paper` for the paper broker, else `demo` or `real`. */
   std::string env_;
   /** @brief The account's number. */
   std::string number_;
@@ -421,6 +421,23 @@ inline bool order_value_text(const std::string& text) {
 }
 
 /**
+ * @brief Whether a KIS account number is written as the operator file takes it: eight digits, `-`, two digits.
+ * @param text The number.
+ * @return Whether it is.
+ */
+inline bool kis_account_number(const std::string& text) {
+  if (text.size() != 11 || text[8] != '-') {
+    return false;
+  }
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (i != 8 && (text[i] < '0' || text[i] > '9')) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * @brief Checks a parsed operator's file against every rule and builds the config.
  * @param root The parsed file.
  * @param config Where the config goes; its path and directory are already set.
@@ -456,26 +473,35 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
     return refuse(broker->source(), "account.broker must be a string, not " + type_name(*broker));
   }
   config.broker_ = broker->as_string()->get();
-  if (config.broker_ == "kis" || config.broker_ == "kiwoom" || config.broker_ == "toss") {
+  if (config.broker_ == "kiwoom" || config.broker_ == "toss") {
     return refuse(
-      broker->source(), "the broker " + config.broker_ + " is not supported in this version; broker = \"paper\" is",
+      broker->source(),
+      "the broker " + config.broker_ + " is not supported in this version; broker = \"kis\" or \"paper\" is",
       "unsupported.broker"
     );
   }
-  if (config.broker_ != "paper") {
-    return refuse(broker->source(), "account.broker must be \"paper\", not \"" + config.broker_ + "\"");
+  if (config.broker_ != "paper" && config.broker_ != "kis") {
+    return refuse(broker->source(), "account.broker must be \"kis\" or \"paper\", not \"" + config.broker_ + "\"");
   }
   text = std::nullopt;
   if (auto bad = string_of(*account, "env", "account.env", text)) {
     return bad;
   }
-  if (text && *text != "paper") {
-    return refuse(
-      account->get("env")->source(),
-      "account.env must be \"paper\" with the paper broker (demo and real come with the brokers that have them)"
-    );
+  if (config.broker_ == "paper") {
+    if (text && *text != "paper") {
+      return refuse(
+        account->get("env")->source(),
+        "account.env must be \"paper\" with the paper broker (demo and real come with the brokers that have them)"
+      );
+    }
+    config.env_ = "paper";
+  } else {
+    // Demo unless real is written out: the library chooses the host from this alone.
+    if (text && *text != "demo" && *text != "real") {
+      return refuse(account->get("env")->source(), "account.env must be \"demo\" or \"real\", not \"" + *text + "\"");
+    }
+    config.env_ = text.value_or("demo");
   }
-  config.env_ = "paper";
   text = std::nullopt;
   if (auto bad = string_of(*account, "number", "account.number", text)) {
     return bad;
@@ -488,6 +514,12 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   });
   if (!plain) {
     return refuse(account->get("number")->source(), "account.number must be 1 to 64 of letters, digits, '_' or '-'");
+  }
+  if (config.broker_ == "kis" && !kis_account_number(*text)) {
+    return refuse(
+      account->get("number")->source(),
+      "account.number for KIS is the eight-digit account and the two-digit product code, as \"12345678-01\""
+    );
   }
   config.number_ = *text;
 
@@ -637,6 +669,13 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
     return bad;
   }
 
+  if (config.broker_ != "paper") {
+    // A broker's account has its own market: a [paper] table would only mislead.
+    if (const auto* node = root.get("paper")) {
+      return refuse(node->source(), "[paper] describes the paper market; a " + config.broker_ + " account has none");
+    }
+    return std::nullopt;
+  }
   const toml::table* paper = nullptr;
   if (auto bad = table_of(root, "paper", paper)) {
     return bad;

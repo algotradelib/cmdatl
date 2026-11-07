@@ -114,22 +114,28 @@ inline Reply env_reply() {
     const auto owner = dir ? read_owner_record(*dir) : std::nullopt;
     reply.body_["owner"] = owner ? json::value(*owner) : json::value(nullptr);
 #endif
-    reply.body_["capabilities"] = account_capabilities<paper::PaperClient>(true);
-    const paper::Costs costs;
-    reply.body_["paper"] = json::object{
-      {"bars", c.paper_.bars_},
-      {"start", c.paper_.start_},
-      {"cash", std::to_string(c.paper_.cash_)},
-      {"costs",
-        json::object{
-          {"commission", decimal_text(costs.commission_)},
-          {"sell_tax", decimal_text(costs.sell_tax_)},
-          {"slippage_ticks", costs.slippage_ticks_},
-        }},
-    };
+    if (c.broker_ != "paper") {
+      // A broker's capabilities are the library client's; the run reports what it reads.
+      reply.body_["capabilities"] = nullptr;
+      reply.body_["paper"] = nullptr;
+    } else {
+      reply.body_["capabilities"] = account_capabilities<paper::PaperClient>(true);
+      const paper::Costs costs;
+      reply.body_["paper"] = json::object{
+        {"bars", c.paper_.bars_},
+        {"start", c.paper_.start_},
+        {"cash", std::to_string(c.paper_.cash_)},
+        {"costs",
+          json::object{
+            {"commission", decimal_text(costs.commission_)},
+            {"sell_tax", decimal_text(costs.sell_tax_)},
+            {"slippage_ticks", costs.slippage_ticks_},
+          }},
+      };
+    }
   }
   reply.body_["schema_version"] = SCHEMA_VERSION;
-  reply.body_["modes"] = json::array{"paper"};
+  reply.body_["modes"] = json::array{"paper", "kis"};
   return reply;
 }
 

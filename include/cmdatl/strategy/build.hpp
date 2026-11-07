@@ -437,6 +437,8 @@ struct Request {
   std::string fill_header_{};
   /** @brief The market-price rule's function (`replay.fill_function`), a C++ name the header declares. */
   std::string fill_function_{};
+  /** @brief The broker a run's driver trades (`kis`), or empty for the mock market. */
+  std::string broker_{};
 };
 
 /**
@@ -567,6 +569,10 @@ inline std::optional<Reply> build_driver(
   std::vector<std::string> extra;
   if (backtest) {
     extra.push_back("backtest");
+  }
+  // A broker's driver compiles that broker's client; the mock's does not: each is its own shape.
+  if (!request.broker_.empty()) {
+    extra.push_back("broker=" + request.broker_);
   }
   if (store) {
     extra.push_back("store");
@@ -712,6 +718,9 @@ inline std::optional<Reply> build_driver(
       "-DCMAKE_BUILD_TYPE=Release",
       "-DCMDATL_ALGOTRADELIB_DIR=" + package,
     };
+    if (!request.broker_.empty()) {
+      configure.push_back("-DCMDATL_DRIVER_BROKER=" + request.broker_);
+    }
     if (store) {
       configure.push_back("-DCMDATL_STORE=ON");
       if (!duckdb_root) {

@@ -110,8 +110,10 @@ inline std::optional<std::string> placement_refusal(
  * It exposes the inner session's `Caps`, `BrokerTag` and `Traits` and its call signatures, so the library's binding,
  * executor and source take it as they take the inner session.
  * @tparam Inner The broker's session type, such as `BlockingSession<mock::MockClient>`.
+ * @tparam Market The session the boundary's own phase and price reads go to: the inner one, or one that cannot trade
+ *   (a KIS demo account reads market data with the real login, since its host refuses the calendar).
  */
-template <typename Inner>
+template <typename Inner, typename Market = Inner>
 class GuardedSession {
 public:
   /** @brief The broker's capabilities. */
@@ -134,7 +136,25 @@ public:
     Inner& inner, PlacementPolicy policy, std::function<std::chrono::system_clock::time_point()> now,
     std::function<void(const PlacementEvent&)> observer
   )
-  : inner_(&inner), policy_(std::move(policy)), now_(std::move(now)), observer_(std::move(observer)) {}
+  : inner_(&inner), market_(&inner), policy_(std::move(policy)), now_(std::move(now)), observer_(std::move(observer)) {}
+
+  /**
+   * @brief Builds the boundary with its phase and price reads going to another session.
+   * @param inner The broker's session, which places and cancels; borrowed, and must outlive this.
+   * @param market The session read for the calendar and the last price; borrowed, and must outlive this.
+   * @param policy The operator's ceilings.
+   * @param now The market's clock.
+   * @param observer Told of every placement, forwarded or refused; may be empty.
+   */
+  GuardedSession(
+    Inner& inner, Market& market, PlacementPolicy policy, std::function<std::chrono::system_clock::time_point()> now,
+    std::function<void(const PlacementEvent&)> observer
+  )
+  : inner_(&inner),
+    market_(&market),
+    policy_(std::move(policy)),
+    now_(std::move(now)),
+    observer_(std::move(observer)) {}
 
   /**
    * @brief Stops every later placement: called when the loop has returned, so nothing the closing reads trigger sends.
@@ -153,12 +173,12 @@ public:
   }
 
   /**
-   * @brief The market's phase now, from the calendar read through the session: `UNKNOWN` when it cannot be read.
+   * @brief The market's phase now, from the calendar read through the market session: `UNKNOWN` when it cannot be read.
    * @return The phase.
    */
   atl::strategy::MarketPhase phase_now() {
     const auto now = now_();
-    const auto calendar = inner_->calendar(policy_.country_, std::nullopt);
+    const auto calendar = market_->calendar(policy_.country_, std::nullopt);
     if (!calendar) {
       return atl::strategy::MarketPhase::UNKNOWN;
     }
@@ -174,7 +194,7 @@ public:
     using Answer = decltype(inner_->place(order));
     std::optional<atl::Decimal64> mark;
     if (!closed_) {
-      const auto quote = inner_->quote(order.instrument_);
+      const auto quote = market_->quote(order.instrument_);
       if (quote) {
         mark = quote.value().last_price_;
       }
@@ -272,6 +292,7 @@ private:
   }
 
   Inner* inner_;
+  Market* market_;
   PlacementPolicy policy_;
   std::function<std::chrono::system_clock::time_point()> now_;
   std::function<void(const PlacementEvent&)> observer_;

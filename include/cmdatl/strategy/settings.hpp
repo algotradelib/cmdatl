@@ -308,10 +308,12 @@ struct CheckedSettings {
  * @param output Where progress goes.
  * @param run Whether the settings are a run's (`run`).
  * @param checked Set to the result.
+ * @param broker Whether the run trades a broker's account, which reads no [bars].
  * @return The refusal, or nothing.
  */
 inline std::optional<Reply> check_given(
-  const GivenSettings& given, const std::string& atlc, Output& output, bool run, CheckedSettings& checked
+  const GivenSettings& given, const std::string& atlc, Output& output, bool run, CheckedSettings& checked,
+  bool broker = false
 ) {
   if (auto refused = program_info(atlc, given.program_, output, checked.info_)) {
     return refused;
@@ -325,7 +327,7 @@ inline std::optional<Reply> check_given(
     reply.body_["unsupported"] = "session";
     return reply;
   }
-  const auto errors = spec::resolve({given.file_, given.line_}, checked.info_.program_, checked.resolved_);
+  const auto errors = spec::resolve({given.file_, given.line_}, checked.info_.program_, checked.resolved_, broker);
   if (!errors.empty()) {
     return settings_refusal(errors, given.spec_);
   }

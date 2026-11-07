@@ -1203,10 +1203,11 @@ struct Resolved {
  * @param layers The layers, each checked key by key.
  * @param program The program's facts.
  * @param resolved Set to the result when there is no error.
+ * @param broker Whether the run trades a broker's account: no [bars] key is taken, the broker gives the bars.
  * @return The errors.
  */
 inline std::vector<Error> resolve(
-  const std::vector<std::vector<Entry>>& layers, const Program& program, Resolved& resolved
+  const std::vector<std::vector<Entry>>& layers, const Program& program, Resolved& resolved, bool broker = false
 ) {
   std::vector<Entry> merged;
   for (const auto& layer : layers) {
@@ -1272,7 +1273,16 @@ inline std::vector<Error> resolve(
     const auto* e = get(key);
     return e != nullptr && e->value_.type_ == Value::Type::LIST ? e->value_.items_.size() : 0;
   };
-  if (source == "wide") {
+  if (broker) {
+    // A run on a broker's account reads its bars from the broker: a [bars] key would only mislead.
+    for (const auto& e : merged) {
+      if (e.key_.rfind("bars.", 0) == 0) {
+        errors.push_back(
+          Error::at(e.origin_, "`" + e.key_ + "`: a run on a broker's account reads its bars from the broker")
+        );
+      }
+    }
+  } else if (source == "wide") {
     both("bars.file", "bars.close");
     if (get("bars.file") == nullptr && get("bars.close") == nullptr) {
       errors.push_back(
