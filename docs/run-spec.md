@@ -168,7 +168,7 @@ timezone = "UTC"
 | `replay.min_commission` | number, 0 or more | 0 | the least commission of a fill |
 | `replay.sell_tax` | number, 0 or more | 0 | the tax, a rate of each sell's value |
 | `replay.slippage_ticks` | whole number, 0 to 1e9 | 0 | slippage, in ticks |
-| `replay.fill` | `"next-open"` or `"decision-close"` | `"next-open"` | the price of a market order (below) |
+| `replay.fill` | `"next-open"`, `"decision-close"` or `"next-close"` | `"next-open"` | the price of a market order (below) |
 | `replay.fill_header` | path, in the spec file only | none | a C++ header declaring a market-price rule of your own (below); with `replay.fill_function` |
 | `replay.fill_function` | a C++ name, such as `decision_close` or `rules::decision_close`, in the spec file only | none | the rule the header declares; with `replay.fill_header` |
 | `replay.shorts` | boolean | `false` | whether a position may go below zero; no borrow is modelled |
@@ -180,10 +180,15 @@ A market order fills against the bar after its decision, at the price `replay.fi
 | --- | --- | --- |
 | `next-open` | that bar's open | backtrader's and backtesting.py's default |
 | `decision-close` | the price it was decided on: the close of the bar the program decided on (the open in `on_open` with `bars.open_point`), or the quote; with no price yet, that bar's open | backtrader's cheat-on-close, backtesting.py's `trade_on_close` |
+| `next-close` | that bar's close | zipline's price basis, backtrader's `Order.Close` |
 
 `decision-close` is the textbook convention, and optimistic: the program trades at a price it has already seen, which a market cannot give, since a closing-auction order is sent before the closing price is known.
 The price is the instrument's last one when the program decided, so it can be days old after a gap in that instrument's data.
 It is the library's `MarketPrice::DECISION_CLOSE`; the report's `caveats` name it (`market_price_rule`) and count its fills (`market_fills_by_rule`).
+`next-close` is a price convention, not a closing-order simulation: the fill keeps the bar's timing (stamped at the bar's end, charged on its trading date, a `DAY` order expiring with its session).
+That timing holds for intraday bars inside one session and for daily trading-date bars; a close-stamped daily bar from a date alone is taken at its midnight in `bars.timezone` (by default UTC, 09:00 KST), so without `bars.open_point` its close is credited at an instant before the session closed.
+On weekly, monthly or yearly bars an order it would price halts the replay: the report's `halted` names `next_close_bar_too_long`, and fills before it stay.
+It is the library's `MarketPrice::NEXT_CLOSE`, named and counted in `caveats` as `decision-close` is.
 A limit order fills when that bar reaches its limit, whatever `fill` says.
 `fill` is a driver argument: changing it builds nothing, and it may be given on the command line (`replay.fill=decision-close`).
 Other than `next-open`, it needs market orders (with `orders.type = "limit"` it is refused) and no rule of your own.
@@ -218,6 +223,7 @@ A program with `on_open` or `on_close` follows the market's session, stated by `
 On US intraday bars, the market stated or inferred, it is refused until the session follows daylight saving (Korean bars in a CSV need `replay.market = "kr"`, since a CSV's market is `us` by default).
 A replay in which such a program met no session's open or close fails, naming the market and the interval; the report gives `sessions_opened` and `sessions_closed`, and `caveats.open_points` when `bars.open_point` is set.
 With `fill = "decision-close"`, a target stated in `on_open` fills at the open it saw and one in `on_close` at the close it saw; with `next-open`, at the next bar's open.
+With `next-close`, at the next bar's close: with `bars.open_point`, a target stated in `on_open` fills at that day's close, and one in `on_close` at the next open point, whose close is the next day's open.
 A fill is dated at the bar it fills against: an `on_close` exit at the next session's first bar, so the last session's exit does not fill.
 With `bars.open_point` a day is two bars and two equity points, so set `replay.periods_per_year` to twice the trading days (504) for the annualized ratios.
 A `DAY` order still resting at an open point (a rule that named no price there) expires with it, since a daily bar ends its session.

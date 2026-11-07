@@ -70,6 +70,7 @@ offset = 0.01 # a buy's limit 1 % above the price, a sell's 1 % below, inside th
 - A run refuses a program with `on_open` or `on_close` before the build (exit 5, `program.live_unsupported`): backtest such a program instead.
 - `on_open` and `on_close` follow the market's session on any bars (Korean bars in a CSV: `market = "kr"` under `[replay]`), with `open_point = true` under `[bars]` on daily bars; a backtest in which no bar opened or closed a session fails.
 - `fill = "decision-close"` under `[replay]` fills a backtest's market orders at the price the program decided on (the textbook close), instead of the next bar's open; a run refuses it.
+- `fill = "next-close"` under `[replay]` fills them at the close of the bar they fill against (zipline's price basis); on weekly or longer bars the backtest halts; a run refuses it too.
 - A market-price rule of your own (`fill_header` and `fill_function` under `[replay]`) is C++ cmdatl compiles and runs: only in the spec file, never on the command line.
 - After the build, a run refuses a program with `on_fill` or a warm-up above 10,000 bars (exit 5, `program.live_unsupported`), and bars that are not daily (`unsupported.interval`).
 - Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.
