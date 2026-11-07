@@ -76,6 +76,7 @@ offset = 0.01 # a buy's limit 1 % above the price, a sell's 1 % below, inside th
 - Daily bars from date-only rows end at 09:00 KST, in `open`; bars stamped at the 15:30 close fall in `post_close`, so a run of those trades only when the operator permits `post_close`.
 - `cmdatl run NAME.toml` runs in the foreground and prints its events, then its reply (`executions`, `commission_paid`, `closing_equity`, `holdings_at_end`, `refused`) as the last line.
   Stopping runs, and every exit code: the agent guide (`cmdatl guide agent`).
+- On a KIS account (the operator's file says `broker = "kis"`) a run spec names `[instruments]` and no `[bars]`: the broker gives daily bars, and the run lasts in real time until stopped.
 
 When a run's fills differ from the backtest's, this rule says why:
 The run starts at the first bar and steps through the data 15 market minutes at a time, as fast as the machine allows; at the end it withdraws whatever rests and confirms it before it reports.

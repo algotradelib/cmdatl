@@ -86,7 +86,7 @@ The operator describes it in a TOML file named by `CMDATL_CONFIG`, never by an a
 atlc = "/opt/atlc/bin/atlc" # optional: atlc, between CMDATL_ATLC and PATH
 
 [account]
-broker = "paper" # the only broker of this version
+broker = "paper" # or "kis", for cmdatl run on a KIS account (below)
 number = "paper-0001" # names the account's state directory
 
 [limits]
@@ -203,9 +203,40 @@ cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
   `--fields` and `--value` do not apply to `run`, which prints every event and its whole reply.
 - A run needs CMake and a C++17 compiler: `run` builds a program once per shape under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`); a later run of an unchanged program builds nothing, and a change to the program, atlc or algotradelib builds again.
 
+### Runs on a KIS account
+
+`cmdatl run` trades a KIS account when the operator's file names one; the account and order commands stay on the paper account.
+A demo account (모의투자) is the default, and the code is the same for a real one: only `env` differs.
+
+```toml
+[account]
+broker = "kis"
+env = "demo" # the default; "real" only when written out
+number = "12345678-01" # the account and its product code
+```
+
+```sh
+cmdatl auth login --broker kis --env demo # the account's login
+cmdatl auth login --broker kis --env real # on a demo account, read for market data only
+cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd job keep it running
+```
+
+- The run is real time: it reads the account on the wall clock during the market's hours, as a person's program would, and lasts until it is stopped.
+- A KIS demo host refuses reference data and the holiday calendar, so a demo run reads market data with the real login, through a session with no account, which cannot place an order.
+  Without a real login a demo run refuses to start.
+- The logins are read from the keychain by `cmdatl` and handed to the run on a pipe, never on its command line or in its environment.
+- The run spec names the symbols in `[instruments]` and takes no `[bars]`: the bars come from the broker, daily, with one more than the program's warm-up.
+- The run holds the account for its life and keeps the account's journal across runs, so the next run sees what an earlier one could not confirm and today's `daily_orders` count the earlier runs' orders.
+- It starts only on a flat account: no order resting anywhere on the account (the run's withdraw cancels every working order on it) and none of the run's symbols held; nobody else trades the account while it runs.
+- Every 60 seconds it writes a `heartbeat` with the holdings of its symbols, the cash, the working orders and the phase, each with the time it was read; a failed read leaves the old time showing.
+- Ctrl-C, SIGTERM, SIGHUP or a closed output withdraw, as above; the end waits up to a minute for the broker to confirm, longer when a request is in flight.
+  Removing the armed file stops placing and leaves what rests.
+- On macOS a sleeping Mac stops the run with its orders resting: start it with `caffeinate -i cmdatl run probe.toml > run.jsonl`, or from a launchd job.
+- An unknown ending (exit 4) leaves the account's journal waiting on an order: read the account in KIS's app before trading it again.
+
 ## Broker logins
 
-`cmdatl auth login` keeps a broker's key and secret in the system's credential store, for the demo and real runs to come; nothing is sent to the broker yet.
+`cmdatl auth login` keeps a broker's key and secret in the system's credential store; `cmdatl run` reads them for a KIS account.
 
 ```sh
 cmdatl auth login # asks for the broker, demo or real, and the broker's fields

@@ -19,6 +19,7 @@ If `env` says anything else, stop and ask: this guide covers paper only.
 
 - The paper account, read and traded by `status`, `account`, `quote`, `order ...` and `clock`; its clock moves by `cmdatl clock advance` and one simulated second per order command.
 - A run's market: each `cmdatl run` builds a fresh one from the run spec's data, gone when the run ends; the paper account's commands never see it.
+- A KIS account (`cmdatl env` shows `account.broker`): only `cmdatl run` trades it, in real time during market hours; the account and order commands answer `unsupported.broker` there, so read the run's `heartbeat` events instead.
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
 The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed` or `<stem>.release`, or the account's state directory.
@@ -78,6 +79,7 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 
 - Start a run only when the task asks for one, and never start again a run that a stop, the operator, a refusal or a limit ended, whatever its exit.
 - `cmdatl run TARGET [KEY=VALUE]...` (a spec, a program, or both) runs in the foreground: JSON lines, events then its reply last, and the run's exit as its own.
+  On a KIS account it refuses to start while any order rests on the account or a run symbol is held (`refused.orders_resting`, `refused.not_flat`, exit 3): the operator's to clear, not yours.
 - To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies (exit 0, `stopped: signal`); never `kill -9` it.
 - The reply's `refused` counts refused orders; `outcome: refused_orders` means a limit or the market refused some: report it.
 - The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours, and several symbols get the smallest cap.
