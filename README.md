@@ -226,13 +226,14 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
   Without a real login a demo run refuses to start.
 - The logins are read from the keychain by `cmdatl` and handed to the run on a pipe, never on its command line or in its environment.
 - The run spec names the symbols in `[instruments]` and takes no `[bars]`: the bars come from the broker, daily, with one more than the program's warm-up.
+- It reads the trading calendar before it starts and refuses when it cannot (nothing is sent).
 - The run holds the account for its life and keeps the account's journal across runs, so the next run sees what an earlier one could not confirm and today's `daily_orders` count the earlier runs' orders.
 - It starts only on a flat account: no order resting anywhere on the account (the run's withdraw cancels every working order on it) and none of the run's symbols held; nobody else trades the account while it runs.
-- Every 60 seconds it writes a `heartbeat` with the holdings of its symbols, the cash, the working orders and the phase, each with the time it was read; a failed read leaves the old time showing.
+- Every 60 seconds it writes a `heartbeat` with the holdings of its symbols, the cash and the working orders as the run last read them, each with its `read_at` (a failed read leaves the old time showing), and the phase computed now from the calendar.
 - Ctrl-C, SIGTERM, SIGHUP or a closed output withdraw, as above; the end waits up to a minute for the broker to confirm, longer when a request is in flight.
   Removing the armed file stops placing and leaves what rests.
 - On macOS a sleeping Mac stops the run with its orders resting: start it with `caffeinate -i cmdatl run probe.toml > run.jsonl`, or from a launchd job.
-- An unknown ending (exit 4) leaves the account's journal waiting on an order: read the account in KIS's app before trading it again.
+- An unconfirmed ending (exit 4: an order not confirmed, the journal or the lock damaged, the broker unreadable at the end) needs the account read in KIS's app before it is traded again; `owed_at_end` lists the orders the journal still waits on.
 
 ## Broker logins
 

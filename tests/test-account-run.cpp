@@ -9,6 +9,8 @@
 #include <cmdatl/account/operator.hpp>
 #include <cmdatl/driver/account.hpp>
 #include <cmdatl/driver/clock.hpp>
+#include <cmdatl/driver/session.hpp>
+#include <cmdatl/strategy/runs.hpp>
 #include <cmdatl/system/credential_pipe.hpp>
 #include <cmdatl/system/process.hpp>
 
@@ -23,6 +25,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -93,7 +96,8 @@ std::vector<json::object> events_of(const Ran& ran, const std::string& kind) {
  */
 Ran run_account_child(
   const PaperFixture& fixture,
-  const std::function<void(atl::mock::Market&, atl::BlockingSession<atl::mock::MockClient>&)>& before = {}
+  const std::function<void(atl::mock::Market&, atl::mock::MockClient&, atl::BlockingSession<atl::mock::MockClient>&)>&
+    before = {}
 ) {
   const auto reply_path = fixture.dir() / "account.reply";
   std::fflush(nullptr);
@@ -123,7 +127,7 @@ Ran run_account_child(
     auto client = std::make_shared<atl::mock::MockClient>(market);
     atl::BlockingSession<atl::mock::MockClient> session(client, atl::mock::MockAccount{});
     if (before) {
-      before(market, session);
+      before(market, *client, session);
     }
     const auto snapshot = cmdatl::load_operator_config();
     if (snapshot.state_ != cmdatl::ConfigSnapshot::State::OK) {
@@ -260,16 +264,18 @@ TEST_CASE("an account run refuses to start with an order resting anywhere on the
   fixture.write_config(kis_config());
   fixture.arm();
   one_decision();
-  const auto ran = run_account_child(fixture, [](atl::mock::Market&, atl::BlockingSession<atl::mock::MockClient>& s) {
-    atl::OrderRequest order;
-    // Another symbol of the account, far below the market: it rests, and the run's withdraw would cancel it.
-    order.instrument_ = atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, "005930"};
-    order.side_ = atl::OrderSide::BUY;
-    order.type_ = atl::OrderType::LIMIT;
-    order.quantity_ = atl::Decimal64(1, 0);
-    order.price_ = atl::Decimal64(60000, 0);
-    REQUIRE(s.place(order));
-  });
+  const auto ran = run_account_child(
+    fixture, [](atl::mock::Market&, atl::mock::MockClient&, atl::BlockingSession<atl::mock::MockClient>& s) {
+      atl::OrderRequest order;
+      // Another symbol of the account, far below the market: it rests, and the run's withdraw would cancel it.
+      order.instrument_ = atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, "005930"};
+      order.side_ = atl::OrderSide::BUY;
+      order.type_ = atl::OrderType::LIMIT;
+      order.quantity_ = atl::Decimal64(1, 0);
+      order.price_ = atl::Decimal64(60000, 0);
+      REQUIRE(s.place(order));
+    }
+  );
   CHECK(ran.exit_ == 3);
   CHECK(code_of(ran) == "refused.orders_resting");
   CHECK(events_of(ran, "start").empty());
@@ -281,8 +287,8 @@ TEST_CASE("an account run refuses to start holding one of its symbols") {
   fixture.write_config(kis_config());
   fixture.arm();
   one_decision();
-  const auto ran =
-    run_account_child(fixture, [](atl::mock::Market& market, atl::BlockingSession<atl::mock::MockClient>& s) {
+  const auto ran = run_account_child(
+    fixture, [](atl::mock::Market& market, atl::mock::MockClient&, atl::BlockingSession<atl::mock::MockClient>& s) {
       atl::OrderRequest order;
       order.instrument_ = atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, "005930"};
       order.side_ = atl::OrderSide::BUY;
@@ -290,7 +296,8 @@ TEST_CASE("an account run refuses to start holding one of its symbols") {
       order.quantity_ = atl::Decimal64(1, 0);
       REQUIRE(s.place(order));
       market.advance_to(market.now() + std::chrono::hours(24));
-    });
+    }
+  );
   CHECK(ran.exit_ == 3);
   CHECK(code_of(ran) == "refused.not_flat");
   CHECK(ran.reply_.at("symbol").as_string() == "005930");
@@ -414,5 +421,147 @@ TEST_CASE("the operator file takes a KIS account: demo by default, real written 
   snapshot = cmdatl::load_operator_config();
   CHECK(snapshot.state_ != cmdatl::ConfigSnapshot::State::OK);
   CHECK(snapshot.error_.code_ == "config.invalid");
+}
+
+namespace {
+
+/** @brief A credential store in memory, for the run's login reads. */
+class Logins : public cmdatl::auth::CredentialStore {
+public:
+  std::map<std::string, std::string> items_;
+  std::vector<std::string> asked_;
+  std::string kind() const override {
+    return "memory";
+  }
+  cmdatl::auth::StoreList list() override {
+    cmdatl::auth::StoreList out;
+    out.status_ = cmdatl::auth::StoreStatus::OK;
+    for (const auto& item : items_) {
+      out.names_.push_back(item.first);
+    }
+    return out;
+  }
+  cmdatl::auth::StoreAnswer get(const std::string& name) override {
+    asked_.push_back(name);
+    cmdatl::auth::StoreAnswer answer;
+    const auto found = items_.find(name);
+    answer.status_ = found == items_.end() ? cmdatl::auth::StoreStatus::NOT_FOUND : cmdatl::auth::StoreStatus::OK;
+    if (found != items_.end()) {
+      answer.value_ = found->second;
+    }
+    return answer;
+  }
+  cmdatl::auth::StoreAnswer put(const std::string&, const std::string&) override {
+    return {};
+  }
+  cmdatl::auth::StoreAnswer remove(const std::string&) override {
+    return {};
+  }
+};
+
+} // namespace
+
+TEST_CASE("a run on a KIS account reads its own login, and on demo the real one for market data, or refuses") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  const auto demo = cmdatl::load_operator_config();
+  REQUIRE(demo.state_ == cmdatl::ConfigSnapshot::State::OK);
+  Logins store;
+  std::vector<std::string> documents;
+  auto refused = cmdatl::runs::read_run_logins(*demo.config_, &store, documents);
+  REQUIRE(refused);
+  CHECK(refused->body_.at("error").as_object().at("code").as_string() == "auth.not_found");
+  store.items_["kis/demo"] = "{\"demo\":true}";
+  refused = cmdatl::runs::read_run_logins(*demo.config_, &store, documents);
+  REQUIRE(refused);
+  CHECK(refused->body_.at("error").as_object().at("code").as_string() == "auth.not_found");
+  CHECK(
+    std::string(refused->body_.at("error").as_object().at("message").as_string()).find("market data") !=
+    std::string::npos
+  );
+  store.items_["kis/real"] = "{\"demo\":false}";
+  CHECK(!cmdatl::runs::read_run_logins(*demo.config_, &store, documents));
+  REQUIRE(documents.size() == 2);
+  CHECK(documents[0] == "{\"demo\":true}");
+  CHECK(documents[1] == "{\"demo\":false}");
+  CHECK(cmdatl::runs::read_run_logins(*demo.config_, nullptr, documents));
+  auto text = kis_config();
+  text.replace(text.find("number"), 0, "env = \"real\"\n");
+  fixture.write_config(text);
+  const auto real = cmdatl::load_operator_config();
+  REQUIRE(real.state_ == cmdatl::ConfigSnapshot::State::OK);
+  store.asked_.clear();
+  CHECK(!cmdatl::runs::read_run_logins(*real.config_, &store, documents));
+  CHECK(store.asked_ == std::vector<std::string>{"kis/real"});
+  CHECK(documents[1].empty());
+}
+
+TEST_CASE("the account and order commands refuse a KIS account, and the reply names it kis-demo") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  const auto status = fixture.json({"status"});
+  CHECK(status.exit_ == 1);
+  const auto reply = json::parse(status.out_).as_object();
+  CHECK(reply.at("env").as_string() == "kis-demo");
+  CHECK(reply.at("error").as_object().at("code").as_string() == "unsupported.broker");
+}
+
+TEST_CASE("once a stop is latched, the boundary refuses every placement before the broker sees it") {
+  PaperFixture fixture;
+  const auto series = runtest::bars_of("005930", 5, atl::BarInterval::ONE_DAY);
+  atl::Instrument instrument;
+  instrument.id_ = series.instrument_;
+  instrument.currency_ = atl::Currency::krw();
+  instrument.lot_size_ = atl::Decimal64::parse("1");
+  instrument.price_rule_ = atl::PriceRule::krx_equity();
+  atl::mock::MarketSettings settings;
+  settings.cash_ = atl::Money{atl::Decimal64(100000000, 0), atl::Currency::krw()};
+  settings.start_ = series.bars_.at(1).timestamp_ + std::chrono::minutes(30);
+  atl::mock::Market market({series}, settings, {instrument});
+  atl::BlockingSession<atl::mock::MockClient> inner(
+    std::make_shared<atl::mock::MockClient>(market), atl::mock::MockAccount{}
+  );
+  std::vector<std::string> reasons;
+  cmdatl::driver::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> guarded(
+    inner, cmdatl::driver::PlacementPolicy{},
+    [&market] {
+      return market.now();
+    },
+    [&reasons](const cmdatl::driver::PlacementEvent& event) {
+      reasons.push_back(event.reason_);
+    }
+  );
+  bool stopping = true;
+  guarded.set_stopping([&stopping] {
+    return stopping;
+  });
+  atl::OrderRequest order;
+  order.instrument_ = series.instrument_;
+  order.side_ = atl::OrderSide::BUY;
+  order.type_ = atl::OrderType::LIMIT;
+  order.quantity_ = atl::Decimal64(1, 0);
+  order.price_ = atl::Decimal64(60000, 0);
+  CHECK(!guarded.place(order));
+  CHECK(!guarded.place(order));
+  CHECK(reasons == std::vector<std::string>{"stopping", "stopping"});
+  CHECK(market.working_orders().orders_.empty());
+}
+
+TEST_CASE("an account run whose calendar cannot be read at start refuses before anything is sent") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  one_decision();
+  const auto ran = run_account_child(fixture, [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+    atl::BrokerError error;
+    error.category_ = atl::ErrorCategory::TRANSPORT;
+    error.reached_broker_ = false;
+    error.message_ = "connection refused";
+    client.fail_next(atl::mock::Call::CALENDAR, error);
+  });
+  CHECK(ran.exit_ == 1);
+  CHECK(code_of(ran) == "run.reference_unreadable");
+  CHECK(events_of(ran, "start").empty());
+  CHECK(!std::filesystem::exists(kis_account_dir(fixture) / "journal.jsonl"));
 }
 #endif
