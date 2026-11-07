@@ -139,7 +139,12 @@ inline int stage_credentials(const std::string& payload) {
  */
 inline std::optional<std::string> read_staged_credentials() {
   struct stat info{};
-  if (::fstat(CREDENTIAL_FD, &info) != 0 || !S_ISFIFO(info.st_mode)) {
+  if (::fstat(CREDENTIAL_FD, &info) != 0) {
+    return std::nullopt;
+  }
+  if (!S_ISFIFO(info.st_mode)) {
+    // Whatever else sits at descriptor 3 is not the logins: closed, so the strategy never inherits it either.
+    ::close(CREDENTIAL_FD);
     return std::nullopt;
   }
   std::string payload;

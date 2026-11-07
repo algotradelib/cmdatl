@@ -124,16 +124,18 @@ private:
  *   the account's (`<broker>/<env>`), then on a KIS demo account the real login, read only for market data (a KIS demo
  *   host refuses reference data and the calendar); an empty document for none.
  * @param config The operator's file, for a broker's account.
+ * @param store The credential store, or null where the system has none.
  * @param documents Set to the documents, in that order.
  * @return The refusal, or nothing.
  */
-inline std::optional<Reply> read_run_logins(const OperatorConfig& config, std::vector<std::string>& documents) {
+inline std::optional<Reply> read_run_logins(
+  const OperatorConfig& config, auth::CredentialStore* store, std::vector<std::string>& documents
+) {
   const auto* broker = auth::find_broker(config.broker_);
   if (broker == nullptr) {
     return error_reply(Exit::FAILED, "unsupported.broker", "cmdatl run does not trade " + config.broker_);
   }
-  auto store = auth::open_store(auth::interaction_allowed(0));
-  if (!store) {
+  if (store == nullptr) {
     return auth::no_store_reply();
   }
   const bool demo = config.env_ == "demo";
@@ -294,7 +296,8 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     }
     std::vector<std::string> logins;
     if (broker) {
-      if (auto refused = read_run_logins(config, logins)) {
+      const auto store = auth::open_store(auth::interaction_allowed(0));
+      if (auto refused = read_run_logins(config, store.get(), logins)) {
         return std::move(*refused);
       }
     }
