@@ -254,12 +254,11 @@ if(CMDATL_BUILD_TESTS)
     # backtest's build compiles it.
     add_executable(backtest-adapter-vendor driver/backtest/main.cpp)
     target_include_directories(backtest-adapter-vendor PRIVATE
-      ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts
-      ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/vendor
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/vendor
     )
     target_include_directories(backtest-adapter-vendor SYSTEM PRIVATE ${CMDATL_TEST_DUCKDB})
-    target_compile_definitions(backtest-adapter-vendor PRIVATE CMDATL_DUCKDB=1 CMDATL_FETCH_ADAPTER=1)
-    target_link_libraries(backtest-adapter-vendor PRIVATE algotradelib::algotradelib ${CMDATL_TEST_DUCKDB_LIBRARY})
+    target_compile_definitions(backtest-adapter-vendor PRIVATE TOML_HEADER_ONLY=1 CMDATL_DUCKDB=1 CMDATL_FETCH_ADAPTER=1)
+    target_link_libraries(backtest-adapter-vendor PRIVATE cmdatl_core ${CMDATL_TEST_DUCKDB_LIBRARY})
     set_target_properties(backtest-adapter-vendor PROPERTIES BUILD_RPATH ${CMDATL_TEST_DUCKDB})
   endif()
   # The replay module with hand-written programs and files written by the test, as the drivers build it: no

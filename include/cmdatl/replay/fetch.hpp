@@ -40,7 +40,7 @@ inline std::string utc_instant(std::int64_t us) {
   const std::time_t seconds = static_cast<std::time_t>(us / 1000000);
   std::tm parts{};
   ::gmtime_r(&seconds, &parts);
-  char text[40];
+  char text[96];
   std::snprintf(
     text, sizeof text, "%04d-%02d-%02dT%02d:%02d:%02d.%06lldZ", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday,
     parts.tm_hour, parts.tm_min, parts.tm_sec, static_cast<long long>(us % 1000000)
@@ -57,7 +57,7 @@ inline std::string utc_date(long long seconds) {
   const std::time_t at = static_cast<std::time_t>(seconds);
   std::tm parts{};
   ::gmtime_r(&at, &parts);
-  char text[16];
+  char text[64];
   std::snprintf(text, sizeof text, "%04d-%02d-%02d", parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday);
   return text;
 }

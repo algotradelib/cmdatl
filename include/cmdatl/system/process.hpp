@@ -394,11 +394,13 @@ inline int lifted_pipe(int (&fds)[2]) noexcept {
  * @param on_stderr_line Called with each stderr line, without its newline, and with an unterminated last one; what
  *   it throws ends the run.
  * @param environment The child's environment as `NAME=VALUE` entries, or nothing for cmdatl's own.
+ * @param descriptor_3 A descriptor the child receives as descriptor 3 (a login's pipe), or -1 for none; this process's
+ *   own descriptor 3 is left alone.
  * @return How it ended; partial output after a failure is never `FINISHED`.
  */
 inline ChildResult run_child(
   const std::vector<std::string>& argv, const std::function<void(const std::string&)>& on_stderr_line,
-  const std::vector<std::string>* environment = nullptr
+  const std::vector<std::string>* environment = nullptr, int descriptor_3 = -1
 ) {
   ChildResult result;
 #if defined(_WIN32)
@@ -466,6 +468,9 @@ inline ChildResult run_child(
     }
     if (error == 0) {
       error = posix_spawn_file_actions_adddup2(actions.get(), err_write.get(), STDERR_FILENO);
+    }
+    if (error == 0 && descriptor_3 >= 0) {
+      error = posix_spawn_file_actions_adddup2(actions.get(), descriptor_3, 3);
     }
     if (error == 0) {
       error = posix_spawnattr_setflags(attr.get(), flags);

@@ -63,8 +63,9 @@ inline std::optional<Reply> replay_outcome(const ChildResult& ran, json::object&
 
 #if !defined(_WIN32)
 /**
- * @brief A login staged on descriptor 3 for one child, closed in this process when its owner goes, on every path; it
- *   never stages over a descriptor 3 it did not open.
+ * @brief A login written into a pipe whose read end this holds, on a descriptor above 3 closed on exec; the child gets
+ *   it as descriptor 3 (`run_child`), and this process's own descriptor 3 is never touched. Closed when its owner
+ *   goes, on every path.
  */
 class StagedLogin {
 public:
@@ -72,30 +73,51 @@ public:
   StagedLogin(const StagedLogin&) = delete;
   StagedLogin& operator=(const StagedLogin&) = delete;
 
-  /** @brief Closes descriptor 3 if this staged it. */
+  /** @brief Closes the read end. */
   ~StagedLogin() {
-    if (staged_) {
-      ::close(sys::CREDENTIAL_FD);
+    if (fd_ >= 0) {
+      ::close(fd_);
     }
   }
 
   /**
-   * @brief Stages a login.
+   * @brief Writes the framed login into a new pipe and keeps its read end.
    * @param document The login.
-   * @return 0, `EBUSY` when descriptor 3 is already open, or the error number.
+   * @return 0, or the error number.
    */
   int stage(const std::string& document) {
-    if (::fcntl(sys::CREDENTIAL_FD, F_GETFD) != -1) {
-      return EBUSY;
-    }
     const auto payload = sys::frame_credentials({document});
-    const int error = payload ? sys::stage_credentials(*payload) : EMSGSIZE;
-    staged_ = error == 0;
+    if (!payload) {
+      return EMSGSIZE;
+    }
+    int ends[2] = {-1, -1};
+    if (::pipe(ends) != 0) {
+      return errno;
+    }
+    // Above 3, so mapping it onto 3 in the child is never a no-op that leaves it closed on exec.
+    fd_ = ::fcntl(ends[0], F_DUPFD_CLOEXEC, 4);
+    const int lifted = errno;
+    ::close(ends[0]);
+    if (fd_ < 0) {
+      ::close(ends[1]);
+      return lifted;
+    }
+    std::size_t written = 0;
+    const int error = write_whole(ends[1], payload->data(), payload->size(), written);
+    ::close(ends[1]);
     return error;
   }
 
+  /**
+   * @brief The read end.
+   * @return The descriptor, or -1 before `stage`.
+   */
+  int fd() const noexcept {
+    return fd_;
+  }
+
 private:
-  bool staged_{false};
+  int fd_{-1};
 };
 
 /**
@@ -312,8 +334,8 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     fills = std::filesystem::absolute(invocation.get("fills")).string();
     argv.push_back("output.fills=" + fills);
   }
-  // The login on descriptor 3 for the driver only, staged after the build (no build child inherits it) and closed here
-  // once the driver has ended, on every path.
+  // The login on descriptor 3 for the driver only: a pipe made after the build (no build child sees it), mapped onto 3
+  // in the driver alone, and closed here once the driver has ended, on every path.
   StagedLogin staged;
   if (!fetching.empty()) {
     if (const int error = staged.stage(login)) {
@@ -323,9 +345,13 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
       );
     }
   }
-  const auto ran = run_child(argv, [&output](const std::string& line) {
-    output.progress(line);
-  });
+  const auto ran = run_child(
+    argv,
+    [&output](const std::string& line) {
+      output.progress(line);
+    },
+    nullptr, staged.fd()
+  );
   std::optional<json::object> fetched;
   if (!fetching.empty()) {
     fetched = read_fetch_outcome(outcome);

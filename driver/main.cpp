@@ -78,7 +78,7 @@ std::vector<cmdatl::driver::DataPoint> data_points(
  * @param args The run's arguments.
  * @return The inputs.
  */
-cmdatl::driver::Loaded load(const std::vector<std::string>& args) {
+[[maybe_unused]] cmdatl::driver::Loaded load(const std::vector<std::string>& args) {
   const auto s = settings_of(args);
   const auto symbols = replay::symbols_of<Program>(s);
   const auto data = replay::load(s, symbols);

@@ -21,6 +21,10 @@
 #include <vector>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 using namespace support;
 
 namespace {
@@ -769,8 +773,28 @@ TEST_CASE(
   REQUIRE(ran.exit_ == 0);
   CHECK(reply_of(ran.out_).at("report") == first);
 
-  // Fewer bars than the store holds: the replay is exactly this fetch's bars.
+  // Fewer bars than the store holds: the replay is exactly this fetch's bars. Descriptor 3 is held by something else
+  // in this process (as on Linux under ctest): the login reaches the driver anyway, and cmdatl leaves it alone.
+  const int held = ::open("/dev/null", O_RDONLY);
+  REQUIRE(held >= 0);
+  const int saved = ::fcntl(3, F_DUPFD_CLOEXEC, 10);
+  REQUIRE(::dup2(held, 3) == 3);
+  if (held != 3) {
+    ::close(held);
+  }
+  struct stat before{};
+  REQUIRE(::fstat(3, &before) == 0);
   ran = backtest({at("vendor.toml"), "bars.count=20"});
+  struct stat after{};
+  CHECK(::fstat(3, &after) == 0);
+  CHECK((after.st_dev == before.st_dev && after.st_ino == before.st_ino));
+  if (saved >= 0) {
+    ::dup2(saved, 3);
+    ::close(saved);
+  } else {
+    ::close(3);
+  }
+  INFO(ran.out_);
   REQUIRE(ran.exit_ == 0);
   CHECK(reply_of(ran.out_).at("report").at("bars").as_int64() == 20);
 
