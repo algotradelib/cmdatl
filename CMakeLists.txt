@@ -211,7 +211,7 @@ if(CMDATL_BUILD_TESTS)
     target_link_libraries(test-cli PRIVATE util)
   endif()
   add_dependencies(test-cli cmdatl fake-atlc hold-lock)
-  # The documentation check reads README.md and docs/ from the source tree; the process tests run cmdatl itself.
+  # The documentation checks read README.md and docs/ from the source tree; the process tests run cmdatl itself.
   target_compile_definitions(test-cli PRIVATE
     CMDATL_RUN_TEST_HOOKS
     CMDATL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"

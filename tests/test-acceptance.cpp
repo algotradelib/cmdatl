@@ -1086,9 +1086,11 @@ TEST_CASE("every strategy reference the docs and skills name answers from the re
   const ScopedVariable atlc("CMDATL_ATLC", equip->atlc_);
   const std::filesystem::path root(CMDATL_SOURCE_DIR);
   std::vector<std::filesystem::path> files{root / "README.md"};
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(root / "skills")) {
-    if (entry.path().extension() == ".md") {
-      files.push_back(entry.path());
+  for (const auto* dir : {"docs", "skills"}) {
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(root / dir)) {
+      if (entry.path().extension() == ".md") {
+        files.push_back(entry.path());
+      }
     }
   }
   // Each `cmdatl strategy reference` with or without a topic, as written; a topic is atlc's file stem, known only to

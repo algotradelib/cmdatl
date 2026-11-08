@@ -1,5 +1,5 @@
 // The guides and skills: `cmdatl guide`, the skills' files and the plugin's manifests, the words they share with the
-// help and the README, and the agent guide's session run as written on a paper account.
+// help and the docs, and the agent guide's session run as written on a paper account.
 
 #include "./order-support.hpp"
 
@@ -9,6 +9,7 @@
 
 #include <boost/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -35,6 +36,35 @@ const std::vector<std::string> GUIDES{"agent", "strategy"};
  */
 std::string skill(const std::string& name) {
   return slurp(ROOT / "skills" / ("cmdatl-" + name) / "SKILL.md");
+}
+
+/**
+ * @brief The docs: the README and the pages in `docs/`, sorted; not the run settings' reference, whose dotted names
+ *   are settings (`replay.cash`), not error codes.
+ * @return Their paths.
+ */
+std::vector<std::filesystem::path> doc_files() {
+  std::vector<std::filesystem::path> files;
+  for (const auto& entry : std::filesystem::directory_iterator(ROOT / "docs")) {
+    if (entry.path().extension() == ".md" && entry.path().filename() != "run-spec.md") {
+      files.push_back(entry.path());
+    }
+  }
+  std::sort(files.begin(), files.end());
+  files.insert(files.begin(), ROOT / "README.md");
+  return files;
+}
+
+/**
+ * @brief The docs' text, the files one after another.
+ * @return The text.
+ */
+std::string doc_text() {
+  std::string text;
+  for (const auto& file : doc_files()) {
+    text += slurp(file);
+  }
+  return text;
 }
 
 /**
@@ -123,17 +153,17 @@ TEST_CASE("cmdatl guide names its two guides and a mistyped one gets the closest
   CHECK(text_of({"--help"}).find("cmdatl guide agent or strategy") != std::string::npos);
 }
 
-TEST_CASE("the exit words are the same in the help and the README and the agent guide") {
+TEST_CASE("the exit words are the same in the help and the docs and the agent guide") {
   const auto help = text_of({"--help"});
-  const auto readme = slurp(ROOT / "README.md");
+  const auto docs = doc_text();
   const auto agent = skill("agent");
   for (const auto* words : {cmdatl::EXIT_REFUSED_TEXT, cmdatl::EXIT_UNKNOWN_TEXT}) {
     INFO(words);
     CHECK(help.find(words) != std::string::npos);
-    CHECK(readme.find(words) != std::string::npos);
+    CHECK(docs.find(words) != std::string::npos);
     CHECK(agent.find(words) != std::string::npos);
   }
-  for (const auto& text : {help, readme, agent}) {
+  for (const auto& text : {help, docs, agent}) {
     CHECK(text.find("safe to retry") == std::string::npos);
   }
 }
@@ -210,7 +240,7 @@ TEST_CASE("no skill names a command that is not built and every error code the d
   };
   const std::regex token("`([a-z_]+)\\.([a-z_]+)`");
   const std::regex reference("`cmdatl ([a-z][a-z ]*[a-z])");
-  std::vector<std::filesystem::path> files{ROOT / "README.md"};
+  auto files = doc_files();
   for (const auto& name : GUIDES) {
     files.push_back(ROOT / "skills" / ("cmdatl-" + name) / "SKILL.md");
   }
@@ -260,13 +290,13 @@ TEST_CASE("no skill names a command that is not built and every error code the d
   CHECK(checked > 20);
 }
 
-TEST_CASE("the strategy guide states the README's parity rule word for word") {
-  const auto readme = slurp(ROOT / "README.md");
+TEST_CASE("the strategy guide states the docs' parity rule word for word") {
+  const auto docs = doc_text();
   std::size_t found = 0;
   for (const auto& line : lines_of(skill("strategy"))) {
     if (line.rfind("A run's fills are those of", 0) == 0 || line.rfind("The run starts at the first bar", 0) == 0) {
       INFO(line);
-      CHECK(readme.find(line) != std::string::npos);
+      CHECK(docs.find(line) != std::string::npos);
       ++found;
     }
   }

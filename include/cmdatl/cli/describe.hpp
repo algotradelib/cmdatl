@@ -19,9 +19,9 @@ inline constexpr int SCHEMA_VERSION = 12;
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
 
-/** @brief Exit 3's words, the same in the help, the README and the agent guide (a test checks them). */
+/** @brief Exit 3's words, the same in the help, the docs and the agent guide (a test checks them). */
 inline constexpr const char* EXIT_REFUSED_TEXT = "3 refused (nothing was sent)";
-/** @brief Exit 4's words, the same in the help, the README and the agent guide (a test checks them). */
+/** @brief Exit 4's words, the same in the help, the docs and the agent guide (a test checks them). */
 inline constexpr const char* EXIT_UNKNOWN_TEXT = "4 unknown (follow error.next before anything else)";
 
 /** @brief The examples `cmdatl --help` opens with: the most common uses (each parsed by the tests). */
