@@ -289,7 +289,8 @@ cmdatl auth login --broker myvendor # asks broker.toml's fields; stored unchecke
 cmdatl strategy backtest dip.toml bars.source=myvendor bars.count=500 bars.store_root=store replay.market=us
 ```
 
-- A backtest with `bars.source = "NAME"` fetches through the adapter into the Parquet store, then replays that version (`docs/run-spec.md`).
+- A backtest with `bars.source = "NAME"` fetches through the adapter into the Parquet store, then replays the bars received (`docs/run-spec.md`).
+- The adapter returns closed bars only (never a bar still forming), with times as UTC instants and the stamp the vendor actually uses (`open` or `close`): cmdatl checks the series' shape, not what its numbers mean.
 - A run trades a broker folder's account when the operator's file says `[account] broker = "NAME"`, as a KIS account (demo by default; `env = "real"` written out); a data vendor's folder is never an account.
   A client that does not state a trading calendar, a working-order listing and reference data (`BrokerTraits`) is refused before anything is read.
   As on a KIS account, a run trades KRX shares (`replay.market = "kr"`), and no account run polls price bands.
