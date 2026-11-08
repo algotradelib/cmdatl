@@ -111,7 +111,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 | `bars.store_root` | path | required | the store's directory |
 | `bars.as_of` | instant: `"YYYY-MM-DD"`, optionally `THH:MM[:SS[.ffffff]]` and `Z` or `+HH:MM` | the latest | read the latest version fetched at or before this instant |
 
-`source = "NAME"`, a broker folder's name (README, "Your own broker or data vendor"): the backtest fetches each symbol's last bars through the folder's adapter, with the login `cmdatl auth login --broker NAME` stored (`NAME/real`), writes them into the store as one version, then replays that version.
+`source = "NAME"`, a broker folder's name (`docs/brokers.md`, "Your own broker or data vendor"): the backtest fetches each symbol's last bars through the folder's adapter, with the login `cmdatl auth login --broker NAME` stored (`NAME/real`), writes them into the store as one version, then replays that version.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |

@@ -12,7 +12,7 @@
 ## Examples
 
 `examples/` holds five atls programs, each with a run spec over the synthetic daily bars in `examples/data/daily.csv`; those specs are backtests (market orders and no market), which `cmdatl run` refuses.
-`examples/run.toml` runs `mean-reversion` as a run (a market and limit orders), and `examples/paper.toml` is a paper account over the same bars: the commands at the top use both.
+`examples/run.toml` runs `mean-reversion` as a run (a market and limit orders), and `examples/paper.toml` is a paper account over the same bars: the commands at the top of the [README](../README.md) use both.
 
 ```sh
 cmdatl strategy backtest examples/mean-reversion.toml params.lookback=30
