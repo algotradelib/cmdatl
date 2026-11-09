@@ -1,7 +1,7 @@
 #pragma once
 
 // The KRX stock tick table, from the library before and after it moved out of core into <algotradelib/krx>.
-// Drop the old branch when that library is published (plan/todo/krx-include-cleanup.md).
+// Drop the old branch once every supported algotradelib has <algotradelib/krx>.
 
 #include <algotradelib/core>
 

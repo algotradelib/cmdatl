@@ -30,7 +30,7 @@
 #endif
 
 // The KRX stock tick table moved out of the library's core into <algotradelib/krx>; this builds with either library.
-// Drop the old branch when that library is published (plan/todo/krx-include-cleanup.md).
+// Drop the old branch once every supported algotradelib has <algotradelib/krx>.
 #if __has_include(<algotradelib/krx>)
 #include <algotradelib/krx>
 #endif
