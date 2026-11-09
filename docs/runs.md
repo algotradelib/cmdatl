@@ -54,6 +54,9 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
 - The account is the login's (one login per broker and environment); a `number` in `[account]` pins it, and a login for another account is then refused before anything connects.
 - The logins are read from the keychain by `cmdatl` and handed to the run on a pipe, never on its command line or in its environment.
 - The run spec names the symbols in `[instruments]` and takes no `[bars]`: the bars come from the broker, daily, with one more than the program's warm-up.
+- The run reads KRX's prices, not KRX and NXT combined: a daily bar closes at KRX's 15:30 close, as KRX-close histories (Yahoo's, for one) do, and NXT's trades before 09:00 and after 15:30 are in neither its bars nor its quotes.
+  Orders go where they always did; the `start` event's `market_data` names the tape (`KRX`).
+- KIS has once restated the previous day's bar between midnight and 06:00 KST, and a run takes each day's bar at its first read after midnight and keeps it: start a run after 06:00 KST, and expect a run kept overnight to decide on the bar as first read.
 - It reads the trading calendar before it starts and refuses when it cannot (nothing is sent).
 - A read before the start that KIS refuses for its request rate is read again twice at most, a few seconds apart.
   A broker that asks for more than 61 seconds before the next read is not waited for: the run fails at once, and `next` names the wait.
