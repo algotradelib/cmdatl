@@ -4,6 +4,7 @@
 // module's, for the run's in-process tests and the replay module's own: neither needs atlc.
 
 #include <cmdatl/driver/run.hpp>
+#include <cmdatl/paper/krx_grid.hpp>
 
 #include <algotradelib/backtest>
 #include <algotradelib/strategy>
@@ -177,7 +178,7 @@ struct Load {
       instrument.type_ = atl::SecurityType::STOCK;
       instrument.currency_ = atl::Currency::krw();
       instrument.lot_size_ = atl::Decimal64::parse("1");
-      instrument.price_rule_ = atl::PriceRule::krx_equity();
+      instrument.price_rule_ = cmdatl::paper::krx_equity_rule();
       loaded.instruments_.push_back(instrument);
     }
     const auto rate = atl::Decimal64::parse(data().commission_);

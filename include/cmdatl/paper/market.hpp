@@ -17,6 +17,7 @@
 // Its matching, costs, acceptance hours and rounding are the paper log's `market` version 1.
 
 #include "./bars.hpp"
+#include "./krx_grid.hpp"
 #include "./time.hpp"
 
 #include <algotradelib/core>
@@ -400,7 +401,7 @@ public:
       return std::nullopt;
     }
     const double c = prev->close_;
-    const auto rule = atl::PriceRule::krx_equity();
+    const auto rule = krx_equity_rule();
     const auto up = rule.round_to_tick(decimal_of(std::round(c * 1.3)), atl::OrderSide::SELL);
     const auto down = rule.round_to_tick(decimal_of(std::ceil(c * 0.7)), atl::OrderSide::BUY);
     return std::make_pair(up ? to_double(*up) : c * 1.3, down ? to_double(*down) : c * 0.7);
@@ -521,7 +522,7 @@ private:
    * @return The price rounded to the tick below.
    */
   static double on_grid(double p) {
-    const auto rounded = atl::PriceRule::krx_equity().round_to_tick(decimal_of(std::round(p)), atl::OrderSide::BUY);
+    const auto rounded = krx_equity_rule().round_to_tick(decimal_of(std::round(p)), atl::OrderSide::BUY);
     return rounded ? to_double(*rounded) : std::round(p);
   }
 
@@ -603,7 +604,7 @@ private:
    * @param t The instant.
    */
   void match(Clock::time_point t) {
-    const auto rule = atl::PriceRule::krx_equity();
+    const auto rule = krx_equity_rule();
     for (auto& order : orders_) {
       if (!is_open(order)) {
         continue;

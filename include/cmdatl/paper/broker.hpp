@@ -4,6 +4,7 @@
 // party adds a broker.
 // Bar queries are refused (nothing in cmdatl reads them yet), and orders carry no trigger price.
 
+#include "./krx_grid.hpp"
 #include "./market.hpp"
 
 #include <algotradelib/broker>
@@ -360,7 +361,7 @@ public:
     instrument.type_ = atl::SecurityType::STOCK;
     instrument.currency_ = atl::Currency{"KRW"};
     instrument.lot_size_ = atl::Decimal64(1, 0);
-    instrument.price_rule_ = atl::PriceRule::krx_equity();
+    instrument.price_rule_ = krx_equity_rule();
     return instrument;
   }
 

@@ -29,6 +29,12 @@
 #include <duckdb.h>
 #endif
 
+// The KRX stock tick table moved out of the library's core into <algotradelib/krx>; this builds with either library.
+// Drop the old branch when that library is published (plan/todo/krx-include-cleanup.md).
+#if __has_include(<algotradelib/krx>)
+#include <algotradelib/krx>
+#endif
+
 /**
  * @file
  * @brief The replay of a strategy `atlc build` generated: the run settings as `key=value` arguments, the bars (wide
@@ -336,7 +342,12 @@ inline atl::Instrument instrument_of(const std::string& symbol, const std::strin
   instrument.type_ = atl::SecurityType::STOCK;
   instrument.currency_ = atl::Currency{kr ? "KRW" : "USD"};
   instrument.lot_size_ = atl::Decimal64::parse("1");
-  instrument.price_rule_ = kr ? atl::PriceRule::krx_equity() : atl::PriceRule::unconstrained();
+#if __has_include(<algotradelib/krx>)
+  const auto krx = atl::krx::equity_price_rule();
+#else
+  const auto krx = atl::PriceRule::krx_equity();
+#endif
+  instrument.price_rule_ = kr ? krx : atl::PriceRule::unconstrained();
   return instrument;
 }
 
