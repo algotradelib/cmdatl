@@ -72,6 +72,8 @@ struct Script {
   std::vector<std::pair<std::string, double>> sets_;
   /** @brief Every pricing set, as (type, offset). */
   std::vector<std::pair<atl::OrderType, std::string>> pricing_;
+  /** @brief The net position the program read on each bar of its first symbol, history included. */
+  std::vector<std::string> held_;
 };
 
 /** @brief The script the programs read; each test sets it before it runs. */
@@ -252,6 +254,8 @@ struct Program {
       return;
     }
     ++seen_;
+    const auto held = ctx.portfolio().net_quantity_of(event.instrument_);
+    script().held_.push_back(held ? held->str() : "none");
     const auto action = script().actions_.find(seen_);
     if (action != script().actions_.end() && action->second) {
       action->second();

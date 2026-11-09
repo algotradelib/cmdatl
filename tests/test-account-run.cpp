@@ -31,6 +31,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <string>
@@ -66,6 +67,10 @@ struct Ran {
   json::object reply_;
   /** @brief The events. */
   std::vector<json::object> events_;
+  /** @brief What the market held after the run, by symbol. */
+  json::object held_after_;
+  /** @brief The net position the program read on each bar, history included. */
+  std::vector<std::string> program_held_;
 };
 
 /**
@@ -95,11 +100,13 @@ std::vector<json::object> events_of(const Ran& ran, const std::string& kind) {
 }
 
 /**
- * @brief Runs `run_account` in a child on a fresh mock market starting at 09:30 KST of the third day of bars; the child
- *   raises SIGINT once an order rests on the market, so a run that places stops itself.
+ * @brief Runs `run_account` on 005930 in a child, on a fresh mock market of 005930 and 000660 from 09:30 KST of the
+ *   third day of bars.
+ *   The child raises SIGINT once an order rests on the market, so a run that places stops itself.
  * @param fixture The fixture (operator file, state root).
  * @param before Called in the child with the market and the session before the run (an order or a holding).
- * @return What it answered.
+ * @param scrubbed Whether the run trades as a broker folder's run.
+ * @return What it answered, and what the market held and the program read.
  */
 Ran run_account_child(
   const PaperFixture& fixture,
@@ -108,6 +115,8 @@ Ran run_account_child(
   bool scrubbed = false
 ) {
   const auto reply_path = fixture.dir() / "account.reply";
+  const auto after_path = fixture.dir() / "account.after";
+  std::filesystem::remove(after_path);
   std::fflush(nullptr);
   const pid_t pid = ::fork();
   REQUIRE(pid >= 0);
@@ -121,17 +130,23 @@ Ran run_account_child(
     ::close(err);
     cmdatl::handle_signals();
     const auto series = runtest::bars_of("005930", 10, atl::BarInterval::ONE_DAY);
-    atl::Instrument instrument;
-    instrument.id_ = series.instrument_;
-    instrument.name_ = "005930";
-    instrument.type_ = atl::SecurityType::STOCK;
-    instrument.currency_ = atl::Currency::krw();
-    instrument.lot_size_ = atl::Decimal64::parse("1");
-    instrument.price_rule_ = atl::PriceRule::krx_equity();
+    // Another symbol of the account, outside the run: an order or a holding the run must leave alone.
+    const auto other = runtest::bars_of("000660", 10, atl::BarInterval::ONE_DAY);
+    std::vector<atl::Instrument> instruments;
+    for (const auto* listed : {&series, &other}) {
+      atl::Instrument instrument;
+      instrument.id_ = listed->instrument_;
+      instrument.name_ = listed->instrument_.symbol_;
+      instrument.type_ = atl::SecurityType::STOCK;
+      instrument.currency_ = atl::Currency::krw();
+      instrument.lot_size_ = atl::Decimal64::parse("1");
+      instrument.price_rule_ = atl::PriceRule::krx_equity();
+      instruments.push_back(instrument);
+    }
     atl::mock::MarketSettings settings;
     settings.cash_ = atl::Money{atl::Decimal64(100000000, 0), atl::Currency::krw()};
     settings.start_ = series.bars_.at(2).timestamp_ + std::chrono::minutes(30);
-    atl::mock::Market market({series}, settings, {instrument});
+    atl::mock::Market market({series, other}, settings, instruments);
     auto client = std::make_shared<atl::mock::MockClient>(market);
     atl::BlockingSession<atl::mock::MockClient> session(client, atl::mock::MockAccount{});
     if (before) {
@@ -183,6 +198,22 @@ Ran run_account_child(
       code =
         cmdatl::driver::run_account(run, *snapshot.config_, runtest::Program(run.ids_), session, session, make_clock);
     }
+    // What the market holds after the run and what the program read, for the test to read.
+    json::object held;
+    if (const auto holdings = market.holdings()) {
+      for (const auto& position : holdings.value().positions_) {
+        held[position.instrument_.symbol_] = position.quantity_.str();
+      }
+    }
+    json::array read;
+    for (const auto& net : runtest::script().held_) {
+      read.push_back(json::value(net));
+    }
+    std::FILE* after = std::fopen(after_path.c_str(), "w");
+    if (after != nullptr) {
+      std::fputs(json::serialize(json::object{{"held", held}, {"read", read}}).c_str(), after);
+      std::fclose(after);
+    }
     std::fflush(nullptr);
     ::_exit(code);
   }
@@ -209,6 +240,13 @@ Ran run_account_child(
       break;
     }
     start = end + 1;
+  }
+  if (std::filesystem::exists(after_path)) {
+    const auto after = json::parse(slurp(after_path)).as_object();
+    ran.held_after_ = after.at("held").as_object();
+    for (const auto& net : after.at("read").as_array()) {
+      ran.program_held_.emplace_back(net.as_string());
+    }
   }
   return ran;
 }
@@ -342,6 +380,61 @@ void one_decision(std::int64_t target = 1) {
   runtest::script().decisions_ = {{2, runtest::Decision{target, "1"}}};
 }
 
+/**
+ * @brief Sets the script: one decision on the second bar, a target of `target` shares as a sell limit 3 % above the
+ *   close, which rests; and a signal on the third bar, for a run whose order is refused and never rests.
+ * @param target The target.
+ */
+void one_sell(std::int64_t target) {
+  runtest::script() = runtest::Script{};
+  runtest::script().decisions_ = {{2, runtest::Decision{target, "1.03"}}};
+  runtest::script().actions_[3] = [] {
+    ::raise(SIGINT);
+  };
+}
+
+/**
+ * @brief A `before` that buys shares at the market and lets a day pass, so the account holds them when the run starts.
+ * @param symbol The symbol.
+ * @param quantity How many.
+ * @return The hook.
+ */
+std::function<void(atl::mock::Market&, atl::mock::MockClient&, atl::BlockingSession<atl::mock::MockClient>&)> holding(
+  const std::string& symbol, std::int64_t quantity
+) {
+  return [symbol, quantity](atl::mock::Market& market, atl::mock::MockClient&, auto& session) {
+    atl::OrderRequest order;
+    order.instrument_ = atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, symbol};
+    order.side_ = atl::OrderSide::BUY;
+    order.type_ = atl::OrderType::MARKET;
+    order.quantity_ = atl::Decimal64(quantity, 0);
+    REQUIRE(session.place(order));
+    market.advance_to(market.now() + std::chrono::hours(24));
+  };
+}
+
+/**
+ * @brief The operator's file capping 005930 at one share, with an order value.
+ * @param order_value The order value, in won.
+ * @return The text.
+ */
+std::string capped_config(const std::string& order_value) {
+  auto text = kis_config();
+  text.replace(text.find("\"005930\" = 100"), 14, "\"005930\" = 1");
+  text.replace(text.find("order_value = 5000000"), 21, "order_value = " + order_value);
+  return text;
+}
+
+/**
+ * @brief The start line's holdings of a symbol.
+ * @param ran The run.
+ * @param symbol The symbol.
+ * @return The quantity, as the start line writes it.
+ */
+std::string held_at_start(const Ran& ran, const std::string& symbol) {
+  return std::string(ran.events_.front().at("holdings_at_start").as_object().at(symbol).as_string());
+}
+
 } // namespace
 
 TEST_CASE("an account run places at its first decision, withdraws on a signal, and ends clean") {
@@ -357,6 +450,8 @@ TEST_CASE("an account run places at its first decision, withdraws on a signal, a
   CHECK(start.at("event").as_string() == "start");
   CHECK(start.at("account").as_string() == "kis-demo-12345678-01");
   CHECK(start.at("orders_left_today").as_int64() == 3);
+  CHECK(start.at("holdings_at_start").as_object().size() == 1);
+  CHECK(held_at_start(ran, "005930") == "0");
   CHECK(events_of(ran, "placed").size() == 1);
   // The heartbeat names what the loop last read, each with its time.
   const auto beats = events_of(ran, "heartbeat");
@@ -396,7 +491,7 @@ TEST_CASE("an account run refuses to start with an order resting anywhere on the
     fixture, [](atl::mock::Market&, atl::mock::MockClient&, atl::BlockingSession<atl::mock::MockClient>& s) {
       atl::OrderRequest order;
       // Another symbol of the account, far below the market: it rests, and the run's withdraw would cancel it.
-      order.instrument_ = atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, "005930"};
+      order.instrument_ = atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, "000660"};
       order.side_ = atl::OrderSide::BUY;
       order.type_ = atl::OrderType::LIMIT;
       order.quantity_ = atl::Decimal64(1, 0);
@@ -410,25 +505,143 @@ TEST_CASE("an account run refuses to start with an order resting anywhere on the
   CHECK(!std::filesystem::exists(kis_account_dir(fixture) / "journal.jsonl"));
 }
 
-TEST_CASE("an account run refuses to start holding one of its symbols") {
+TEST_CASE("an account run starts holding one of its symbols and sends nothing for a target it holds") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  one_sell(1);
+  const auto ran = run_account_child(fixture, holding("005930", 1));
+  CHECK(ran.exit_ == 0);
+  CHECK(code_of(ran).empty());
+  REQUIRE(!ran.events_.empty());
+  CHECK(held_at_start(ran, "005930") == "1");
+  CHECK(events_of(ran, "placed").empty());
+  CHECK(ran.reply_.at("holdings_at_end").as_object().at("005930").as_string() == "1");
+  CHECK(ran.reply_.at("outcome").as_string() == "clean");
+}
+
+TEST_CASE("an account run sells shares the account held before it started") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  one_sell(1);
+  const auto ran = run_account_child(fixture, holding("005930", 2));
+  CHECK(ran.exit_ == 0);
+  REQUIRE(!ran.events_.empty());
+  CHECK(held_at_start(ran, "005930") == "2");
+  const auto placed = events_of(ran, "placed");
+  REQUIRE(placed.size() == 1);
+  CHECK(placed.front().at("side").as_string() == "sell");
+  CHECK(placed.front().at("quantity").as_string() == "1");
+}
+
+TEST_CASE("an account run holding more than its cap sells only by one order that brings it within the cap") {
+  PaperFixture fixture;
+  fixture.arm();
+  const auto placed_sells = [](const auto& ran) {
+    std::vector<std::string> quantities;
+    for (const auto& event : events_of(ran, "placed")) {
+      CHECK(event.at("side").as_string() == "sell");
+      quantities.emplace_back(event.at("quantity").as_string());
+    }
+    return quantities;
+  };
+  const auto guard_refused = [](const auto& ran) {
+    return ran.reply_.at("refused").as_object().at("guard").as_int64();
+  };
+  // Held 3, capped at 1: a sell to 2 leaves more than the cap, and the guard refuses it.
+  fixture.write_config(capped_config("1000000"));
+  one_sell(2);
+  auto ran = run_account_child(fixture, holding("005930", 3));
+  CHECK(ran.exit_ == 0);
+  REQUIRE(!ran.events_.empty());
+  CHECK(held_at_start(ran, "005930") == "3");
+  CHECK(ran.events_.front().at("cap").as_string() == "1");
+  CHECK(placed_sells(ran).empty());
+  CHECK(guard_refused(ran) >= 1);
+  CHECK(ran.held_after_.at("005930").as_string() == "3");
+
+  // To the cap, with room for 2 shares an order: one sell of 2.
+  fixture.write_config(capped_config("200000"));
+  one_sell(1);
+  ran = run_account_child(fixture, holding("005930", 3));
+  CHECK(ran.exit_ == 0);
+  CHECK(placed_sells(ran) == std::vector<std::string>{"2"});
+
+  // Flat, with room for 3 shares an order: one sell of 3.
+  fixture.write_config(capped_config("300000"));
+  one_sell(0);
+  ran = run_account_child(fixture, holding("005930", 3));
+  CHECK(ran.exit_ == 0);
+  CHECK(placed_sells(ran) == std::vector<std::string>{"3"});
+
+  // To the cap, with room for 1 share an order: no order fits, and nothing is placed.
+  fixture.write_config(capped_config("100000"));
+  one_sell(1);
+  ran = run_account_child(fixture, holding("005930", 3));
+  CHECK(ran.exit_ == 0);
+  CHECK(placed_sells(ran).empty());
+  CHECK(guard_refused(ran) >= 1);
+  CHECK(ran.held_after_.at("005930").as_string() == "3");
+}
+
+TEST_CASE("an account run leaves another symbol's holding alone and does not list it") {
   PaperFixture fixture;
   fixture.write_config(kis_config());
   fixture.arm();
   one_decision();
-  const auto ran = run_account_child(
-    fixture, [](atl::mock::Market& market, atl::mock::MockClient&, atl::BlockingSession<atl::mock::MockClient>& s) {
-      atl::OrderRequest order;
-      order.instrument_ = atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, "005930"};
-      order.side_ = atl::OrderSide::BUY;
-      order.type_ = atl::OrderType::MARKET;
-      order.quantity_ = atl::Decimal64(1, 0);
-      REQUIRE(s.place(order));
-      market.advance_to(market.now() + std::chrono::hours(24));
-    }
+  const auto ran = run_account_child(fixture, holding("000660", 2));
+  CHECK(ran.exit_ == 0);
+  REQUIRE(!ran.events_.empty());
+  const auto& listed = ran.events_.front().at("holdings_at_start").as_object();
+  CHECK(listed.size() == 1);
+  CHECK(listed.at("005930").as_string() == "0");
+  CHECK(events_of(ran, "placed").size() == 1);
+  CHECK(ran.reply_.at("stopped").as_string() == "signal");
+  CHECK(ran.held_after_.at("000660").as_string() == "2");
+}
+
+TEST_CASE("a program reads the account's holding on every bar, the history read at the start included") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  // Three history bars before the first decision; it holds what it has, so nothing is sent.
+  runtest::script() = runtest::Script{};
+  runtest::script().warmup_ = 3;
+  runtest::script().decisions_ = {{3, runtest::Decision{2, "1"}}};
+  runtest::script().actions_[4] = [] {
+    ::raise(SIGINT);
+  };
+  const auto ran = run_account_child(fixture, holding("005930", 2));
+  CHECK(ran.exit_ == 0);
+  CHECK(events_of(ran, "placed").empty());
+  REQUIRE(ran.program_held_.size() >= 3);
+  for (const auto& net : ran.program_held_) {
+    CHECK(net == "2");
+  }
+}
+
+TEST_CASE("the start's holdings sum every row of an instrument, are 0 without one, and refuse a sum that overflows") {
+  using Tag = atl::BlockingSession<atl::mock::MockClient>::BrokerTag;
+  const auto id = atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, "005930"};
+  const auto other = atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, "000660"};
+  const auto row = [](const atl::InstrumentId& instrument, const atl::Decimal64& quantity) {
+    atl::HoldingPosition position;
+    position.instrument_ = instrument;
+    position.quantity_ = quantity;
+    return position;
+  };
+  const auto split = cmdatl::driver::net_holdings<Tag>(
+    {row(id, atl::Decimal64(60, 0)), row(other, atl::Decimal64(7, 0)), row(id, atl::Decimal64(40, 0))}, {id}
   );
-  CHECK(ran.exit_ == 3);
-  CHECK(code_of(ran) == "refused.not_flat");
-  CHECK(ran.reply_.at("symbol").as_string() == "005930");
+  REQUIRE(split);
+  CHECK(split->size() == 1);
+  CHECK(split->at("005930").as_string() == "100");
+  const auto none = cmdatl::driver::net_holdings<Tag>({row(other, atl::Decimal64(7, 0))}, {id});
+  REQUIRE(none);
+  CHECK(none->at("005930").as_string() == "0");
+  const auto huge = atl::Decimal64(std::numeric_limits<std::int64_t>::max(), 0);
+  CHECK(!cmdatl::driver::net_holdings<Tag>({row(id, huge), row(id, huge)}, {id}));
 }
 
 TEST_CASE("an account run refuses without the armed file, before reading the account") {

@@ -5,9 +5,11 @@
 // boundary (`session.hpp`), on the wall clock (`WallClock`).
 //
 // The account is shared with everything else that trades it, so the run holds the account's lock for its life and uses
-// the account's journal, kept across runs. It starts only on a flat account: no order resting anywhere on the account
-// (the library's withdraw cancels every working order) and none of the run's symbols held. The daily allowance is what
-// the journal leaves today. A signal or a closed output withdraws; removing the armed file quiesces.
+// the account's journal, kept across runs.
+// It starts only with no order resting anywhere on the account (the library's withdraw cancels every working order).
+// The account's holdings of its symbols are its position from the start: every sellable share of them is its to sell.
+// The daily allowance is what the journal leaves today.
+// A signal or a closed output withdraws; removing the armed file quiesces.
 //
 // Generic over its sessions and clock, so the tests drive it with the library's mock client; `main.cpp` builds the KIS
 // sessions from the logins `cmdatl run` hands over on descriptor 3 (`kis_account.hpp`).
@@ -82,6 +84,32 @@ inline std::optional<std::string> kis_account_mismatch(
     return "the login's account is not the operator file's account.number " + number;
   }
   return std::nullopt;
+}
+
+/**
+ * @brief What an account holds of each instrument: the net over every row of a holdings read, as the runner sizes a
+ *   target against it (`Portfolio::net_quantity_of`).
+ * @tparam Tag The broker's tag.
+ * @param positions The holdings read's rows.
+ * @param ids The instruments.
+ * @return Each instrument's symbol mapped to its net quantity as a decimal string, `"0"` when no row names it; nothing
+ *   when a sum does not fit a decimal.
+ */
+template <typename Tag>
+std::optional<json::object> net_holdings(
+  std::vector<atl::HoldingPosition> positions, const std::vector<atl::InstrumentId>& ids
+) {
+  atl::strategy::Portfolio<Tag> portfolio;
+  portfolio.positions_ = std::move(positions);
+  json::object held;
+  for (const auto& id : ids) {
+    const auto net = portfolio.net_quantity_of(id);
+    if (!net) {
+      return std::nullopt;
+    }
+    held[id.symbol_] = net->str();
+  }
+  return held;
 }
 
 /** @brief How often the run writes a heartbeat with what it last read. */
@@ -379,7 +407,9 @@ int run_account(
           " order(s) a day, and the account's journal shows them placed today"
       );
     }
-    // A flat start: the withdraw cancels every order on the account, and the run's view of its symbols starts at zero.
+    // No order resting: the withdraw cancels every order on the account.
+    // The holdings of the run's symbols are its position: every sellable share of them is the run's to sell.
+    json::object holdings_at_start;
     {
       const auto orders = inner.working_orders();
       if (!orders) {
@@ -395,25 +425,20 @@ int run_account(
             " order(s) rest on the account; a run's withdraw cancels them all"
         );
       }
-      const auto held = inner.holdings();
+      auto held = inner.holdings();
       if (!held) {
         return run_error(
           base, Exit::FAILED, "run.account_unreadable",
           "the account's holdings could not be read: " + held.error().message_
         );
       }
-      for (const auto& position : held.value().positions_) {
-        const bool ours =
-          std::find(run.symbols_.begin(), run.symbols_.end(), position.instrument_.symbol_) != run.symbols_.end();
-        if (ours && !(position.quantity_ == atl::Decimal64(0, 0))) {
-          return run_error(
-            base, Exit::REFUSED, "refused.not_flat",
-            "the account holds " + position.quantity_.str() + " of " + position.instrument_.symbol_ +
-              ", a symbol of this run",
-            "", {{"symbol", position.instrument_.symbol_}}
-          );
-        }
+      auto net = net_holdings<typename Inner::BrokerTag>(std::move(held.value().positions_), run.ids_);
+      if (!net) {
+        return run_error(
+          base, Exit::FAILED, "run.account_unreadable", "the account's holdings of a run symbol do not add up"
+        );
       }
+      holdings_at_start = std::move(*net);
     }
     // The trading calendar, read before anything starts: the loop decides the phase from it, and a first read failing
     // after the start would cost the first decision until its next read, hours later. The client keeps what it read.
@@ -528,6 +553,7 @@ int run_account(
         {"account", config.account_name()},
         {"market_data", run.market_data_},
         {"cap", wiring.limits_.max_position_quantity_ ? wiring.limits_.max_position_quantity_->str() : "0"},
+        {"holdings_at_start", holdings_at_start},
         {"orders_left_today", left},
         {"warmup_bars", run.warmup_},
         {"pid", static_cast<std::int64_t>(::getpid())},

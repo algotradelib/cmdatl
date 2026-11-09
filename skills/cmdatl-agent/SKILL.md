@@ -79,7 +79,8 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 
 - Start a run only when the task asks for one, and never start again a run that a stop, the operator, a refusal or a limit ended, whatever its exit.
 - `cmdatl run TARGET [KEY=VALUE]...` (a spec, a program, or both) runs in the foreground: JSON lines, events then its reply last, and the run's exit as its own.
-  On a KIS account it refuses to start while any order rests on the account or a run symbol is held (`refused.orders_resting`, `refused.not_flat`, exit 3): the operator's to clear, not yours.
+  On a KIS account it refuses to start while any order rests on the account (`refused.orders_resting`, exit 3): the operator's to clear, not yours.
+  A run may sell every share of its symbols the account holds, including shares bought after it started.
 - To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies (exit 0, `stopped: signal`); never `kill -9` it.
 - The reply's `refused` counts refused orders; `outcome: refused_orders` means a limit or the market refused some: report it.
 - The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours, and several symbols get the smallest cap.
