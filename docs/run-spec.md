@@ -179,7 +179,7 @@ timezone = "UTC"
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `replay.from`, `replay.to` | date: `"YYYY-MM-DD"`, or yyyymmdd as a number or string, from 1970 | the first and last bar | the dates replayed, inclusive, in UTC |
-| `replay.market` | `"us"` or `"kr"` | `"kr"` when the first store coordinate's source starts with `kis`, `kiwoom` or `toss` or contains `krx`, else `"us"` | `us`: USD, any price; `kr`: KRW, prices on the KRX tick table |
+| `replay.market` | `"us"` or `"kr"` | `"kr"` when the first store coordinate's source starts with `kis`, `kiwoom` or `toss` or contains `krx`, else `"us"` | `us`: USD, any price; `kr`: KRW, prices on the KRX equity tick table, also for ETFs and ETNs, whose live ladder is finer (1 KRW below 2,000 KRW, 5 KRW from 2,000 KRW), so a replay's limits and `slippage_ticks` are coarser for them and can fill differently from a live run |
 | `replay.cash` | number above 0 | 100000 (`us`), 100000000 (`kr`) | the opening cash |
 | `replay.commission` | number, 0 or more | 0 | the commission, a rate of each fill's value |
 | `replay.min_commission` | number, 0 or more | 0 | the least commission of a fill |
