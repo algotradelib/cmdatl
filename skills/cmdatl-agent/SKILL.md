@@ -1,6 +1,6 @@
 ---
 name: cmdatl-agent
-description: How to trade a paper account (the only account of this version) through the cmdatl command line - read positions, cash and the operator's limits, plan and place limit orders, confirm fills, handle refusals and exit codes, and start and stop strategy runs. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
+description: How to trade through the cmdatl command line - on the paper account read positions, cash and the operator's limits, plan and place limit orders and confirm fills; handle refusals and exit codes; start and stop strategy runs, on the paper account or a KIS account. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
 ---
 
 # Trading with cmdatl
@@ -14,11 +14,11 @@ description: How to trade a paper account (the only account of this version) thr
 
 ## The accounts
 
-Every market here is simulated on this machine; nothing reaches a broker, and `env` says `paper`.
-If `env` says anything else, stop and ask: this guide covers paper only.
+The paper account and its runs' markets are simulated here: nothing they do reaches a broker, and `env` says `paper`.
+On a KIS account (`kis-demo`, `kis-real`) a run's orders reach KIS; on any other `env`, stop and ask.
 
 - The paper account, read and traded by `status`, `account`, `quote`, `order ...` and `clock`; its clock moves by `cmdatl clock advance` and one simulated second per order command.
-- A run's market: each `cmdatl run` builds a fresh one from the run spec's data, gone when the run ends; the paper account's commands never see it.
+- A paper run's market: each `cmdatl run` on paper builds a fresh one from the run spec's data, gone when the run ends; the paper account's commands never see it.
 - A KIS account (`cmdatl env` shows `account.broker`): only `cmdatl run` trades it, in real time during market hours; the account and order commands answer `unsupported.broker` there, so read the run's `heartbeat` events instead.
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
@@ -83,13 +83,15 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
   A run may sell every share of its symbols the account holds, including shares bought after it started.
 - To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies (exit 0, `stopped: signal`); never `kill -9` it.
 - The reply's `refused` counts refused orders; `outcome: refused_orders` means a limit or the market refused some: report it.
-- The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours, and several symbols get the smallest cap.
-- Exit 4: report the reply's `error`; its market ended with it and no account changed.
+- The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours on paper, and on a KIS account today's orders in the account's journal, from every run; several symbols get the smallest cap.
+- Exit 4: report the reply's `error`.
+  On paper its market ended with it; no account changed.
+  On a KIS account an order may have gone out: the operator reads the account in KIS's app before it is traded again (`owed_at_end`: what the journal waits on); start nothing there.
 - Removing the armed file stops every run: the operator's lever, not yours.
 
 ## What the markets are
 
-Both fill whole orders against stored daily bars.
+Both simulated markets fill whole orders against stored daily bars.
 The paper account takes orders 08:30-15:30 KST on dates in its data; a run's market fills a limit when a later bar reaches it, as a backtest does.
 Neither is a broker's demo account or evidence of how one would answer.
 Money and quantities are decimal strings; `--fields a,b.c` keeps fields, `--value PATH` prints one (not for `run`).
