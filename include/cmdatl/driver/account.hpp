@@ -407,15 +407,34 @@ int run_account(
           " order(s) a day, and the account's journal shows them placed today"
       );
     }
+    // The reads before the start are read again after a rate or token refusal, each wait noted on stderr at once.
+    // One token wait per session; on a real account the market-data session is the trading one.
+    StartBudget trading_budget;
+    StartBudget market_budget;
+    auto& market_waits =
+      static_cast<const void*>(&market) == static_cast<const void*>(&inner) ? trading_budget : market_budget;
+    const auto start_note = [](const std::string& line) {
+      (void)write_line(line + "\n", STDERR_FILENO);
+    };
     // No order resting: the withdraw cancels every order on the account.
     // The holdings of the run's symbols are its position: every sellable share of them is the run's to sell.
     json::object holdings_at_start;
     {
-      const auto orders = inner.working_orders();
+      const auto read_orders = read_at_start(
+        [&inner]() {
+          return inner.working_orders();
+        },
+        clock, start_note, trading_budget
+      );
+      if (read_orders.refused_ == StartRead::INTERRUPTED) {
+        return run_error(base, Exit::INTERRUPTED, "interrupted", "a signal arrived before the run started");
+      }
+      const auto& orders = read_orders.answer_;
       if (!orders) {
         return run_error(
           base, Exit::FAILED, "run.account_unreadable",
-          "the account's working orders could not be read: " + orders.error().message_
+          "the account's working orders could not be read: " + orders.error().message_,
+          start_read_next(read_orders.refused_, "")
         );
       }
       if (!orders.value().orders_.empty()) {
@@ -425,11 +444,20 @@ int run_account(
             " order(s) rest on the account; a run's withdraw cancels them all"
         );
       }
-      auto held = inner.holdings();
+      auto read_held = read_at_start(
+        [&inner]() {
+          return inner.holdings();
+        },
+        clock, start_note, trading_budget
+      );
+      if (read_held.refused_ == StartRead::INTERRUPTED) {
+        return run_error(base, Exit::INTERRUPTED, "interrupted", "a signal arrived before the run started");
+      }
+      auto& held = read_held.answer_;
       if (!held) {
         return run_error(
           base, Exit::FAILED, "run.account_unreadable",
-          "the account's holdings could not be read: " + held.error().message_
+          "the account's holdings could not be read: " + held.error().message_, start_read_next(read_held.refused_, "")
         );
       }
       auto net = net_holdings<typename Inner::BrokerTag>(std::move(held.value().positions_), run.ids_);
@@ -443,12 +471,21 @@ int run_account(
     // The trading calendar, read before anything starts: the loop decides the phase from it, and a first read failing
     // after the start would cost the first decision until its next read, hours later. The client keeps what it read.
     {
-      const auto calendar = market.calendar(atl::Country::KR, std::nullopt);
+      const auto read_calendar = read_at_start(
+        [&market]() {
+          return market.calendar(atl::Country::KR, std::nullopt);
+        },
+        clock, start_note, market_waits
+      );
+      if (read_calendar.refused_ == StartRead::INTERRUPTED) {
+        return run_error(base, Exit::INTERRUPTED, "interrupted", "a signal arrived before the run started");
+      }
+      const auto& calendar = read_calendar.answer_;
       if (!calendar) {
         return run_error(
           base, Exit::FAILED, "run.reference_unreadable",
           "the trading calendar could not be read: " + calendar.error().message_,
-          "nothing was sent; start the run again"
+          start_read_next(read_calendar.refused_, "nothing was sent; start the run again")
         );
       }
       const auto today = atl::strategy::SessionWindow::krx().local_date(now());
@@ -542,6 +579,8 @@ int run_account(
     wiring.closing_wait_ = std::chrono::seconds(30);
     wiring.final_rounds_ = 20;
     wiring.final_step_ = std::chrono::seconds(3);
+    wiring.start_note_ = start_note;
+    wiring.start_budget_ = &market_waits;
     const auto on_ready = [&]() {
       guard.check(now());
       json::object start{
@@ -606,8 +645,14 @@ int run_account(
       case Outcome::REFERENCE_UNREADABLE:
         if (thrown.empty()) {
           return run_error(
-            base, Exit::FAILED, "run.reference_unreadable", traded.detail_, "nothing was sent; start the run again"
+            base, Exit::FAILED, "run.reference_unreadable", traded.detail_,
+            start_read_next(traded.start_read_, "nothing was sent; start the run again")
           );
+        }
+        break;
+      case Outcome::INTERRUPTED:
+        if (thrown.empty()) {
+          return run_error(base, Exit::INTERRUPTED, "interrupted", traded.detail_);
         }
         break;
       case Outcome::NOT_STARTED:

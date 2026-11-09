@@ -79,6 +79,15 @@ inline constexpr const char* SESSION_UNSUPPORTED_NEXT =
   "run it with cmdatl strategy backtest (intraday bars, or bars.open_point on daily ones); a run takes programs "
   "without on_open/on_close";
 
+/** @brief What to do when a run's reads before its start stayed refused for the broker's request rate. */
+inline constexpr const char* START_RATE_NEXT =
+  "nothing was sent; the broker refused the reads for its request rate: start the run again in a minute";
+
+/** @brief What to do when a run's reads before its start stayed refused for KIS's one access token a minute. */
+inline constexpr const char* START_TOKEN_NEXT =
+  "nothing was sent; KIS issues one access token a minute: start the run again in a minute, with no other program "
+  "using the same KIS key";
+
 /**
  * @brief Why a run spec's market settings are refused before anything is loaded, or nothing: the market `kr`, no store,
  *   no short sales, no fill at a decided close, no open points.

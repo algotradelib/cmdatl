@@ -55,6 +55,11 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
 - The logins are read from the keychain by `cmdatl` and handed to the run on a pipe, never on its command line or in its environment.
 - The run spec names the symbols in `[instruments]` and takes no `[bars]`: the bars come from the broker, daily, with one more than the program's warm-up.
 - It reads the trading calendar before it starts and refuses when it cannot (nothing is sent).
+- A read before the start that KIS refuses for its request rate is read again twice at most, a few seconds apart.
+  When KIS refuses the run's access token because it issues one a minute, the run waits 61 seconds once for each login and reads again.
+  Each wait is written to stderr when it begins, and Ctrl-C during it stops the run with nothing sent (exit 130, `interrupted`).
+  When the reads still fail, the error's `next` names the wait.
+- A run keeps no token, so a command or another run started right after a run can still meet KIS's one-token-a-minute refusal.
 - The run holds the account for its life and keeps the account's journal across runs, so the next run sees what an earlier one could not confirm and today's `daily_orders` count the earlier runs' orders.
 - It starts only with no order resting anywhere on the account, since the stop's withdraw cancels every working order on it, other symbols' included; nobody else trades the account while it runs.
 - The account's holdings of the run's symbols are the run's position from its first decision.

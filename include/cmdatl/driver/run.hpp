@@ -714,8 +714,14 @@ int run_main(int argc, char** argv, Load load, Make make) {
       case Outcome::REFERENCE_UNREADABLE:
         if (thrown.empty()) {
           return run_error(
-            base, Exit::FAILED, "run.reference_unreadable", traded.detail_, "nothing was sent; start the run again"
+            base, Exit::FAILED, "run.reference_unreadable", traded.detail_,
+            start_read_next(traded.start_read_, "nothing was sent; start the run again")
           );
+        }
+        break;
+      case Outcome::INTERRUPTED:
+        if (thrown.empty()) {
+          return run_error(base, Exit::INTERRUPTED, "interrupted", traded.detail_);
         }
         break;
       case Outcome::NOT_STARTED:
