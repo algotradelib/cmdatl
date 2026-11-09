@@ -1217,6 +1217,33 @@ TEST_CASE("a read before the start waits as each refusal asks and notes the wait
     CHECK(noted.find("reading again in 5 s") != std::string::npos);
   }
 
+  SECTION("a retry_after above the limit or unrepresentable returns at once with no wait and no second read") {
+    for (
+      const auto asked : {cmdatl::driver::START_RATE_WAIT_LIMIT + std::chrono::seconds(1), std::chrono::seconds::max()}
+    ) {
+      atl::runner::ManualClock clock(t0);
+      std::size_t reads = 0;
+      cmdatl::driver::StartBudget budget;
+      auto refused = rate_refusal();
+      refused.retry_after_ = asked;
+      bool noted = false;
+      const auto answer = cmdatl::driver::read_at_start(
+        scripted({atl::Result<int>(refused), atl::Result<int>(7)}, reads), clock,
+        [&](const std::string&) {
+          noted = true;
+        },
+        budget
+      );
+      CHECK(!answer.answer_);
+      CHECK(answer.refused_ == StartRead::LONG_WAIT);
+      CHECK(cmdatl::driver::start_read_next(answer.refused_, "") == cmdatl::START_LONG_WAIT_NEXT);
+      CHECK(reads == 1);
+      CHECK(!noted);
+      CHECK(clock.waits() == 0);
+      CHECK(clock.now() == t0);
+    }
+  }
+
   SECTION("a protocol error and an authentication error with another code are read once") {
     atl::runner::ManualClock clock(t0);
     cmdatl::driver::StartBudget budget;

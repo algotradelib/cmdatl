@@ -56,6 +56,7 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
 - The run spec names the symbols in `[instruments]` and takes no `[bars]`: the bars come from the broker, daily, with one more than the program's warm-up.
 - It reads the trading calendar before it starts and refuses when it cannot (nothing is sent).
 - A read before the start that KIS refuses for its request rate is read again twice at most, a few seconds apart.
+  A broker that asks for more than 61 seconds before the next read is not waited for: the run fails at once, and `next` names the wait.
   When KIS refuses the run's access token because it issues one a minute, the run waits 61 seconds once for each login and reads again.
   Each wait is written to stderr when it begins, and Ctrl-C during it stops the run with nothing sent (exit 130, `interrupted`).
   When the reads still fail, the error's `next` names the wait.

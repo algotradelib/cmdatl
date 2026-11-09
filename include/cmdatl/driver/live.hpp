@@ -107,6 +107,9 @@ inline constexpr const char* KIS_TOKEN_MINUTE = "EGW00133";
 /** @brief The wait before a read whose access token KIS refused for its one-a-minute rule is tried again. */
 inline constexpr std::chrono::seconds START_TOKEN_WAIT{61};
 
+/** @brief The longest wait a broker's `retry_after_` may ask for before a start's read is tried again. */
+inline constexpr std::chrono::seconds START_RATE_WAIT_LIMIT = START_TOKEN_WAIT;
+
 /** @brief Which refusal ended a read before the start, so the reply can name the wait. */
 enum class StartRead {
   /** @brief The read answered, or failed in a way that is not tried again. */
@@ -117,6 +120,8 @@ enum class StartRead {
   TOKEN,
   /** @brief A signal arrived during a wait; the read was not tried again. */
   INTERRUPTED,
+  /** @brief The broker asked for a wait above `START_RATE_WAIT_LIMIT`; nothing waited, the read not tried again. */
+  LONG_WAIT,
 };
 
 /** @brief What a session has used of its waits before the start: one wait for KIS's token minute. */
@@ -142,7 +147,8 @@ struct StartAnswer {
  *
  * For reads before a run's start only, never for a placement or a cancellation.
  * A refusal for the broker's request rate is read again at most `START_RATE_RETRIES` times per call.
- * Each of those waits is the broker's `retry_after_`, or `START_RATE_WAIT` when it named none.
+ * Each of those waits is the broker's `retry_after_`, or `START_RATE_WAIT` when it named none or a negative one.
+ * A `retry_after_` above `START_RATE_WAIT_LIMIT` is returned at once as `LONG_WAIT`, neither waited nor shortened.
  * KIS's one-token-a-minute refusal (`KIS_TOKEN_MINUTE`) is waited out once per session (`START_TOKEN_WAIT`).
  * A second one on the same session, in this call or a later one, is returned at once.
  * Any other failure is returned at once, and the counts never reset when the kind of refusal changes.
@@ -169,8 +175,14 @@ auto read_at_start(Read&& read, Clock& clock, Note&& note, StartBudget& budget)
       if (rate_retries == START_RATE_RETRIES) {
         return {std::move(answer), StartRead::RATE};
       }
+      wait = error.retry_after_ && *error.retry_after_ >= std::chrono::seconds::zero() ?
+        *error.retry_after_ :
+        START_RATE_WAIT;
+      // Checked before any conversion to the clock's units: a long or unrepresentable delay is never waited.
+      if (wait > START_RATE_WAIT_LIMIT) {
+        return {std::move(answer), StartRead::LONG_WAIT};
+      }
       ++rate_retries;
-      wait = error.retry_after_.value_or(START_RATE_WAIT);
       line = "cmdatl: the broker refused a read for its request rate; reading again in " +
         std::to_string(wait.count()) + " s (" + std::to_string(rate_retries + 1) + " of " +
         std::to_string(START_RATE_RETRIES + 1) + ")";
@@ -207,6 +219,8 @@ inline std::string start_read_next(StartRead refused, std::string otherwise) {
       return START_RATE_NEXT;
     case StartRead::TOKEN:
       return START_TOKEN_NEXT;
+    case StartRead::LONG_WAIT:
+      return START_LONG_WAIT_NEXT;
     case StartRead::NONE:
     case StartRead::INTERRUPTED:
       break;

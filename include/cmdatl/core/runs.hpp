@@ -88,6 +88,11 @@ inline constexpr const char* START_TOKEN_NEXT =
   "nothing was sent; KIS issues one access token a minute: start the run again in a minute, with no other program "
   "using the same KIS key";
 
+/** @brief What to do when the broker asked a run's read before its start to wait longer than a minute. */
+inline constexpr const char* START_LONG_WAIT_NEXT =
+  "nothing was sent; the broker asked for a wait of more than a minute before reading again: start the run again "
+  "after that wait";
+
 /**
  * @brief Why a run spec's market settings are refused before anything is loaded, or nothing: the market `kr`, no store,
  *   no short sales, no fill at a decided close, no open points.

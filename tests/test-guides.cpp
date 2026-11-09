@@ -322,6 +322,7 @@ TEST_CASE("every next cmdatl gives leaves the operator's decisions with the oper
   texts.emplace_back("the run's own reply", cmdatl::run_unknown_next());
   texts.emplace_back("a run's start: rate", cmdatl::START_RATE_NEXT);
   texts.emplace_back("a run's start: token", cmdatl::START_TOKEN_NEXT);
+  texts.emplace_back("a run's start: long wait", cmdatl::START_LONG_WAIT_NEXT);
   std::vector<cmdatl::Reply> replies{
     cmdatl::paper_state_reply("damaged"), cmdatl::journal_missing_reply("missing"), cmdatl::lock_lost_reply()
   };
