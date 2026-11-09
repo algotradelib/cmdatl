@@ -30,6 +30,7 @@
 #include <csignal>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <map>
@@ -105,14 +106,17 @@ std::vector<json::object> events_of(const Ran& ran, const std::string& kind) {
  *   The child raises SIGINT once an order rests on the market, so a run that places stops itself.
  * @param fixture The fixture (operator file, state root).
  * @param before Called in the child with the market and the session before the run (an order or a holding).
- * @param scrubbed Whether the run trades as a broker folder's run.
+ * @param scrubbed Whether the run trades as a broker folder's run does, through `ScrubbedSession`.
+ * @param on_sleep Called in the child with each slice the clock sleeps, before the market moves.
+ * @param own_market_data Whether market data is read through a second session on the same client, as on a KIS demo.
  * @return What it answered, and what the market held and the program read.
  */
 Ran run_account_child(
   const PaperFixture& fixture,
   const std::function<void(atl::mock::Market&, atl::mock::MockClient&, atl::BlockingSession<atl::mock::MockClient>&)>&
     before = {},
-  bool scrubbed = false
+  bool scrubbed = false, const std::function<void(std::chrono::nanoseconds)>& on_sleep = {},
+  bool own_market_data = false
 ) {
   const auto reply_path = fixture.dir() / "account.reply";
   const auto after_path = fixture.dir() / "account.after";
@@ -175,7 +179,10 @@ Ran run_account_child(
             std::chrono::duration_cast<std::chrono::steady_clock::duration>(market.now().time_since_epoch())
           );
         },
-        [&market, &raised](std::chrono::nanoseconds duration) {
+        [&market, &raised, &on_sleep](std::chrono::nanoseconds duration) {
+          if (on_sleep) {
+            on_sleep(duration);
+          }
           market.advance_to(market.now() + std::chrono::duration_cast<std::chrono::system_clock::duration>(duration));
           if (!raised && !market.working_orders().orders_.empty()) {
             raised = true;
@@ -194,6 +201,11 @@ Ran run_account_child(
       cmdatl::driver::ScrubbedSession<atl::BlockingSession<atl::mock::MockClient>> opaque(session);
       code =
         cmdatl::driver::run_account(run, *snapshot.config_, runtest::Program(run.ids_), opaque, opaque, make_clock);
+    } else if (own_market_data) {
+      atl::BlockingSession<atl::mock::MockClient> market_data(client, atl::mock::MockAccount{});
+      code = cmdatl::driver::run_account(
+        run, *snapshot.config_, runtest::Program(run.ids_), session, market_data, make_clock
+      );
     } else {
       code =
         cmdatl::driver::run_account(run, *snapshot.config_, runtest::Program(run.ids_), session, session, make_clock);
@@ -393,6 +405,41 @@ void one_sell(std::int64_t target) {
   };
 }
 
+/** @brief KIS's refusal of a read for its per-second rate (`EGW00201`), as the client classifies it. */
+atl::BrokerError rate_refusal() {
+  atl::BrokerError error;
+  error.category_ = atl::ErrorCategory::RATE_LIMIT;
+  error.http_status_ = 500;
+  error.broker_code_ = "EGW00201";
+  error.message_ = "{rt_cd:1, msg_cd:EGW00201}";
+  return error;
+}
+
+/** @brief KIS's refusal of a second access token within a minute (`EGW00133`), as the client reports it on a read. */
+atl::BrokerError token_refusal() {
+  atl::BrokerError error;
+  error.category_ = atl::ErrorCategory::AUTHENTICATION;
+  error.reached_broker_ = false;
+  error.http_status_ = 403;
+  error.broker_code_ = "EGW00133";
+  error.message_ = "{error_code:EGW00133}";
+  return error;
+}
+
+/**
+ * @brief A sleep hook that adds each slice slept before the run's start line to the fixture's `slept` file.
+ * @param fixture The fixture.
+ * @return The hook, for `run_account_child`.
+ */
+std::function<void(std::chrono::nanoseconds)> sleeps_before_start(const PaperFixture& fixture) {
+  const auto dir = fixture.dir();
+  return [dir](std::chrono::nanoseconds duration) {
+    if (slurp(dir / "account.reply").find("\"event\":\"start\"") == std::string::npos) {
+      std::ofstream(dir / "slept", std::ios::app) << duration.count() << '\n';
+    }
+  };
+}
+
 /**
  * @brief A `before` that buys shares at the market and lets a day pass, so the account holds them when the run starts.
  * @param symbol The symbol.
@@ -433,6 +480,30 @@ std::string capped_config(const std::string& order_value) {
  */
 std::string held_at_start(const Ran& ran, const std::string& symbol) {
   return std::string(ran.events_.front().at("holdings_at_start").as_object().at(symbol).as_string());
+}
+
+/**
+ * @brief The seconds slept before the start line, from the fixture's `slept` file.
+ * @param fixture The fixture.
+ * @return The seconds.
+ */
+long long slept_before_start(const PaperFixture& fixture) {
+  std::ifstream in(fixture.dir() / "slept");
+  long long total = 0;
+  long long nanoseconds = 0;
+  while (in >> nanoseconds) {
+    total += nanoseconds;
+  }
+  return total / 1000000000LL;
+}
+
+/**
+ * @brief The `next` of a reply's error.
+ * @param ran The run.
+ * @return It.
+ */
+std::string next_of_reply(const Ran& ran) {
+  return std::string(ran.reply_.at("error").as_object().at("next").as_string());
 }
 
 } // namespace
@@ -1062,5 +1133,283 @@ TEST_CASE("a broker folder's driver refuses a client that states none of what a 
   std::tie(exit, reply) = driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"SECRET-TOKEN-123"})");
   CHECK(reply.at("error").at("code") == "auth.account_mismatch");
   CHECK(json::serialize(reply).find("SECRET-TOKEN-123") == std::string::npos);
+}
+
+TEST_CASE("a read before the start waits as each refusal asks and notes the wait first") {
+  using cmdatl::driver::StartRead;
+  const auto scripted = [](std::vector<atl::Result<int>> answers, std::size_t& reads) {
+    return [answers, &reads]() {
+      return answers.at(reads++);
+    };
+  };
+  const auto t0 = std::chrono::system_clock::time_point(std::chrono::hours(1000));
+
+  SECTION("the note comes before the wait and a rate refusal waits 2 s") {
+    atl::runner::ManualClock clock(t0);
+    std::vector<std::chrono::system_clock::time_point> noted;
+    std::size_t reads = 0;
+    cmdatl::driver::StartBudget budget;
+    const auto answer = cmdatl::driver::read_at_start(
+      scripted({atl::Result<int>(rate_refusal()), atl::Result<int>(7)}, reads), clock,
+      [&](const std::string& line) {
+        noted.push_back(clock.now());
+        CHECK(line.find("request rate; reading again in 2 s (2 of 3)") != std::string::npos);
+      },
+      budget
+    );
+    REQUIRE(answer.answer_);
+    CHECK(answer.answer_.value() == 7);
+    CHECK(answer.refused_ == StartRead::NONE);
+    CHECK(reads == 2);
+    CHECK(noted == std::vector<std::chrono::system_clock::time_point>{t0});
+    CHECK(clock.now() == t0 + std::chrono::seconds(2));
+  }
+
+  SECTION("rate then token then rate then rate: four reads and the fourth refusal returned as a rate refusal") {
+    atl::runner::ManualClock clock(t0);
+    std::size_t reads = 0;
+    std::vector<std::string> notes;
+    cmdatl::driver::StartBudget budget;
+    const auto answer = cmdatl::driver::read_at_start(
+      scripted(
+        {atl::Result<int>(rate_refusal()), atl::Result<int>(token_refusal()), atl::Result<int>(rate_refusal()),
+          atl::Result<int>(rate_refusal()), atl::Result<int>(7)},
+        reads
+      ),
+      clock,
+      [&](const std::string& line) {
+        notes.push_back(line);
+      },
+      budget
+    );
+    CHECK(!answer.answer_);
+    CHECK(answer.refused_ == StartRead::RATE);
+    CHECK(reads == 4);
+    CHECK(notes.size() == 3);
+    CHECK(budget.token_waited_);
+    CHECK(clock.now() == t0 + std::chrono::seconds(2 + 61 + 2));
+    // The session's token wait is spent: a later read's token refusal returns at once.
+    std::size_t again = 0;
+    const auto later = cmdatl::driver::read_at_start(
+      scripted({atl::Result<int>(token_refusal())}, again), clock, [](const std::string&) {}, budget
+    );
+    CHECK(later.refused_ == StartRead::TOKEN);
+    CHECK(again == 1);
+    CHECK(clock.now() == t0 + std::chrono::seconds(65));
+  }
+
+  SECTION("a retry_after of 5 s waits 5 s") {
+    atl::runner::ManualClock clock(t0);
+    std::size_t reads = 0;
+    cmdatl::driver::StartBudget budget;
+    auto refused = rate_refusal();
+    refused.retry_after_ = std::chrono::seconds(5);
+    std::string noted;
+    const auto answer = cmdatl::driver::read_at_start(
+      scripted({atl::Result<int>(refused), atl::Result<int>(7)}, reads), clock,
+      [&](const std::string& line) {
+        noted = line;
+      },
+      budget
+    );
+    CHECK(answer.answer_);
+    CHECK(clock.now() == t0 + std::chrono::seconds(5));
+    CHECK(noted.find("reading again in 5 s") != std::string::npos);
+  }
+
+  SECTION("a protocol error and an authentication error with another code are read once") {
+    atl::runner::ManualClock clock(t0);
+    cmdatl::driver::StartBudget budget;
+    atl::BrokerError protocol;
+    protocol.category_ = atl::ErrorCategory::PROTOCOL;
+    auto other = token_refusal();
+    other.broker_code_ = "EGW00123";
+    for (const auto& error : {protocol, other}) {
+      std::size_t reads = 0;
+      bool noted = false;
+      const auto answer = cmdatl::driver::read_at_start(
+        scripted({atl::Result<int>(error), atl::Result<int>(7)}, reads), clock,
+        [&](const std::string&) {
+          noted = true;
+        },
+        budget
+      );
+      CHECK(!answer.answer_);
+      CHECK(answer.refused_ == StartRead::NONE);
+      CHECK(reads == 1);
+      CHECK(!noted);
+    }
+    CHECK(clock.now() == t0);
+    CHECK(!budget.token_waited_);
+  }
+}
+
+TEST_CASE("an account run reads the account again after a rate refusal and gives up naming the wait") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  one_decision();
+  auto ran = run_account_child(fixture, [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+    client.fail_next(atl::mock::Call::HOLDINGS, rate_refusal());
+  });
+  CHECK(ran.exit_ == 0);
+  REQUIRE(!ran.events_.empty());
+  CHECK(ran.events_.front().at("event").as_string() == "start");
+  CHECK(events_of(ran, "placed").size() == 1);
+  const auto noted = slurp(fixture.dir() / "account.stderr");
+  CHECK(
+    noted.find("cmdatl: the broker refused a read for its request rate; reading again in 2 s") != std::string::npos
+  );
+
+  PaperFixture refused;
+  refused.write_config(kis_config());
+  refused.arm();
+  one_decision();
+  ran = run_account_child(
+    refused,
+    [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+      client.fail_next(atl::mock::Call::HOLDINGS, rate_refusal(), 3);
+    },
+    false, sleeps_before_start(refused)
+  );
+  CHECK(ran.exit_ == 1);
+  CHECK(code_of(ran) == "run.account_unreadable");
+  CHECK(next_of_reply(ran) == cmdatl::START_RATE_NEXT);
+  CHECK(events_of(ran, "start").empty());
+  CHECK(slept_before_start(refused) == 4);
+  CHECK(!std::filesystem::exists(kis_account_dir(refused) / "journal.jsonl"));
+}
+
+TEST_CASE("an account run waits out KIS's token minute once per session then starts or names the minute") {
+  SECTION("one token refusal: the run waits 61 s and starts") {
+    PaperFixture fixture;
+    fixture.write_config(kis_config());
+    fixture.arm();
+    one_decision();
+    const auto ran = run_account_child(
+      fixture,
+      [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+        client.fail_next(atl::mock::Call::WORKING_ORDERS, token_refusal());
+      },
+      false, sleeps_before_start(fixture)
+    );
+    CHECK(ran.exit_ == 0);
+    REQUIRE(!ran.events_.empty());
+    CHECK(ran.events_.front().at("event").as_string() == "start");
+    CHECK(slept_before_start(fixture) == 61);
+    const auto noted = slurp(fixture.dir() / "account.stderr");
+    CHECK(
+      noted.find("KIS issues one access token a minute and refused this one; reading again in 61 s") !=
+      std::string::npos
+    );
+  }
+  SECTION("a second token refusal on the same read or a later one returns at once and names the minute") {
+    for (const auto second : {atl::mock::Call::WORKING_ORDERS, atl::mock::Call::HOLDINGS}) {
+      PaperFixture fixture;
+      fixture.write_config(kis_config());
+      fixture.arm();
+      one_decision();
+      const auto ran = run_account_child(
+        fixture,
+        [second](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+          client.fail_next(atl::mock::Call::WORKING_ORDERS, token_refusal());
+          client.fail_next(second, token_refusal());
+        },
+        false, sleeps_before_start(fixture)
+      );
+      CHECK(ran.exit_ == 1);
+      CHECK(code_of(ran) == "run.account_unreadable");
+      CHECK(next_of_reply(ran) == cmdatl::START_TOKEN_NEXT);
+      CHECK(events_of(ran, "start").empty());
+      CHECK(slept_before_start(fixture) == 61);
+    }
+  }
+  SECTION("the market-data session has its own wait on a demo account and shares the trading one's otherwise") {
+    for (const bool own : {true, false}) {
+      PaperFixture fixture;
+      fixture.write_config(kis_config());
+      fixture.arm();
+      one_decision();
+      const auto ran = run_account_child(
+        fixture,
+        [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+          client.fail_next(atl::mock::Call::WORKING_ORDERS, token_refusal());
+          client.fail_next(atl::mock::Call::CALENDAR, token_refusal());
+        },
+        false, sleeps_before_start(fixture), own
+      );
+      if (own) {
+        CHECK(ran.exit_ == 0);
+        REQUIRE(!ran.events_.empty());
+        CHECK(ran.events_.front().at("event").as_string() == "start");
+        CHECK(slept_before_start(fixture) == 122);
+      } else {
+        CHECK(ran.exit_ == 1);
+        CHECK(code_of(ran) == "run.reference_unreadable");
+        CHECK(next_of_reply(ran) == cmdatl::START_TOKEN_NEXT);
+        CHECK(slept_before_start(fixture) == 61);
+      }
+    }
+  }
+}
+
+TEST_CASE("an account run reads reference data again after a rate refusal and notes the wait while it waits") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  one_decision();
+  const auto dir = fixture.dir();
+  auto ran = run_account_child(
+    fixture,
+    [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+      client.fail_next(atl::mock::Call::INSTRUMENT, rate_refusal());
+    },
+    false,
+    [dir](std::chrono::nanoseconds) {
+      if (!std::filesystem::exists(dir / "first-sleep")) {
+        const bool noted = slurp(dir / "account.stderr").find("request rate") != std::string::npos;
+        std::ofstream(dir / "first-sleep") << (noted ? "noted" : "silent");
+      }
+    }
+  );
+  CHECK(ran.exit_ == 0);
+  REQUIRE(!ran.events_.empty());
+  CHECK(ran.events_.front().at("event").as_string() == "start");
+  CHECK(slurp(dir / "first-sleep") == "noted");
+
+  PaperFixture refused;
+  refused.write_config(kis_config());
+  refused.arm();
+  one_decision();
+  ran = run_account_child(refused, [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+    client.fail_next(atl::mock::Call::INSTRUMENT, rate_refusal(), 3);
+  });
+  CHECK(ran.exit_ == 1);
+  CHECK(code_of(ran) == "run.reference_unreadable");
+  CHECK(next_of_reply(ran) == cmdatl::START_RATE_NEXT);
+  CHECK(events_of(ran, "start").empty());
+}
+
+TEST_CASE("a signal during a wait before the start answers interrupted with nothing started or placed") {
+  for (const auto call : {atl::mock::Call::WORKING_ORDERS, atl::mock::Call::INSTRUMENT}) {
+    PaperFixture fixture;
+    fixture.write_config(kis_config());
+    fixture.arm();
+    one_decision();
+    const auto ran = run_account_child(
+      fixture,
+      [call](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+        client.fail_next(call, call == atl::mock::Call::INSTRUMENT ? rate_refusal() : token_refusal());
+      },
+      false,
+      [](std::chrono::nanoseconds) {
+        ::raise(SIGINT);
+      }
+    );
+    CHECK(ran.exit_ == 130);
+    CHECK(code_of(ran) == "interrupted");
+    CHECK(events_of(ran, "start").empty());
+    CHECK(events_of(ran, "placed").empty());
+  }
 }
 #endif
