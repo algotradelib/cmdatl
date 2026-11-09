@@ -56,7 +56,30 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
 - The run spec names the symbols in `[instruments]` and takes no `[bars]`: the bars come from the broker, daily, with one more than the program's warm-up.
 - It reads the trading calendar before it starts and refuses when it cannot (nothing is sent).
 - The run holds the account for its life and keeps the account's journal across runs, so the next run sees what an earlier one could not confirm and today's `daily_orders` count the earlier runs' orders.
-- It starts only on a flat account: no order resting anywhere on the account (the run's withdraw cancels every working order on it) and none of the run's symbols held; nobody else trades the account while it runs.
+- It starts only with no order resting anywhere on the account, since the stop's withdraw cancels every working order on it, other symbols' included; nobody else trades the account while it runs.
+- The account's holdings of the run's symbols are the run's position from its first decision.
+- The run may sell every sellable share of its symbols, held before the start or bought after it, whoever bought it; the start line's `holdings_at_start` shows what it found, not a limit.
+- A run places orders only for its own symbols, and leaves other symbols' holdings alone.
+- The run's cap is the smallest `position` cap among its symbols, and it counts every share held: the guard refuses a buy over it and a sell that leaves more than it, and never splits an order.
+  So a holding above the cap leaves only by one order that brings it within the cap and fits `order_value`; when none fits, the operator changes the limits or sells in KIS's app.
+- Shares a run leaves at its end stay on the account, and the next run on that symbol starts with them.
+- A program's state is computed again at every start, not restored: the history bars read at the start go through its handlers, and on each of them `held` is the account's holding now.
+  So a `state` set from `held` is rebuilt from today's holding.
+  This program, restarted holding shares, takes the first history bar's close as `entry`, and sells them at once if today's close is 5 % below it:
+
+  ```atls
+  state {
+    real entry = 0;
+  }
+  on_bar {
+    if (held > 0 and entry == 0) {
+      entry = close;
+    }
+    if (held > 0 and close < entry * 0.95) {
+      target(0);
+    }
+  }
+  ```
 - Every 60 seconds it writes a `heartbeat` with the holdings of its symbols, the cash and the working orders as the run last read them, each with its `read_at` (a failed read leaves the old time showing), and the phase computed now from the calendar.
 - Ctrl-C, SIGTERM, SIGHUP or a closed output withdraw, as above; the end waits up to a minute for the broker to confirm, longer when a request is in flight.
   Removing the armed file stops placing and leaves what rests.

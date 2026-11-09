@@ -27,6 +27,7 @@ on_bar { if (close > m) { target(quantity); } else { target(0); } }
 ```
 
 - `target(x)` is the position to hold, in shares; `held` is the current one.
+- On a broker account `held` is the account's holding, on the history bars read at the start too, so a `state` set from `held` is rebuilt from today's holding at every start; the run may sell every share of its symbols the account holds.
 - Indicators and lags (`x[k]`, `x` k bars ago) go in `series`, never under an `if` or in `on_bar`: `bool up = m > m[1];`.
 - Nothing states `slow > fast` between parameters: keep them so yourself.
 
