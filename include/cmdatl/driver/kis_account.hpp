@@ -6,6 +6,8 @@
 // On a demo account the market data comes from the real login with an empty account, which cannot trade: a KIS demo
 // host refuses reference data and the holiday calendar (`EGW02006`), as the library's `example-live-program` does.
 // Both clients are paced at one request a second, the rate a KIS demo key is refused above (`EGW00201`).
+// Both read only KRX's prices (the library reads KRX and NXT combined by default): a daily bar closes at 15:30.
+// Orders go where they always did.
 
 #include "./account_main.hpp"
 
@@ -28,7 +30,13 @@ namespace driver {
 namespace atl = algotradelib;
 namespace json = boost::json;
 
-/** @brief The KIS part of an account run (see `account_main.hpp`): two logins, the account's and, on demo, the real one. */
+struct KisBrokerTest;
+
+/**
+ * @brief The KIS part of an account run (see `account_main.hpp`): two logins, the account's and, on demo, the real one.
+ *
+ * `KisBrokerTest` is defined by the tests alone, to read the configs `identify` built.
+ */
 class KisBroker {
 public:
   /**
@@ -53,7 +61,7 @@ public:
    * @param config The operator file.
    * @param documents The logins.
    * @param effective Its number set to the login's account.
-   * @param market_data Where market data comes from, for the start line.
+   * @param market_data Where market data comes from and its tape (KRX), for the start line.
    * @return The exit after a refusal, or nothing.
    */
   std::optional<int> identify(
@@ -82,6 +90,8 @@ public:
     }
     // The account the run trades: the login's, which the operator file's number, when given, has just matched.
     effective.number_ = account_.account_number_ + "-" + account_.product_code_;
+    // One tape for every read, set on each config the run builds: bars never come from another book than the quotes.
+    trading_config_.market_tape_ = atl::kis::MarketTape::KRX;
     if (demo) {
       atl::kis::KisConfig real;
       try {
@@ -94,8 +104,11 @@ public:
       if (real.is_demo_) {
         return run_error(base, Exit::FAILED, "auth.account_mismatch", "the login stored as kis/real is a demo login");
       }
+      real.market_tape_ = atl::kis::MarketTape::KRX;
       market_config_ = std::move(real);
-      market_data = "kis-real (read only)";
+      market_data = "kis-real (read only), KRX";
+    } else {
+      market_data = "own, KRX";
     }
     return std::nullopt;
   }
@@ -134,6 +147,8 @@ public:
   }
 
 private:
+  friend struct KisBrokerTest;
+
   atl::kis::KisConfig trading_config_;
   atl::kis::KisAccount account_;
   std::optional<atl::kis::KisConfig> market_config_;

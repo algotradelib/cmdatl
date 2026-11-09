@@ -14,6 +14,7 @@
 #include <cmdatl/account/operator.hpp>
 #include <cmdatl/driver/account.hpp>
 #include <cmdatl/driver/clock.hpp>
+#include <cmdatl/driver/kis_account.hpp>
 #include <cmdatl/driver/session.hpp>
 #include <cmdatl/driver/user_account.hpp>
 #include <cmdatl/strategy/runs.hpp>
@@ -35,6 +36,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -47,6 +49,33 @@
 using namespace support;
 namespace atl = algotradelib;
 namespace json = boost::json;
+
+namespace cmdatl {
+namespace driver {
+
+/** @brief The tests' way to the configs `KisBroker::identify` built. */
+struct KisBrokerTest {
+  /**
+   * @brief The account's config.
+   * @param broker The broker.
+   * @return It.
+   */
+  static const atl::kis::KisConfig& trading(const KisBroker& broker) {
+    return broker.trading_config_;
+  }
+
+  /**
+   * @brief The market-data config, on demo.
+   * @param broker The broker.
+   * @return It, or nothing.
+   */
+  static const std::optional<atl::kis::KisConfig>& market(const KisBroker& broker) {
+    return broker.market_config_;
+  }
+};
+
+} // namespace driver
+} // namespace cmdatl
 
 namespace {
 
@@ -734,6 +763,44 @@ TEST_CASE("a login is the operator file's account only with the same number, pro
   // No number in the operator file: the login decides the account; the environment must still agree.
   CHECK(!kis_account_mismatch("", true, "87654321", "01", true));
   CHECK(kis_account_mismatch("", false, "87654321", "01", true));
+}
+
+TEST_CASE("a KIS run reads KRX's tape on every config it builds on demo and on real") {
+  using cmdatl::driver::KisBroker;
+  using cmdatl::driver::KisBrokerTest;
+  // Fake keys: identify only reads the documents, and nothing here connects.
+  const std::string demo_login =
+    R"({"app_key":"fake-key","app_secret":"fake-secret","account_number":"12345678","demo":true})";
+  const std::string real_login =
+    R"({"app_key":"fake-key","app_secret":"fake-secret","account_number":"87654321","demo":false})";
+  cmdatl::OperatorConfig config;
+  config.broker_ = "kis";
+  {
+    config.env_ = "demo";
+    KisBroker broker;
+    auto effective = config;
+    std::string market_data = "own";
+    REQUIRE(!broker.identify(json::object{}, config, {demo_login, real_login}, effective, market_data));
+    CHECK(effective.number_ == "12345678-01");
+    CHECK(KisBrokerTest::trading(broker).market_tape_ == atl::kis::MarketTape::KRX);
+    REQUIRE(KisBrokerTest::market(broker));
+    CHECK(!KisBrokerTest::market(broker)->is_demo_);
+    CHECK(KisBrokerTest::market(broker)->market_tape_ == atl::kis::MarketTape::KRX);
+    CHECK(market_data == "kis-real (read only), KRX");
+  }
+  {
+    config.env_ = "real";
+    KisBroker broker;
+    auto effective = config;
+    std::string market_data = "own";
+    REQUIRE(!broker.identify(json::object{}, config, {real_login, ""}, effective, market_data));
+    CHECK(effective.number_ == "87654321-01");
+    CHECK(!KisBrokerTest::trading(broker).is_demo_);
+    CHECK(KisBrokerTest::trading(broker).market_tape_ == atl::kis::MarketTape::KRX);
+    // The account's own session reads the market data.
+    CHECK(!KisBrokerTest::market(broker));
+    CHECK(market_data == "own, KRX");
+  }
 }
 
 TEST_CASE("the credentials' framing: two documents round trip, and anything else is refused") {
