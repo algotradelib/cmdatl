@@ -732,6 +732,12 @@ TEST_CASE("a run waits out an earlier run's delayed history and holdings, then s
   CHECK(ran.reply_.at("outcome").as_string() == "clean");
   CHECK(ran.held_after_.at("005930").as_string() == "1");
   CHECK(has(outcomes_of(fixture, "dead-1"), "confirmed"));
+  // Started again, the account owes nothing.
+  const auto again = owed_run(fixture, {}, false);
+  CHECK(again.exit_ == 0);
+  REQUIRE(!again.events_.empty());
+  CHECK(again.events_.front().at("owed_at_start").as_array().empty());
+  CHECK(again.reply_.at("outcome").as_string() == "clean");
 }
 
 TEST_CASE("a withheld target is released against the holdings an earlier run's fill left, and buys nothing more") {
@@ -740,16 +746,13 @@ TEST_CASE("a withheld target is released against the holdings an earlier run's f
   fixture.arm();
   // The program wants one share; the earlier run's buy of one filled, and the holdings show it late.
   script_target(1);
-  const auto ran = owed_run(
-    fixture,
-    [](Dead& dead) {
-      dead.place("005930", atl::OrderSide::BUY, 1, FILLS);
-      REQUIRE(dead.client().holdings());
-      dead.advance(std::chrono::hours(24));
-      dead.client().repeat_last(atl::mock::Call::HOLDINGS, 6);
-    },
-    true
-  );
+  const auto earlier = [](Dead& dead) {
+    dead.place("005930", atl::OrderSide::BUY, 1, FILLS);
+    REQUIRE(dead.client().holdings());
+    dead.advance(std::chrono::hours(24));
+    dead.client().repeat_last(atl::mock::Call::HOLDINGS, 6);
+  };
+  const auto ran = owed_run(fixture, earlier, true);
   CHECK(ran.exit_ == 0);
   REQUIRE(!ran.events_.empty());
   // The start read the stale holdings.
@@ -760,6 +763,16 @@ TEST_CASE("a withheld target is released against the holdings an earlier run's f
   CHECK(ran.held_after_.at("005930").as_string() == "1");
   CHECK(ran.reply_.at("outcome").as_string() == "clean");
   CHECK(has(outcomes_of(fixture, "dead-1"), "confirmed"));
+  // Started again on the account holding that share: nothing owed, and the target already met buys nothing.
+  script_target(1);
+  const auto again = owed_run(fixture, earlier, false);
+  CHECK(again.exit_ == 0);
+  REQUIRE(!again.events_.empty());
+  CHECK(again.events_.front().at("owed_at_start").as_array().empty());
+  CHECK(events_of(again, "placed").empty());
+  CHECK(again.orders_after_.size() == 1);
+  CHECK(again.held_after_.at("005930").as_string() == "1");
+  CHECK(again.reply_.at("outcome").as_string() == "clean");
 }
 
 TEST_CASE("an earlier run's order stays owed while its history fails or lags, and a later start settles it") {
