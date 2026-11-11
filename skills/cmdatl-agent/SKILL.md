@@ -79,14 +79,14 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 
 - Start a run only when the task asks for one, and never start again a run that a stop, the operator, a refusal or a limit ended, whatever its exit.
 - `cmdatl run TARGET [KEY=VALUE]...` (a spec, a program, or both) runs in the foreground: JSON lines, events then its reply last, and the run's exit as its own.
-  On a KIS account it refuses to start while any order rests on the account (`refused.orders_resting`, exit 3): the operator's to clear, not yours.
-  A run may sell every share of its symbols the account holds, including shares bought after it started.
+  On a KIS account it first settles earlier runs' owed orders on its symbols (`owed_at_start`); other resting orders refuse it (`refused.orders_resting`, exit 3): the operator's to clear.
+  A run may sell every share of its symbols the account holds, including shares bought during the run.
 - To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies (exit 0, `stopped: signal`); never `kill -9` it.
 - The reply's `refused` counts refused orders; `outcome: refused_orders` means a limit or the market refused some: report it.
 - The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours on paper, and on a KIS account today's orders in the account's journal, from every run; several symbols get the smallest cap.
 - Exit 4: report the reply's `error`.
   On paper its market ended with it; no account changed.
-  On a KIS account an order may have gone out: the operator reads the account in KIS's app before it is traded again (`owed_at_end`: what the journal waits on); start nothing there.
+  On a KIS account an order may have gone out (`owed_at_end`: what the journal owes): the operator reads it in KIS's app; start nothing there.
 - Removing the armed file stops every run: the operator's lever, not yours.
 
 ## What the markets are

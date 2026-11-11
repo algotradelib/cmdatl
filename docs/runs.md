@@ -65,7 +65,14 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
   When the reads still fail, the error's `next` names the wait.
 - A run keeps no token, so a command or another run started right after a run can still meet KIS's one-token-a-minute refusal.
 - The run holds the account for its life and keeps the account's journal across runs, so the next run sees what an earlier one could not confirm and today's `daily_orders` count the earlier runs' orders.
-- It starts only with no order resting anywhere on the account, since the stop's withdraw cancels every working order on it, other symbols' included; nobody else trades the account while it runs.
+- A run started after one that died (a kill, a crash, a sleeping Mac) settles what the journal left owed on its own symbols before it places anything there.
+  The `start` event's `owed_at_start` lists those orders (`symbol`, `side`, `quantity`, `journal_id`, `order_id`, empty while the broker has not named it, and `state`).
+  One still working is withdrawn at the stop; one filled or cancelled is confirmed from the holdings and the order history.
+  One the broker never shows, or one the journal holds for the operator (`state: operator`), stays owed: the run places nothing on that symbol and ends with exit 4.
+- An order owed on a symbol the run does not trade refuses the start (`unknown.owed_at_start`); a run on that symbol settles it.
+- It starts only with no order resting on the account but an earlier run's own: one the journal shows KIS accepted today, with the same number, symbol, side, quantity and price.
+  Any other refuses the start before anything is sent (`refused.orders_resting`), since the stop's withdraw cancels every working order on the account, other symbols' included; nobody else trades the account while it runs.
+- With today's `daily_orders` spent, a run that inherits owed orders still starts, to settle them, and places nothing (`orders_left_today` is 0).
 - The account's holdings of the run's symbols are the run's position from its first decision.
 - The run may sell every sellable share of its symbols, held before the start or bought after it, whoever bought it; the start line's `holdings_at_start` shows what it found, not a limit.
 - A run places orders only for its own symbols, and leaves other symbols' holdings alone.
