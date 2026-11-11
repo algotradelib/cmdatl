@@ -208,8 +208,9 @@ struct LastReads {
 };
 
 /**
- * @brief A session that records what the loop read through it, for the heartbeat, and forwards everything.
- * @tparam Inner The session it wraps (the placement boundary).
+ * @brief A session that records what the loop read through it, for the heartbeat, and forwards everything, calling
+ *   `on_call` before and after each call.
+ * @tparam Inner The session it wraps (the placement boundary, or the market-data session).
  */
 template <typename Inner>
 class RecordingSession {
@@ -229,12 +230,13 @@ public:
    * @param symbols The run's symbols, the holdings recorded.
    * @param now The clock.
    * @param reads Where the answers are recorded; borrowed.
+   * @param on_call Called before and after each broker call (the run takes a stop signal there); may be empty.
    */
   RecordingSession(
     Inner& inner, std::vector<std::string> symbols, std::function<std::chrono::system_clock::time_point()> now,
-    LastReads& reads
+    LastReads& reads, std::function<void()> on_call = {}
   )
-  : inner_(&inner), symbols_(std::move(symbols)), now_(std::move(now)), reads_(&reads) {}
+  : inner_(&inner), symbols_(std::move(symbols)), now_(std::move(now)), reads_(&reads), on_call_(std::move(on_call)) {}
 
   /** @brief Forwarded. */
   void close() noexcept {
@@ -242,31 +244,45 @@ public:
   }
   /** @brief Forwarded. @param order The order. @return The answer. */
   auto place(atl::OrderRequest order) {
-    return inner_->place(std::move(order));
+    return noted([&]() {
+      return inner_->place(std::move(order));
+    });
   }
   /** @brief Forwarded. @param ref The order. @param instruction What to cancel. @return The answer. */
   auto cancel(const Ref& ref, const atl::AmendInstruction& instruction) {
-    return inner_->cancel(ref, instruction);
+    return noted([&]() {
+      return inner_->cancel(ref, instruction);
+    });
   }
   /** @brief Forwarded. @param query The query. @return The answer. */
   auto bars(atl::BarQuery query) {
-    return inner_->bars(std::move(query));
+    return noted([&]() {
+      return inner_->bars(std::move(query));
+    });
   }
   /** @brief Forwarded. @param instrument The instrument. @return The answer. */
   auto quote(atl::InstrumentId instrument) {
-    return inner_->quote(std::move(instrument));
+    return noted([&]() {
+      return inner_->quote(std::move(instrument));
+    });
   }
   /** @brief Forwarded. @param subject The instrument. @return The answer. */
   auto instrument(atl::InstrumentId subject) {
-    return inner_->instrument(std::move(subject));
+    return noted([&]() {
+      return inner_->instrument(std::move(subject));
+    });
   }
   /** @brief Forwarded. @param country The country. @param from The first date. @return The answer. */
   auto calendar(atl::Country country, std::optional<atl::Date> from = std::nullopt) {
-    return inner_->calendar(country, std::move(from));
+    return noted([&]() {
+      return inner_->calendar(country, std::move(from));
+    });
   }
   /** @brief Forwarded, the run's symbols recorded. @return The answer. */
   auto holdings() {
-    auto answer = inner_->holdings();
+    auto answer = noted([&]() {
+      return inner_->holdings();
+    });
     if (answer) {
       json::object held;
       for (const auto& symbol : symbols_) {
@@ -283,7 +299,9 @@ public:
   }
   /** @brief Forwarded, KRW recorded. @param currency The currency. @return The answer. */
   auto buying_power(atl::Currency currency) {
-    auto answer = inner_->buying_power(currency);
+    auto answer = noted([&]() {
+      return inner_->buying_power(currency);
+    });
     if (answer && currency == atl::Currency::krw()) {
       reads_->cash_ = std::make_pair(answer.value().cash_.amount_.str(), now_());
     }
@@ -291,7 +309,9 @@ public:
   }
   /** @brief Forwarded, recorded. @return The answer. */
   auto working_orders() {
-    auto answer = inner_->working_orders();
+    auto answer = noted([&]() {
+      return inner_->working_orders();
+    });
     if (answer) {
       json::array rows;
       for (const auto& row : answer.value().orders_) {
@@ -312,22 +332,41 @@ public:
   }
   /** @brief Forwarded. @param query The query. @return The answer. */
   auto order_history(const atl::OrderHistoryQuery& query) {
-    return inner_->order_history(query);
+    return noted([&]() {
+      return inner_->order_history(query);
+    });
   }
   /** @brief Forwarded. @param instrument The instrument. @return The answer. */
   auto sellable_quantity(atl::InstrumentId instrument) {
-    return inner_->sellable_quantity(std::move(instrument));
+    return noted([&]() {
+      return inner_->sellable_quantity(std::move(instrument));
+    });
   }
   /** @brief Forwarded. @param instrument The instrument. @return The answer. */
   auto price_limits(atl::InstrumentId instrument) {
-    return inner_->price_limits(std::move(instrument));
+    return noted([&]() {
+      return inner_->price_limits(std::move(instrument));
+    });
   }
 
 private:
+  template <typename Call>
+  auto noted(Call&& call) {
+    if (on_call_) {
+      on_call_();
+    }
+    auto answer = call();
+    if (on_call_) {
+      on_call_();
+    }
+    return answer;
+  }
+
   Inner* inner_;
   std::vector<std::string> symbols_;
   std::function<std::chrono::system_clock::time_point()> now_;
   LastReads* reads_;
+  std::function<void()> on_call_;
 };
 
 /**
@@ -605,8 +644,19 @@ int run_account(
     guarded.set_stopping([&stop]() {
       return stop.intent().has_value();
     });
+    // A stop signal is taken at the edge of the broker call it arrived during, not at the loop's next sleep: an
+    // iteration's reads can take many seconds at a broker's pace, and the loop takes a stop latched during an iteration
+    // straight after it. Before each call too, so no placement leaves after the signal.
+    const auto take_signal = [&guard, &now]() {
+      if (interrupted()) {
+        guard.latch("signal", atl::runner::StopIntent::WITHDRAW, now());
+      }
+    };
     LastReads reads;
-    RecordingSession<GuardedSession<Inner, Market>> session(guarded, run.symbols_, now, reads);
+    RecordingSession<GuardedSession<Inner, Market>> session(guarded, run.symbols_, now, reads, take_signal);
+    // The market-data reads (bars, quotes) go through their own session, which is asked for no account read.
+    LastReads market_reads;
+    RecordingSession<Market> market_session(market, {}, now, market_reads, take_signal);
     std::optional<std::chrono::steady_clock::time_point> heartbeat;
     on_slice = [&]() {
       const auto wall = clock.monotonic_now();
@@ -669,7 +719,7 @@ int run_account(
     std::string thrown;
     try {
       traded = trade_on_rails(
-        session, market, journal, std::move(strategy), wiring, stop, clock, on_ready,
+        session, market_session, journal, std::move(strategy), wiring, stop, clock, on_ready,
         [&inner]() {
           const auto orders = inner.working_orders();
           return orders && orders.value().orders_.empty();

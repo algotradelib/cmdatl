@@ -91,6 +91,7 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
   ```
 - Every 60 seconds it writes a `heartbeat` with the holdings of its symbols, the cash and the working orders as the run last read them, each with its `read_at` (a failed read leaves the old time showing), and the phase computed now from the calendar.
 - Ctrl-C, SIGTERM, SIGHUP or a closed output withdraw, as above; the end waits up to a minute for the broker to confirm, longer when a request is in flight.
+  A signal is taken when the broker request in flight answers: the `stop` event follows it, and the withdraw starts once the iteration's remaining reads are done.
   Removing the armed file stops placing and leaves what rests.
 - On macOS a sleeping Mac stops the run with its orders resting: start it with `caffeinate -i cmdatl run probe.toml > run.jsonl`, or from a launchd job.
 - The reply's `holdings_at_end` is the account's holdings of the run's symbols, read once more at the end; a read KIS refuses for its request rate is read again twice at most, a few seconds apart.

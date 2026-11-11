@@ -1376,6 +1376,38 @@ TEST_CASE("an account run reads the account again after a rate refusal and gives
   CHECK(!std::filesystem::exists(kis_account_dir(refused) / "journal.jsonl"));
 }
 
+TEST_CASE("a signal during an iteration is taken at its next broker call, before a placement and the next sleep") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  const auto dir = fixture.dir();
+  // The signal arrives inside an iteration, on the bar whose decision would place.
+  runtest::script() = runtest::Script{};
+  runtest::script().decisions_ = {{3, runtest::Decision{1, "1"}}};
+  runtest::script().actions_[3] = [dir] {
+    std::ofstream(dir / "raised") << "raised";
+    ::raise(SIGINT);
+  };
+  // Any sleep after the signal comes after the stop line.
+  const auto ran = run_account_child(fixture, {}, false, [dir](std::chrono::nanoseconds) {
+    if (
+      std::filesystem::exists(dir / "raised") &&
+      slurp(dir / "account.reply").find("\"event\":\"stop\"") == std::string::npos
+    ) {
+      std::ofstream(dir / "slept-before-stop") << "slept";
+    }
+  });
+  CHECK(ran.exit_ == 0);
+  CHECK(std::filesystem::exists(dir / "raised"));
+  CHECK(!std::filesystem::exists(dir / "slept-before-stop"));
+  CHECK(events_of(ran, "stop").size() == 1);
+  CHECK(events_of(ran, "placed").empty());
+  CHECK(ran.reply_.at("stopped").as_string() == "signal");
+  CHECK(ran.reply_.at("refused").as_object().at("signal").as_int64() == 1);
+  CHECK(ran.reply_.at("outcome").as_string() == "clean");
+  CHECK(slurp(dir / "account.stderr").find(", closing wait ") != std::string::npos);
+}
+
 TEST_CASE("a run's last holdings read is read again after a rate refusal, a signal noted, and names why it failed") {
   const auto series = runtest::bars_of("005930", 10, atl::BarInterval::ONE_DAY);
   atl::mock::MarketSettings settings;

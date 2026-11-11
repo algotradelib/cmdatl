@@ -439,7 +439,9 @@ Traded trade_on_rails(
     << "loop: " << report.iterations_ << " iteration(s), " << report.blocked_ << " blocked, "
     << report.orders_guard_refused_ << " refused by the guard, " << report.orders_binding_refused_
     << " refused before sending, final gate "
-    << (report.final_gate_ ? atl::strategy::halt_reason_name(*report.final_gate_) : std::string_view("none")) << '\n';
+    << (report.final_gate_ ? atl::strategy::halt_reason_name(*report.final_gate_) : std::string_view("none"))
+    << ", closing wait " << std::chrono::duration_cast<std::chrono::milliseconds>(report.closing_waited_).count()
+    << " ms" << (report.closing_wait_expired_ ? " (expired)" : "") << '\n';
   // A failed journal write is the most urgent: what the runner was sending is unknown.
   if (const auto failure = bound.local_failure()) {
     traded.outcome_ = Outcome::LOCAL_FAILURE;
