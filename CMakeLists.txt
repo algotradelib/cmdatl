@@ -291,6 +291,11 @@ if(CMDATL_BUILD_TESTS)
   target_include_directories(driver-no-data-facts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts)
   target_compile_definitions(driver-no-data-facts PRIVATE TOML_HEADER_ONLY=1)
   target_link_libraries(driver-no-data-facts PRIVATE cmdatl_core)
+  # A KIS account's driver, compiled as a run's build compiles it; it is never run here (it would call the broker).
+  add_executable(driver-kis driver/main.cpp)
+  target_include_directories(driver-kis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts)
+  target_compile_definitions(driver-kis PRIVATE TOML_HEADER_ONLY=1 CMDATL_DRIVER_KIS=1)
+  target_link_libraries(driver-kis PRIVATE cmdatl_core)
   # A broker folder's account driver, compiled here as a run's build compiles it, against a fixture adapter over the
   # library's mock broker and one whose client states none of what a run reads at its start (it must compile, and
   # refuse at start).
