@@ -211,11 +211,11 @@ inline std::optional<std::string> remove_token(const Broker& broker, const std::
   std::string identity;
   const auto found = store.get(name);
   if (found.status_ == StoreStatus::OK) {
-    // The loader's message is not repeated: the document is the user's.
-    reason = "no key could be read from the stored login";
     try {
       identity = broker.read_(found.value_, "stored login " + name);
     } catch (const std::exception&) {
+      // The loader's message is not repeated: the document is the user's.
+      reason = "no key could be read from the stored login";
     }
   }
   if (!identity.empty()) {
