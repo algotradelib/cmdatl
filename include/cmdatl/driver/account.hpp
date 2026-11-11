@@ -178,11 +178,14 @@ EndHoldings holdings_at_end(Session& session, const std::vector<std::string>& sy
  *   run's withdraw cancels every working order, so each must be one the account's journal owns.
  *
  * A row is owned only with positive evidence: the journal still owes a named placement on one of the run's instruments
- * whose broker number came from an acknowledgement (`ACCEPTED`) written on `today`, every line of that placement names
+ * that was sent on `today` (its earliest line is its `PENDING` line, written before the send, on `today`) and whose
+ * broker number came from an acknowledgement (`ACCEPTED`) also written on `today`; every line of that placement names
  * that number or none, no other placement's line names it, and the row carries that number with the same instrument,
  * side and quantity, the same limit price when the row shows one, and an order date of `today` when the row shows one.
- * KRX day orders expire at the close, so an earlier day's acknowledgement owns no working row; a placement whose
- * acknowledgement was lost (no number in the journal, or one only a recovery sweep wrote) owns none either.
+ * KRX day orders expire at the close, so a placement sent on an earlier day owns no working row, even when its
+ * acknowledgement was written today (a process suspended between the broker's answer and its line); one whose send day
+ * the journal does not show owns none; a placement whose acknowledgement was lost (no number in the journal, or one
+ * only a recovery sweep wrote) owns none either.
  * Each placement owns at most one row. It reads the journal and appends nothing.
  * @tparam Tag The broker's tag.
  * @param replay The account's journal, as read at the start.
@@ -216,10 +219,19 @@ std::vector<std::string> inherited_orders(
       continue;
     }
     const atl::runner::JournalEntry* acknowledged = nullptr;
+    // When the placement was sent: its earliest line, which must be a `PENDING` line (written before the send).
+    std::optional<std::chrono::system_clock::time_point> earliest;
+    std::optional<std::chrono::system_clock::time_point> sent;
     bool consistent = true;
     for (const auto& entry : replay.entries_) {
       if (entry.action_ != atl::runner::JournalAction::PLACE || entry.id_ != row.journal_id_) {
         continue;
+      }
+      if (!earliest || entry.recorded_at_ < *earliest) {
+        earliest = entry.recorded_at_;
+      }
+      if (entry.outcome_ == atl::runner::JournalOutcome::PENDING && (!sent || entry.recorded_at_ < *sent)) {
+        sent = entry.recorded_at_;
       }
       if (entry.requires_operator_ || (!entry.order_id_.empty() && entry.order_id_ != row.order_id_)) {
         consistent = false;
@@ -231,7 +243,7 @@ std::vector<std::string> inherited_orders(
         acknowledged = &entry;
       }
     }
-    if (!consistent || acknowledged == nullptr) {
+    if (!consistent || acknowledged == nullptr || !sent || *sent != *earliest || !on_today(*sent)) {
       continue;
     }
     if (std::find(ids.begin(), ids.end(), acknowledged->instrument_) == ids.end()) {

@@ -30,6 +30,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -210,6 +211,84 @@ private:
   atl::runner::JournalEntry last_;
 };
 
+/**
+ * @brief A session whose working-order rows carry no order time, as KIS real-account rows do; everything else forwarded.
+ * @tparam Inner The session it wraps.
+ */
+template <typename Inner>
+class UndatedSession {
+public:
+  /** @brief The broker's capabilities. */
+  using Caps = typename Inner::Caps;
+  /** @brief The broker's tag. */
+  using BrokerTag = typename Inner::BrokerTag;
+  /** @brief The broker's traits. */
+  using Traits = typename Inner::Traits;
+  /** @brief An order reference. */
+  using Ref = typename Inner::Ref;
+
+  /** @brief Wraps a session. @param inner The session; borrowed. */
+  explicit UndatedSession(Inner& inner) : inner_(&inner) {}
+
+  /** @brief Forwarded. @param order The order. @return The answer. */
+  auto place(atl::OrderRequest order) {
+    return inner_->place(std::move(order));
+  }
+  /** @brief Forwarded. @param ref The order. @param instruction What to cancel. @return The answer. */
+  auto cancel(const Ref& ref, const atl::AmendInstruction& instruction) {
+    return inner_->cancel(ref, instruction);
+  }
+  /** @brief Forwarded. @param query The query. @return The answer. */
+  auto bars(atl::BarQuery query) {
+    return inner_->bars(std::move(query));
+  }
+  /** @brief Forwarded. @param instrument The instrument. @return The answer. */
+  auto quote(atl::InstrumentId instrument) {
+    return inner_->quote(std::move(instrument));
+  }
+  /** @brief Forwarded. @param subject The instrument. @return The answer. */
+  auto instrument(atl::InstrumentId subject) {
+    return inner_->instrument(std::move(subject));
+  }
+  /** @brief Forwarded. @param country The country. @param from The first date. @return The answer. */
+  auto calendar(atl::Country country, std::optional<atl::Date> from = std::nullopt) {
+    return inner_->calendar(country, std::move(from));
+  }
+  /** @brief Forwarded. @return The answer. */
+  auto holdings() {
+    return inner_->holdings();
+  }
+  /** @brief Forwarded. @param currency The currency. @return The answer. */
+  auto buying_power(atl::Currency currency) {
+    return inner_->buying_power(std::move(currency));
+  }
+  /** @brief Forwarded, each row's order time removed. @return The answer. */
+  auto working_orders() {
+    auto answer = inner_->working_orders();
+    if (answer) {
+      for (auto& row : answer.value().orders_) {
+        row.order_.ordered_at_.reset();
+      }
+    }
+    return answer;
+  }
+  /** @brief Forwarded. @param query The query. @return The answer. */
+  auto order_history(const atl::OrderHistoryQuery& query) {
+    return inner_->order_history(query);
+  }
+  /** @brief Forwarded. @param instrument The instrument. @return The answer. */
+  auto sellable_quantity(atl::InstrumentId instrument) {
+    return inner_->sellable_quantity(std::move(instrument));
+  }
+  /** @brief Forwarded. @param instrument The instrument. @return The answer. */
+  auto price_limits(atl::InstrumentId instrument) {
+    return inner_->price_limits(std::move(instrument));
+  }
+
+private:
+  Inner* inner_;
+};
+
 /** @brief What a run in a child answered, and what its market and journal showed. */
 struct Ran {
   /** @brief The child's exit. */
@@ -267,11 +346,12 @@ std::string status_name(atl::OrderStatus status) {
  * @param before The earlier run, given the market, the client and whether it writes the journal; may be empty.
  * @param seed Whether `before` writes the journal (the first start) or only rebuilds the market (a restart).
  * @param stop_after How long the run trades before the signal, on the market's clock.
+ * @param undated Whether the run reads working-order rows without their order time (`UndatedSession`).
  * @return What it answered, and what the market and the journal showed.
  */
 Ran owed_run(
   const PaperFixture& fixture, const std::function<void(Dead&)>& before, bool seed,
-  std::chrono::minutes stop_after = std::chrono::minutes(20)
+  std::chrono::minutes stop_after = std::chrono::minutes(20), bool undated = false
 ) {
   const auto reply_path = fixture.dir() / "owed.reply";
   const auto after_path = fixture.dir() / "owed.after";
@@ -357,8 +437,16 @@ Ran owed_run(
         }
       );
     };
-    const int code =
-      cmdatl::driver::run_account(run, *snapshot.config_, runtest::Program(run.ids_), session, session, make_clock);
+    int code = 0;
+    if (undated) {
+      UndatedSession<Session> without_times(session);
+      code = cmdatl::driver::run_account(
+        run, *snapshot.config_, runtest::Program(run.ids_), without_times, without_times, make_clock
+      );
+    } else {
+      code =
+        cmdatl::driver::run_account(run, *snapshot.config_, runtest::Program(run.ids_), session, session, make_clock);
+    }
     json::object held;
     if (const auto holdings = market.holdings()) {
       for (const auto& position : holdings.value().positions_) {
@@ -973,6 +1061,49 @@ TEST_CASE("a run refuses a working order that only looks like an earlier run's, 
   }
 }
 
+TEST_CASE("a placement sent yesterday and acknowledged in today's journal owns no working order today") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  script_target(std::nullopt);
+  // The earlier run sent yesterday and was suspended before it wrote the broker's answer, number 1, which it wrote
+  // today; today the broker gave number 1 to an unrelated order of the same shape.
+  const auto earlier = [](Dead& dead) {
+    atl::runner::JournalEntry entry;
+    entry.id_ = "dead-1";
+    entry.action_ = atl::runner::JournalAction::PLACE;
+    entry.outcome_ = atl::runner::JournalOutcome::PENDING;
+    entry.recorded_at_ = dead.market().now();
+    entry.instrument_ = kr("005930");
+    entry.side_ = atl::OrderSide::BUY;
+    entry.quantity_ = atl::Decimal64(1, 0);
+    entry.price_ = atl::Decimal64(RESTS, 0);
+    entry.baseline_ = atl::Decimal64(0, 0);
+    dead.append(entry);
+    dead.advance(std::chrono::hours(24));
+    entry.outcome_ = atl::runner::JournalOutcome::ACCEPTED;
+    entry.order_id_ = "1";
+    entry.recorded_at_ = dead.market().now();
+    dead.append(entry);
+    dead.place_elsewhere("005930", atl::OrderSide::BUY, 1, RESTS);
+    dead.advance(std::chrono::minutes(1));
+  };
+  bool undated = false;
+  SECTION("the working row carries its order time") {
+    undated = false;
+  }
+  SECTION("the working row carries none, as KIS real-account rows") {
+    undated = true;
+  }
+  for (const bool seed : {true, false}) {
+    const auto ran = owed_run(fixture, earlier, seed, std::chrono::minutes(1), undated);
+    CHECK(ran.exit_ == 3);
+    CHECK(code_of(ran) == "refused.orders_resting");
+    sent_nothing(ran, 1);
+    CHECK(status_of(ran, "1") == "pending");
+  }
+}
+
 TEST_CASE("a working order is the journal's only by today's acknowledged number with the same order") {
   using Tag = Session::BrokerTag;
   using cmdatl::driver::inherited_orders;
@@ -1075,6 +1206,17 @@ TEST_CASE("a working order is the journal's only by today's acknowledged number 
     owners(contested, {owed("a-1", "7", "named"), owed("b-1", "7", "named")}, {working("7")}) ==
     std::vector<std::string>{""}
   );
+  // Sent yesterday and acknowledged today, or no line showing the send: not owned.
+  auto late = replay;
+  late.entries_.front().recorded_at_ = at - std::chrono::hours(24);
+  CHECK(owners(late, named, {working("7")}) == std::vector<std::string>{""});
+  atl::runner::JournalReplay unsent;
+  unsent.entries_ = {placement("a-1", atl::runner::JournalOutcome::ACCEPTED, "7")};
+  CHECK(owners(unsent, named, {working("7")}) == std::vector<std::string>{""});
+  // An answer stamped before its send line: the send day is not shown.
+  auto backwards = replay;
+  backwards.entries_.back().recorded_at_ = at - std::chrono::minutes(1);
+  CHECK(owners(backwards, named, {working("7")}) == std::vector<std::string>{""});
   // A line marked for the operator (a damaged line salvaged): not owned.
   auto damaged = replay;
   damaged.entries_.back().requires_operator_ = true;
