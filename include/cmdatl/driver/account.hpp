@@ -6,9 +6,13 @@
 //
 // The account is shared with everything else that trades it, so the run holds the account's lock for its life and uses
 // the account's journal, kept across runs.
-// It starts only with no order resting anywhere on the account (the library's withdraw cancels every working order).
+// What an earlier run left owed on the run's symbols, the library's recovery settles from the broker's lists before
+// anything is placed there; owed on another symbol, the run refuses to start.
+// It starts only with no order resting on the account but an earlier run's own (the library's withdraw cancels every
+// working order): `inherited_orders` says which rows the account's journal owns.
 // The account's holdings of its symbols are its position from the start: every sellable share of them is its to sell.
-// The daily allowance is what the journal leaves today.
+// The daily allowance is what the journal leaves today; with none left, a run that inherits owed orders still starts,
+// to settle them, and places nothing.
 // A signal or a closed output withdraws; removing the armed file quiesces.
 //
 // Generic over its sessions and clock, so the tests drive it with the library's mock client; `main.cpp` builds the KIS
@@ -34,12 +38,14 @@
 
 #include <boost/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -165,6 +171,129 @@ EndHoldings holdings_at_end(Session& session, const std::vector<std::string>& sy
     }
   }
   return out;
+}
+
+/**
+ * @brief Which of the account's working orders a run may take as an earlier run's order, before anything is sent: the
+ *   run's withdraw cancels every working order, so each must be one the account's journal owns.
+ *
+ * A row is owned only with positive evidence: the journal still owes a named placement on one of the run's instruments
+ * whose broker number came from an acknowledgement (`ACCEPTED`) written on `today`, every line of that placement names
+ * that number or none, no other placement's line names it, and the row carries that number with the same instrument,
+ * side and quantity, the same limit price when the row shows one, and an order date of `today` when the row shows one.
+ * KRX day orders expire at the close, so an earlier day's acknowledgement owns no working row; a placement whose
+ * acknowledgement was lost (no number in the journal, or one only a recovery sweep wrote) owns none either.
+ * Each placement owns at most one row. It reads the journal and appends nothing.
+ * @tparam Tag The broker's tag.
+ * @param replay The account's journal, as read at the start.
+ * @param owed What the journal still owes, as the library restores it.
+ * @param ids The run's instruments.
+ * @param today The run's KST date, as days from 1970-01-01.
+ * @param rows The working orders.
+ * @return For each row, the journal id of the placement that owns it, or empty when none does.
+ */
+template <typename Tag>
+std::vector<std::string> inherited_orders(
+  const atl::runner::JournalReplay& replay, const std::vector<Owed>& owed, const std::vector<atl::InstrumentId>& ids,
+  std::int64_t today, const std::vector<atl::WorkingOrder<Tag>>& rows
+) {
+  const auto same = [](const atl::Decimal64& a, const atl::Decimal64& b) {
+    return !atl::decimal_less(a, b) && !atl::decimal_less(b, a);
+  };
+  const auto on_today = [today](std::chrono::system_clock::time_point at) {
+    return paper::in_interval(at) && paper::kst_day(at) == today;
+  };
+  // The broker numbers today's acknowledgements gave the placements still owed, each with its line.
+  struct Claim {
+    const atl::runner::JournalEntry* acknowledged_{nullptr};
+    bool contested_{false};
+    bool used_{false};
+  };
+  std::map<std::string, Claim> claims;
+  const auto named = std::string(atl::runner::obligation_state_name(atl::runner::ObligationState::NAMED));
+  for (const auto& row : owed) {
+    if (row.state_ != named || row.order_id_.empty()) {
+      continue;
+    }
+    const atl::runner::JournalEntry* acknowledged = nullptr;
+    bool consistent = true;
+    for (const auto& entry : replay.entries_) {
+      if (entry.action_ != atl::runner::JournalAction::PLACE || entry.id_ != row.journal_id_) {
+        continue;
+      }
+      if (entry.requires_operator_ || (!entry.order_id_.empty() && entry.order_id_ != row.order_id_)) {
+        consistent = false;
+      }
+      if (
+        acknowledged == nullptr && entry.outcome_ == atl::runner::JournalOutcome::ACCEPTED &&
+        entry.order_id_ == row.order_id_ && on_today(entry.recorded_at_)
+      ) {
+        acknowledged = &entry;
+      }
+    }
+    if (!consistent || acknowledged == nullptr) {
+      continue;
+    }
+    if (std::find(ids.begin(), ids.end(), acknowledged->instrument_) == ids.end()) {
+      continue;
+    }
+    const auto found = claims.find(row.order_id_);
+    if (found != claims.end()) {
+      found->second.contested_ = true;
+      continue;
+    }
+    claims[row.order_id_].acknowledged_ = acknowledged;
+  }
+  // A number another placement's line names is no evidence of either.
+  for (const auto& entry : replay.entries_) {
+    if (entry.action_ != atl::runner::JournalAction::PLACE || entry.order_id_.empty()) {
+      continue;
+    }
+    const auto found = claims.find(entry.order_id_);
+    if (found != claims.end() && entry.id_ != found->second.acknowledged_->id_) {
+      found->second.contested_ = true;
+    }
+  }
+  std::vector<std::string> owners(rows.size());
+  for (std::size_t at = 0; at < rows.size(); ++at) {
+    const auto& order = rows[at].order_;
+    const auto found = order.order_id_.empty() ? claims.end() : claims.find(order.order_id_);
+    if (found == claims.end() || found->second.contested_ || found->second.used_) {
+      continue;
+    }
+    const auto& line = *found->second.acknowledged_;
+    const bool price_agrees = !order.price_ || (line.price_ && same(*order.price_, *line.price_));
+    const bool date_agrees = !order.ordered_at_ || (!order.ordered_date_assumed_ && on_today(*order.ordered_at_));
+    if (
+      !(order.instrument_ == line.instrument_) || order.side_ != line.side_ || !same(order.quantity_, line.quantity_) ||
+      !price_agrees || !date_agrees
+    ) {
+      continue;
+    }
+    found->second.used_ = true;
+    owners[at] = line.id_;
+  }
+  return owners;
+}
+
+/**
+ * @brief The orders an account's journal still owes, as the start event lists them (in the shape of the reply's
+ *   `owed_at_end`).
+ * @param owed The owed placements.
+ * @return One object each: symbol, side, quantity, journal id, the broker's number (empty while none named it) and the
+ *   library's state.
+ */
+inline json::array owed_rows(const std::vector<Owed>& owed) {
+  json::array rows;
+  for (const auto& o : owed) {
+    rows.push_back(
+      json::object{
+        {"symbol", o.symbol_}, {"side", o.side_}, {"quantity", o.quantity_}, {"journal_id", o.journal_id_},
+        {"order_id", o.order_id_}, {"state", o.state_}
+      }
+    );
+  }
+  return rows;
 }
 
 /** @brief How often the run writes a heartbeat with what it last read. */
@@ -459,48 +588,54 @@ int run_account(
       return run_error(base, Exit::REFUSED, "refused.not_armed", "the operator's armed file does not exist");
     }
     // The account's journal, kept across runs: what an earlier run left owed is this run's to account for first.
+    // Read once and kept: the start's checks read it, and append nothing.
     const auto journal_path = run.account_dir_ + "/journal.jsonl";
     const auto scope = config.scope();
-    {
-      const auto replay = atl::runner::read_journal_file(journal_path);
-      const bool fresh = !std::filesystem::exists(journal_path, ec);
-      if (!fresh) {
-        const auto view = journal_view(inner, replay, scope, paper::kst_day(now()));
-        if (!view.owned_ || !view.intact_) {
-          return run_error(
-            base, Exit::UNKNOWN, "unknown.journal_damaged",
-            view.detail_.empty() ? "the account's journal is not intact" : view.detail_, ACCOUNT_UNKNOWN_NEXT
-          );
-        }
-        if (!view.owed_.empty()) {
-          return run_error(
-            base, Exit::UNKNOWN, "unknown.owed_at_start",
-            "the account's journal waits on " + std::to_string(view.owed_.size()) + " order(s) an earlier run sent",
-            "read the account's order list in the broker's app; reading it does not clear the journal, which "
-            "cmdatl order reconcile will on a broker account in a later version"
-          );
-        }
-      }
-    }
+    const auto today = paper::kst_day(now());
+    const auto replay = atl::runner::read_journal_file(journal_path);
+    JournalView at_start;
     std::int64_t left = config.limits_.daily_orders_;
     if (std::filesystem::exists(journal_path, ec)) {
-      const auto view = journal_view(inner, atl::runner::read_journal_file(journal_path), scope, paper::kst_day(now()));
-      const auto allowance = orders_left(config, view);
-      if (!allowance) {
+      at_start = journal_view(inner, replay, scope, today);
+      const auto allowance = orders_left(config, at_start);
+      if (!at_start.owned_ || !allowance) {
         return run_error(
           base, Exit::UNKNOWN, "unknown.journal_damaged",
-          view.detail_.empty() ? "the account's journal is not intact" : view.detail_, ACCOUNT_UNKNOWN_NEXT
+          at_start.detail_.empty() ? "the account's journal is not intact" : at_start.detail_, ACCOUNT_UNKNOWN_NEXT
         );
       }
       left = *allowance;
     }
-    if (left <= 0) {
+    // An order owed on a run symbol is the library's to settle from the broker's lists before anything is placed
+    // there; one on another symbol is not this run's to read or withdraw.
+    std::set<std::string> elsewhere;
+    for (const auto& owed : at_start.owed_) {
+      if (std::find(run.symbols_.begin(), run.symbols_.end(), owed.symbol_) == run.symbols_.end()) {
+        elsewhere.insert(owed.symbol_);
+      }
+    }
+    if (!elsewhere.empty()) {
+      std::string named;
+      for (const auto& symbol : elsewhere) {
+        named += (named.empty() ? "" : ", ") + symbol;
+      }
+      return run_error(
+        base, Exit::UNKNOWN, "unknown.owed_at_start",
+        "the account's journal waits on order(s) an earlier run sent on " + named + ", which this run does not trade",
+        "the operator starts a run on " + named +
+          ", which settles what an earlier run left owed on its own symbols from the broker's lists, or reads the "
+          "account's order list in the broker's app"
+      );
+    }
+    // With today's allowance spent, a run that inherits owed orders still settles them, and places nothing.
+    if (left <= 0 && at_start.owed_.empty()) {
       return run_error(
         base, Exit::REFUSED, "refused.daily_order_limit",
         "the operator allows " + std::to_string(config.limits_.daily_orders_) +
           " order(s) a day, and the account's journal shows them placed today"
       );
     }
+    left = std::max<std::int64_t>(left, 0);
     // The reads before the start are read again after a rate or token refusal, each wait noted on stderr at once.
     // One token wait per session; on a real account the market-data session is the trading one.
     StartBudget trading_budget;
@@ -510,7 +645,7 @@ int run_account(
     const auto start_note = [](const std::string& line) {
       (void)write_line(line + "\n", STDERR_FILENO);
     };
-    // No order resting: the withdraw cancels every order on the account.
+    // No order resting but an earlier run's own on the run's symbols: the withdraw cancels every order on the account.
     // The holdings of the run's symbols are its position: every sellable share of them is the run's to sell.
     json::object holdings_at_start;
     {
@@ -531,11 +666,15 @@ int run_account(
           start_read_next(read_orders.refused_, "")
         );
       }
-      if (!orders.value().orders_.empty()) {
+      const auto owners =
+        inherited_orders<typename Inner::BrokerTag>(replay, at_start.owed_, run.ids_, today, orders.value().orders_);
+      const auto unowned = static_cast<std::size_t>(std::count(owners.begin(), owners.end(), std::string()));
+      if (unowned > 0) {
         return run_error(
           base, Exit::REFUSED, "refused.orders_resting",
-          std::to_string(orders.value().orders_.size()) +
-            " order(s) rest on the account; a run's withdraw cancels them all"
+          std::to_string(unowned) +
+            " order(s) rest on the account that the account's journal does not show an earlier run placing today on "
+            "this run's symbols; a run's withdraw cancels them all"
         );
       }
       auto read_held = read_at_start(
@@ -699,6 +838,7 @@ int run_account(
         {"cap", wiring.limits_.max_position_quantity_ ? wiring.limits_.max_position_quantity_->str() : "0"},
         {"holdings_at_start", holdings_at_start},
         {"orders_left_today", left},
+        {"owed_at_start", owed_rows(at_start.owed_)},
         {"warmup_bars", run.warmup_},
         {"pid", static_cast<std::int64_t>(::getpid())},
       };
