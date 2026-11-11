@@ -564,6 +564,7 @@ TEST_CASE("an account run places at its first decision, withdraws on a signal, a
   CHECK(ran.reply_.at("outcome").as_string() == "clean");
   CHECK(ran.reply_.at("owed_at_end").as_array().empty());
   CHECK(ran.reply_.at("holdings_at_end").as_object().at("005930").as_string() == "0");
+  CHECK(ran.reply_.at("holdings_at_end_error").is_null());
   // The account's journal, kept for the next run.
   CHECK(std::filesystem::exists(kis_account_dir(fixture) / "journal.jsonl"));
 }
@@ -1373,6 +1374,62 @@ TEST_CASE("an account run reads the account again after a rate refusal and gives
   CHECK(events_of(ran, "start").empty());
   CHECK(slept_before_start(refused) == 4);
   CHECK(!std::filesystem::exists(kis_account_dir(refused) / "journal.jsonl"));
+}
+
+TEST_CASE("a run's last holdings read is read again after a rate refusal, a signal noted, and names why it failed") {
+  const auto series = runtest::bars_of("005930", 10, atl::BarInterval::ONE_DAY);
+  atl::mock::MarketSettings settings;
+  settings.start_ = series.bars_.at(2).timestamp_ + std::chrono::minutes(30);
+  atl::mock::Market market({series}, settings);
+  auto client = std::make_shared<atl::mock::MockClient>(market);
+  atl::BlockingSession<atl::mock::MockClient> session(client, atl::mock::MockAccount{});
+  std::chrono::steady_clock::time_point t{};
+  cmdatl::driver::WallClock clock(
+    {},
+    [] {
+      return std::chrono::system_clock::time_point{};
+    },
+    [&t] {
+      return t;
+    },
+    [&t](std::chrono::nanoseconds d) {
+      t += std::chrono::duration_cast<std::chrono::steady_clock::duration>(d);
+    },
+    [] {
+      return false;
+    }
+  );
+  std::vector<std::string> notes;
+  const auto note = [&notes](const std::string& line) {
+    notes.push_back(line);
+  };
+  const std::vector<std::string> symbols{"005930"};
+  // The signal that stopped the run is still noted: the waits run all the same.
+  cmdatl::interruption = 1;
+  client->fail_next(atl::mock::Call::HOLDINGS, rate_refusal());
+  auto end = cmdatl::driver::holdings_at_end(session, symbols, clock, note);
+  CHECK(end.held_.at("005930").as_string() == "0");
+  CHECK(end.error_.is_null());
+  CHECK(notes.size() == 1);
+  CHECK(t == std::chrono::steady_clock::time_point{} + std::chrono::seconds(2));
+  client->fail_next(atl::mock::Call::HOLDINGS, rate_refusal(), 3);
+  end = cmdatl::driver::holdings_at_end(session, symbols, clock, note);
+  CHECK(end.held_.at("005930").is_null());
+  CHECK(end.error_ == json::value("EGW00201"));
+  CHECK(t == std::chrono::steady_clock::time_point{} + std::chrono::seconds(6));
+  // A failure without a broker code is named by its kind; KIS's token minute is not waited out at the end.
+  atl::BrokerError lost;
+  lost.category_ = atl::ErrorCategory::TRANSPORT;
+  lost.message_ = "connection reset";
+  client->fail_next(atl::mock::Call::HOLDINGS, lost);
+  end = cmdatl::driver::holdings_at_end(session, symbols, clock, note);
+  CHECK(end.held_.at("005930").is_null());
+  CHECK(end.error_ == json::value("transport"));
+  client->fail_next(atl::mock::Call::HOLDINGS, token_refusal());
+  end = cmdatl::driver::holdings_at_end(session, symbols, clock, note);
+  CHECK(end.error_ == json::value("EGW00133"));
+  CHECK(t == std::chrono::steady_clock::time_point{} + std::chrono::seconds(6));
+  cmdatl::interruption = 0;
 }
 
 TEST_CASE("an account run waits out KIS's token minute once per session then starts or names the minute") {

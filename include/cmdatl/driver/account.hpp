@@ -20,6 +20,7 @@
 #include "../core/reply.hpp"
 #include "../orders/rails.hpp"
 #include "../paper/time.hpp"
+#include "../replay/adapter_text.hpp"
 #include "../system/lock.hpp"
 #include "../system/process.hpp"
 #include "./clock.hpp"
@@ -110,6 +111,60 @@ std::optional<json::object> net_holdings(
     held[id.symbol_] = net->str();
   }
   return held;
+}
+
+/** @brief The account's holdings at a run's end, as its reply shows them. */
+struct EndHoldings {
+  /** @brief The shares held of each run symbol, as a decimal string; null for each when the read failed. */
+  json::object held_;
+  /** @brief Why the read failed: the broker's code, else the error's category as a word; null when it was read. */
+  json::value error_;
+};
+
+/**
+ * @brief Reads the account's holdings of the run's symbols once more, for the reply.
+ *
+ * Read again after a refusal for the broker's request rate, as the start's reads are: right after a withdraw's
+ * cancellation and its confirming reads, KIS can refuse it for its per-second rate. A signal does not cut the waits
+ * short, since a signal is what usually ends a run, and KIS's token minute is not waited out at the end.
+ * @tparam Session The session.
+ * @tparam Clock The clock: `wait_for(duration)`.
+ * @tparam Note A callable taking a line, for the operator.
+ * @param session The session.
+ * @param symbols The run's symbols.
+ * @param clock The clock waited on.
+ * @param note Told before each wait.
+ * @return The holdings, or why they are not known.
+ */
+template <typename Session, typename Clock, typename Note>
+EndHoldings holdings_at_end(Session& session, const std::vector<std::string>& symbols, Clock& clock, Note&& note) {
+  EndHoldings out;
+  for (const auto& symbol : symbols) {
+    out.held_[symbol] = nullptr;
+  }
+  StartBudget budget;
+  budget.token_waited_ = true;
+  const auto read = read_at_start(
+    [&session]() {
+      return session.holdings();
+    },
+    clock, note, budget, false
+  );
+  const auto& held = read.answer_;
+  if (!held) {
+    const auto code = replay::shown_code(held.error().broker_code_);
+    out.error_ = code.empty() ? json::value(replay::category_word(held.error().category_)) : json::value(code);
+    return out;
+  }
+  for (const auto& symbol : symbols) {
+    out.held_[symbol] = "0";
+  }
+  for (const auto& position : held.value().positions_) {
+    if (out.held_.contains(position.instrument_.symbol_)) {
+      out.held_[position.instrument_.symbol_] = position.quantity_.str();
+    }
+  }
+  return out;
 }
 
 /** @brief How often the run writes a heartbeat with what it last read. */
@@ -711,21 +766,9 @@ int run_account(
     body["stopped"] = guard.stopped_.empty() ? json::value(nullptr) : json::value(guard.stopped_);
     body["ended_at"] = at_text(now());
     // The broker's own figures for the run's symbols, read once more.
-    json::object holdings;
-    for (const auto& symbol : run.symbols_) {
-      holdings[symbol] = nullptr;
-    }
-    if (const auto held = inner.holdings()) {
-      for (const auto& symbol : run.symbols_) {
-        holdings[symbol] = "0";
-      }
-      for (const auto& position : held.value().positions_) {
-        if (holdings.contains(position.instrument_.symbol_)) {
-          holdings[position.instrument_.symbol_] = position.quantity_.str();
-        }
-      }
-    }
-    body["holdings_at_end"] = holdings;
+    auto holdings = holdings_at_end(inner, run.symbols_, clock, start_note);
+    body["holdings_at_end"] = std::move(holdings.held_);
+    body["holdings_at_end_error"] = std::move(holdings.error_);
     json::array owed;
     for (const auto& o : view.owed_) {
       owed.push_back(

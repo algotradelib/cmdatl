@@ -429,6 +429,10 @@ inline std::vector<Command> command_list() {
     .returns("opening_equity", "the run's cash at its start")
     .returns("closing_equity", "cash and holdings at the last price, at the end")
     .returns("holdings_at_end", "shares held at the end, by symbol")
+    .returns(
+      "holdings_at_end_error",
+      "on a broker account, why holdings_at_end is null: the broker's code, else the error's kind; null when read"
+    )
     .returns("owed_at_end", "orders the run's journal still waits on")
     .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::REFUSED, Exit::UNKNOWN, Exit::PROGRAM, Exit::INTERRUPTED})
     .sends()

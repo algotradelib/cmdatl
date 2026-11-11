@@ -93,4 +93,6 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
 - Ctrl-C, SIGTERM, SIGHUP or a closed output withdraw, as above; the end waits up to a minute for the broker to confirm, longer when a request is in flight.
   Removing the armed file stops placing and leaves what rests.
 - On macOS a sleeping Mac stops the run with its orders resting: start it with `caffeinate -i cmdatl run probe.toml > run.jsonl`, or from a launchd job.
+- The reply's `holdings_at_end` is the account's holdings of the run's symbols, read once more at the end; a read KIS refuses for its request rate is read again twice at most, a few seconds apart.
+  When it still fails, each symbol is `null` and `holdings_at_end_error` names why: KIS's code (`EGW00201`, the per-second limit), else the error's kind (`transport`); it is `null` when the holdings were read.
 - An unconfirmed ending (exit 4: an order not confirmed, the journal or the lock damaged, the broker unreadable at the end) needs the account read in KIS's app before it is traded again; `owed_at_end` lists the orders the journal still waits on.

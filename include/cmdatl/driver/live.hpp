@@ -145,14 +145,15 @@ struct StartAnswer {
 /**
  * @brief Reads, and reads again after a rate or token refusal, within bounds, waiting on the clock between reads.
  *
- * For reads before a run's start only, never for a placement or a cancellation.
+ * For reads before a run's start and a run's last holdings read only, never for a placement or a cancellation.
  * A refusal for the broker's request rate is read again at most `START_RATE_RETRIES` times per call.
  * Each of those waits is the broker's `retry_after_`, or `START_RATE_WAIT` when it named none or a negative one.
  * A `retry_after_` above `START_RATE_WAIT_LIMIT` is returned at once as `LONG_WAIT`, neither waited nor shortened.
  * KIS's one-token-a-minute refusal (`KIS_TOKEN_MINUTE`) is waited out once per session (`START_TOKEN_WAIT`).
  * A second one on the same session, in this call or a later one, is returned at once.
  * Any other failure is returned at once, and the counts never reset when the kind of refusal changes.
- * Before each wait `note` is given a line saying so; after it, a signal returns `INTERRUPTED` without reading again.
+ * Before each wait `note` is given a line saying so; after it, a signal returns `INTERRUPTED` without reading again,
+ * unless `signal_ends` is false.
  * @tparam Read A callable returning the library's `Result`.
  * @tparam Clock The clock: `wait_for(duration)`.
  * @tparam Note A callable taking the line, for the operator.
@@ -160,10 +161,11 @@ struct StartAnswer {
  * @param clock The clock waited on.
  * @param note Told before each wait.
  * @param budget The session's waits already used.
+ * @param signal_ends Whether a signal seen after a wait ends the reads; false for a read made while the run stops.
  * @return The last answer and the refusal that ended it.
  */
 template <typename Read, typename Clock, typename Note>
-auto read_at_start(Read&& read, Clock& clock, Note&& note, StartBudget& budget)
+auto read_at_start(Read&& read, Clock& clock, Note&& note, StartBudget& budget, bool signal_ends = true)
   -> StartAnswer<std::decay_t<decltype(read())>> {
   auto answer = read();
   int rate_retries = 0;
@@ -199,7 +201,7 @@ auto read_at_start(Read&& read, Clock& clock, Note&& note, StartBudget& budget)
     }
     note(line);
     clock.wait_for(wait);
-    if (interrupted()) {
+    if (signal_ends && interrupted()) {
       return {std::move(answer), StartRead::INTERRUPTED};
     }
     answer = read();
