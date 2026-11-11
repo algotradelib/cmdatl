@@ -1,12 +1,16 @@
 #pragma once
 
-// Reading and writing the operator's file, the bars and the account's state files through descriptors.
+// Reading and writing the operator's file, the bars and the account's state files through descriptors, and where
+// cmdatl's cache is.
 
 #include "./syscalls.hpp"
 
 #include <cerrno>
 #include <cstddef>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <optional>
 #include <string>
 
 #if !defined(_WIN32)
@@ -16,6 +20,24 @@
 #endif
 
 namespace cmdatl {
+
+/**
+ * @brief A folder of cmdatl's cache: `$XDG_CACHE_HOME/cmdatl/<name>` when that is set and absolute, else
+ *   `$HOME/.cache/cmdatl/<name>` when `HOME` is.
+ * @param name The folder's name, such as `drivers`.
+ * @return The folder, or nothing.
+ */
+inline std::optional<std::string> cache_folder(const char* name) {
+  const char* xdg = std::getenv("XDG_CACHE_HOME");
+  if (xdg != nullptr && *xdg == '/') {
+    return (std::filesystem::path(xdg) / "cmdatl" / name).lexically_normal().string();
+  }
+  const char* home = std::getenv("HOME");
+  if (home != nullptr && *home == '/') {
+    return (std::filesystem::path(home) / ".cache" / "cmdatl" / name).lexically_normal().string();
+  }
+  return std::nullopt;
+}
 
 /** @brief How reading a whole file through its descriptor ended. */
 struct FileRead {

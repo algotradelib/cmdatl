@@ -69,20 +69,11 @@ inline const std::vector<std::string> KEY_VARIABLES{
 inline constexpr std::chrono::milliseconds SHAPE_LOCK_STEP{20};
 
 /**
- * @brief The cache's root: `$XDG_CACHE_HOME/cmdatl/drivers` when that is set and absolute, else
- *   `$HOME/.cache/cmdatl/drivers` when `HOME` is.
+ * @brief The cache's root: `cache_folder("drivers")`.
  * @return The root, or nothing.
  */
 inline std::optional<std::string> cache_root() {
-  const char* xdg = std::getenv("XDG_CACHE_HOME");
-  if (xdg != nullptr && *xdg == '/') {
-    return (std::filesystem::path(xdg) / "cmdatl" / "drivers").lexically_normal().string();
-  }
-  const char* home = std::getenv("HOME");
-  if (home != nullptr && *home == '/') {
-    return (std::filesystem::path(home) / ".cache" / "cmdatl" / "drivers").lexically_normal().string();
-  }
-  return std::nullopt;
+  return cache_folder("drivers");
 }
 
 /**
