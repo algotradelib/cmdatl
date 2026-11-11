@@ -764,6 +764,8 @@ TEST_CASE("an earlier run's order the broker never saw, or one held for the oper
   }
   const auto ran = owed_run(fixture, earlier, true, std::chrono::minutes(30));
   CHECK(ran.exit_ == 4);
+  // The owed-order limit stops the run: nothing more is placed, and what rests stays.
+  CHECK(code_of(ran) == "unknown.owed_order");
   REQUIRE(!ran.events_.empty());
   const auto& owed = ran.events_.front().at("owed_at_start").as_array();
   REQUIRE(owed.size() == 1);
@@ -774,6 +776,7 @@ TEST_CASE("an earlier run's order the broker never saw, or one held for the oper
   // Started again: still owed, still nothing placed.
   const auto again = owed_run(fixture, earlier, false, std::chrono::minutes(30));
   CHECK(again.exit_ == 4);
+  CHECK(code_of(again) == "unknown.owed_order");
   CHECK(events_of(again, "placed").empty());
   CHECK(owed_ids(again.reply_.at("owed_at_end")) == std::vector<std::string>{"dead-1"});
   CHECK(!has(outcomes_of(fixture, "dead-1"), "confirmed"));
@@ -856,7 +859,7 @@ TEST_CASE("a run refuses an earlier run's owed order on another symbol, and send
     const auto& error = ran.reply_.at("error").as_object();
     CHECK(std::string(error.at("message").as_string()).find("000660") != std::string::npos);
     const std::string next(error.at("next").as_string());
-    CHECK(next.find("operator starts a run on 000660") != std::string::npos);
+    CHECK(next.find("ask the operator, who starts a run on 000660") != std::string::npos);
     sent_nothing(ran, 1);
   }
 }

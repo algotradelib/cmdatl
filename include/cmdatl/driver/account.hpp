@@ -620,9 +620,9 @@ int run_account(
       return run_error(
         base, Exit::UNKNOWN, "unknown.owed_at_start",
         "the account's journal waits on order(s) an earlier run sent on " + named + ", which this run does not trade",
-        "the operator starts a run on " + named +
-          ", which settles what an earlier run left owed on its own symbols from the broker's lists, or reads the "
-          "account's order list in the broker's app"
+        "ask the operator, who starts a run on " + named +
+          " to settle it from the broker's lists (a run settles what an earlier run left owed on its own symbols), or "
+          "reads the account's order list in the broker's app"
       );
     }
     // With today's allowance spent, a run that inherits owed orders still settles them, and places nothing.

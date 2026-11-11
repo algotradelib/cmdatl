@@ -108,9 +108,11 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"refused.not_armed", Exit::REFUSED, false,
       "the armed file cmdatl env names is missing: only the operator creates it; ask the operator"},
     {"refused.orders_resting", Exit::REFUSED, false,
-      "a run's withdraw cancels every order on the account: the operator cancels them in the broker's app first"},
+      "a run's withdraw cancels every order on the account, and only one an earlier run placed today on the run's "
+      "symbols is the run's to withdraw: the operator cancels the others in the broker's app first"},
     {"unknown.owed_at_start", Exit::UNKNOWN, false,
-      "the account's journal waits on an order: read the broker's order list; reading it does not clear the journal"},
+      "the account's journal waits on an order on a symbol the run does not trade: ask the operator, who starts a run "
+      "on that symbol to settle it from the broker's lists"},
     {"auth.account_mismatch", Exit::FAILED, false,
       "the login's account or environment is not the operator file's: fix [account] or log in again"},
     {"run.account_unreadable", Exit::FAILED, false, "nothing was sent; start the run again"},
