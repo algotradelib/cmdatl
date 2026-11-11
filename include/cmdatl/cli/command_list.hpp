@@ -398,14 +398,14 @@ inline std::vector<Command> command_list() {
       return reference_reply(invocation);
     }));
 
-  add(make_command({"run"}, "Run", "run a strategy on its own mock market, in the foreground")
+  add(make_command({"run"}, "Run", "run a strategy on its own mock market or a KIS account, in the foreground")
     .describe(
       "Builds the program's driver (CMake and a C++17 compiler are needed; builds are cached) and becomes it: the run "
-      "trades a mock market made from the settings' data and prints its events as JSON lines, its reply last, "
-      "whatever the output format. Settings are read as strategy backtest reads them. The operator's file limits "
-      "every order the run places, and no setting changes it. Ctrl-C, SIGTERM or SIGHUP withdraws the run: no new "
-      "orders, its resting orders cancelled; under nohup, SIGHUP is ignored. The agent commands do not see a run's "
-      "market."
+      "trades a mock market made from the settings' data or, when the operator's file names a broker account (KIS or "
+      "a broker folder's), that account in real time, and prints its events as JSON lines, its reply last, whatever "
+      "the output format. Settings are read as strategy backtest reads them. The operator's file limits every order "
+      "the run places, and no setting changes it. Ctrl-C, SIGTERM or SIGHUP withdraws the run: no new orders, its "
+      "resting orders cancelled; under nohup, SIGHUP is ignored. The agent commands do not see a run's mock market."
     )
     .example("cmdatl run dip.toml")
     .example("cmdatl run dip.toml params.lookback=21")

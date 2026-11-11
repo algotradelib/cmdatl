@@ -47,7 +47,7 @@ Exit 5 is a program error (`program.invalid`, with atlc's diagnostics in `errors
 
 ## Runs
 
-A run trades the program through algotradelib's live runner on a mock market built from the settings' data, read as a backtest reads them; the operator's file limits every order it places, and no setting changes it.
+A run trades the program through algotradelib's live runner on a mock market built from the settings' data, read as a backtest reads them, or on the KIS account the operator's file names; the operator's file limits every order it places, and no setting changes it.
 To test a program, backtest it; start a run only when the task asks for a run.
 The starter spec cannot run as written: its `[orders]` places market orders and it names no market.
 Replace its `[instruments]`, `[replay]` and `[orders]` tables with:

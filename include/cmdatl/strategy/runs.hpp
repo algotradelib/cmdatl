@@ -1,6 +1,6 @@
 #pragma once
 
-// `run`: a strategy on its own mock market, in the caller's foreground.
+// `run`: a strategy on its own mock market or the operator file's broker account, in the caller's foreground.
 //
 // `run` reads and checks its settings (`settings.hpp`), makes the run's directory (`<state root>/runs/<account>/<run
 // id>`, new), builds the program's driver into it (`build.hpp`), and replaces itself with the driver (`execve`), so the

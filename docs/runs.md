@@ -1,6 +1,6 @@
 # Runs
 
-A run trades a strategy through algotradelib's live runner, the code that would trade a broker's account, on a mock market built from the run spec's data.
+A run trades a strategy through algotradelib's live runner, the code that would trade a broker's account, on a mock market built from the run spec's data, or on a [KIS account](#runs-on-a-kis-account) the operator's file names.
 
 ```sh
 cmdatl run dip.toml # builds the program once, then runs it in the foreground: events as JSON lines, the reply last
