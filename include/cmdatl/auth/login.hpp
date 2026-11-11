@@ -193,47 +193,46 @@ inline Reply no_store_reply() {
 }
 
 /**
- * @brief Removes a stored login's saved access token through the library's store, before the login is removed or
- *   replaced: the token's identity is read from the login. A broker folder's login has none, nor has a login the
- *   library's loader refuses, since no run could use it.
+ * @brief Removes a stored login's saved access token through the library's store, as far as it can, before the login
+ *   is removed or replaced: the token's identity is read from the login. It never stops the change. A broker folder's
+ *   login has no such token, nor has any login when the token folder does not exist.
  * @param broker The login's broker.
  * @param name The login's name.
  * @param store The credential store.
- * @param then What the operator does once the token folder is fixed.
- * @return The refusal (nothing changed), or none.
+ * @return Why the token may remain, for the reply, or none when it is gone or there was none.
  */
-inline std::optional<Reply> remove_token(
-  const Broker& broker, const std::string& name, CredentialStore& store, const std::string& then
-) {
+inline std::optional<std::string> remove_token(const Broker& broker, const std::string& name, CredentialStore& store) {
   const auto folder = token_folder();
   struct stat info{};
   if (broker.read_ == nullptr || !folder || (::lstat(folder->c_str(), &info) != 0 && errno == ENOENT)) {
     return std::nullopt;
   }
-  const auto found = store.get(name);
-  if (found.status_ == StoreStatus::NOT_FOUND) {
-    return std::nullopt;
-  }
-  if (found.status_ != StoreStatus::OK) {
-    return store_failure(store.kind(), found.status_, found.detail_);
-  }
+  std::string reason = "the stored login could not be read";
   std::string identity;
-  try {
-    identity = broker.read_(found.value_, "stored login " + name);
-  } catch (const std::exception&) {
-    return std::nullopt;
+  const auto found = store.get(name);
+  if (found.status_ == StoreStatus::OK) {
+    // The loader's message is not repeated: the document is the user's.
+    reason = "no key could be read from the stored login";
+    try {
+      identity = broker.read_(found.value_, "stored login " + name);
+    } catch (const std::exception&) {
+    }
   }
-  algotradelib::network::FileTokenStore tokens(*folder);
-  const auto held = tokens.lock(identity);
-  const auto failed = held ? tokens.remove(identity) : std::optional<algotradelib::BrokerError>(held.error());
-  if (failed) {
-    return error_reply(
-      Exit::FAILED, "file.unwritable",
-      "the saved access token of " + name + " could not be removed (" + failed->message_ + "); nothing changed",
-      token_store_next(failed->message_, then)
-    );
+  if (!identity.empty()) {
+    algotradelib::network::FileTokenStore tokens(*folder);
+    const auto held = tokens.lock(identity);
+    const auto failed = held ? tokens.remove(identity) : std::optional<algotradelib::BrokerError>(held.error());
+    if (!failed) {
+      return std::nullopt;
+    }
+    reason = failed->message_;
   }
-  return std::nullopt;
+  auto warning = "the saved access token of " + name + " may still be usable until it expires (" + reason +
+    "); saved tokens are in " + *folder;
+  if (reason.find("not private") != std::string::npos) {
+    warning += ", which the operator makes private (chmod 700 on it, chmod 600 on each file in it)";
+  }
+  return warning;
 }
 
 /**
@@ -288,8 +287,8 @@ inline std::string brokers_hint() {
 
 /**
  * @brief `auth login`: asks for what was not given (on a terminal), checks the document locally with the library's
- *   loaders (a broker folder's is stored unchecked: its adapter reads it at the run), and stores it; a login it
- *   replaces loses its saved access token first. Sends nothing to a broker.
+ *   loaders (a broker folder's is stored unchecked: its adapter reads it at the run), and stores it; the saved access
+ *   token of a login it replaces is removed first, as far as it can be. Sends nothing to a broker.
  * @param request What was given.
  * @param in Standard input.
  * @param prompts Where questions go (stderr).
@@ -465,11 +464,7 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
   if (interrupted()) {
     return interrupted_auth();
   }
-  if (exists) {
-    if (auto refused = remove_token(*broker, name, *store, "runs cmdatl auth login again")) {
-      return std::move(*refused);
-    }
-  }
+  const auto token_left = exists ? remove_token(*broker, name, *store) : std::nullopt;
   const auto stored = store->put(name, text);
   if (stored.status_ != StoreStatus::OK) {
     return store_failure(store->kind(), stored.status_, stored.detail_, true);
@@ -485,6 +480,9 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
     reply.body_ = login_row(*broker, demo, canonical, store->kind());
   }
   reply.body_["replaced"] = exists;
+  if (token_left) {
+    reply.body_["token_warning"] = *token_left;
+  }
   return reply;
 }
 
@@ -606,8 +604,8 @@ inline Reply status(const LoginFilter& filter, CredentialStore* store) {
 }
 
 /**
- * @brief `auth logout`: removes one stored login, its saved access token first; on a terminal, asks which when several
- *   match.
+ * @brief `auth logout`: removes one stored login, its saved access token first as far as it can be; on a terminal, asks
+ *   which when several match.
  * @param filter Which login.
  * @param in Standard input.
  * @param prompts Where questions go (stderr).
@@ -659,11 +657,8 @@ inline Reply logout(const LoginFilter& filter, int in, std::ostream& prompts, Cr
   if (interrupted()) {
     return interrupted_auth();
   }
-  if (const auto* broker = find_broker(name.substr(0, name.find('/')))) {
-    if (auto refused = remove_token(*broker, name, *store, "runs cmdatl auth logout again")) {
-      return std::move(*refused);
-    }
-  }
+  const auto* broker = find_broker(name.substr(0, name.find('/')));
+  const auto token_left = broker != nullptr ? remove_token(*broker, name, *store) : std::nullopt;
   const auto removed = store->remove(name);
   if (removed.status_ == StoreStatus::NOT_FOUND) {
     return error_reply(Exit::FAILED, "auth.not_found", "no stored login " + name + "; nothing changed");
@@ -673,6 +668,9 @@ inline Reply logout(const LoginFilter& filter, int in, std::ostream& prompts, Cr
   }
   Reply reply;
   reply.body_["removed"] = name;
+  if (token_left) {
+    reply.body_["token_warning"] = *token_left;
+  }
   return reply;
 }
 

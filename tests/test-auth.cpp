@@ -48,6 +48,8 @@ public:
   auth::StoreStatus fail_put_{auth::StoreStatus::OK};
   /** @brief An answer only `get` gives, unless `OK`. */
   auth::StoreStatus fail_get_{auth::StoreStatus::OK};
+  /** @brief An answer only `remove` gives, unless `OK`. */
+  auth::StoreStatus fail_remove_{auth::StoreStatus::OK};
   /** @brief How many times `put` was called. */
   int puts_{0};
 
@@ -89,8 +91,8 @@ public:
   }
 
   auth::StoreAnswer remove(const std::string& name) override {
-    if (fail_ != auth::StoreStatus::OK) {
-      return {fail_, {}, "test"};
+    if (fail_ != auth::StoreStatus::OK || fail_remove_ != auth::StoreStatus::OK) {
+      return {fail_ != auth::StoreStatus::OK ? fail_ : fail_remove_, {}, "test"};
     }
     return {items_.erase(name) > 0 ? auth::StoreStatus::OK : auth::StoreStatus::NOT_FOUND, {}, {}};
   }
@@ -433,7 +435,7 @@ TEST_CASE("auth logout removes one login, and asks which only on a terminal") {
   CHECK(prompts.str().empty());
 }
 
-TEST_CASE("auth logout and a replacing login remove the old login's saved token and only it") {
+TEST_CASE("auth logout and a replacing login remove the old login's saved token as far as they can") {
   namespace network = algotradelib::network;
   const ScratchDir dir;
   const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
@@ -453,91 +455,131 @@ TEST_CASE("auth logout and a replacing login remove the old login's saved token 
     REQUIRE(loaded);
     return loaded.value().has_value();
   };
+  const auto warning = [](const Reply& reply) {
+    const auto* found = reply.body_.if_contains("token_warning");
+    return found == nullptr ? std::string() : std::string(found->as_string());
+  };
   const std::string other_key = "KEY-OTHER-55555";
   const auto kis_demo = network::token_identity("kis", "demo", KEY);
   const auto kis_real = network::token_identity("kis", "real", KEY);
   const auto kis_real_other = network::token_identity("kis", "real", other_key);
   const auto kiwoom_demo = network::token_identity("kiwoom", "demo", KEY);
+  const auto kiwoom = R"({"appkey":")" + KEY + R"(","secretkey":")" + SECRET + R"("})";
   std::vector<std::string> replies;
+  std::ostringstream prompts;
+  const Input in;
+  const auto logout = [&](MemoryStore& store, const std::string& broker, const std::string& env) {
+    auto reply = auth::logout({broker, env}, in.fd(), prompts, &store);
+    replies.push_back(json::serialize(reply.body_));
+    return reply;
+  };
 
   MemoryStore store;
   REQUIRE(login_with(store, "kis", "demo", kis_document()).exit_ == Exit::OK);
   REQUIRE(login_with(store, "kis", "real", kis_document()).exit_ == Exit::OK);
-  REQUIRE(
-    login_with(store, "kiwoom", "demo", R"({"appkey":")" + KEY + R"(","secretkey":")" + SECRET + R"("})").exit_ ==
-    Exit::OK
-  );
+  REQUIRE(login_with(store, "kiwoom", "demo", kiwoom).exit_ == Exit::OK);
   for (const auto& identity : {kis_demo, kis_real, kis_real_other, kiwoom_demo}) {
     publish(identity);
   }
-  std::ostringstream prompts;
-  const Input in;
 
   // Logout: the demo login's token goes, the real login's (same key, other environment) stays.
-  auto reply = auth::logout({std::string("kis"), std::string("demo")}, in.fd(), prompts, &store);
-  replies.push_back(json::serialize(reply.body_));
+  auto reply = logout(store, "kis", "demo");
   REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(warning(reply).empty());
   CHECK(!saved(kis_demo));
   CHECK(saved(kis_real));
   CHECK(saved(kiwoom_demo));
 
   // A replacing login: the old key's token goes, the new key's stays.
-  reply = login_with(
-    store, "kis", "real",
-    R"({"app_key":")" + other_key + R"(","app_secret":")" + SECRET + R"(","account_number":"12345678","demo":false})",
-    true
-  );
+  const auto other_real =
+    R"({"app_key":")" + other_key + R"(","app_secret":")" + SECRET + R"(","account_number":"12345678","demo":false})";
+  reply = login_with(store, "kis", "real", other_real, true);
   replies.push_back(json::serialize(reply.body_));
   REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(warning(reply).empty());
   CHECK(!saved(kis_real));
   CHECK(saved(kis_real_other));
-  CHECK(saved(kiwoom_demo));
 
-  // A folder that is not private: nothing changed, the reason given, chmod named.
+  // A folder that is not private: the login goes all the same, and the reply says the token may remain and how to fix.
   std::filesystem::permissions(folder, std::filesystem::perms::owner_all | std::filesystem::perms::others_read);
-  const auto puts = store.puts_;
-  reply = auth::logout({std::string("kiwoom"), std::string("demo")}, in.fd(), prompts, &store);
-  replies.push_back(json::serialize(reply.body_));
-  CHECK(reply.exit_ == Exit::FAILED);
-  CHECK(code(reply) == "file.unwritable");
-  const auto& error = reply.body_.at("error").as_object();
-  CHECK(std::string(error.at("message").as_string()).find("not private") != std::string::npos);
-  CHECK(std::string(error.at("next").as_string()).find("chmod 700") != std::string::npos);
-  CHECK(std::string(error.at("next").as_string()).find("cmdatl auth logout again") != std::string::npos);
-  CHECK(store.items_.count("kiwoom/demo") == 1);
+  reply = logout(store, "kiwoom", "demo");
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(store.items_.count("kiwoom/demo") == 0);
+  CHECK(
+    warning(reply).find("may still be usable until it expires (token store: the folder is not private") !=
+    std::string::npos
+  );
+  CHECK(warning(reply).find(folder.string()) != std::string::npos);
+  CHECK(warning(reply).find("chmod 700") != std::string::npos);
   reply = login_with(store, "kis", "real", kis_document(R"(,"demo":false)"), true);
   replies.push_back(json::serialize(reply.body_));
-  CHECK(code(reply) == "file.unwritable");
-  CHECK(store.puts_ == puts);
-  CHECK(store.items_.at("kis/real").find(other_key) != std::string::npos);
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(store.items_.at("kis/real").find(other_key) == std::string::npos);
+  CHECK(warning(reply).find("chmod 700") != std::string::npos);
   std::filesystem::permissions(folder, std::filesystem::perms::owner_all);
   CHECK(saved(kiwoom_demo));
   CHECK(saved(kis_real_other));
 
-  // A token file that cannot be removed for another reason: reported, and no chmod named.
+  // A token file that cannot be removed for another reason: the login goes, the warning names no chmod.
   {
     const auto held = tokens.lock(kiwoom_demo);
     REQUIRE(held);
     REQUIRE(!tokens.remove(kiwoom_demo));
   }
   std::filesystem::create_directory(folder / (kiwoom_demo + ".token"));
-  reply = auth::logout({std::string("kiwoom"), std::string("demo")}, in.fd(), prompts, &store);
-  replies.push_back(json::serialize(reply.body_));
-  CHECK(code(reply) == "file.unwritable");
-  CHECK(reply.body_.at("error").as_object().at("next").as_string().find("chmod") == std::string::npos);
-  CHECK(store.items_.count("kiwoom/demo") == 1);
+  REQUIRE(login_with(store, "kiwoom", "demo", kiwoom).exit_ == Exit::OK);
+  reply = logout(store, "kiwoom", "demo");
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(warning(reply).find("could not be removed") != std::string::npos);
+  CHECK(warning(reply).find("chmod") == std::string::npos);
   std::filesystem::remove_all(folder / (kiwoom_demo + ".token"));
 
-  // A login no run could read has no token to find; a broker folder's has none of the library's.
-  store.items_["kiwoom/demo"] = "not a login";
-  reply = auth::logout({std::string("kiwoom"), std::string("demo")}, in.fd(), prompts, &store);
-  CHECK(reply.exit_ == Exit::OK);
+  // The store will not give the login back but deletes it: the login goes, and the token may remain.
+  publish(kiwoom_demo);
+  REQUIRE(login_with(store, "kiwoom", "demo", kiwoom).exit_ == Exit::OK);
+  store.fail_get_ = auth::StoreStatus::LOCKED;
+  reply = logout(store, "kiwoom", "demo");
+  store.fail_get_ = auth::StoreStatus::OK;
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(store.items_.count("kiwoom/demo") == 0);
+  CHECK(warning(reply).find("the stored login could not be read") != std::string::npos);
+  CHECK(saved(kiwoom_demo));
 
-  // No token folder: nothing to remove, and nothing is created.
+  // A delete that fails answers as it always did.
+  REQUIRE(login_with(store, "kiwoom", "demo", kiwoom).exit_ == Exit::OK);
+  store.fail_remove_ = auth::StoreStatus::UNAVAILABLE;
+  reply = logout(store, "kiwoom", "demo");
+  store.fail_remove_ = auth::StoreStatus::OK;
+  CHECK(reply.exit_ == Exit::FAILED);
+  CHECK(code(reply) == "auth.no_store");
+  CHECK(!reply.body_.contains("token_warning"));
+  CHECK(store.items_.count("kiwoom/demo") == 1);
+
+  // A login the library's loader refuses, its key still a valid one: logout and replacement go, and say the token
+  // of that key may remain.
+  const auto refused =
+    R"({"app_key":")" + KEY + R"(","app_secret":")" + SECRET + R"(","account_number":"1","demo":true})";
+  publish(kis_demo);
+  store.items_["kis/demo"] = refused;
+  reply = logout(store, "kis", "demo");
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(store.items_.count("kis/demo") == 0);
+  CHECK(warning(reply).find("no key could be read from the stored login") != std::string::npos);
+  CHECK(warning(reply).find("account") == std::string::npos);
+  CHECK(saved(kis_demo));
+  store.items_["kis/demo"] = refused;
+  reply = login_with(store, "kis", "demo", kis_document(), true);
+  replies.push_back(json::serialize(reply.body_));
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(warning(reply).find("no key could be read from the stored login") != std::string::npos);
+  CHECK(saved(kis_demo));
+
+  // No token folder: nothing to remove, nothing created, no warning.
   {
     const ScopedVariable none("XDG_CACHE_HOME", (dir.path() / "none").string());
-    reply = auth::logout({std::string("kis"), std::string("real")}, in.fd(), prompts, &store);
+    reply = logout(store, "kis", "real");
     CHECK(reply.exit_ == Exit::OK);
+    CHECK(!reply.body_.contains("token_warning"));
     CHECK(!std::filesystem::exists(dir.path() / "none"));
   }
   CHECK(saved(kis_real_other));
@@ -545,6 +587,7 @@ TEST_CASE("auth logout and a replacing login remove the old login's saved token 
     INFO(text);
     CHECK(text.find("fake-token") == std::string::npos);
     CHECK(text.find(KEY) == std::string::npos);
+    CHECK(text.find(SECRET) == std::string::npos);
   }
 }
 

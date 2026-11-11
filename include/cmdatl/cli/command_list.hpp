@@ -154,6 +154,7 @@ inline std::vector<Command> command_list() {
     .returns("store", "keychain")
     .returns("checked", "false: the broker has not seen the login")
     .returns("replaced", "whether a stored login was replaced")
+    .returns("token_warning", "present when the old login's saved access token may remain, usable until it expires")
     .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
     .error("usage.bad_value")
     .error("usage.missing_argument")
@@ -165,7 +166,6 @@ inline std::vector<Command> command_list() {
     .error("auth.no_answer")
     .error("adapter.invalid")
     .error("adapter.unsafe")
-    .error("file.unwritable")
     .error("interrupted")
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return auth::login_command(invocation, output);
@@ -194,6 +194,7 @@ inline std::vector<Command> command_list() {
     .option("broker", "NAME", "the login's broker")
     .option("env", "ENV", "demo or real")
     .returns("removed", "the login removed, such as kis/demo")
+    .returns("token_warning", "present when the old login's saved access token may remain, usable until it expires")
     .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
     .error("usage.bad_value")
     .error("usage.missing_argument")
@@ -201,7 +202,6 @@ inline std::vector<Command> command_list() {
     .error("auth.store_locked")
     .error("auth.not_found")
     .error("auth.no_answer")
-    .error("file.unwritable")
     .error("interrupted")
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return auth::logout_command(invocation, output);
