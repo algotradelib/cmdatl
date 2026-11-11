@@ -19,6 +19,6 @@ cmdatl auth logout --broker kis --env demo
 - A run saves each key's access token in `$XDG_CACHE_HOME/cmdatl/tokens/`, else `~/.cache/cmdatl/tokens/`: one file per broker, environment and key, and every run on that key uses it until the token expires.
 - A token is a bearer credential: whoever can read its file can use the account until the token expires, a day at most on KIS.
   The folder and its files are yours alone (modes 700 and 600), and a run refuses them when anyone else has any permission on them.
-- `auth logout` removes the login's saved token before the login, and `auth login` replacing a login removes the old login's token first.
-  When the token cannot be removed, nothing changes, and the error says why.
+- `auth logout` removes the login's saved token when it can, then the login; `auth login` replacing a login removes the old login's token first in the same way.
+  When the token cannot be removed (the login cannot be read, or the folder refuses), the login is removed or replaced all the same, and the reply's `token_warning` says the token may remain usable until it expires, and where the folder is.
 - `auth logout` does not stop a run already going: that run keeps its token, and may save a new one when it renews it.
