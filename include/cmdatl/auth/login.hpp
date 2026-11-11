@@ -2,6 +2,7 @@
 
 #include "../core/reply.hpp"
 #include "../core/table.hpp"
+#include "../system/files.hpp"
 #include "../system/process.hpp"
 #include "../system/terminal.hpp"
 #include "./brokers.hpp"
@@ -9,13 +10,19 @@
 #include "./store.hpp"
 #include "./user_brokers.hpp"
 
+#include <algotradelib/src/network/file_token_store.hpp>
+
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
+#include <exception>
 #include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
 #include <vector>
+
+#include <sys/stat.h>
 
 namespace cmdatl {
 namespace auth {
@@ -186,6 +193,50 @@ inline Reply no_store_reply() {
 }
 
 /**
+ * @brief Removes a stored login's saved access token through the library's store, before the login is removed or
+ *   replaced: the token's identity is read from the login. A broker folder's login has none, nor has a login the
+ *   library's loader refuses, since no run could use it.
+ * @param broker The login's broker.
+ * @param name The login's name.
+ * @param store The credential store.
+ * @param then What the operator does once the token folder is fixed.
+ * @return The refusal (nothing changed), or none.
+ */
+inline std::optional<Reply> remove_token(
+  const Broker& broker, const std::string& name, CredentialStore& store, const std::string& then
+) {
+  const auto folder = token_folder();
+  struct stat info{};
+  if (broker.read_ == nullptr || !folder || (::lstat(folder->c_str(), &info) != 0 && errno == ENOENT)) {
+    return std::nullopt;
+  }
+  const auto found = store.get(name);
+  if (found.status_ == StoreStatus::NOT_FOUND) {
+    return std::nullopt;
+  }
+  if (found.status_ != StoreStatus::OK) {
+    return store_failure(store.kind(), found.status_, found.detail_);
+  }
+  std::string identity;
+  try {
+    identity = broker.read_(found.value_, "stored login " + name);
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+  algotradelib::network::FileTokenStore tokens(*folder);
+  const auto held = tokens.lock(identity);
+  const auto failed = held ? tokens.remove(identity) : std::optional<algotradelib::BrokerError>(held.error());
+  if (failed) {
+    return error_reply(
+      Exit::FAILED, "file.unwritable",
+      "the saved access token of " + name + " could not be removed (" + failed->message_ + "); nothing changed",
+      token_store_next(failed->message_, then)
+    );
+  }
+  return std::nullopt;
+}
+
+/**
  * @brief The reply after SIGINT, SIGTERM or SIGHUP.
  * @return The reply.
  */
@@ -237,8 +288,8 @@ inline std::string brokers_hint() {
 
 /**
  * @brief `auth login`: asks for what was not given (on a terminal), checks the document locally with the library's
- *   loaders (a broker folder's is stored unchecked: its adapter reads it at the run), and stores it. Sends nothing to
- *   a broker.
+ *   loaders (a broker folder's is stored unchecked: its adapter reads it at the run), and stores it; a login it
+ *   replaces loses its saved access token first. Sends nothing to a broker.
  * @param request What was given.
  * @param in Standard input.
  * @param prompts Where questions go (stderr).
@@ -414,6 +465,11 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
   if (interrupted()) {
     return interrupted_auth();
   }
+  if (exists) {
+    if (auto refused = remove_token(*broker, name, *store, "runs cmdatl auth login again")) {
+      return std::move(*refused);
+    }
+  }
   const auto stored = store->put(name, text);
   if (stored.status_ != StoreStatus::OK) {
     return store_failure(store->kind(), stored.status_, stored.detail_, true);
@@ -550,7 +606,8 @@ inline Reply status(const LoginFilter& filter, CredentialStore* store) {
 }
 
 /**
- * @brief `auth logout`: removes one stored login; on a terminal, asks which when several match.
+ * @brief `auth logout`: removes one stored login, its saved access token first; on a terminal, asks which when several
+ *   match.
  * @param filter Which login.
  * @param in Standard input.
  * @param prompts Where questions go (stderr).
@@ -601,6 +658,11 @@ inline Reply logout(const LoginFilter& filter, int in, std::ostream& prompts, Cr
   }
   if (interrupted()) {
     return interrupted_auth();
+  }
+  if (const auto* broker = find_broker(name.substr(0, name.find('/')))) {
+    if (auto refused = remove_token(*broker, name, *store, "runs cmdatl auth logout again")) {
+      return std::move(*refused);
+    }
   }
   const auto removed = store->remove(name);
   if (removed.status_ == StoreStatus::NOT_FOUND) {

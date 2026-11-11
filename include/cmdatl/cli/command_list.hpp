@@ -165,6 +165,7 @@ inline std::vector<Command> command_list() {
     .error("auth.no_answer")
     .error("adapter.invalid")
     .error("adapter.unsafe")
+    .error("file.unwritable")
     .error("interrupted")
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return auth::login_command(invocation, output);
@@ -200,6 +201,7 @@ inline std::vector<Command> command_list() {
     .error("auth.store_locked")
     .error("auth.not_found")
     .error("auth.no_answer")
+    .error("file.unwritable")
     .error("interrupted")
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return auth::logout_command(invocation, output);

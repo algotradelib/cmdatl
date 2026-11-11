@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "paper-support.hpp"
 #include "support.hpp"
 
 #include <algorithm>
@@ -309,6 +310,8 @@ TEST_CASE("auth login without a terminal never asks: each missing value is a usa
 }
 
 TEST_CASE("auth login replaces a stored login only with --force") {
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "absent").string());
   MemoryStore store;
   REQUIRE(login_with(store, "kis", "demo", kis_document()).exit_ == Exit::OK);
   const auto before = store.items_.at("kis/demo");
@@ -412,6 +415,8 @@ TEST_CASE("auth status shows the stored logins masked, and which variables are s
 }
 
 TEST_CASE("auth logout removes one login, and asks which only on a terminal") {
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "absent").string());
   MemoryStore store;
   REQUIRE(login_with(store, "kis", "demo", kis_document()).exit_ == Exit::OK);
   REQUIRE(login_with(store, "kis", "real", kis_document()).exit_ == Exit::OK);
@@ -426,6 +431,121 @@ TEST_CASE("auth logout removes one login, and asks which only on a terminal") {
   CHECK(code(auth::logout({}, in.fd(), prompts, nullptr)) == "auth.no_store");
   CHECK(code(auth::logout({std::string("kis"), std::string("x")}, in.fd(), prompts, &store)) == "usage.bad_value");
   CHECK(prompts.str().empty());
+}
+
+TEST_CASE("auth logout and a replacing login remove the old login's saved token, and only it") {
+  namespace network = algotradelib::network;
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+  const auto folder = dir.path() / "cache" / "cmdatl" / "tokens";
+  std::filesystem::create_directories(folder);
+  std::filesystem::permissions(folder, std::filesystem::perms::owner_all);
+  network::FileTokenStore tokens(folder.string());
+  const auto publish = [&tokens](const std::string& identity) {
+    const auto held = tokens.lock(identity);
+    REQUIRE(held);
+    REQUIRE(
+      !tokens.publish(identity, {"fake-token-" + identity, std::chrono::system_clock::now() + std::chrono::hours(1)})
+    );
+  };
+  const auto saved = [&tokens](const std::string& identity) {
+    const auto loaded = tokens.load(identity);
+    REQUIRE(loaded);
+    return loaded.value().has_value();
+  };
+  const std::string other_key = "KEY-OTHER-55555";
+  const auto kis_demo = network::token_identity("kis", "demo", KEY);
+  const auto kis_real = network::token_identity("kis", "real", KEY);
+  const auto kis_real_other = network::token_identity("kis", "real", other_key);
+  const auto kiwoom_demo = network::token_identity("kiwoom", "demo", KEY);
+  std::vector<std::string> replies;
+
+  MemoryStore store;
+  REQUIRE(login_with(store, "kis", "demo", kis_document()).exit_ == Exit::OK);
+  REQUIRE(login_with(store, "kis", "real", kis_document()).exit_ == Exit::OK);
+  REQUIRE(
+    login_with(store, "kiwoom", "demo", R"({"appkey":")" + KEY + R"(","secretkey":")" + SECRET + R"("})").exit_ ==
+    Exit::OK
+  );
+  for (const auto& identity : {kis_demo, kis_real, kis_real_other, kiwoom_demo}) {
+    publish(identity);
+  }
+  std::ostringstream prompts;
+  const Input in;
+
+  // Logout: the demo login's token goes, the real login's (same key, other environment) stays.
+  auto reply = auth::logout({std::string("kis"), std::string("demo")}, in.fd(), prompts, &store);
+  replies.push_back(json::serialize(reply.body_));
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(!saved(kis_demo));
+  CHECK(saved(kis_real));
+  CHECK(saved(kiwoom_demo));
+
+  // A replacing login: the old key's token goes, the new key's stays.
+  reply = login_with(
+    store, "kis", "real",
+    R"({"app_key":")" + other_key + R"(","app_secret":")" + SECRET + R"(","account_number":"12345678","demo":false})",
+    true
+  );
+  replies.push_back(json::serialize(reply.body_));
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(!saved(kis_real));
+  CHECK(saved(kis_real_other));
+  CHECK(saved(kiwoom_demo));
+
+  // A folder that is not private: nothing changed, the reason given, chmod named.
+  std::filesystem::permissions(folder, std::filesystem::perms::owner_all | std::filesystem::perms::others_read);
+  const auto puts = store.puts_;
+  reply = auth::logout({std::string("kiwoom"), std::string("demo")}, in.fd(), prompts, &store);
+  replies.push_back(json::serialize(reply.body_));
+  CHECK(reply.exit_ == Exit::FAILED);
+  CHECK(code(reply) == "file.unwritable");
+  const auto& error = reply.body_.at("error").as_object();
+  CHECK(std::string(error.at("message").as_string()).find("not private") != std::string::npos);
+  CHECK(std::string(error.at("next").as_string()).find("chmod 700") != std::string::npos);
+  CHECK(std::string(error.at("next").as_string()).find("cmdatl auth logout again") != std::string::npos);
+  CHECK(store.items_.count("kiwoom/demo") == 1);
+  reply = login_with(store, "kis", "real", kis_document(R"(,"demo":false)"), true);
+  replies.push_back(json::serialize(reply.body_));
+  CHECK(code(reply) == "file.unwritable");
+  CHECK(store.puts_ == puts);
+  CHECK(store.items_.at("kis/real").find(other_key) != std::string::npos);
+  std::filesystem::permissions(folder, std::filesystem::perms::owner_all);
+  CHECK(saved(kiwoom_demo));
+  CHECK(saved(kis_real_other));
+
+  // A token file that cannot be removed for another reason: reported, and no chmod named.
+  {
+    const auto held = tokens.lock(kiwoom_demo);
+    REQUIRE(held);
+    REQUIRE(!tokens.remove(kiwoom_demo));
+  }
+  std::filesystem::create_directory(folder / (kiwoom_demo + ".token"));
+  reply = auth::logout({std::string("kiwoom"), std::string("demo")}, in.fd(), prompts, &store);
+  replies.push_back(json::serialize(reply.body_));
+  CHECK(code(reply) == "file.unwritable");
+  CHECK(reply.body_.at("error").as_object().at("next").as_string().find("chmod") == std::string::npos);
+  CHECK(store.items_.count("kiwoom/demo") == 1);
+  std::filesystem::remove_all(folder / (kiwoom_demo + ".token"));
+
+  // A login no run could read has no token to find; a broker folder's has none of the library's.
+  store.items_["kiwoom/demo"] = "not a login";
+  reply = auth::logout({std::string("kiwoom"), std::string("demo")}, in.fd(), prompts, &store);
+  CHECK(reply.exit_ == Exit::OK);
+
+  // No token folder: nothing to remove, and nothing is created.
+  {
+    const ScopedVariable none("XDG_CACHE_HOME", (dir.path() / "none").string());
+    reply = auth::logout({std::string("kis"), std::string("real")}, in.fd(), prompts, &store);
+    CHECK(reply.exit_ == Exit::OK);
+    CHECK(!std::filesystem::exists(dir.path() / "none"));
+  }
+  CHECK(saved(kis_real_other));
+  for (const auto& text : replies) {
+    INFO(text);
+    CHECK(text.find("fake-token") == std::string::npos);
+    CHECK(text.find(KEY) == std::string::npos);
+  }
 }
 
 TEST_CASE("the auth commands are in the table, and their replies parse") {
@@ -458,6 +578,8 @@ public:
     REQUIRE(pid_ >= 0);
     if (pid_ == 0) {
       cmdatl::handle_signals();
+      // No token folder: a replaced or removed login has no saved token to remove.
+      ::setenv("XDG_CACHE_HOME", (dir / "absent").c_str(), 1);
       termios before{};
       ::tcgetattr(0, &before);
       FileStore store(dir);

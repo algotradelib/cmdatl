@@ -43,9 +43,10 @@ struct Broker {
   /**
    * @brief Reads a canonical document with the library's loaders, as a run will; null for a broker folder, whose
    *   document is stored unchecked and read by its adapter at the run.
+   * @return The library's identity of the login's key, which names its saved access token.
    * @throws std::runtime_error with the library's message (the field, never its value).
    */
-  void (*read_)(const std::string& text, const std::string& origin){nullptr};
+  std::string (*read_)(const std::string& text, const std::string& origin){nullptr};
 };
 
 /**
@@ -64,6 +65,7 @@ inline const std::vector<Broker>& brokers() {
         config.from_json_text(text, origin);
         algotradelib::kis::KisAccount account;
         account.from_json_text(text, origin);
+        return config.token_identity();
       }},
     {"kiwoom", "Kiwoom Securities", true,
       {{"appkey", "App key: ", false, std::nullopt, false}, {"secretkey", "Secret key: ", true, std::nullopt, false}},
@@ -71,6 +73,7 @@ inline const std::vector<Broker>& brokers() {
       [](const std::string& text, const std::string& origin) {
         algotradelib::kiwoom::KiwoomConfig config;
         config.from_json_text(text, origin);
+        return config.token_identity();
       }},
     {"toss", "Toss Securities", false,
       {{"client_id", "Client id: ", false, std::nullopt, false},
@@ -78,6 +81,7 @@ inline const std::vector<Broker>& brokers() {
       {"TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET"}, [](const std::string& text, const std::string& origin) {
         algotradelib::tossinvest::TossConfig config;
         config.from_json_text(text, origin);
+        return config.token_identity();
       }},
   };
   return list;
