@@ -944,6 +944,37 @@ TEST_CASE("with today's allowance spent, a run inheriting a working order withdr
   CHECK(events_of(again, "start").empty());
 }
 
+TEST_CASE("with today's allowance spent, a target left unmet once an inherited order settles is refused, not placed") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config(1));
+  fixture.arm();
+  // Today's one order was the earlier run's, cancelled in the broker's app; the program wants one share.
+  script_target(1);
+  const auto ran = owed_run(
+    fixture,
+    [](Dead& dead) {
+      dead.place("005930", atl::OrderSide::BUY, 1, RESTS);
+      dead.advance(std::chrono::minutes(1));
+      REQUIRE(dead.market().cancel("1"));
+      dead.advance(std::chrono::minutes(4));
+    },
+    true, std::chrono::minutes(60)
+  );
+  CHECK(ran.exit_ == 0);
+  REQUIRE(!ran.events_.empty());
+  CHECK(ran.events_.front().at("orders_left_today").as_int64() == 0);
+  CHECK(owed_ids(ran.events_.front().at("owed_at_start")) == std::vector<std::string>{"dead-1"});
+  // Settled from the history while the run trades, then the target is tried and the zero allowance refuses it.
+  CHECK(has(outcomes_of(fixture, "dead-1"), "confirmed"));
+  CHECK(events_of(ran, "placed").empty());
+  CHECK(ran.reply_.at("placed").as_int64() == 0);
+  CHECK(ran.reply_.at("refused").as_object().at("guard").as_int64() >= 1);
+  CHECK(ran.reply_.at("outcome").as_string() == "refused_orders");
+  CHECK(ran.orders_after_.size() == 1);
+  CHECK(ran.held_after_.find("005930") == ran.held_after_.end());
+  CHECK(ran.reply_.at("owed_at_end").as_array().empty());
+}
+
 TEST_CASE("a run refuses an earlier run's owed order on another symbol, and sends nothing, again after a restart") {
   PaperFixture fixture;
   fixture.write_config(kis_config());
