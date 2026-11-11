@@ -5,6 +5,13 @@
 [![codecov](https://codecov.io/gh/algotradelib/cmdatl/graph/badge.svg)](https://codecov.io/gh/algotradelib/cmdatl)
 <!-- badges: end -->
 
+<!-- multilingual: start -->
+<p align="left">
+  <b>English</b> &middot;
+  <a href="README.ko-kr.md">한국어</a>
+</p>
+<!-- multilingual: end -->
+
 algotradelib from the command line.
 With [algotradelib](https://github.com/algotradelib/algotradelib) alone you write your own C++ for a backtest or a trading loop; with cmdatl you write the strategy in [atls](https://github.com/algotradelib/atlc), describe the run in a TOML file, and backtest it or run it from the command line.
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.

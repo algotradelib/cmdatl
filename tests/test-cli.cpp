@@ -414,7 +414,7 @@ TEST_CASE("the format follows the terminal unless asked, and text errors keep en
 TEST_CASE("every cmdatl invocation in the docs and skills parses, and every inline reference exists") {
   const cmdatl::Table table(cmdatl::command_list());
   const std::filesystem::path root(CMDATL_SOURCE_DIR);
-  std::vector<std::filesystem::path> files{root / "README.md"};
+  std::vector<std::filesystem::path> files{root / "README.md", root / "README.ko-kr.md"};
   for (const auto* dir : {"docs", "skills"}) {
     if (std::filesystem::is_directory(root / dir)) {
       for (const auto& entry : std::filesystem::recursive_directory_iterator(root / dir)) {
