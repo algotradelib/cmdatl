@@ -25,6 +25,7 @@
 #include "../orders/rails.hpp"
 #include "../paper/time.hpp"
 #include "../replay/adapter_text.hpp"
+#include "../system/files.hpp"
 #include "../system/lock.hpp"
 #include "../system/process.hpp"
 #include "./clock.hpp"
@@ -33,6 +34,7 @@
 #include "./session.hpp"
 
 #include <algotradelib/broker>
+#include <algotradelib/network>
 #include <algotradelib/runner>
 #include <algotradelib/strategy>
 
@@ -46,6 +48,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -68,6 +71,31 @@ namespace json = boost::json;
 inline constexpr const char* ACCOUNT_UNKNOWN_NEXT =
   "read the account's order list and holdings in the broker's app before trading it again; the account's journal "
   "keeps what this run could not confirm";
+
+/**
+ * @brief The store a run's broker clients share their access tokens through: the library's file store on
+ *   `token_folder()`, its missing parents made `0700`. Without a cache folder it names none, and refuses at the first
+ *   read, before anything is sent.
+ * @return The store.
+ */
+inline std::shared_ptr<atl::network::TokenStore> run_token_store() {
+  const auto folder = token_folder().value_or(std::string());
+  (void)make_private_dirs(folder);
+  return std::make_shared<atl::network::FileTokenStore>(folder);
+}
+
+/**
+ * @brief The next step after a start read failed: the token store's when it refused, else `otherwise`.
+ * @param error The read's error.
+ * @param otherwise The next step for any other error.
+ * @return The text.
+ */
+inline std::string read_failure_next(const atl::BrokerError& error, std::string otherwise) {
+  if (error.broker_code_ != "token_store") {
+    return otherwise;
+  }
+  return "nothing was sent; " + token_store_next(error.message_, "starts the run again");
+}
 
 /**
  * @brief Whether a login is the operator file's account: the account number and product code as `12345678-01`, and the
@@ -673,7 +701,7 @@ int run_account(
         return run_error(
           base, Exit::FAILED, "run.account_unreadable",
           "the account's working orders could not be read: " + orders.error().message_,
-          start_read_next(read_orders.refused_, "")
+          start_read_next(read_orders.refused_, read_failure_next(orders.error(), ""))
         );
       }
       const auto owners =
@@ -700,7 +728,8 @@ int run_account(
       if (!held) {
         return run_error(
           base, Exit::FAILED, "run.account_unreadable",
-          "the account's holdings could not be read: " + held.error().message_, start_read_next(read_held.refused_, "")
+          "the account's holdings could not be read: " + held.error().message_,
+          start_read_next(read_held.refused_, read_failure_next(held.error(), ""))
         );
       }
       auto net = net_holdings<typename Inner::BrokerTag>(std::move(held.value().positions_), run.ids_);
@@ -728,7 +757,9 @@ int run_account(
         return run_error(
           base, Exit::FAILED, "run.reference_unreadable",
           "the trading calendar could not be read: " + calendar.error().message_,
-          start_read_next(read_calendar.refused_, "nothing was sent; start the run again")
+          start_read_next(
+            read_calendar.refused_, read_failure_next(calendar.error(), "nothing was sent; start the run again")
+          )
         );
       }
       const auto today = atl::strategy::SessionWindow::krx().local_date(now());

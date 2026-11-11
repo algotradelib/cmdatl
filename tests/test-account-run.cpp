@@ -1537,6 +1537,100 @@ TEST_CASE("an account run waits out KIS's token minute once per session then sta
   }
 }
 
+TEST_CASE("the token folder is the cache's, made private, and a run's store refuses one that is not") {
+  ScratchDir dir;
+  {
+    const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+    const auto folder = dir.path() / "cache" / "cmdatl" / "tokens";
+    CHECK(cmdatl::token_folder() == folder.string());
+    const auto store = cmdatl::driver::run_token_store();
+    for (const auto& made : {dir.path() / "cache", dir.path() / "cache" / "cmdatl", folder}) {
+      INFO(made);
+      REQUIRE(std::filesystem::is_directory(made));
+      CHECK(
+        (std::filesystem::status(made).permissions() & std::filesystem::perms::all) == std::filesystem::perms::owner_all
+      );
+    }
+    const auto id = atl::network::token_identity("kis", "demo", "KEY");
+    {
+      const auto held = store->lock(id);
+      REQUIRE(held);
+      REQUIRE(!store->publish(id, {"fake-token", std::chrono::system_clock::now() + std::chrono::hours(1)}));
+    }
+    const auto token_file = folder / (id + ".token");
+    CHECK(
+      (std::filesystem::status(token_file).permissions() & std::filesystem::perms::all) ==
+      (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write)
+    );
+    std::filesystem::permissions(folder, std::filesystem::perms::owner_all | std::filesystem::perms::group_read);
+    const auto refused = cmdatl::driver::run_token_store()->lock(id);
+    REQUIRE(!refused);
+    CHECK(refused.error().broker_code_ == "token_store");
+    const auto next = cmdatl::driver::read_failure_next(refused.error(), "otherwise");
+    CHECK(next.find("chmod 700") != std::string::npos);
+    CHECK(next.find(folder.string()) != std::string::npos);
+    CHECK(next.find("fake-token") == std::string::npos);
+    std::filesystem::permissions(folder, std::filesystem::perms::owner_all);
+  }
+  {
+    const ScopedVariable cache("XDG_CACHE_HOME", "relative");
+    const ScopedVariable home("HOME", dir.path().string());
+    CHECK(cmdatl::token_folder() == (dir.path() / ".cache" / "cmdatl" / "tokens").string());
+  }
+  {
+    const ScopedVariable cache("XDG_CACHE_HOME", std::nullopt);
+    const ScopedVariable home("HOME", std::nullopt);
+    CHECK(!cmdatl::token_folder());
+    // No folder named: the store refuses at its first use, before a client could request a token.
+    const auto refused = cmdatl::driver::run_token_store()->lock(atl::network::token_identity("kis", "demo", "KEY"));
+    REQUIRE(!refused);
+    CHECK(refused.error().broker_code_ == "token_store");
+  }
+  atl::BrokerError other = token_refusal();
+  CHECK(cmdatl::driver::read_failure_next(other, "otherwise") == "otherwise");
+  const auto waited =
+    cmdatl::driver::read_failure_next(atl::network::token_store_error("token store: lock not obtained in time"), "");
+  CHECK(waited.find("chmod") == std::string::npos);
+  CHECK(waited.find("nothing was sent") == 0);
+}
+
+TEST_CASE("an account run that the token store refuses at a start read names the reason, and chmod only for privacy") {
+  const std::vector<std::pair<atl::mock::Call, std::string>> reads{
+    {atl::mock::Call::WORKING_ORDERS, "run.account_unreadable"},
+    {atl::mock::Call::HOLDINGS, "run.account_unreadable"},
+    {atl::mock::Call::CALENDAR, "run.reference_unreadable"},
+  };
+  const std::vector<std::pair<bool, std::string>> reasons{
+    {true, "token store: the folder is not private (owner or permissions)"},
+    {false, "token store: lock not obtained in time"},
+  };
+  for (const auto& [call, expected] : reads) {
+    for (const auto& [privacy, reason] : reasons) {
+      INFO(expected << " " << reason);
+      PaperFixture fixture;
+      fixture.write_config(kis_config());
+      fixture.arm();
+      one_decision();
+      const auto ran = run_account_child(
+        fixture,
+        [call = call, reason = reason](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+          client.fail_next(call, atl::network::token_store_error(reason));
+        },
+        false, sleeps_before_start(fixture)
+      );
+      CHECK(ran.exit_ == 1);
+      CHECK(code_of(ran) == expected);
+      const auto message = std::string(ran.reply_.at("error").as_object().at("message").as_string());
+      CHECK(message.find(reason) != std::string::npos);
+      const auto next = next_of_reply(ran);
+      CHECK(next.find("nothing was sent") == 0);
+      CHECK((next.find("chmod") != std::string::npos) == privacy);
+      CHECK(events_of(ran, "start").empty());
+      CHECK(slept_before_start(fixture) == 0);
+    }
+  }
+}
+
 TEST_CASE("an account run reads reference data again after a rate refusal and notes the wait while it waits") {
   PaperFixture fixture;
   fixture.write_config(kis_config());

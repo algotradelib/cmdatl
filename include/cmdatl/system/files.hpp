@@ -39,6 +39,29 @@ inline std::optional<std::string> cache_folder(const char* name) {
   return std::nullopt;
 }
 
+/**
+ * @brief The folder of the broker access tokens every cmdatl process on one key shares; the library names its files.
+ * @return `cache_folder("tokens")`.
+ */
+inline std::optional<std::string> token_folder() {
+  return cache_folder("tokens");
+}
+
+/**
+ * @brief What the operator does after the token store refused: `chmod` only when the reason is that the folder or a
+ *   file in it is not private.
+ * @param reason The store's reason (the library's fixed text).
+ * @param then What follows, such as `starts the run again`.
+ * @return The text.
+ */
+inline std::string token_store_next(const std::string& reason, const std::string& then) {
+  const auto folder = token_folder().value_or("the token folder");
+  if (reason.find("not private") != std::string::npos) {
+    return "the operator makes " + folder + " private (chmod 700 on it, chmod 600 on each file in it), then " + then;
+  }
+  return "the operator checks " + folder + ", then " + then;
+}
+
 /** @brief How reading a whole file through its descriptor ended. */
 struct FileRead {
   /** @brief What happened. */

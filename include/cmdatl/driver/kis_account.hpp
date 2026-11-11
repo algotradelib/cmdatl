@@ -114,7 +114,8 @@ public:
   }
 
   /**
-   * @brief Builds the sessions and trades: both clients paced at one request a second.
+   * @brief Builds the sessions and trades: both clients paced at one request a second, their tokens shared through
+   *   `run_token_store()`.
    * @tparam Program The program.
    * @param run The run.
    * @param effective The operator file, with the login's account.
@@ -129,9 +130,11 @@ public:
     tls.set_verify_mode(ssl::verify_peer);
     atl::network::HttpClientOptions paced;
     paced.rate_limit_ = atl::network::RateLimitBudget{1, 1, 0};
+    // Every cmdatl process on a key shares its token; each client stores under its own key's identity.
+    const auto tokens = run_token_store();
     using Session = atl::BlockingSession<atl::kis::KisBlockingClient>;
     Session session(
-      std::make_shared<atl::kis::KisBlockingClient>(tls, std::move(trading_config_), paced), std::move(account_)
+      std::make_shared<atl::kis::KisBlockingClient>(tls, std::move(trading_config_), paced, tokens), std::move(account_)
     );
     const auto make_clock = [](std::function<void()> after_slice) {
       return WallClock(std::move(after_slice));
@@ -139,7 +142,8 @@ public:
     if (market_config_) {
       // No account: a session that cannot trade, so a swap by mistake places nothing.
       Session market(
-        std::make_shared<atl::kis::KisBlockingClient>(tls, std::move(*market_config_), paced), atl::kis::KisAccount{}
+        std::make_shared<atl::kis::KisBlockingClient>(tls, std::move(*market_config_), paced, tokens),
+        atl::kis::KisAccount{}
       );
       return run_account(run, effective, std::forward<Program>(strategy), session, market, make_clock);
     }
