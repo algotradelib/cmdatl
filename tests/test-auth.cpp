@@ -433,7 +433,7 @@ TEST_CASE("auth logout removes one login, and asks which only on a terminal") {
   CHECK(prompts.str().empty());
 }
 
-TEST_CASE("auth logout and a replacing login remove the old login's saved token, and only it") {
+TEST_CASE("auth logout and a replacing login remove the old login's saved token and only it") {
   namespace network = algotradelib::network;
   const ScratchDir dir;
   const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());

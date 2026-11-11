@@ -1537,7 +1537,7 @@ TEST_CASE("an account run waits out KIS's token minute once per session then sta
   }
 }
 
-TEST_CASE("the token folder is the cache's, made private, and a run's store refuses one that is not") {
+TEST_CASE("a run's token folder is under the cache and private and its store refuses one that is not") {
   ScratchDir dir;
   {
     const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
@@ -1594,7 +1594,7 @@ TEST_CASE("the token folder is the cache's, made private, and a run's store refu
   CHECK(waited.find("nothing was sent") == 0);
 }
 
-TEST_CASE("an account run that the token store refuses at a start read names the reason, and chmod only for privacy") {
+TEST_CASE("an account run refused by the token store at a start read names the reason and chmod only for privacy") {
   const std::vector<std::pair<atl::mock::Call, std::string>> reads{
     {atl::mock::Call::WORKING_ORDERS, "run.account_unreadable"},
     {atl::mock::Call::HOLDINGS, "run.account_unreadable"},
