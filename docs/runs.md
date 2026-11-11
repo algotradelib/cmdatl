@@ -63,7 +63,8 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
   When KIS refuses the run's access token because it issues one a minute, the run waits 61 seconds once for each login and reads again.
   Each wait is written to stderr when it begins, and Ctrl-C during it stops the run with nothing sent (exit 130, `interrupted`).
   When the reads still fail, the error's `next` names the wait.
-- A run keeps no token, so a command or another run started right after a run can still meet KIS's one-token-a-minute refusal.
+- Every run on a key shares its access token through a file (see [Broker logins](logins.md)), so a second start within a minute takes no token: it uses the one the first took.
+  When that file's folder cannot be used, the run refuses before anything is sent, and the error gives the reason; its `next` names `chmod` when the folder or a file in it is not private.
 - The run holds the account for its life and keeps the account's journal across runs, so the next run sees what an earlier one could not confirm and today's `daily_orders` count the earlier runs' orders.
 - A run started after one that died (a kill, a crash, a sleeping Mac) settles what the journal left owed on its own symbols before it places anything there.
   The `start` event's `owed_at_start` lists those orders (`symbol`, `side`, `quantity`, `journal_id`, `order_id`, empty while the broker has not named it, and `state`).
