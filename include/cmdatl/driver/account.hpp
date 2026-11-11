@@ -237,12 +237,10 @@ std::vector<std::string> inherited_orders(
     if (std::find(ids.begin(), ids.end(), acknowledged->instrument_) == ids.end()) {
       continue;
     }
-    const auto found = claims.find(row.order_id_);
-    if (found != claims.end()) {
-      found->second.contested_ = true;
-      continue;
-    }
-    claims[row.order_id_].acknowledged_ = acknowledged;
+    // A second placement with the same number is found below, among the lines that name it.
+    Claim claim;
+    claim.acknowledged_ = acknowledged;
+    claims.emplace(row.order_id_, claim);
   }
   // A number another placement's line names is no evidence of either.
   for (const auto& entry : replay.entries_) {
