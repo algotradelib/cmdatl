@@ -1,5 +1,5 @@
 // The order commands in process: their arguments, their checks in order, the plan book, once()'s mapping, release(),
-// reconcile's rows, the owed rows' hints, and the safety items the reviews assigned to them.
+// reconcile's rows, the owed rows' hints, and the safety rules on cancels, unjournaled orders and withdrawals.
 
 #include "./order-support.hpp"
 
@@ -759,7 +759,7 @@ TEST_CASE("H12: an order the journal does not name refuses plan and place and ca
   CHECK(reconciled.body_.at("checked").as_array()[0].as_object().at("state").as_string() == "unjournaled_order");
 }
 
-TEST_CASE("review 2's wording: a place whose plan withdraws answers withdrawal_sent and exit 0 and the plan used") {
+TEST_CASE("a place whose plan withdraws answers withdrawal_sent and exit 0 and the plan used") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto first = plan_id(fixture, "005930", "10", "75000");
