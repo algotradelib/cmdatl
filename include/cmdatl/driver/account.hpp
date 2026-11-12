@@ -23,8 +23,8 @@
 #include "../account/session.hpp"
 #include "../core/errors.hpp"
 #include "../core/reply.hpp"
+#include "../core/time.hpp"
 #include "../orders/rails.hpp"
-#include "../paper/time.hpp"
 #include "../replay/adapter_text.hpp"
 #include "../system/files.hpp"
 #include "../system/lock.hpp"
@@ -232,7 +232,7 @@ std::vector<std::string> inherited_orders(
     return !atl::decimal_less(a, b) && !atl::decimal_less(b, a);
   };
   const auto on_today = [today](std::chrono::system_clock::time_point at) {
-    return paper::in_interval(at) && paper::kst_day(at) == today;
+    return in_interval(at) && kst_day(at) == today;
   };
   // The broker numbers today's acknowledgements gave the placements still owed, each with its line.
   struct Claim {
@@ -629,7 +629,7 @@ int run_account(
     // Read once and kept: the start's checks read it, and append nothing.
     const auto journal_path = run.account_dir_ + "/journal.jsonl";
     const auto scope = config.scope();
-    const auto today = paper::kst_day(now());
+    const auto today = kst_day(now());
     const auto replay = atl::runner::read_journal_file(journal_path);
     JournalView at_start;
     std::int64_t left = config.limits_.daily_orders_;
@@ -978,7 +978,7 @@ int run_account(
       body["outcome"] = "refused_orders";
     }
     body["placed"] = placed;
-    const auto view = journal_view(inner, atl::runner::read_journal_file(journal_path), scope, paper::kst_day(now()));
+    const auto view = journal_view(inner, atl::runner::read_journal_file(journal_path), scope, kst_day(now()));
     if (exit == Exit::OK && (guard.lock_lost_ || !lock.still_at_path())) {
       exit = Exit::UNKNOWN;
       code = "unknown.lock_lost";

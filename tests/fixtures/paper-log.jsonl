@@ -1,9 +1,0 @@
-{"op":"genesis","format":1,"market":1,"fingerprint":"f38f50a7cb7784e1","start":1711350000000000000}
-{"op":"advance","to":1711411200000000000}
-{"op":"place","at":1711411200000000000,"symbol":"005930","country":"kr","route":"combined","side":"buy","type":"limit","tif":"day","session":"regular","venue":"unspecified","quantity":10,"price":"78500.5"}
-{"op":"result","of":"place","id":"1","error":""}
-{"op":"place","at":1711411200000000000,"symbol":"000660","country":"kr","route":"combined","side":"sell","type":"market","tif":"day","session":"regular","venue":"unspecified","quantity":1}
-{"op":"result","of":"place","id":"","error":"not enough sellable quantity"}
-{"op":"cancel","at":1711411200000000000,"id":"1"}
-{"op":"result","of":"cancel","id":"1","error":""}
-{"op":"advance","to":1711411500000000000}

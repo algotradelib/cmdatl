@@ -1,10 +1,10 @@
 #pragma once
 
-// The paper market's history: one strict CSV of daily bars with the columns `symbol`, `date`, `open`, `high`, `low`,
+// The mock market's history: one strict CSV of daily bars with the columns `symbol`, `date`, `open`, `high`, `low`,
 // `close` and `volume`, in any order: the columns `cmdatl strategy new` documents for bars.csv.
 // A daily bar stands for that date's 09:00-15:30 KST session.
 
-#include "./time.hpp"
+#include "../core/time.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,7 +17,6 @@
 #include <vector>
 
 namespace cmdatl {
-namespace paper {
 
 /** @brief The most rows a bars file may have. */
 inline constexpr std::size_t MAX_BAR_ROWS = 1000000;
@@ -293,5 +292,4 @@ inline std::optional<BarsProblem> parse_bars(std::string_view text, MarketData& 
   return std::nullopt;
 }
 
-} // namespace paper
 } // namespace cmdatl

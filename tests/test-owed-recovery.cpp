@@ -7,11 +7,11 @@
 #include "run-strategy.hpp"
 #include "support.hpp"
 
+#include <algotradelib/krx>
 #include <cmdatl/account/account.hpp>
 #include <cmdatl/account/operator.hpp>
 #include <cmdatl/driver/account.hpp>
 #include <cmdatl/driver/clock.hpp>
-#include <cmdatl/paper/krx_grid.hpp>
 #include <cmdatl/system/process.hpp>
 
 #include <algotradelib/live>
@@ -380,7 +380,7 @@ Ran owed_run(
       instrument.type_ = atl::SecurityType::STOCK;
       instrument.currency_ = atl::Currency::krw();
       instrument.lot_size_ = atl::Decimal64::parse("1");
-      instrument.price_rule_ = cmdatl::paper::krx_equity_rule();
+      instrument.price_rule_ = algotradelib::krx::equity_price_rule();
       instruments.push_back(instrument);
     }
     atl::mock::MarketSettings settings;
@@ -1154,7 +1154,7 @@ TEST_CASE("a working order is the journal's only by today's acknowledged number 
   const auto ids = std::vector<atl::InstrumentId>{kr("005930")};
   // 2024-03-27 00:30 UTC, 09:30 KST.
   const auto at = std::chrono::system_clock::time_point{} + std::chrono::hours(24 * 19809) + std::chrono::minutes(30);
-  const auto today = cmdatl::paper::kst_day(at);
+  const auto today = cmdatl::kst_day(at);
   const auto placement = [&](const std::string& id, atl::runner::JournalOutcome outcome, const std::string& number) {
     atl::runner::JournalEntry entry;
     entry.id_ = id;

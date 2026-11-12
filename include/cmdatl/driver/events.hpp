@@ -8,7 +8,7 @@
 
 #include "../core/errors.hpp"
 #include "../core/reply.hpp"
-#include "../paper/time.hpp"
+#include "../core/time.hpp"
 #include "../system/files.hpp"
 #include "../system/process.hpp"
 #include "../system/syscalls.hpp"
@@ -42,7 +42,7 @@ inline constexpr int EVENT_FORMAT = 1;
  * @return The text.
  */
 inline std::string at_text(std::chrono::system_clock::time_point at) {
-  return paper::kst_iso(at);
+  return kst_iso(at);
 }
 
 /**

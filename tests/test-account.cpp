@@ -25,7 +25,6 @@
 #include <unistd.h>
 
 using namespace support;
-namespace paper = cmdatl::paper;
 namespace atl = algotradelib;
 namespace runner = algotradelib::runner;
 
@@ -44,7 +43,7 @@ const std::string SCOPE = "mock:mock:paper-0001";
  * @return The entry.
  */
 runner::JournalEntry place_entry(
-  const std::string& id, runner::JournalOutcome outcome, paper::Clock::time_point at, const std::string& order_id = "",
+  const std::string& id, runner::JournalOutcome outcome, cmdatl::Clock::time_point at, const std::string& order_id = "",
   const std::string& symbol = "005930"
 ) {
   runner::JournalEntry entry;
@@ -52,7 +51,7 @@ runner::JournalEntry place_entry(
   entry.action_ = runner::JournalAction::PLACE;
   entry.outcome_ = outcome;
   entry.recorded_at_ = at;
-  entry.instrument_ = paper::kr(symbol);
+  entry.instrument_ = cmdatl::kr(symbol);
   entry.side_ = atl::OrderSide::BUY;
   entry.type_ = atl::OrderType::LIMIT;
   entry.time_in_force_ = atl::TimeInForce::DAY;
@@ -466,8 +465,8 @@ TEST_CASE("the day's count turns over at 00:00 KST, not at 00:00 UTC") {
   REQUIRE(fixture.json({"clock", "advance", "--to", "2024-03-26T00:10"}).exit_ == 0);
   CHECK(reply(fixture, {"account"}).at("orders_left_today").as_int64() == 2);
   const auto snapshot = cmdatl::load_operator_config();
-  CHECK(paper::kst_day(kst("2024-03-26T00:10")) == paper::kst_day(kst("2024-03-26T00:30")));
-  CHECK(paper::utc_day(kst("2024-03-26T00:10")) == paper::utc_day(kst("2024-03-25T23:30")));
+  CHECK(cmdatl::kst_day(kst("2024-03-26T00:10")) == cmdatl::kst_day(kst("2024-03-26T00:30")));
+  CHECK(cmdatl::utc_day(kst("2024-03-26T00:10")) == cmdatl::utc_day(kst("2024-03-25T23:30")));
   journal(fixture, {place_entry("third", runner::JournalOutcome::PENDING, kst("2024-03-26T00:05"))});
   CHECK(reply(fixture, {"account"}).at("orders_left_today").as_int64() == 1);
 }
@@ -627,15 +626,15 @@ TEST_CASE("an operator-only line at an instant outside the interval makes the co
   initialize(fixture);
   const auto good = slurp(fixture.journal());
   const auto log = slurp(fixture.log());
-  const auto micros = [](paper::Clock::time_point at) {
+  const auto micros = [](cmdatl::Clock::time_point at) {
     return std::chrono::duration_cast<std::chrono::microseconds>(at.time_since_epoch()).count();
   };
   const std::vector<std::pair<const char*, std::int64_t>> extreme{
     {"INT64_MAX", std::numeric_limits<std::int64_t>::max()},
     {"INT64_MIN", std::numeric_limits<std::int64_t>::min()},
     {"-1", -1},
-    {"just before 1990 KST", micros(paper::first_instant()) - 1},
-    {"2101 KST", micros(paper::end_instant())},
+    {"just before 1990 KST", micros(cmdatl::first_instant()) - 1},
+    {"2101 KST", micros(cmdatl::end_instant())},
   };
   for (const auto& c : extreme) {
     INFO(c.first);
@@ -662,15 +661,15 @@ TEST_CASE("an operator-only line at an instant outside the interval makes the co
     cmdatl::JournalView view;
     auto replay = runner::read_journal_file(fixture.journal().string());
     replay.entries_.clear();
-    auto salvaged = place_entry("s~damaged", runner::JournalOutcome::ACCEPTED, paper::Clock::time_point{});
+    auto salvaged = place_entry("s~damaged", runner::JournalOutcome::ACCEPTED, cmdatl::Clock::time_point{});
     salvaged.requires_operator_ = true;
     auto counted = place_entry("c1", runner::JournalOutcome::ACCEPTED, kst("2024-03-25T10:00"));
-    auto far = place_entry("x1", runner::JournalOutcome::ACCEPTED, paper::Clock::time_point::max());
+    auto far = place_entry("x1", runner::JournalOutcome::ACCEPTED, cmdatl::Clock::time_point::max());
     far.requires_operator_ = true;
     const auto opened = open_account();
     REQUIRE(opened->account_);
     auto& desk = opened->account_->desk();
-    const auto today = paper::kst_day(desk.now());
+    const auto today = cmdatl::kst_day(desk.now());
     replay.entries_ = {counted};
     const auto alone = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
     CHECK(alone.placed_today_ == 1);
@@ -1077,7 +1076,7 @@ TEST_CASE("an allocation failing anywhere in an account command leaks nothing an
   // Sixty days of bars, so an advance never runs out of data during the sweep.
   std::string bars = "symbol,date,open,high,low,close,volume\n";
   for (int day = 0; day < 60; ++day) {
-    const auto date = paper::date_text(paper::days_from_civil(2024, 3, 25) + day);
+    const auto date = cmdatl::date_text(cmdatl::days_from_civil(2024, 3, 25) + day);
     bars += "005930," + date + ",78000,79000,77500,78500,1\n";
     bars += "000660," + date + ",180000,182000,178000,181000,1\n";
   }

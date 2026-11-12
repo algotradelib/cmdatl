@@ -6,8 +6,8 @@
 // The book is a second wall behind the journal's size in the snapshot: a file that fails any check is read as an
 // empty book as a whole, so a damaged entry never becomes an authorization.
 
-#include "../paper/bars.hpp"
-#include "../paper/time.hpp"
+#include "../account/bars.hpp"
+#include "../core/time.hpp"
 #include "../system/files.hpp"
 #include "../system/lock.hpp"
 #include "../system/syscalls.hpp"
@@ -62,7 +62,7 @@ inline bool valid_target(std::string_view text) {
  * @return Whether it is.
  */
 inline bool valid_limit(std::string_view text) {
-  return paper::parse_price(text).has_value();
+  return parse_price(text).has_value();
 }
 
 /**
@@ -179,7 +179,7 @@ std::string snapshot_of(
   Session& session, const std::string& scope, const std::string& symbol, const std::string& target,
   const std::string& limit, std::optional<std::int64_t> journal_size
 ) {
-  return hex_digits(paper::fnv1a(snapshot_text(session, scope, symbol, target, limit, journal_size)), 16);
+  return hex_digits(fnv1a(snapshot_text(session, scope, symbol, target, limit, journal_size)), 16);
 }
 
 /**
@@ -267,8 +267,8 @@ public:
       plan.sim_ = sim->as_int64();
       plan.used_ = used->as_bool();
       if (
-        !paper::valid_symbol(plan.symbol_) || !valid_target(plan.target_) || !valid_limit(plan.limit_) ||
-        !valid_snapshot(plan.snapshot_) || !paper::from_nanos(plan.sim_)
+        !valid_symbol(plan.symbol_) || !valid_target(plan.target_) || !valid_limit(plan.limit_) ||
+        !valid_snapshot(plan.snapshot_) || !from_nanos(plan.sim_)
       ) {
         return std::nullopt;
       }
@@ -347,7 +347,7 @@ public:
   std::string issue(Plan plan) {
     const auto wall =
       std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    auto id = "p" + hex_digits(paper::fnv1a(plan.snapshot_ + std::to_string(wall)), 10);
+    auto id = "p" + hex_digits(fnv1a(plan.snapshot_ + std::to_string(wall)), 10);
     plans_.erase(
       std::remove_if(
         plans_.begin(), plans_.end(),
@@ -419,7 +419,7 @@ public:
     Written written;
     const auto content = text();
     const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    const auto salt = paper::fnv1a(std::to_string(stamp) + "|" + std::to_string(::getpid()) + "|" + content);
+    const auto salt = fnv1a(std::to_string(stamp) + "|" + std::to_string(::getpid()) + "|" + content);
     const auto temporary = dir_ + "/plans." + std::to_string(::getpid()) + "." + hex_digits(salt, 16) + ".tmp";
     if (!lock.still_at_path()) {
       written.lock_lost_ = true;

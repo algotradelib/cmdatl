@@ -24,14 +24,13 @@ namespace {
 const std::map<std::string, std::set<std::string>> ALLOWED{
   {"core", {}},
   {"system", {}},
-  {"paper", {}},
-  {"account", {"core", "system", "paper"}},
-  {"orders", {"core", "system", "paper", "account"}},
+  {"account", {"core", "system"}},
+  {"orders", {"core", "system", "account"}},
   {"strategy", {"core", "system", "account", "auth"}},
   {"replay", {}},
-  {"driver", {"core", "system", "paper", "account", "orders", "replay"}},
+  {"driver", {"core", "system", "account", "orders", "replay"}},
   {"auth", {"core", "system"}},
-  {"cli", {"core", "system", "paper", "account", "orders", "strategy", "auth"}},
+  {"cli", {"core", "system", "account", "orders", "strategy", "auth"}},
 };
 
 struct Directive {

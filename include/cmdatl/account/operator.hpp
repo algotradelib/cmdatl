@@ -8,10 +8,10 @@
 
 #include "../core/reply.hpp"
 #include "../core/runs.hpp"
+#include "../core/time.hpp"
 #include "../core/toml.hpp"
-#include "../paper/bars.hpp"
-#include "../paper/time.hpp"
 #include "../system/files.hpp"
+#include "./bars.hpp"
 
 #include <algorithm>
 #include <cerrno>
@@ -81,11 +81,7 @@ struct PaperSettings {
   /** @brief The first instant, as written (`YYYY-MM-DDTHH:MM`, KST). */
   std::string start_;
   /** @brief The first instant. */
-  paper::Clock::time_point start_at_{};
-  /** @brief Seconds an accepted order stays out of the order list. */
-  std::int64_t listing_lag_{0};
-  /** @brief Seconds a fill stays out of holdings. */
-  std::int64_t holdings_lag_{0};
+  Clock::time_point start_at_{};
 };
 
 /** @brief The operator's file, read and checked. */
@@ -388,7 +384,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
     if (symbol == nullptr) {
       return refuse(element.source(), "limits.symbols must hold strings, not " + type_name(element));
     }
-    if (!paper::valid_symbol(symbol->get())) {
+    if (!valid_symbol(symbol->get())) {
       return refuse(element.source(), "a symbol is 1 to 32 of letters, digits, '.', '_' or '-'");
     }
     if (std::find(l.symbols_.begin(), l.symbols_.end(), symbol->get()) != l.symbols_.end()) {
@@ -409,10 +405,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
       return refuse(entry.first.source(), "limits.position names " + symbol + ", which limits.symbols does not list");
     }
     std::int64_t cap = 0;
-    if (
-      auto bad =
-        integer_in(*position->as_table(), symbol.c_str(), "limits.position." + symbol, 0, paper::MAX_SHARES, cap)
-    ) {
+    if (auto bad = integer_in(*position->as_table(), symbol.c_str(), "limits.position." + symbol, 0, MAX_SHARES, cap)) {
       return bad;
     }
     l.position_[symbol] = cap;
@@ -543,7 +536,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (start->as_string() == nullptr) {
     return refuse(start->source(), "mock.start must be a string, not " + type_name(*start));
   }
-  const auto at = paper::parse_kst(start->as_string()->get());
+  const auto at = parse_kst(start->as_string()->get());
   if (!at) {
     return refuse(
       start->source(), "mock.start must be a real KST instant written YYYY-MM-DDTHH:MM, from 1990-01-01 to 2100-12-31"

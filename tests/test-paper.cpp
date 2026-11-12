@@ -1,7 +1,7 @@
 #include "./paper-support.hpp"
 
-#include <cmdatl/paper/bars.hpp>
-#include <cmdatl/paper/time.hpp>
+#include <cmdatl/account/bars.hpp>
+#include <cmdatl/core/time.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -18,7 +18,6 @@
 #include <unistd.h>
 
 using namespace support;
-namespace paper = cmdatl::paper;
 namespace atl = algotradelib;
 
 static_assert(!std::is_copy_constructible<cmdatl::Account>::value, "an account is not copied");
@@ -42,9 +41,9 @@ std::pair<int, std::string> status_of(const PaperFixture& fixture) {
 }
 
 /**
- * @brief Checks that a paper log is refused as state that cannot be rebuilt, and that nothing was changed.
+ * @brief Checks that a state file is refused as state that cannot be rebuilt, and that nothing was changed.
  * @param fixture The account, already initialized.
- * @param text The log's bytes.
+ * @param text The state file's bytes.
  */
 void expect_paper_state(const PaperFixture& fixture, const std::string& text) {
   spit(fixture.log(), text);
@@ -101,44 +100,44 @@ std::vector<std::string> placed_log(const PaperFixture& fixture) {
 } // namespace
 
 TEST_CASE("dates and instants are read strictly inside 1990-01-01 to 2100-12-31 KST") {
-  CHECK(paper::parse_date("1990-01-01").has_value());
-  CHECK(paper::parse_date("2100-12-31").has_value());
-  CHECK(!paper::parse_date("1989-12-31"));
-  CHECK(!paper::parse_date("2101-01-01"));
-  CHECK(!paper::parse_date("2024-02-30"));
-  CHECK(paper::parse_date("2024-02-29").has_value());
-  CHECK(!paper::parse_date("2023-02-29"));
-  CHECK(!paper::parse_date("2024-1-02"));
-  CHECK(!paper::parse_date("2024-01-02 "));
-  CHECK(!paper::parse_date("9999-12-31"));
-  CHECK(paper::parse_kst("2024-03-25T09:30").has_value());
-  CHECK(!paper::parse_kst("2024-03-25T24:00"));
-  CHECK(!paper::parse_kst("2024-03-25T09:60"));
-  CHECK(!paper::parse_kst("2024-03-25 09:30"));
-  CHECK(!paper::parse_kst("2024-03-25T09:30:00"));
-  CHECK(paper::kst_iso(kst("2024-03-25T09:30")) == "2024-03-25T09:30:00+09:00");
-  CHECK(paper::kst_iso(kst("1990-01-01T00:00")) == "1990-01-01T00:00:00+09:00");
-  CHECK(paper::kst_iso(kst("2100-12-31T23:59")) == "2100-12-31T23:59:00+09:00");
+  CHECK(cmdatl::parse_date("1990-01-01").has_value());
+  CHECK(cmdatl::parse_date("2100-12-31").has_value());
+  CHECK(!cmdatl::parse_date("1989-12-31"));
+  CHECK(!cmdatl::parse_date("2101-01-01"));
+  CHECK(!cmdatl::parse_date("2024-02-30"));
+  CHECK(cmdatl::parse_date("2024-02-29").has_value());
+  CHECK(!cmdatl::parse_date("2023-02-29"));
+  CHECK(!cmdatl::parse_date("2024-1-02"));
+  CHECK(!cmdatl::parse_date("2024-01-02 "));
+  CHECK(!cmdatl::parse_date("9999-12-31"));
+  CHECK(cmdatl::parse_kst("2024-03-25T09:30").has_value());
+  CHECK(!cmdatl::parse_kst("2024-03-25T24:00"));
+  CHECK(!cmdatl::parse_kst("2024-03-25T09:60"));
+  CHECK(!cmdatl::parse_kst("2024-03-25 09:30"));
+  CHECK(!cmdatl::parse_kst("2024-03-25T09:30:00"));
+  CHECK(cmdatl::kst_iso(kst("2024-03-25T09:30")) == "2024-03-25T09:30:00+09:00");
+  CHECK(cmdatl::kst_iso(kst("1990-01-01T00:00")) == "1990-01-01T00:00:00+09:00");
+  CHECK(cmdatl::kst_iso(kst("2100-12-31T23:59")) == "2100-12-31T23:59:00+09:00");
   // 00:00 KST is 15:00 UTC of the day before: the KST date changes there, not at 00:00 UTC.
   const auto before = kst("2024-03-25T23:59");
   const auto after = kst("2024-03-26T00:00");
-  CHECK(paper::kst_day(after) == paper::kst_day(before) + 1);
-  CHECK(paper::utc_day(after) == paper::utc_day(before));
+  CHECK(cmdatl::kst_day(after) == cmdatl::kst_day(before) + 1);
+  CHECK(cmdatl::utc_day(after) == cmdatl::utc_day(before));
   const auto at = kst("2024-03-25T09:30");
-  CHECK(paper::from_nanos(paper::nanos(at)) == at);
-  CHECK(!paper::from_nanos(paper::nanos(paper::end_instant())));
-  CHECK(!paper::from_nanos(paper::nanos(paper::first_instant()) - 1));
-  CHECK(!paper::from_nanos(INT64_MAX));
-  CHECK(!paper::from_nanos(INT64_MIN));
+  CHECK(cmdatl::from_nanos(cmdatl::nanos(at)) == at);
+  CHECK(!cmdatl::from_nanos(cmdatl::nanos(cmdatl::end_instant())));
+  CHECK(!cmdatl::from_nanos(cmdatl::nanos(cmdatl::first_instant()) - 1));
+  CHECK(!cmdatl::from_nanos(INT64_MAX));
+  CHECK(!cmdatl::from_nanos(INT64_MIN));
 }
 
 TEST_CASE("the bars file is read strictly, its first problem named by line") {
   const std::string header = "symbol,date,open,high,low,close,volume\n";
-  paper::MarketData data;
-  CHECK(!paper::parse_bars(header + "AAA,2024-01-02,10,12,9,11,100\n", data));
+  cmdatl::MarketData data;
+  CHECK(!cmdatl::parse_bars(header + "AAA,2024-01-02,10,12,9,11,100\n", data));
   CHECK(data.bars_.at("AAA").size() == 1);
-  CHECK(!paper::parse_bars(header + "AAA,2024-01-02,10,12,9,11,100\r\nBBB,2024-01-02,1,1,1,1,0", data));
-  CHECK(!paper::parse_bars(header + "AAA,2024-01-02,10000000,10000000,1,1.0001,1000000000000\n", data));
+  CHECK(!cmdatl::parse_bars(header + "AAA,2024-01-02,10,12,9,11,100\r\nBBB,2024-01-02,1,1,1,1,0", data));
+  CHECK(!cmdatl::parse_bars(header + "AAA,2024-01-02,10000000,10000000,1,1.0001,1000000000000\n", data));
   const std::vector<std::pair<std::string, std::size_t>> bad{
     {"symbol,date,open,high,low,close\n", 1},
     {header + "AAA,2024-01-02,10,12,9,11\n", 2},
@@ -166,7 +165,7 @@ TEST_CASE("the bars file is read strictly, its first problem named by line") {
   };
   for (const auto& entry : bad) {
     INFO(entry.first);
-    const auto problem = paper::parse_bars(entry.first, data);
+    const auto problem = cmdatl::parse_bars(entry.first, data);
     REQUIRE(problem.has_value());
     CHECK(problem->line_ == entry.second);
   }
@@ -177,37 +176,37 @@ TEST_CASE("the bars file is read strictly, its first problem named by line") {
       "symbol,day,open,high,low,close,volume\n", "symbol,date,open,high,low,close,volume,\n", ",\n"}
   ) {
     INFO(wrong);
-    const auto problem = paper::parse_bars(std::string(wrong) + "AAA,2024-01-02,10,12,9,11,100\n", data);
+    const auto problem = cmdatl::parse_bars(std::string(wrong) + "AAA,2024-01-02,10,12,9,11,100\n", data);
     REQUIRE(problem.has_value());
     CHECK(problem->line_ == 1);
     CHECK(problem->message_.find("the seven columns") != std::string::npos);
   }
-  const auto bom = paper::parse_bars("\xEF\xBB\xBFsymbol,date,open,high,low,close,volume\n", data);
+  const auto bom = cmdatl::parse_bars("\xEF\xBB\xBFsymbol,date,open,high,low,close,volume\n", data);
   REQUIRE(bom.has_value());
   CHECK(bom->message_.find("byte-order mark") != std::string::npos);
-  const auto empty = paper::parse_bars("symbol,,date,open,high,low,close,volume\n", data);
+  const auto empty = cmdatl::parse_bars("symbol,,date,open,high,low,close,volume\n", data);
   REQUIRE(empty.has_value());
   CHECK(empty->message_.find("an empty column name") != std::string::npos);
   std::string many = header;
-  many.reserve(header.size() + 25 * (paper::MAX_BAR_ROWS + 1));
-  for (std::size_t i = 0; i <= paper::MAX_BAR_ROWS; ++i) {
+  many.reserve(header.size() + 25 * (cmdatl::MAX_BAR_ROWS + 1));
+  for (std::size_t i = 0; i <= cmdatl::MAX_BAR_ROWS; ++i) {
     many += "S" + std::to_string(i % 1000) + "," +
-      paper::date_text(paper::FIRST_DAY + static_cast<std::int64_t>(i / 1000)) + ",1,1,1,1,0\n";
+      cmdatl::date_text(cmdatl::FIRST_DAY + static_cast<std::int64_t>(i / 1000)) + ",1,1,1,1,0\n";
   }
-  const auto problem = paper::parse_bars(many, data);
+  const auto problem = cmdatl::parse_bars(many, data);
   REQUIRE(problem.has_value());
-  CHECK(problem->line_ == paper::MAX_BAR_ROWS + 2);
+  CHECK(problem->line_ == cmdatl::MAX_BAR_ROWS + 2);
 }
 
 TEST_CASE("the bars file's columns are read by name, in any order") {
-  paper::MarketData documented;
-  REQUIRE(!paper::parse_bars(
+  cmdatl::MarketData documented;
+  REQUIRE(!cmdatl::parse_bars(
     "symbol,date,open,high,low,close,volume\nAAA,2024-01-02,10,12,9,11,100\nAAA,2024-01-03,11,13,10,12,200\n"
     "BBB,2024-01-02,5,6,4,5.5,7\n",
     documented
   ));
-  paper::MarketData reordered;
-  REQUIRE(!paper::parse_bars(
+  cmdatl::MarketData reordered;
+  REQUIRE(!cmdatl::parse_bars(
     "volume,close,low,high,open,date,symbol\n100,11,9,12,10,2024-01-02,AAA\n200,12,10,13,11,2024-01-03,AAA\n"
     "7,5.5,4,6,5,2024-01-02,BBB\n",
     reordered
@@ -227,12 +226,12 @@ TEST_CASE("the bars file's columns are read by name, in any order") {
   }
   // A row is still checked cell by cell, through the header's order.
   const auto problem =
-    paper::parse_bars("date,symbol,open,high,low,close,volume\nAAA,2024-01-02,10,12,9,11,100\n", reordered);
+    cmdatl::parse_bars("date,symbol,open,high,low,close,volume\nAAA,2024-01-02,10,12,9,11,100\n", reordered);
   REQUIRE(problem.has_value());
   CHECK(problem->line_ == 2);
 }
 
-TEST_CASE("every paper.data case refuses at open and writes nothing") {
+TEST_CASE("every mock.data case refuses at open and writes nothing") {
   const PaperFixture fixture;
   const std::string header = "symbol,date,open,high,low,close,volume\n";
   const std::vector<std::string> bad{
@@ -244,7 +243,7 @@ TEST_CASE("every paper.data case refuses at open and writes nothing") {
     header + "005930,2024-03-25,1.00001,2,1,1,1\n000660,2024-03-25,1,1,1,1,1\n",
     // A symbol of limits.symbols without rows.
     header + "005930,2024-03-25,78000,79000,77500,78500,1\n",
-    // paper.start before the first date's close, and after the last date's close plus a day.
+    // mock.start before the first date's close, and after the last date's close plus a day.
     header + "005930,2024-03-26,78000,79000,77500,78500,1\n000660,2024-03-26,1,1,1,1,1\n",
     header + "005930,2024-03-21,78000,79000,77500,78500,1\n000660,2024-03-21,1,1,1,1,1\n",
   };
@@ -262,7 +261,7 @@ TEST_CASE("every paper.data case refuses at open and writes nothing") {
   {
     const int fd = ::open((fixture.dir() / "bars.csv").c_str(), O_WRONLY | O_TRUNC);
     REQUIRE(fd >= 0);
-    REQUIRE(::ftruncate(fd, static_cast<off_t>(paper::MAX_BARS_BYTES) + 1) == 0);
+    REQUIRE(::ftruncate(fd, static_cast<off_t>(cmdatl::MAX_BARS_BYTES) + 1) == 0);
     ::close(fd);
     const auto ran = fixture.json({"status"});
     CHECK(ran.exit_ == 1);

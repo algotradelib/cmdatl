@@ -406,7 +406,7 @@ inline Started start(Account& account) {
       started.refusal_ = paper_state_reply(desk.halted().value_or("the mock market halted") + "; nothing was sent");
       return started;
   }
-  started.body_["now"] = paper::kst_iso(desk.now());
+  started.body_["now"] = kst_iso(desk.now());
   started.body_["events"] = events_json(desk);
   return started;
 }
@@ -554,7 +554,7 @@ inline Reply plan_reply(const Invocation& invocation, Account& account, Output& 
     auto config = once_config(account.config(), risk_limits(account.config(), {symbol}, left));
     config.dry_run_ = true;
     sending::OnceRequest request;
-    request.instrument_ = paper::kr(symbol);
+    request.instrument_ = kr(symbol);
     request.target_quantity_ = algotradelib::Decimal64::parse(target);
     request.limit_ = algotradelib::Decimal64::parse(limit);
     result = sending::once(account.desk(), *opened.journal_, account.lock(), request, config);
@@ -570,7 +570,7 @@ inline Reply plan_reply(const Invocation& invocation, Account& account, Output& 
     plan.limit_ = limit;
     plan.snapshot_ =
       snapshot_of(account.desk().session(), account.config().scope(), symbol, target, limit, journal_size(account));
-    plan.sim_ = paper::nanos(account.desk().now());
+    plan.sim_ = nanos(account.desk().now());
     const auto id = book.issue(plan);
     const auto saved = book.save(account.lock());
     if (saved.lock_lost_) {
@@ -596,8 +596,7 @@ inline Reply plan_reply(const Invocation& invocation, Account& account, Output& 
     if (result.plan_kind_ != "withdraw" && held) {
       body["quantity"] = std::to_string(std::llabs(std::stoll(target) - std::stoll(held->str())));
     }
-    body["expires_at"] =
-      paper::kst_iso(account.desk().now() + std::chrono::seconds(account.config().limits_.plan_ttl_));
+    body["expires_at"] = kst_iso(account.desk().now() + std::chrono::seconds(account.config().limits_.plan_ttl_));
     body["next"] = "cmdatl order place " + id;
   }
   return finish(account, from_once(result, std::move(body)), symbol);
@@ -622,7 +621,7 @@ inline Reply place_reply(const Invocation& invocation, Account& account, Output&
   body["plan_id"] = id;
   auto book = PlanBook::load(account.dir());
   auto plan = book.find(id);
-  const auto now_nanos = paper::nanos(account.desk().now());
+  const auto now_nanos = nanos(account.desk().now());
   if (!plan || plan->sim_ > now_nanos) {
     return finish(
       account,
@@ -709,7 +708,7 @@ inline Reply place_reply(const Invocation& invocation, Account& account, Output&
     const auto left = orders_left(account.config(), account.journal()).value_or(0);
     const auto config = once_config(account.config(), risk_limits(account.config(), {plan->symbol_}, left));
     sending::OnceRequest request;
-    request.instrument_ = paper::kr(plan->symbol_);
+    request.instrument_ = kr(plan->symbol_);
     request.target_quantity_ = algotradelib::Decimal64::parse(plan->target_);
     request.limit_ = algotradelib::Decimal64::parse(plan->limit_);
     result = sending::once(account.desk(), *opened.journal_, account.lock(), request, config);
@@ -772,7 +771,7 @@ inline Reply cancel_reply(const Invocation& invocation, Account& account, Output
     config.withdraw_only_ = true;
     config.limits_.max_orders_per_window_ = 0;
     sending::OnceRequest request;
-    request.instrument_ = paper::kr(symbol);
+    request.instrument_ = kr(symbol);
     request.target_quantity_ = algotradelib::Decimal64(0, 0);
     result = sending::once(account.desk(), *opened.journal_, account.lock(), request, config);
   }
@@ -839,7 +838,7 @@ inline Reply reconcile_reply(const Invocation& invocation, Account& account, Out
         // Reconcile never sends: no phase stands between it and the confirmations holdings support.
         config.limits_.permitted_phases_.reset();
         sending::OnceRequest request;
-        request.instrument_ = paper::kr(symbol);
+        request.instrument_ = kr(symbol);
         request.target_quantity_ = *held;
         const auto result = sending::once(account.desk(), *opened.journal_, account.lock(), request, config);
         state = reconcile_row(result);
@@ -908,9 +907,9 @@ inline Reply release_reply(const Invocation& invocation, Account& account, Outpu
       return with_body(std::move(*opened.refusal_), std::move(body));
     }
     result = sending::release(
-      account.desk(), *opened.journal_, account.lock(), paper::kr(symbol), invocation.get("reason"),
+      account.desk(), *opened.journal_, account.lock(), kr(symbol), invocation.get("reason"),
       account.config().armed_path(), account.config().release_path(), [](std::string_view text) {
-        return paper::valid_symbol(text);
+        return valid_symbol(text);
       }
     );
   }

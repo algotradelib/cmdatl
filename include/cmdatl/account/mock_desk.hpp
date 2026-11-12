@@ -4,8 +4,8 @@
 // placement boundary. The market is a pure function of the operator's bars, cash and start and of the changes the file
 // records, so the file is the account's whole market state between commands.
 
-#include "../paper/bars.hpp"
 #include "../system/lock.hpp"
+#include "./bars.hpp"
 #include "./operator.hpp"
 #include "./session.hpp"
 
@@ -54,7 +54,7 @@ enum class Moved {
 /** @brief What the market did to one order during a clock move. */
 struct MockEvent {
   /** @brief When. */
-  paper::Clock::time_point at_{};
+  Clock::time_point at_{};
   /** @brief `filled` or `expired`. */
   std::string kind_;
   /** @brief The order. */
@@ -91,7 +91,7 @@ inline std::string decimal_text_of(const atl::Decimal64& value) {
  * @param bars Its bars.
  * @return The series.
  */
-inline atl::BarSeries mock_series(const std::string& symbol, const std::vector<paper::DayBar>& bars) {
+inline atl::BarSeries mock_series(const std::string& symbol, const std::vector<DayBar>& bars) {
   const auto price = [](double value) {
     // A bar's price has at most four decimals and is at most 10^7, so it is exact in ten-thousandths.
     return atl::decimal_normalized(atl::Decimal64(std::llround(value * 10000), 4));
@@ -103,7 +103,7 @@ inline atl::BarSeries mock_series(const std::string& symbol, const std::vector<p
   series.currency_ = atl::Currency::krw();
   for (const auto& day : bars) {
     atl::Bar bar;
-    bar.timestamp_ = paper::open_of(day.day_) + paper::SESSION_LENGTH;
+    bar.timestamp_ = open_of(day.day_) + SESSION_LENGTH;
     bar.open_ = price(day.open_);
     bar.high_ = price(day.high_);
     bar.low_ = price(day.low_);
@@ -148,8 +148,7 @@ public:
    * @param data The bars, read and checked.
    * @throws std::logic_error When the lock is not held or is another account's (a defect).
    */
-  MockDesk(MockDeskKey key, const OperatorConfig& config, const OwnerLock& lock, const paper::MarketData& data)
-  : lock_(lock) {
+  MockDesk(MockDeskKey key, const OperatorConfig& config, const OwnerLock& lock, const MarketData& data) : lock_(lock) {
     (void)key;
     const auto dir = account_dir(config);
     if (!lock.held() || !dir || lock.dir() != *dir) {
@@ -252,7 +251,7 @@ public:
    * @brief The market's clock.
    * @return The instant.
    */
-  paper::Clock::time_point now() const {
+  Clock::time_point now() const {
     return file_->market().now();
   }
 
@@ -323,7 +322,7 @@ public:
    * @param at The instant.
    * @return Whether it does.
    */
-  bool accepts_orders_at(const std::string& symbol, paper::Clock::time_point at) {
+  bool accepts_orders_at(const std::string& symbol, Clock::time_point at) {
     const auto window = atl::strategy::SessionWindow::krx();
     const auto calendar = market_session_->calendar(atl::Country::KR);
     if (!calendar || !market_session_->quote(id_of(symbol))) {
@@ -338,16 +337,16 @@ public:
    * @return The date, as days from 1970-01-01.
    */
   std::int64_t data_end() const {
-    return days_.empty() ? paper::FIRST_DAY : days_.back();
+    return days_.empty() ? FIRST_DAY : days_.back();
   }
 
   /**
    * @brief The latest instant the clock may reach: the last session's close plus a day, inside the supported interval.
    * @return The instant.
    */
-  paper::Clock::time_point clock_limit() const {
-    const auto limit = paper::open_of(data_end()) + paper::SESSION_LENGTH + std::chrono::hours(24);
-    return std::min(limit, paper::end_instant() - paper::Clock::duration(std::chrono::minutes(1)));
+  Clock::time_point clock_limit() const {
+    const auto limit = open_of(data_end()) + SESSION_LENGTH + std::chrono::hours(24);
+    return std::min(limit, end_instant() - Clock::duration(std::chrono::minutes(1)));
   }
 
   /**
@@ -355,10 +354,10 @@ public:
    * @param at The instant.
    * @return The open, or nothing past the data.
    */
-  std::optional<paper::Clock::time_point> next_session_after(paper::Clock::time_point at) const {
+  std::optional<Clock::time_point> next_session_after(Clock::time_point at) const {
     for (const auto day : days_) {
-      if (at < paper::open_of(day)) {
-        return paper::open_of(day);
+      if (at < open_of(day)) {
+        return open_of(day);
       }
     }
     return std::nullopt;
@@ -370,7 +369,7 @@ public:
    * @param target The new instant, after now and at most `clock_limit()`.
    * @return How it ended; the clock moved only when `OK`, or partway when `HALTED`.
    */
-  Moved advance_to(paper::Clock::time_point target) {
+  Moved advance_to(Clock::time_point target) {
     if (!lock_.still_at_path()) {
       return Moved::LOCK_LOST;
     }

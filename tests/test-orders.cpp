@@ -25,13 +25,25 @@
 
 using namespace support;
 namespace atl = algotradelib;
-namespace paper = cmdatl::paper;
 namespace sending = cmdatl::sending;
 
 namespace {
 
 /** @brief The account's journal scope in the fixtures. */
 const std::string SCOPE = "mock:mock:paper-0001";
+
+/**
+ * @brief A read the broker refused without seeing it.
+ * @return The error.
+ */
+atl::BrokerError unread() {
+  atl::BrokerError error;
+  error.category_ = atl::ErrorCategory::INVALID_ARGUMENT;
+  error.reached_broker_ = false;
+  error.broker_code_ = "x";
+  error.message_ = "x";
+  return error;
+}
 
 /**
  * @brief Arms a fixture and moves it to the first session's open.
@@ -61,7 +73,7 @@ double day_mark(const std::string& symbol) {
  * @return The entry.
  */
 atl::runner::JournalEntry place_entry(
-  const std::string& id, atl::runner::JournalOutcome outcome, paper::Clock::time_point at,
+  const std::string& id, atl::runner::JournalOutcome outcome, cmdatl::Clock::time_point at,
   const std::string& order_id = "", const std::string& symbol = "005930"
 ) {
   atl::runner::JournalEntry entry;
@@ -69,7 +81,7 @@ atl::runner::JournalEntry place_entry(
   entry.action_ = atl::runner::JournalAction::PLACE;
   entry.outcome_ = outcome;
   entry.recorded_at_ = at;
-  entry.instrument_ = paper::kr(symbol);
+  entry.instrument_ = cmdatl::kr(symbol);
   entry.side_ = atl::OrderSide::BUY;
   entry.type_ = atl::OrderType::LIMIT;
   entry.time_in_force_ = atl::TimeInForce::DAY;
@@ -314,7 +326,8 @@ TEST_CASE("the plan book: stale when the account moves or the plan ages and and 
   const PaperFixture second(parts);
   second.arm();
   // A minute later than the plan, inside plan_ttl: the clock moves to the next whole minute.
-  const auto next_minute = paper::kst_iso(*paper::parse_kst(now.substr(0, 16)) + std::chrono::minutes(1)).substr(0, 16);
+  const auto next_minute =
+    cmdatl::kst_iso(*cmdatl::parse_kst(now.substr(0, 16)) + std::chrono::minutes(1)).substr(0, 16);
   REQUIRE(ask(second, {"clock", "advance", "--to", next_minute}).exit_ == 0);
   const auto dir = second.dir() / "state" / "cmdatl" / "accounts" / "mock-mock-paper-0002";
   spit(dir / "plans.json", book);
@@ -375,8 +388,8 @@ TEST_CASE("the plan book's values: every rule refuses the whole book and and the
   const std::vector<std::string> bad{
     with("1711411200000000000", std::to_string(LLONG_MIN)),
     with("1711411200000000000", std::to_string(LLONG_MAX)),
-    with("1711411200000000000", std::to_string(paper::nanos(paper::first_instant()) - 1)),
-    with("1711411200000000000", std::to_string(paper::nanos(paper::end_instant()))),
+    with("1711411200000000000", std::to_string(cmdatl::nanos(cmdatl::first_instant()) - 1)),
+    with("1711411200000000000", std::to_string(cmdatl::nanos(cmdatl::end_instant()))),
     with("\"target\":\"10\"", "\"target\":\"-1\""),
     with("\"target\":\"10\"", "\"target\":\"1.5\""),
     with("\"target\":\"10\"", "\"target\":\"1000000000\""),
@@ -422,17 +435,17 @@ TEST_CASE(
     // The place's own second moves the clock one second: the plan's instant is set so that the age at place is
     // plan_ttl plus the offset.
     const auto now =
-      paper::nanos(*paper::parse_kst(std::string(ask(fixture, {"clock"}).body_.at("now").as_string()).substr(0, 16)));
+      cmdatl::nanos(*cmdatl::parse_kst(std::string(ask(fixture, {"clock"}).body_.at("now").as_string()).substr(0, 16)));
     (void)now;
-    const auto clock = paper::nanos(
-      paper::Clock::time_point(
-        std::chrono::duration_cast<paper::Clock::duration>(std::chrono::nanoseconds(plans->back().second.sim_))
+    const auto clock = cmdatl::nanos(
+      cmdatl::Clock::time_point(
+        std::chrono::duration_cast<cmdatl::Clock::duration>(std::chrono::nanoseconds(plans->back().second.sim_))
       )
     );
     const auto sim = std::to_string(plans->back().second.sim_);
     const auto place_at = clock + 1000000000LL;
     // The clock's own tick: a microsecond on macOS, a nanosecond on Linux; finer instants are refused as damage.
-    const auto tick = std::chrono::duration_cast<std::chrono::nanoseconds>(paper::Clock::duration(1)).count();
+    const auto tick = std::chrono::duration_cast<std::chrono::nanoseconds>(cmdatl::Clock::duration(1)).count();
     const auto wanted = offset < 0 ? place_at + tick : place_at - 60000000000LL - offset * tick;
     text.replace(text.find(sim), sim.size(), std::to_string(wanted));
     spit(path, text);
@@ -474,7 +487,7 @@ TEST_CASE("map_report: every step reached and and its precedence") {
   indeterminate.indeterminate_.emplace_back();
   CHECK(mapped(indeterminate, 1, true, 0).reason_ == "indeterminate");
   Report broker;
-  broker.rejected_.push_back({atl::strategy::RejectReason::BROKER_REFUSED, paper::kr("005930"), ""});
+  broker.rejected_.push_back({atl::strategy::RejectReason::BROKER_REFUSED, cmdatl::kr("005930"), ""});
   CHECK(mapped(broker, 1, false, 0).reason_ == "broker_refused");
   CHECK(mapped(broker, 1, false, 0).exit_ == OnceExit::UNKNOWN);
   // The market's own text is kept; the binding's is not its to say.
@@ -486,7 +499,7 @@ TEST_CASE("map_report: every step reached and and its precedence") {
   );
   CHECK(mapped(broker, 1, true, 0).exit_ == OnceExit::UNKNOWN);
   Report binding;
-  binding.rejected_.push_back({atl::strategy::RejectReason::BINDING_REFUSED, paper::kr("005930"), ""});
+  binding.rejected_.push_back({atl::strategy::RejectReason::BINDING_REFUSED, cmdatl::kr("005930"), ""});
   CHECK(mapped(binding, 0, false, 0).reason_ == "not_reached");
   CHECK(mapped(binding, 0, false, 0).exit_ == OnceExit::REFUSED);
   CHECK(
@@ -553,7 +566,7 @@ TEST_CASE("the owed rows' next and by case") {
 
 TEST_CASE("approval files: the grammar and line by line") {
   const auto symbol = [](std::string_view text) {
-    return paper::valid_symbol(text);
+    return cmdatl::valid_symbol(text);
   };
   CHECK(
     sending::parse_approval("005930 j1\n005930 j2\r\n000660 j3\n", "005930", symbol).ids_ ==
@@ -579,9 +592,9 @@ TEST_CASE("approval files: the grammar and line by line") {
 TEST_CASE("order release: the approval names exactly the owed set and renamed after one use") {
   const PaperFixture fixture;
   open_session(fixture);
-  const auto at = paper::Clock::time_point(
-    std::chrono::duration_cast<paper::Clock::duration>(
-      std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
+  const auto at = cmdatl::Clock::time_point(
+    std::chrono::duration_cast<cmdatl::Clock::duration>(
+      std::chrono::nanoseconds(cmdatl::nanos(*cmdatl::parse_kst("2024-03-26T09:00")))
     )
   );
   journal(
@@ -687,9 +700,9 @@ TEST_CASE("a cancel reports what it sent and never met; nothing listed is nothin
     REQUIRE(opened->account_);
     REQUIRE(opened->account_->desk().session().place(order("005930", true, "10", "75000")));
   }
-  const auto at = paper::Clock::time_point(
-    std::chrono::duration_cast<paper::Clock::duration>(
-      std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
+  const auto at = cmdatl::Clock::time_point(
+    std::chrono::duration_cast<cmdatl::Clock::duration>(
+      std::chrono::nanoseconds(cmdatl::nanos(*cmdatl::parse_kst("2024-03-26T09:00")))
     )
   );
   journal(
@@ -717,9 +730,9 @@ TEST_CASE("two journaled orders on one symbol are the operator's: a cancel sends
     REQUIRE(opened->account_->desk().session().place(order("005930", true, "10", "75000")));
     REQUIRE(opened->account_->desk().session().place(order("005930", true, "10", "75000")));
   }
-  const auto at = paper::Clock::time_point(
-    std::chrono::duration_cast<paper::Clock::duration>(
-      std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
+  const auto at = cmdatl::Clock::time_point(
+    std::chrono::duration_cast<cmdatl::Clock::duration>(
+      std::chrono::nanoseconds(cmdatl::nanos(*cmdatl::parse_kst("2024-03-26T09:00")))
     )
   );
   journal(
@@ -959,9 +972,9 @@ TEST_CASE("hostile inputs: mutated plan books never authorize a send their snaps
 TEST_CASE("hostile inputs: mutated approval files never release a set they do not name exactly", "[hostile]") {
   const PaperFixture fixture;
   open_session(fixture);
-  const auto at = paper::Clock::time_point(
-    std::chrono::duration_cast<paper::Clock::duration>(
-      std::chrono::nanoseconds(paper::nanos(*paper::parse_kst("2024-03-26T09:00")))
+  const auto at = cmdatl::Clock::time_point(
+    std::chrono::duration_cast<cmdatl::Clock::duration>(
+      std::chrono::nanoseconds(cmdatl::nanos(*cmdatl::parse_kst("2024-03-26T09:00")))
     )
   );
   int serial = 0;
@@ -993,7 +1006,7 @@ TEST_CASE("hostile inputs: mutated approval files never release a set they do no
     if (ran.exit_ == 0) {
       ++released;
       const auto parsed = sending::parse_approval(text, "005930", [](std::string_view t) {
-        return paper::valid_symbol(t);
+        return cmdatl::valid_symbol(t);
       });
       CHECK(parsed.refused_.empty());
       CHECK(parsed.ids_ == std::vector<std::string>{wanted});
@@ -1075,19 +1088,19 @@ TEST_CASE("snapshots: a failed read is written ? and never matches a good read")
     bool cash_{true};
     atl::Result<atl::HoldingsSnapshot> holdings() {
       if (!holdings_) {
-        return atl::Result<atl::HoldingsSnapshot>(paper::refusal("x", "x", false));
+        return atl::Result<atl::HoldingsSnapshot>(unread());
       }
       return atl::HoldingsSnapshot{};
     }
     Working working_orders() {
       if (!orders_) {
-        return Working(paper::refusal("x", "x", false));
+        return Working(unread());
       }
       return Working(WorkingValue{});
     }
     atl::Result<atl::BuyingPower> buying_power(const atl::Currency&) {
       if (!cash_) {
-        return atl::Result<atl::BuyingPower>(paper::refusal("x", "x", false));
+        return atl::Result<atl::BuyingPower>(unread());
       }
       return atl::BuyingPower{};
     }

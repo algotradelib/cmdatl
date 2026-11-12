@@ -6,7 +6,6 @@
 #include "../core/reply.hpp"
 #include "../system/files.hpp"
 #include "../system/lock.hpp"
-#include "./desk.hpp"
 #include "./mock_desk.hpp"
 #include "./operator.hpp"
 
@@ -38,6 +37,15 @@
 #endif
 
 namespace cmdatl {
+
+/**
+ * @brief A KRX instrument as the account's commands name it.
+ * @param symbol The symbol.
+ * @return The instrument.
+ */
+inline algotradelib::InstrumentId kr(const std::string& symbol) {
+  return {algotradelib::Country::KR, algotradelib::Venue::COMBINED, symbol};
+}
 
 /** @brief One placement the journal has not accounted for, as the library's restore names it. */
 struct Owed {
@@ -206,7 +214,7 @@ JournalView journal_view(
       // A salvaged operator-only line records the epoch because it has no time: no date to count it on.
       continue;
     }
-    if (!paper::in_interval(entry.recorded_at_)) {
+    if (!in_interval(entry.recorded_at_)) {
       // The library does not bound an operator-only line's instant; one outside the interval gives no KST date.
       if (view.intact_) {
         view.intact_ = false;
@@ -222,7 +230,7 @@ JournalView journal_view(
     }
   }
   for (const auto& entry : first_line) {
-    if (paper::kst_day(entry.second) == today) {
+    if (kst_day(entry.second) == today) {
       ++view.placed_today_;
     }
   }
@@ -534,7 +542,7 @@ public:
    */
   void refresh_view() {
     replay_ = algotradelib::runner::read_journal_file(journal_path());
-    journal_ = journal_view(desk_->session(), replay_, config_.scope(), paper::kst_day(desk_->now()));
+    journal_ = journal_view(desk_->session(), replay_, config_.scope(), kst_day(desk_->now()));
     readiness_.reset();
   }
 #endif
@@ -628,7 +636,7 @@ private:
    * @param data Where the bars go.
    * @return The refusal, or nothing.
    */
-  std::optional<Reply> read_bars(paper::MarketData& data) const {
+  std::optional<Reply> read_bars(MarketData& data) const {
     const auto& path = config_.paper_.bars_;
     const auto bad = [&path](const std::string& what) {
       return error_reply(Exit::FAILED, "mock.data", "the mock bars " + path + " " + what, "fix the bars file");
@@ -638,11 +646,11 @@ private:
       return bad(std::string("cannot be opened: ") + std::strerror(errno));
     }
     std::string text;
-    const auto read = read_whole(fd.get(), paper::MAX_BARS_BYTES, text);
+    const auto read = read_whole(fd.get(), MAX_BARS_BYTES, text);
     if (read.status_ != FileRead::Status::OK) {
-      return bad("were not read: " + read.text(paper::MAX_BARS_BYTES));
+      return bad("were not read: " + read.text(MAX_BARS_BYTES));
     }
-    if (const auto problem = paper::parse_bars(text, data)) {
+    if (const auto problem = parse_bars(text, data)) {
       return bad("line " + std::to_string(problem->line_) + ": " + problem->message_);
     }
     for (const auto& symbol : config_.limits_.symbols_) {
@@ -650,22 +658,22 @@ private:
         return bad("have no rows for " + symbol + ", which limits.symbols lists");
       }
     }
-    std::int64_t first = paper::LAST_DAY;
-    std::int64_t last = paper::FIRST_DAY;
+    std::int64_t first = LAST_DAY;
+    std::int64_t last = FIRST_DAY;
     for (const auto& entry : data.bars_) {
       first = std::min(first, entry.second.front().day_);
       last = std::max(last, entry.second.back().day_);
     }
     const auto start = config_.paper_.start_at_;
-    if (start < paper::open_of(first) + paper::SESSION_LENGTH) {
+    if (start < open_of(first) + SESSION_LENGTH) {
       return bad(
-        "begin " + paper::date_text(first) +
+        "begin " + date_text(first) +
         "; mock.start must be at or after that date's 15:30 KST, so a symbol has a "
         "last price and a previous close"
       );
     }
-    if (start >= paper::open_of(last) + paper::SESSION_LENGTH + std::chrono::hours(24)) {
-      return bad("end " + paper::date_text(last) + "; mock.start must be before that date's 15:30 KST plus a day");
+    if (start >= open_of(last) + SESSION_LENGTH + std::chrono::hours(24)) {
+      return bad("end " + date_text(last) + "; mock.start must be before that date's 15:30 KST plus a day");
     }
     return std::nullopt;
   }
@@ -710,7 +718,7 @@ private:
    * @return The refusal, or nothing when the account is open.
    */
   std::optional<Reply> open_held() {
-    paper::MarketData data;
+    MarketData data;
     if (auto refused = read_bars(data)) {
       return refused;
     }
@@ -776,7 +784,7 @@ private:
       journal_identity_ = std::make_pair(identity.st_dev, identity.st_ino);
     }
     replay_ = algotradelib::runner::read_journal_file(journal_path());
-    journal_ = journal_view(desk_->session(), replay_, config_.scope(), paper::kst_day(desk_->now()));
+    journal_ = journal_view(desk_->session(), replay_, config_.scope(), kst_day(desk_->now()));
     return std::nullopt;
   }
 #endif

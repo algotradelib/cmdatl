@@ -11,13 +11,13 @@
 // includes one before the folder's part of the run.
 #include "adapter/adapter.hpp"
 
+#include <algotradelib/krx>
 #include <cmdatl/account/operator.hpp>
 #include <cmdatl/account/session.hpp>
 #include <cmdatl/driver/account.hpp>
 #include <cmdatl/driver/clock.hpp>
 #include <cmdatl/driver/kis_account.hpp>
 #include <cmdatl/driver/user_account.hpp>
-#include <cmdatl/paper/krx_grid.hpp>
 #include <cmdatl/strategy/runs.hpp>
 #include <cmdatl/system/credential_pipe.hpp>
 #include <cmdatl/system/process.hpp>
@@ -174,7 +174,7 @@ Ran run_account_child(
       instrument.type_ = atl::SecurityType::STOCK;
       instrument.currency_ = atl::Currency::krw();
       instrument.lot_size_ = atl::Decimal64::parse("1");
-      instrument.price_rule_ = cmdatl::paper::krx_equity_rule();
+      instrument.price_rule_ = algotradelib::krx::equity_price_rule();
       instruments.push_back(instrument);
     }
     atl::mock::MarketSettings settings;
@@ -1040,7 +1040,7 @@ TEST_CASE("once a stop is latched, the boundary refuses every placement before t
   instrument.id_ = series.instrument_;
   instrument.currency_ = atl::Currency::krw();
   instrument.lot_size_ = atl::Decimal64::parse("1");
-  instrument.price_rule_ = cmdatl::paper::krx_equity_rule();
+  instrument.price_rule_ = algotradelib::krx::equity_price_rule();
   atl::mock::MarketSettings settings;
   settings.cash_ = atl::Money{atl::Decimal64(100000000, 0), atl::Currency::krw()};
   settings.start_ = series.bars_.at(1).timestamp_ + std::chrono::minutes(30);

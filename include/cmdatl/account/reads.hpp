@@ -133,11 +133,11 @@ json::object quote_row(Account& account, Desk& desk, const std::string& symbol) 
   const auto& readiness = account.readiness();
   json::object row;
   row["symbol"] = symbol;
-  const auto quote = desk.market_session().quote(paper::kr(symbol));
+  const auto quote = desk.market_session().quote(kr(symbol));
   row["last_price"] = quote ? json::value(quote.value().last_price_.str()) : json::value(nullptr);
   std::optional<algotradelib::PriceLimits> band;
   if constexpr (Desk::MarketSession::Caps::has_price_limits) {
-    auto read = desk.market_session().price_limits(paper::kr(symbol));
+    auto read = desk.market_session().price_limits(kr(symbol));
     if (read) {
       band = std::move(read.value());
     }
@@ -273,7 +273,7 @@ json::array orders_json(Desk& desk) {
  */
 template <typename Desk>
 std::string data_end_text(Desk& desk) {
-  return paper::kst_iso(paper::open_of(desk.data_end()) + paper::SESSION_LENGTH);
+  return kst_iso(open_of(desk.data_end()) + SESSION_LENGTH);
 }
 
 /**
@@ -291,7 +291,7 @@ Reply status_reply(const Invocation& invocation, Account& account, Desk& desk, O
   (void)output;
   const auto& readiness = account.readiness();
   json::object body;
-  body["now"] = paper::kst_iso(desk.now());
+  body["now"] = kst_iso(desk.now());
   body["phase"] = readiness.phase_;
   body["armed"] = readiness.armed_;
   auto failing = account_gates(readiness);
@@ -335,7 +335,7 @@ Reply account_reply(const Invocation& invocation, Account& account, Desk& desk, 
   (void)output;
   const auto only = invocation.has("symbol") ? std::optional<std::string>(invocation.get("symbol")) : std::nullopt;
   json::object body;
-  body["now"] = paper::kst_iso(desk.now());
+  body["now"] = kst_iso(desk.now());
   body["positions"] = positions_json(desk, only);
   body["cash"] = desk.paper_cash();
   body["buying_power"] = buying_power_text(desk);
@@ -384,7 +384,7 @@ Reply quote_reply(const Invocation& invocation, Account& account, Desk& desk, Ou
     );
   }
   json::object body;
-  body["now"] = paper::kst_iso(desk.now());
+  body["now"] = kst_iso(desk.now());
   body["phase"] = account.readiness().phase_;
   json::array quotes;
   for (const auto& symbol : symbols) {
@@ -408,7 +408,7 @@ Reply order_list_reply(const Invocation& invocation, Account& account, Desk& des
   (void)invocation;
   (void)output;
   json::object body;
-  body["now"] = paper::kst_iso(desk.now());
+  body["now"] = kst_iso(desk.now());
   body["orders"] = orders_json(desk);
   return read_reply(account, std::move(body));
 }
@@ -427,7 +427,7 @@ Reply clock_reply(const Invocation& invocation, Account& account, Desk& desk, Ou
   (void)invocation;
   (void)output;
   json::object body;
-  body["now"] = paper::kst_iso(desk.now());
+  body["now"] = kst_iso(desk.now());
   body["phase"] = account.readiness().phase_;
   body["data_end"] = data_end_text(desk);
   return read_reply(account, std::move(body));
@@ -474,7 +474,7 @@ inline std::optional<Reply> check_advance(const Invocation& invocation) {
   if (invocation.has("hours") && !whole_in(invocation.get("hours"), 1, 336)) {
     return error_reply(Exit::USAGE, "usage.bad_value", "--hours is a whole number from 1 to 336", "");
   }
-  if (invocation.has("to") && !paper::parse_kst(invocation.get("to"))) {
+  if (invocation.has("to") && !parse_kst(invocation.get("to"))) {
     return error_reply(
       Exit::USAGE, "usage.bad_value", "--to is a KST time written YYYY-MM-DDTHH:MM, from 1990-01-01 to 2100-12-31", ""
     );
@@ -494,7 +494,7 @@ inline std::optional<Reply> check_symbols(const Invocation& invocation) {
       continue;
     }
     for (const auto& symbol : found->second) {
-      if (!paper::valid_symbol(symbol)) {
+      if (!valid_symbol(symbol)) {
         return error_reply(
           Exit::USAGE, "usage.bad_value",
           "'" + symbol + "' is not a symbol: 1 to 32 of letters, digits, '.', '_' or '-'", ""
@@ -516,7 +516,7 @@ json::array events_json(Desk& desk) {
   json::array events;
   for (const auto& event : desk.drain_events()) {
     json::object row;
-    row["at"] = paper::kst_iso(event.at_);
+    row["at"] = kst_iso(event.at_);
     row["kind"] = event.kind_;
     row["order_id"] = event.order_id_;
     row["symbol"] = event.symbol_;
@@ -566,19 +566,19 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
     return account.journal_damaged_reply();
   }
   const auto from = desk.now();
-  paper::Clock::time_point target = from;
+  Clock::time_point target = from;
   if (invocation.has("minutes")) {
     target = from + std::chrono::minutes(*whole_in(invocation.get("minutes"), 1, 20160));
   } else if (invocation.has("hours")) {
     target = from + std::chrono::hours(*whole_in(invocation.get("hours"), 1, 336));
   } else if (invocation.has("to")) {
-    target = *paper::parse_kst(invocation.get("to"));
+    target = *parse_kst(invocation.get("to"));
   } else {
     const auto next = desk.next_session_after(from);
     if (!next) {
       return error_reply(
         Exit::FAILED, "clock.past_data",
-        "no session after " + paper::kst_iso(from) + " in the mock market's data, which ends " + data_end_text(desk),
+        "no session after " + kst_iso(from) + " in the mock market's data, which ends " + data_end_text(desk),
         "cmdatl clock shows where the data ends"
       );
     }
@@ -586,7 +586,7 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
   }
   if (target <= from) {
     return error_reply(
-      Exit::FAILED, "clock.backwards", "the clock is at " + paper::kst_iso(from) + " and only moves forward",
+      Exit::FAILED, "clock.backwards", "the clock is at " + kst_iso(from) + " and only moves forward",
       "cmdatl clock shows where the clock stands"
     );
   }
@@ -616,8 +616,8 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
   // Committed: from here a failure leaves the outcome unknown, never a plain failure.
   try {
     json::object body;
-    body["from"] = paper::kst_iso(from);
-    body["now"] = paper::kst_iso(desk.now());
+    body["from"] = kst_iso(from);
+    body["now"] = kst_iso(desk.now());
     body["phase"] = phase_of(desk);
     auto events = events_json(desk);
     body["events"] = std::move(events);

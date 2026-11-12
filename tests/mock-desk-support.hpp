@@ -33,7 +33,7 @@ struct HeldAccount {
   /** @brief The operator's file. */
   cmdatl::ConfigSnapshot snapshot_;
   /** @brief The bars. */
-  cmdatl::paper::MarketData data_;
+  cmdatl::MarketData data_;
   /** @brief The lock. */
   std::unique_ptr<cmdatl::OwnerLock> lock_;
 
@@ -43,7 +43,7 @@ struct HeldAccount {
    */
   explicit HeldAccount(const PaperFixture& fixture) : snapshot_(cmdatl::load_operator_config()) {
     REQUIRE(snapshot_.config_);
-    REQUIRE(!cmdatl::paper::parse_bars(slurp(fixture.dir() / "bars.csv"), data_));
+    REQUIRE(!cmdatl::parse_bars(slurp(fixture.dir() / "bars.csv"), data_));
     std::filesystem::create_directories(fixture.account());
     lock_ = std::make_unique<cmdatl::OwnerLock>(fixture.account().string());
     REQUIRE(

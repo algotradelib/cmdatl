@@ -61,7 +61,7 @@ TEST_CASE("the mock desk answers its reads from the bars and the kept market") {
   CHECK_FALSE(desk->has_symbol("035420"));
   CHECK(desk->accepts_orders_at("005930", desk->now()));
   CHECK_FALSE(desk->accepts_orders_at("035420", desk->now()));
-  CHECK(desk->data_end() == cmdatl::paper::kst_day(kst("2024-03-27T12:00")));
+  CHECK(desk->data_end() == cmdatl::kst_day(kst("2024-03-27T12:00")));
   CHECK(desk->clock_limit() == kst("2024-03-28T15:30"));
   CHECK(desk->next_session_after(desk->now()) == kst("2024-03-26T09:00"));
   CHECK_FALSE(desk->next_session_after(kst("2024-03-27T09:00")));
@@ -70,7 +70,7 @@ TEST_CASE("the mock desk answers its reads from the bars and the kept market") {
 
   REQUIRE(desk->advance_to(kst("2024-03-26T10:00")) == cmdatl::Moved::OK);
   CHECK(desk->drain_events().empty());
-  const auto quote = desk->market_session().quote(cmdatl::paper::kr("005930"));
+  const auto quote = desk->market_session().quote(cmdatl::kr("005930"));
   REQUIRE(quote);
   CHECK(quote.value().last_price_.str() == "78500");
   const auto placed = desk->session().place(order("005930", true, "2", "79000"));

@@ -8,9 +8,8 @@
 #include <string_view>
 
 namespace cmdatl {
-namespace paper {
 
-/** @brief The clock of the paper market and of every instant in its log. */
+/** @brief The clock of the mock market and of every instant cmdatl writes. */
 using Clock = std::chrono::system_clock;
 
 /** @brief Korea's offset from UTC; KRX has no daylight saving time. */
@@ -223,7 +222,7 @@ inline std::string kst_iso(Clock::time_point at) {
 }
 
 /**
- * @brief An instant as the nanoseconds since 1970 the paper log writes.
+ * @brief An instant as the nanoseconds since 1970 cmdatl writes.
  * @param at The instant, inside the supported interval.
  * @return The nanoseconds.
  */
@@ -232,7 +231,7 @@ inline std::int64_t nanos(Clock::time_point at) {
 }
 
 /**
- * @brief The instant the paper log wrote, when it is inside the supported interval and has no finer part than the
+ * @brief The instant cmdatl wrote, when it is inside the supported interval and has no finer part than the
  *   clock keeps (so writing it again gives the same number).
  * @param value The nanoseconds since 1970.
  * @return The instant, or nothing.
@@ -248,5 +247,4 @@ inline std::optional<Clock::time_point> from_nanos(std::int64_t value) {
   return at;
 }
 
-} // namespace paper
 } // namespace cmdatl

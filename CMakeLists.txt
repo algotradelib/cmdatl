@@ -124,7 +124,7 @@ configure_file(${CMDATL_GENERATED}/guides.hpp.new ${CMDATL_GENERATED}/cmdatl/gui
 # licence, and the backtest driver's main.cpp and CMakeLists.txt.
 add_executable(cmdatl_embed tools/embed.cpp)
 target_compile_features(cmdatl_embed PRIVATE cxx_std_17)
-set(CMDATL_DRIVER_MODULES driver replay orders account paper system core)
+set(CMDATL_DRIVER_MODULES driver replay orders account system core)
 set(cmdatl_driver_pairs "")
 set(cmdatl_driver_sources "")
 foreach(module IN LISTS CMDATL_DRIVER_MODULES)

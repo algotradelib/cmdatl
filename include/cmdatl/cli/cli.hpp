@@ -393,16 +393,7 @@ inline Reply account_command_reply(
   if (account.journal_intact() && !write_owner_record(account.lock(), owner_what(command, invocation))) {
     return lock_lost_reply();
   }
-  Reply reply;
-  try {
-    reply = command.run_account_(invocation, account, output);
-  } catch (const paper::LockLost&) {
-    reply = lock_lost_reply();
-  } catch (const paper::OutOfRange& error) {
-    reply = paper_state_reply(error.what());
-  } catch (const paper::PaperStateError& error) {
-    reply = paper_state_reply(error.what());
-  }
+  Reply reply = command.run_account_(invocation, account, output);
   if (!account.lock().still_at_path()) {
     reply = lock_lost_reply();
   }

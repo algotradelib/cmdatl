@@ -1,4 +1,4 @@
-// The order commands as processes: a session across the paper data's days, commands racing for one account, the
+// The order commands as processes: a session across the mock data's days, commands racing for one account, the
 // exit table's send invariant after every command, and an allocation failing anywhere in an order command.
 
 #include "./order-support.hpp"

@@ -251,7 +251,7 @@ inline algotradelib::OrderRequest order(
   const std::string& symbol, bool buy, const std::string& quantity, const std::string& price = ""
 ) {
   algotradelib::OrderRequest request;
-  request.instrument_ = cmdatl::paper::kr(symbol);
+  request.instrument_ = cmdatl::kr(symbol);
   request.side_ = buy ? algotradelib::OrderSide::BUY : algotradelib::OrderSide::SELL;
   request.type_ = price.empty() ? algotradelib::OrderType::MARKET : algotradelib::OrderType::LIMIT;
   request.quantity_ = algotradelib::Decimal64::parse(quantity);
@@ -266,8 +266,8 @@ inline algotradelib::OrderRequest order(
  * @param text `YYYY-MM-DDTHH:MM`.
  * @return The instant.
  */
-inline cmdatl::paper::Clock::time_point kst(const std::string& text) {
-  const auto at = cmdatl::paper::parse_kst(text);
+inline cmdatl::Clock::time_point kst(const std::string& text) {
+  const auto at = cmdatl::parse_kst(text);
   REQUIRE(at.has_value());
   return *at;
 }
