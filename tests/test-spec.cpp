@@ -1034,10 +1034,15 @@ TEST_CASE("the program's header: read against the spec, a regular file the inclu
     CHECK(has(r.errors_.front(), file + ":2"));
     CHECK(has(r.errors_.front(), "is not a regular file"));
   }
-  // A regular file whose path the include cannot quote; a line break is refused with any control character.
-  spit(dir.path() / "a\"b.hpp", "#pragma once\n");
-  spit(dir.path() / "a\\b.hpp", "#pragma once\n");
-  for (const auto* named : {"header = 'a\"b.hpp'\n", "header = 'a\\b.hpp'\n"}) {
+  // A regular file whose path the include cannot quote, or whose trigraph a compiler may read as `#` or `\`; a line
+  // break is refused with any control character.
+  for (const auto* name : {"a\"b.hpp", "a\\b.hpp", "good?\?=.hpp", "good?\?/.hpp"}) {
+    spit(dir.path() / name, "#pragma once\n");
+  }
+  for (
+    const auto* named :
+    {"header = 'a\"b.hpp'\n", "header = 'a\\b.hpp'\n", "header = 'good?\?=.hpp'\n", "header = 'good?\?/.hpp'\n"}
+  ) {
     const auto r = resolved(named);
     REQUIRE(r.errors_.size() == 1);
     CHECK(has(r.errors_.front(), file + ":2"));

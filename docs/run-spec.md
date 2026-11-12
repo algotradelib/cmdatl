@@ -75,7 +75,7 @@ header = "include/statistics.hpp"
 
 - The path is read against the run spec's directory, as `strategy` is; it names one header, which may include others.
 - cmdatl includes it in the driver before the generated strategy, in a backtest and in a run alike, on the mock market or an account.
-- A path that is not a regular file, or that holds `"`, `\` or a line break, is refused at its line before anything is built.
+- A path that is not a regular file, or that holds `"`, `\`, `??` (which starts a trigraph) or a line break, is refused at its line before anything is built.
 - Without it, such a program fails its build (`build.failed`), and the reply's message starts with the compiler's first error, which names the class or function to define.
 - The header is native code compiled into the process that runs the program, and trades in a run: name only code you trust.
 

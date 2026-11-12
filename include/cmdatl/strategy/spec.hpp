@@ -1509,10 +1509,14 @@ inline std::vector<Error> resolve(
   // The program's own C++ (its `extern` functions and indicators): one header, included before the generated strategy.
   if (const auto* e = get("header")) {
     std::error_code ec;
-    if (e->value_.text().find_first_of("\"\\\n\r") != std::string::npos) {
-      errors.push_back(Error::at(e->origin_, "`header`: a path holding `\"`, `\\` or a line break cannot be included"));
-    } else if (!std::filesystem::is_regular_file(e->value_.text(), ec)) {
-      errors.push_back(Error::at(e->origin_, "`header` = \"" + e->value_.text() + "\" is not a regular file"));
+    // `??` starts every trigraph, which a compiler set to read them would turn into another path.
+    const auto path = e->value_.text();
+    if (path.find_first_of("\"\\\n\r") != std::string::npos || path.find("??") != std::string::npos) {
+      errors.push_back(
+        Error::at(e->origin_, "`header`: a path holding `\"`, `\\`, `??` or a line break cannot be included")
+      );
+    } else if (!std::filesystem::is_regular_file(path, ec)) {
+      errors.push_back(Error::at(e->origin_, "`header` = \"" + path + "\" is not a regular file"));
     }
   }
   // Whether every bar is daily: wide tables always, a CSV by its interval, a store by each coordinate's.
