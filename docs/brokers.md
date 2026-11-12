@@ -31,7 +31,7 @@ choices = ["US", "KO"] # optional, for a string or an integer
 ```
 
 ```cpp
-// adapter.hpp: algotradelib only (no other include path or library), in namespace cmdatl_adapter
+// adapter.hpp: algotradelib and the Boost.JSON its target carries (no other include path or library), in namespace cmdatl_adapter
 namespace cmdatl_adapter {
 using Client = my::Client; // a blocking client with algotradelib::BrokerTraits<Client>
 struct Connection {
@@ -97,6 +97,9 @@ What an adapter would otherwise decide itself (an exchange, a currency, a symbol
 - A run's driver reads the operator's file again and connects only with the options `cmdatl run` checked; a file changed in between is refused before anything is read or sent.
 - Bars are raw: cmdatl asks the adapter for unadjusted prices and refuses an answer marked adjusted.
   An option such as `adjusted` is not one cmdatl honours: whatever an adapter declares, it returns raw bars.
+
+A declaration cannot state a string's form (a code's length, a symbol table's syntax): an adapter checks a value it cannot use itself, in `connect`, before any request.
+Its message is never shown, so what the user sees of a refusal is the error's category and its code (`broker_code_`, kept when short and plain); a `connect` that throws is reported as a login or options it could not use.
 
 An adapter reads its options as it reads the login:
 

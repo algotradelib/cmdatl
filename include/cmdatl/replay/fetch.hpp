@@ -218,7 +218,8 @@ int fetch_main(int argc, char** argv, Fills fills_of, Connect connect, const std
     }();
     if (!connection) {
       return failed(
-        {{"message", "the broker folder's adapter could not use the stored login (its text is not shown)"}}
+        {{"message",
+          "the broker folder's adapter could not use the stored login or the options (its text is not shown)"}}
       );
     }
     using Client = typename std::decay_t<decltype(connection->client_)>::element_type;

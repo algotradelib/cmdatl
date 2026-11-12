@@ -253,7 +253,8 @@ public:
       // The adapter's text is not cmdatl's: it could quote the login.
       return run_error(
         base, Exit::FAILED, "auth.account_mismatch",
-        "the broker folder's adapter could not use the stored login (its text is not shown); log in again"
+        "the broker folder's adapter could not use the stored login or the options (its text is not shown); check the "
+        "operator file's [account.options], or log in again"
       );
     }
     if (!connection_->client_) {
