@@ -82,14 +82,15 @@ cmdatl strategy backtest daily.toml
 What an adapter would otherwise decide itself (an exchange, a currency, a symbol table) is an option, given in the TOML; the adapter declares each one in `broker.toml`.
 
 - `[[options]]` declares one option: `name` (a letter or `_`, then letters, digits or `_`), `type` (`string`, `integer`, `number` or `boolean`), `required` (`true` or `false`, always written), and optionally `choices` (for a string or an integer, the values it may take).
-  An adapter declares at most 32 options, and none named as one of the login's `[[fields]]`: a credential is never an option.
+  An adapter declares at most 32 options, and none with the `name` of one of the login's `[[fields]]`: a credential is never an option.
 - A backtest gives the values in the run spec's `[bars.options]`, or on the command line as `bars.options.NAME=VALUE`, which wins over the file, in any order.
   A command-line value is typed by the declaration: a declared string stays a string (`bars.options.code=005930` is `"005930"`), an integer takes integer syntax, a boolean `true` or `false`.
 - A run on a folder's account gives them in the operator's file, `[account.options]`; they have no command-line form, as the rest of the operator's file has none.
 - There are no defaults: a value the adapter needs is written in the TOML, or the run is refused.
-- cmdatl checks the values against the declarations before anything is built, without running the adapter: an option not declared (also when none is), a value of another type, a value outside its choices, a required option left out, a table or an array in place of a value.
+- cmdatl checks the values against the declarations before anything is built, without running the adapter: an option not declared (also when none is), a value of another type, a value outside its choices, a required option left out, a table (an empty one too) or an array in place of a value.
   Each is refused at its file and line: `spec.invalid` (exit 2) for the run spec or the command line, `config.invalid` (exit 1) for the operator's file.
-  An options table beside a built-in source or broker is refused too.
+  An options table beside a built-in source or broker, or in a run on a broker's account, is refused too, even an empty one.
+  Beside a broker folder an empty table gives no options: `{}`, or the refusal of a required option left out.
 - The adapter receives the values as a JSON object's text, keys sorted: a string, an integer kept whole (never rounded through a double), a number (an integer when written as one), `true` or `false`; `{}` when none is given.
 - Options are settings, not secrets: they may appear in replies (`settings_given`) and in the driver's arguments, as other settings do.
 - Options are the run's data, not its build: changing one compiles nothing.

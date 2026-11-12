@@ -227,6 +227,8 @@ struct Value {
     NUM,
     BOOL,
     LIST,
+    /** @brief An empty `[bars.options]`, kept so that its presence is checked; it holds no option. */
+    TABLE,
   };
   /** @brief What it is. */
   Type type_{Type::STR};
@@ -300,6 +302,7 @@ struct Value {
       case Type::BOOL:
         return boolean_ ? "true" : "false";
       case Type::LIST:
+      case Type::TABLE:
         break;
     }
     std::string out;
@@ -317,8 +320,8 @@ struct Value {
     if (type_ == Type::STR) {
       return "\"" + text_ + "\"";
     }
-    if (type_ == Type::LIST) {
-      return "[" + text() + "]";
+    if (type_ == Type::LIST || type_ == Type::TABLE) {
+      return type_ == Type::LIST ? "[" + text() + "]" : std::string("a table");
     }
     return text();
   }
@@ -938,7 +941,11 @@ inline std::optional<Error> check(Entry& e) {
     return Error::at(at, "`" + e.key_ + "` moved to `bars." + e.key_.substr(5) + "`: [data] is now [bars]");
   } else if (e.key_ == "bars.options" || e.key_.rfind("bars.options.", 0) == 0) {
     // A broker folder's options: flat, each checked against its broker.toml's declarations once the folder is read.
-    if (e.key_.size() <= 13 || e.key_.find('.', 13) != std::string::npos) {
+    // An empty [bars.options] is a table only the file can give, kept for its presence.
+    if (e.value_.type_ == Value::Type::TABLE && e.key_ == "bars.options" && !at.command_line()) {
+      return std::nullopt;
+    }
+    if (e.key_.size() <= 13 || e.key_.find('.', 13) != std::string::npos || e.value_.type_ == Value::Type::TABLE) {
       return Error::at(at, "`" + e.key_ + "`: [bars.options] holds options, each a string, a number or a boolean");
     }
     if (e.value_.type_ == Value::Type::LIST) {
@@ -1306,7 +1313,7 @@ inline std::vector<Error> resolve(
         )
       );
     }
-    if (e.key_.rfind("bars.options.", 0) == 0 && !folder && !broker) {
+    if (e.key_.rfind("bars.options", 0) == 0 && !folder && !broker) {
       errors.push_back(
         Error::at(
           e.origin_,
@@ -1774,7 +1781,7 @@ inline std::vector<Error> resolve(
     if (
       e.key_ == "strategy" || e.key_ == "bars.source" || e.key_.rfind("build.", 0) == 0 ||
       e.key_.rfind("params.", 0) == 0 || e.key_ == "replay.fill_header" || e.key_ == "replay.fill_function" ||
-      e.key_ == "bars.adapter" || e.key_.rfind("bars.options.", 0) == 0
+      e.key_ == "bars.adapter" || e.key_.rfind("bars.options", 0) == 0
     ) {
       if (folder && e.key_.rfind("bars.options.", 0) == 0) {
         out.fetch_options_.push_back(e);
@@ -2117,7 +2124,20 @@ inline Read flatten(const toml::table& root, const std::string& text, const std:
       }
       const auto key = prefix.empty() ? part : prefix + "." + part;
       if (const auto* inner = node.as_table()) {
-        walk(*inner, key);
+        // An option is never a table, even an empty one; an empty [bars.options] is kept, so a source it does not
+        // belong to refuses it.
+        if (key.rfind("bars.options.", 0) == 0) {
+          refuse(node.source(), "`" + key + "`: [bars.options] holds options, each a string, a number or a boolean");
+        } else if (key == "bars.options" && inner->empty()) {
+          Value table;
+          table.type_ = Value::Type::TABLE;
+          placed.push_back(
+            {node.source().begin.line, node.source().begin.column, Entry{key, table, origin(node.source())},
+              std::nullopt}
+          );
+        } else {
+          walk(*inner, key);
+        }
         continue;
       }
       if (const auto* array = node.as_array()) {

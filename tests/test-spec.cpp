@@ -851,6 +851,7 @@ TEST_CASE("a broker folder's options are flat, typed by its broker.toml on the c
     {"exchange = \"US\"\nhistory = \"12\"\n", {}, "`bars.options.history` is an integer (broker.toml), not \"12\""},
     {"exchange = \"US\"\ncode = 5930\n", {}, "`bars.options.code` is a string (broker.toml), not 5930"},
     {"exchange = \"US\"\nlive = 1\n", {}, "`bars.options.live` is true or false (broker.toml), not 1"},
+    {"exchange = \"US\"\nhistory = true\n", {}, "`bars.options.history` is an integer (broker.toml), not true"},
     {"exchange = \"US\"\ncolour = \"red\"\n", {},
       "/specs/s.toml:11: `bars.options.colour` is not an option the broker folder's broker.toml declares (it declares exchange, code, history, rate, live)"},
     {"exchange = \"US\"\n", {"bars.options.history=1.0"},
@@ -894,6 +895,43 @@ TEST_CASE("a broker folder's options are flat, typed by its broker.toml on the c
   const auto beside = resolve({spec(WIDE_SPEC).entries_, cli({"bars.options.exchange=US"}, errors)}, p);
   REQUIRE(beside.errors_.size() == 1);
   CHECK(has(beside.errors_.front(), "the command line: `bars.options.exchange` applies to"));
+
+  // A table in place of an option is refused, empty or not; an empty [bars.options] is kept, never lost: beside a folder
+  // it gives no options (so a required one is missing), beside a built-in source or a broker's account it is refused.
+  CHECK(has(one_error(base + "history = {}\n"), "`bars.options.history`: [bars.options] holds options"));
+  CHECK(has(one_error(base + "[bars.options.typo]\n"), "`bars.options.typo`: [bars.options] holds options"));
+  CHECK(has(cli_error("bars.options=x"), "[bars.options] holds options"));
+  const auto required = options("", {}, five, text);
+  REQUIRE(required.size() == 1);
+  CHECK(has(required.front(), "needs `bars.options.exchange`"));
+  const std::vector<std::string> empties{
+    WIDE_SPEC + "[bars.options]\n", "strategy = \"m.atls\"\n[bars]\nfile = \"c.csv\"\noptions = {}\n"
+  };
+  for (const auto& empty : empties) {
+    const auto r = run(empty, p);
+    REQUIRE(r.errors_.size() == 1);
+    CHECK(has(r.errors_.front(), "/specs/s.toml:"));
+    CHECK(has(r.errors_.front(), "`bars.options` applies to bars.source = a broker folder's name"));
+  }
+  sp::Resolved account;
+  const auto on_account = texts(sp::resolve({spec("[bars.options]\n").entries_}, p, account, true));
+  CHECK(std::any_of(on_account.begin(), on_account.end(), [](const std::string& e) {
+    return has(e, "/specs/s.toml:1: `bars.options`: a run on a broker's account reads its bars from the broker");
+  }));
+  // The source is chosen after the command line is merged: an empty table follows it either way.
+  const std::string switched =
+    "strategy = \"m.atls\"\n[bars]\nsource = \"wide\"\nadapter = \"v\"\ncount = 5\nstore_root = \"s\"\n"
+    "[replay]\nmarket = \"us\"\n[bars.options]\n";
+  const auto to_folder = resolve({spec(switched).entries_, cli({"bars.source=vendor"}, errors)}, p);
+  REQUIRE(to_folder.errors_.empty());
+  CHECK(to_folder.resolved_.fetch_options_.empty());
+  CHECK_FALSE(to_folder.arg("bars.options"));
+  const auto to_csv =
+    resolve({spec(base).entries_, cli({"bars.source=csv", "bars.file=c.csv", "bars.symbol=x"}, errors)}, p);
+  CHECK(std::any_of(to_csv.errors_.begin(), to_csv.errors_.end(), [](const std::string& e) {
+    return has(e, "`bars.options` applies to bars.source = a broker folder's name");
+  }));
+  CHECK(errors.empty());
 }
 
 TEST_CASE("open points match the program and the data") {
