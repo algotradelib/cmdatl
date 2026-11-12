@@ -19,7 +19,6 @@
 
 #include <cmdatl/driver_files.hpp>
 
-#include <cctype>
 #include <cerrno>
 #include <chrono>
 #include <cstdint>
@@ -802,19 +801,21 @@ inline std::optional<Reply> build_driver(
   const auto built = run_child(
     {*cmake, "--build", build_dir.string()},
     [&progress, &first_error](const std::string& line) {
-      // Read without color escapes (ESC, then up to a letter), which a compiler can put inside `: error: `.
+      // Also read without colors (`ESC [`, digits, `;` or `:`, then `m`), which a compiler can put inside `: error: `.
       std::string plain;
       for (std::size_t k = 0; first_error.empty() && k < line.size(); ++k) {
-        if (line[k] == '\x1b') {
-          while (k + 1 < line.size() && std::isalpha(static_cast<unsigned char>(line[k + 1])) == 0) {
-            ++k;
-          }
-          ++k;
+        const auto end =
+          line.compare(k, 2, "\x1b[") == 0 ? line.find_first_not_of("0123456789;:", k + 2) : std::string::npos;
+        if (end != std::string::npos && line[end] == 'm') {
+          k = end;
         } else {
           plain += line[k];
         }
       }
-      if (first_error.empty() && plain.find(": error: ") != std::string::npos) {
+      if (
+        first_error.empty() &&
+        (line.find(": error: ") != std::string::npos || plain.find(": error: ") != std::string::npos)
+      ) {
         first_error = line;
       }
       progress(line);

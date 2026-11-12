@@ -258,6 +258,10 @@ TEST_CASE("a failed driver build's message leads with its first error, colored o
   const std::vector<std::string> firsts{
     "\x1b[1mstrategy.hpp:16:15: \x1b[0m\x1b[0;1;31merror: \x1b[0m\x1b[1mstatic assertion failed: X is not defined\x1b[0m",
     "strategy.hpp:16:15: error: static assertion failed: X is not defined",
+    // A hyperlink around the file name, ended by `ESC \` or by BEL, and an escape that is not a color: kept as they are.
+    "\x1b]8;;file:///src/strategy.hpp\x1b\\strategy.hpp\x1b]8;;\x1b\\:16:15: error: static assertion failed: X is not defined",
+    "\x1b]8;;file:///src/strategy.hpp\x07strategy.hpp\x1b]8;;\x07:16:15: error: static assertion failed: X is not defined",
+    "strategy.hpp:16:15\x1b[1@: error: static assertion failed: X is not defined",
   };
   for (const auto& first : firsts) {
     INFO(first);
