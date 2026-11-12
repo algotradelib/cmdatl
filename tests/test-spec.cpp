@@ -14,6 +14,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -783,6 +784,115 @@ TEST_CASE("a broker folder's history names the folder in the spec file, and runs
     run("strategy = \"m.atls\"\n[bars]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\n[build]\nduckdb = \"d\"\n", p);
   REQUIRE(store.errors_.empty());
   CHECK(store.resolved_.duckdb_ == "/specs/d");
+}
+
+TEST_CASE("a broker folder's options are flat, typed by its broker.toml on the command line, and reach it as JSON") {
+  const auto p = single();
+  const auto declared = [](const std::string& text) {
+    std::vector<cmdatl::options::Declared> out;
+    REQUIRE_FALSE(cmdatl::options::read_declared(toml::parse(std::string_view(text)), {"api_token"}, out));
+    return out;
+  };
+  const auto five = declared(
+    "[[options]]\nname = \"exchange\"\ntype = \"string\"\nrequired = true\nchoices = [\"US\", \"KO\"]\n"
+    "[[options]]\nname = \"code\"\ntype = \"string\"\nrequired = false\n"
+    "[[options]]\nname = \"history\"\ntype = \"integer\"\nrequired = false\n"
+    "[[options]]\nname = \"rate\"\ntype = \"number\"\nrequired = false\n"
+    "[[options]]\nname = \"live\"\ntype = \"boolean\"\nrequired = false\n"
+  );
+  // `adapter` on line 4; [bars.options] on line 9 and its keys from 10.
+  const std::string base =
+    "strategy = \"m.atls\"\n[bars]\nsource = \"vendor\"\nadapter = \"v\"\ncount = 5\nstore_root = \"s\"\n"
+    "[replay]\nmarket = \"us\"\n[bars.options]\n";
+  const auto options =
+    [&](
+      const std::string& lines, const std::vector<std::string>& words,
+      const std::vector<cmdatl::options::Declared>& decls, std::string& text
+    ) {
+      const auto parsed = spec(base + lines);
+      INFO(lines);
+      REQUIRE(parsed.errors_.empty());
+      std::vector<std::string> errors;
+      const auto line = cli(words, errors);
+      REQUIRE(errors.empty());
+      const auto r = resolve({parsed.entries_, line}, p);
+      REQUIRE(r.errors_.empty());
+      CHECK_FALSE(r.arg("bars.options.exchange"));
+      return texts(sp::fetch_options(r.resolved_, decls, text));
+    };
+  std::string text;
+  // From the file, typed as written: an integer past a double's precision kept whole, a string of digits a string.
+  const auto all = "exchange = \"US\"\ncode = \"005930\"\nhistory = 9007199254740993\nrate = 0.5\nlive = true\n";
+  CHECK(options(all, {}, five, text).empty());
+  CHECK(text == R"({"code":"005930","exchange":"US","history":9007199254740993,"live":true,"rate":5E-1})");
+  // From the command line, typed by the declarations, in any order, winning over the file.
+  const std::vector<std::string> words{
+    "bars.options.live=false", "bars.options.code=005930", "bars.options.rate=2", "bars.options.history=-12",
+    "bars.options.exchange=KO"
+  };
+  CHECK(options("exchange = \"US\"\n", words, five, text).empty());
+  CHECK(text == R"({"code":"005930","exchange":"KO","history":-12,"live":false,"rate":2})");
+  std::string reversed;
+  CHECK(options("exchange = \"US\"\n", {words.rbegin(), words.rend()}, five, reversed).empty());
+  CHECK(reversed == text);
+  const auto one = declared("[[options]]\nname = \"exchange\"\ntype = \"string\"\nrequired = true\n");
+  CHECK(options("exchange = \"a\\\"b\\\\c\"\n", {}, one, text).empty());
+  CHECK(text == R"({"exchange":"a\"b\\c"})");
+  CHECK(options("", {}, {}, text).empty());
+  CHECK(text == "{}");
+
+  // Each refused at its place, never with a login's text: undeclared (also when none is), of another type, outside the
+  // choices, a command-line word that is not of its type, a required one missing.
+  const std::vector<std::tuple<std::string, std::vector<std::string>, std::string>> refused{
+    {"exchange = \"XX\"\n", {},
+      "/specs/s.toml:10: `bars.options.exchange` is one of \"US\", \"KO\" (broker.toml), not \"XX\""},
+    {"exchange = \"US\"\nhistory = 1.5\n", {},
+      "/specs/s.toml:11: `bars.options.history` is an integer (broker.toml), not 1.5E0"},
+    {"exchange = \"US\"\nhistory = \"12\"\n", {}, "`bars.options.history` is an integer (broker.toml), not \"12\""},
+    {"exchange = \"US\"\ncode = 5930\n", {}, "`bars.options.code` is a string (broker.toml), not 5930"},
+    {"exchange = \"US\"\nlive = 1\n", {}, "`bars.options.live` is true or false (broker.toml), not 1"},
+    {"exchange = \"US\"\ncolour = \"red\"\n", {},
+      "/specs/s.toml:11: `bars.options.colour` is not an option the broker folder's broker.toml declares (it declares exchange, code, history, rate, live)"},
+    {"exchange = \"US\"\n", {"bars.options.history=1.0"},
+      "the command line: `bars.options.history` is an integer (broker.toml), not \"1.0\""},
+    {"exchange = \"US\"\n", {"bars.options.history=007"}, "is an integer (broker.toml), not \"007\""},
+    {"exchange = \"US\"\n", {"bars.options.history=9223372036854775808"},
+      "is an integer (broker.toml), not \"9223372036854775808\""},
+    {"exchange = \"US\"\n", {"bars.options.rate=nan"}, "is a number (broker.toml), not \"nan\""},
+    {"exchange = \"US\"\n", {"bars.options.live=yes"}, "is true or false (broker.toml), not \"yes\""},
+    {"exchange = \"US\"\n", {"bars.options.exchange=XX"}, "the command line: `bars.options.exchange` is one of"},
+    {"exchange = \"US\"\n", {"bars.options.colour=red"}, "the command line: `bars.options.colour` is not an option"},
+    {"", {}, "/specs/s.toml:4: the broker folder vendor needs `bars.options.exchange` (required in its broker.toml)"},
+  };
+  for (const auto& [lines, line, says] : refused) {
+    INFO(lines);
+    const auto errors = options(lines, line, five, text);
+    REQUIRE(errors.size() == 1);
+    INFO(errors.front());
+    CHECK(has(errors.front(), says));
+  }
+  // The options' JSON is a driver argument, bounded as the others are.
+  const auto large = options("exchange = \"US\"\n", {"bars.options.code=" + std::string(4100, 'x')}, five, text);
+  REQUIRE(large.size() == 1);
+  CHECK(has(large.front(), "/specs/s.toml:4: the broker folder's options make more than 4096 bytes of JSON"));
+  const auto none = options("exchange = \"US\"\n", {}, {}, text);
+  REQUIRE(none.size() == 1);
+  CHECK(has(none.front(), "(it declares none)"));
+
+  // Flat scalars only, and only beside a broker folder's history.
+  CHECK(has(one_error(base + "[bars.options.deep]\nx = 1\n"), "[bars.options] holds options"));
+  CHECK(
+    has(one_error(base + "list = [\"a\"]\n"), "`bars.options.list` is a string, a number or a boolean, not an array")
+  );
+  CHECK(has(one_error("[bars]\noptions = 5\n"), "[bars.options] holds options"));
+  CHECK(has(cli_error("bars.options.a.b=1"), "[bars.options] holds options"));
+  const auto wide = run(WIDE_SPEC + "[bars.options]\nexchange = \"US\"\n", p);
+  REQUIRE(wide.errors_.size() == 1);
+  CHECK(has(wide.errors_.front(), "`bars.options.exchange` applies to bars.source = a broker folder's name"));
+  std::vector<std::string> errors;
+  const auto beside = resolve({spec(WIDE_SPEC).entries_, cli({"bars.options.exchange=US"}, errors)}, p);
+  REQUIRE(beside.errors_.size() == 1);
+  CHECK(has(beside.errors_.front(), "the command line: `bars.options.exchange` applies to"));
 }
 
 TEST_CASE("open points match the program and the data") {

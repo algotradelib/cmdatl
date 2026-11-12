@@ -5,3 +5,14 @@ data_only = true
 name = "api_token"
 prompt = "API token: "
 secret = true
+
+[[options]]
+name = "exchange"
+type = "string"
+required = true
+choices = ["US", "KO"]
+
+[[options]]
+name = "history"
+type = "integer"
+required = false

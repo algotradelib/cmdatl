@@ -9,6 +9,7 @@
 // key, never read as TOML: `instruments.stock=005930` is the string 005930.
 
 #include "../account/operator.hpp"
+#include "../core/options.hpp"
 #include "../core/reply.hpp"
 #include "../core/table.hpp"
 #include "../system/files.hpp"
@@ -935,6 +936,15 @@ inline std::optional<Error> check(Entry& e) {
   } else if (e.key_.rfind("data.", 0) == 0 && known("bars." + e.key_.substr(5)) != nullptr) {
     // The bar keys were `data.*` until [data] was renamed [bars]; an old spec is refused, never read from either.
     return Error::at(at, "`" + e.key_ + "` moved to `bars." + e.key_.substr(5) + "`: [data] is now [bars]");
+  } else if (e.key_ == "bars.options" || e.key_.rfind("bars.options.", 0) == 0) {
+    // A broker folder's options: flat, each checked against its broker.toml's declarations once the folder is read.
+    if (e.key_.size() <= 13 || e.key_.find('.', 13) != std::string::npos) {
+      return Error::at(at, "`" + e.key_ + "`: [bars.options] holds options, each a string, a number or a boolean");
+    }
+    if (e.value_.type_ == Value::Type::LIST) {
+      return Error::at(at, "`" + e.key_ + "` is a string, a number or a boolean, not an array");
+    }
+    return std::nullopt;
   } else if (const auto* key = known(e.key_)) {
     kind = key->kind_;
   } else {
@@ -1209,6 +1219,11 @@ struct Resolved {
   std::string fetch_source_;
   /** @brief That folder's path (`bars.adapter`), absolute as written, or empty. */
   std::string fetch_adapter_;
+  /** @brief Where `bars.adapter` is written. */
+  Origin fetch_adapter_at_;
+  /** @brief The folder's options (`bars.options.NAME`), unchecked against its declarations; the command line's typed
+   * by them. */
+  std::vector<Entry> fetch_options_;
   /** @brief `build.duckdb`, absolute, or empty. */
   std::string duckdb_;
   /** @brief `market` or `limit`. */
@@ -1288,6 +1303,14 @@ inline std::vector<Error> resolve(
       errors.push_back(
         Error::at(
           e.origin_, "`" + e.key_ + "` applies to bars.source = " + list + ", and this run reads \"" + source + "\""
+        )
+      );
+    }
+    if (e.key_.rfind("bars.options.", 0) == 0 && !folder && !broker) {
+      errors.push_back(
+        Error::at(
+          e.origin_,
+          "`" + e.key_ + "` applies to bars.source = a broker folder's name, and this run reads \"" + source + "\""
         )
       );
     }
@@ -1751,8 +1774,11 @@ inline std::vector<Error> resolve(
     if (
       e.key_ == "strategy" || e.key_ == "bars.source" || e.key_.rfind("build.", 0) == 0 ||
       e.key_.rfind("params.", 0) == 0 || e.key_ == "replay.fill_header" || e.key_ == "replay.fill_function" ||
-      e.key_ == "bars.adapter"
+      e.key_ == "bars.adapter" || e.key_.rfind("bars.options.", 0) == 0
     ) {
+      if (folder && e.key_.rfind("bars.options.", 0) == 0) {
+        out.fetch_options_.push_back(e);
+      }
       continue;
     }
     const auto key = e.key_.rfind("instruments.", 0) == 0 ? "instrument." + e.key_.substr(12) : e.key_;
@@ -1763,6 +1789,7 @@ inline std::vector<Error> resolve(
   out.fetch_source_ = folder ? source : std::string();
   if (const auto* e = get("bars.adapter"); e != nullptr && folder) {
     out.fetch_adapter_ = e->value_.text();
+    out.fetch_adapter_at_ = e->origin_;
   }
   // DuckDB's directory reaches CMake only for a store run, so only then must it be one CMake can take.
   if (const auto* e = get("build.duckdb"); e != nullptr && out.store_) {
@@ -1806,6 +1833,67 @@ inline std::vector<Error> resolve(
   }
   if (errors.empty()) {
     resolved = std::move(out);
+  }
+  return errors;
+}
+
+/**
+ * @brief Checks a broker folder's options against its declarations, each at the place it was given: a file's value as
+ *   the file types it, a command-line word typed by its declaration; every required option given.
+ * @param resolved The settings, resolved for a broker folder's history.
+ * @param declared The folder's declarations.
+ * @param text Set to the options as the adapter receives them, a JSON object's text (`{}` for none).
+ * @return The errors.
+ */
+inline std::vector<Error> fetch_options(
+  const Resolved& resolved, const std::vector<options::Declared>& declared, std::string& text
+) {
+  std::vector<Error> errors;
+  std::vector<std::pair<std::string, json::value>> values;
+  std::set<std::string> names;
+  for (const auto& e : resolved.fetch_options_) {
+    const auto name = e.key_.substr(13);
+    names.insert(name);
+    const auto found = std::find_if(declared.begin(), declared.end(), [&name](const options::Declared& d) {
+      return d.name_ == name;
+    });
+    json::value value;
+    const auto& v = e.value_;
+    // A command-line word not of its declared type stays a string, which the check refuses.
+    if (!(e.origin_.command_line() && found != declared.end() && options::from_word(*found, v.text_, value))) {
+      if (v.type_ == Value::Type::STR) {
+        value.emplace_string() = v.text_;
+      } else if (v.type_ == Value::Type::BOOL) {
+        value = v.boolean_;
+      } else if (const auto n = integer_text(v.text_) ? options::integer_of(v.text_) : std::nullopt) {
+        value = *n;
+      } else {
+        value = v.number_;
+      }
+    }
+    if (const auto problem = options::check(declared, e.key_, name, value)) {
+      errors.push_back(Error::at(e.origin_, *problem));
+      continue;
+    }
+    values.emplace_back(name, std::move(value));
+  }
+  for (const auto& name : options::missing(declared, names)) {
+    errors.push_back(
+      Error::at(
+        resolved.fetch_adapter_at_,
+        "the broker folder " + resolved.fetch_source_ + " needs `bars.options." + name +
+          "` (required in its broker.toml)"
+      )
+    );
+  }
+  text = options::text_of(std::move(values));
+  if (errors.empty() && text.size() > options::MAX_TEXT) {
+    errors.push_back(
+      Error::at(
+        resolved.fetch_adapter_at_,
+        "the broker folder's options make more than " + std::to_string(options::MAX_TEXT) + " bytes of JSON"
+      )
+    );
   }
   return errors;
 }

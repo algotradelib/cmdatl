@@ -1,9 +1,10 @@
 #pragma once
 
 // A broker folder's adapter for tests: a data vendor on the library's DataOnlyTraits, serving a fixed daily history
-// (200 bars from 2024-01-01, prices to the cent) of any symbol, the last `count` of them. A login whose token starts
-// with `fail` is answered with an HTTP 401 whose text holds the token, as a vendor putting its token in a URL would;
-// one starting with `empty` is answered with no bars.
+// (`history` bars from 2024-01-01, prices to the cent) of any symbol, the last `count` of them. A login whose token
+// starts with `fail` is answered with an HTTP 401 whose text holds the token, as a vendor putting its token in a URL
+// would; one starting with `empty` is answered with no bars. Its options (broker.toml): `exchange`, which it needs as a
+// string, and `history`, an integer.
 
 #include <algotradelib/broker>
 
@@ -23,10 +24,12 @@ struct Tag {
   static constexpr std::string_view name = "fixture-vendor";
 };
 
-/** @brief The client: the token. */
+/** @brief The client: the token and the history's length. */
 struct Client {
   /** @brief The token. */
   std::string token_;
+  /** @brief How many bars the history holds. */
+  int history_{200};
 };
 
 /**
@@ -115,7 +118,7 @@ struct algotradelib::BrokerTraits<fixture_vendor::Client> : algotradelib::DataOn
     series.stamp_ = BarStamp::OPEN;
     series.adjusted_ = query.adjusted_;
     series.currency_ = Currency(query.instrument_.country_ == Country::KR ? "KRW" : "USD");
-    const int total = 200;
+    const int total = client.history_;
     for (int k = std::max(0, total - query.count_); k < total; ++k) {
       series.bars_.push_back(fixture_vendor::bar_at(k));
     }
@@ -141,14 +144,20 @@ struct Connection {
 };
 
 /**
- * @brief Connects with the stored login, `{"api_token": ...}`; it takes no option.
+ * @brief Connects with the stored login, `{"api_token": ...}`, and the options, `{"exchange": ..., "history": ...}`.
  * @param login The login.
+ * @param options The options.
  * @return The connection.
  */
-inline Connection connect(const std::string& login, const std::string&) {
+inline Connection connect(const std::string& login, const std::string& options) {
+  const auto given = boost::json::parse(options).as_object();
+  (void)given.at("exchange").as_string();
   Connection connection;
   connection.client_ = std::make_shared<Client>();
   connection.client_->token_ = std::string(boost::json::parse(login).as_object().at("api_token").as_string());
+  if (const auto* history = given.if_contains("history")) {
+    connection.client_->history_ = static_cast<int>(history->as_int64());
+  }
   return connection;
 }
 

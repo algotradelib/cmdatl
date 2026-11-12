@@ -735,7 +735,8 @@ TEST_CASE(
   spit(
     at("vendor.toml"),
     "strategy = 'dip.atls'\n[bars]\nsource = 'fixture'\nadapter = '" + relative +
-      "'\ncount = 150\nstore_root = 'store'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
+      "'\ncount = 150\nstore_root = 'store'\n[bars.options]\nexchange = 'US'\n[instruments]\nstock = 'AAA'\n"
+      "[replay]\nmarket = 'us'\n"
   );
   // The login as auth login stores it: bound to the folder's canonical path.
   const auto login_for = [](const std::filesystem::path& bound, const std::string& token) {
@@ -765,6 +766,40 @@ TEST_CASE(
   reply = reply_of(ran.out_);
   CHECK(reply.at("fetched").at("series").as_array().at(0).at("new_rows").as_int64() == 0);
   CHECK(reply.at("report") == first);
+
+  // An option from the command line, typed by broker.toml, reaches the adapter (a history of 100 bars), and the driver
+  // is the same build: options are the run's data, not its shape.
+  const auto shape_of = [](const std::string& err) {
+    const auto at = err.find("cmdatl: building the backtest's driver for ");
+    REQUIRE(at != std::string::npos);
+    const auto end = err.find('\n', at);
+    return err.substr(err.find(" in ", at) + 4, end - err.find(" in ", at) - 4);
+  };
+  const auto shape = shape_of(ran.err_);
+  ran = backtest({"bars.options.history=100", at("vendor.toml")});
+  INFO(ran.out_ << "\n" << ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  CHECK(reply_of(ran.out_).at("report").at("bars").as_int64() == 100);
+  CHECK(shape_of(ran.err_) == shape);
+  // Options broker.toml does not declare, or of another type, or outside its choices, or a required one missing:
+  // refused before anything is built.
+  for (
+    const auto& words : std::vector<std::vector<std::string>>{
+      {"bars.options.history=1.5"}, {"bars.options.colour=red"}, {"bars.options.exchange=XX"}
+    }
+  ) {
+    auto line = words;
+    line.insert(line.begin(), at("vendor.toml"));
+    ran = backtest(line);
+    CHECK(code_of(ran.out_) == "spec.invalid");
+    CHECK(ran.err_.find("building") == std::string::npos);
+  }
+  auto bare = slurp(at("vendor.toml"));
+  spit(at("bare.toml"), bare.replace(bare.find("[bars.options]\nexchange = 'US'\n"), 31, ""));
+  ran = backtest({at("bare.toml")});
+  CHECK(code_of(ran.out_) == "spec.invalid");
+  CHECK(ran.out_.find("needs `bars.options.exchange`") != std::string::npos);
+  CHECK(ran.err_.find("building") == std::string::npos);
 
   // The version replayed again from the store alone, as the reply says.
   const std::string as_of(reply.at("fetched").at("fetched_at").as_string());

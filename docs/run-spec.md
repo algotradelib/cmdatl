@@ -119,6 +119,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 | `bars.count` | whole number, 1 to 100000 | required | the last bars of each symbol fetched (an adapter may refuse more than its broker serves; fewer may come back) |
 | `bars.interval` | as for `"csv"` | `"1d"` | the bars' interval |
 | `bars.store_root` | path | required | the store the bars are written into, as for `"store"` |
+| `bars.options.NAME` | as the folder's `broker.toml` declares | required if declared so | an option the adapter takes, in `[bars.options]`; on the command line typed by its declaration (`docs/brokers.md`, "Options") |
 
 - `replay.market` is required: it gives the instruments' country, which the adapter is asked for.
 - The symbols come from `[instruments]`; a symbol holding `/`, `\`, `=`, `,`, a glob character (`*?[]{}`), a control character or a space at either end, or being `.` or `..`, is refused before anything is fetched.
@@ -127,6 +128,8 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 - The reply's `fetched` gives `fetched_at` (to the microsecond) and, per symbol, the bars fetched, those new to the store and the first and last date.
   `bars.source = "store"` with `bars.as_of = fetched_at` reads the store as it stood after the fetch: every bar's latest version up to that instant, which can include bars this fetch did not return (an older history, or bars an earlier fetch had and this one did not); it is the same history only when the store held nothing else for those series.
 - Prices are raw (not adjusted), each within `DECIMAL(18,4)`, and the history is the vendor's as of the fetch, revisions included: it is not what was known on each day.
+  An adapter's option cannot change that: an answer marked adjusted is refused.
+- An option the folder does not declare, of another type, outside its choices, or a required one missing, is refused before anything is built (`spec.invalid`); the adapter receives the options as a JSON object's text.
 - An adapter's error is reported by its category, HTTP status and code (`fetch.failed`), never by its text, which could carry a credential.
 - A login bound to another folder, or to none, is refused before anything is built (`auth.adapter_mismatch`), and so are `replay.fill_header` and `build.duckdb` beside the fetch, from the spec or the command line: the rule's C++, or the library in that directory, would run in the driver that holds the login (`DUCKDB_ROOT`, else the system's paths, finds DuckDB for a fetch).
 

@@ -215,17 +215,22 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   if (auto refused = check_given(given, atlc.path_, output, false, checked)) {
     return std::move(*refused);
   }
-  // A broker folder's history: the folder found and its files read once, its login read and checked against that
-  // folder, and the files compiled as read.
+  // A broker folder's history: the folder found and its files read once, its options checked against its
+  // declarations, its login read and checked against that folder, and the files compiled as read.
   const auto& fetching = checked.resolved_.fetch_source_;
   std::optional<auth::AdapterSnapshot> adapter;
   std::string login;
+  std::string options = "{}";
   if (!fetching.empty()) {
     auto found = auth::lookup_broker(fetching, checked.resolved_.fetch_adapter_);
     if (found.found_ != auth::BrokerFound::FOLDER) {
       return auth::broker_refusal(found);
     }
     const auto& folder = *found.folder_;
+    const auto errors = spec::fetch_options(checked.resolved_, folder.options_, options);
+    if (!errors.empty()) {
+      return settings_refusal(errors, given.spec_);
+    }
     const auto name = auth::login_name(folder.entry_, false);
     auth::StoreAnswer answer;
     std::string kind = "store";
@@ -323,6 +328,7 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   if (!fetching.empty()) {
     outcome = (scratch ? scratch->path() : std::filesystem::temp_directory_path()) / "fetch.json";
     argv.push_back("fetch.source=" + fetching);
+    argv.push_back("fetch.options=" + options);
     argv.push_back("fetch.outcome=" + outcome.string());
   }
   std::string fills;

@@ -1072,7 +1072,8 @@ TEST_CASE("a run on a broker folder's account checks the operator file's options
   const auto acme = project.folder(
     "acme",
     BROKER_TOML + "[[options]]\nname = \"exchange\"\ntype = \"string\"\nrequired = true\nchoices = [\"KO\"]\n" +
-      "[[options]]\nname = \"lot\"\ntype = \"integer\"\nrequired = false\n"
+      "[[options]]\nname = \"lot\"\ntype = \"integer\"\nrequired = false\n" +
+      "[[options]]\nname = \"note\"\ntype = \"string\"\nrequired = false\n"
   );
   PaperFixture fixture;
   // [account.options] on line 5 of the operator's file and its keys from 6, `adapter` on line 3.
@@ -1097,6 +1098,7 @@ TEST_CASE("a run on a broker folder's account checks the operator file's options
     {"exchange = \"KO\"\nlot = 1.5\n", 7, "`account.options.lot` is an integer (broker.toml), not 1.5E0"},
     {"exchange = \"KO\"\nappKey = \"k\"\n", 7, "`account.options.appKey` is not an option"},
     {"lot = 1\n", 3, "the broker folder acme needs account.options.exchange (required in its broker.toml)"},
+    {"exchange = \"KO\"\nnote = \"" + std::string(4100, 'x') + "\"\n", 3, "make more than 4096 bytes of JSON"},
   };
   for (const auto& [lines, line, says] : cases) {
     INFO(lines);
