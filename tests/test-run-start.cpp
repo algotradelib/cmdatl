@@ -950,8 +950,7 @@ TEST_CASE("the README's quick start runs on the example mock account and its run
   // The README's lines this case runs, as the README has them.
   const auto readme = slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "README.md");
   const std::vector<std::string> lines{
-    "cmdatl order plan AAA --target 10 --limit 102 #", "cmdatl clock advance --to 2024-01-04T15:30 #",
-    "cmdatl order reconcile AAA #", "cmdatl run examples/run.toml #"
+    "cmdatl order plan AAA --target 10 --limit 102 #", "cmdatl run examples/run.toml #"
   };
   for (const auto& line : lines) {
     INFO(line);

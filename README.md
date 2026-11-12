@@ -12,28 +12,45 @@
 </p>
 <!-- multilingual: end -->
 
-algotradelib from the command line.
-With [algotradelib](https://github.com/algotradelib/algotradelib) alone you write your own C++ for a backtest or a trading loop; with cmdatl you write the strategy in [atls](https://github.com/algotradelib/atlc), describe the run in a TOML file, and backtest it or run it from the command line.
-The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
-In this version the account and order commands work on a mock account: a market simulated from stored daily bars and kept in a state file, with no broker and no network.
-`cmdatl run` also trades a KIS account the operator's file names, a demo account (모의투자) unless the file says otherwise; see [Runs](docs/runs.md).
-Broker logins are kept in the macOS keychain, so a run on a broker's account, or a backtest that fetches its bars through a broker folder, needs macOS; other backtests, the mock account and runs on a mock market work on Linux too.
+cmdatl is [algotradelib](https://github.com/algotradelib/algotradelib) from the command line.
+Write a strategy in [atls](https://github.com/algotradelib/atlc), describe the run in a TOML file, and backtest it or run it with one command, without writing C++.
+An AI agent can use the same commands to read an account and place orders one at a time, inside limits the operator sets.
 
-From a clone, with cmdatl and atlc installed (below):
+## Quick start
+
+From a clone, with cmdatl and atlc installed ([Install](#install)).
+
+Backtest a strategy:
 
 ```sh
-cmdatl strategy backtest examples/mean-reversion.toml params.lookback=30 # builds and replays it; the report as JSON
-export CMDATL_CONFIG=$PWD/examples/mock.toml # the example mock account: the operator's file
-touch examples/mock.armed # the operator arms the account; without this file nothing may be placed
-cmdatl status # the account in one read
-cmdatl order plan AAA --target 10 --limit 102 # sends nothing; replies with a plan id
-cmdatl order place p8c16a0bcd2 # the plan id the reply named
-cmdatl clock advance --to 2024-01-04T15:30 # the mock clock moves only when told; the order fills against the next day's bar, at its close
-cmdatl order reconcile AAA # records the fill from holdings; sends nothing
-cmdatl run examples/run.toml # a strategy run on its own mock market: its events, then its reply
+cmdatl strategy backtest examples/mean-reversion.toml
 ```
 
-`cmdatl strategy new dip --template mean-reversion` starts a program of your own: `dip.atls` and `dip.toml`, a run spec that reads `bars.csv` beside it (`cp examples/data/daily.csv bars.csv` gives it the examples' bars).
+Read the example mock account and plan an order:
+
+```sh
+export CMDATL_CONFIG=$PWD/examples/mock.toml
+cmdatl status
+cmdatl order plan AAA --target 10 --limit 102 # sends nothing; replies with a plan id
+```
+
+Run a strategy on a mock market:
+
+```sh
+cmdatl run examples/run.toml # its events, then its reply
+```
+
+Placing a plan and following it to its fill are in [Orders](docs/orders.md) and [The mock account](docs/mock-account.md); a strategy of your own starts with `cmdatl strategy new` ([Strategies](docs/strategies.md)).
+
+## Notes
+
+- The account and order commands (`status`, `order`, ...) work on a mock account: a market simulated from stored daily bars, with no broker and no network.
+- `cmdatl run` also trades a KIS account the operator's file names, a demo account (모의투자) unless the file says otherwise; see [Runs](docs/runs.md).
+- Nothing is placed until the operator creates the armed file.
+- Broker logins are kept in the macOS keychain, so a run on a broker's account, or a backtest that fetches its bars through a broker folder, needs macOS.
+  Everything else works on Linux too.
+
+## Architecture
 
 How cmdatl's parts use algotradelib's modules and atlc:
 
