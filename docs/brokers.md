@@ -74,10 +74,13 @@ cmdatl strategy backtest daily.toml
 - The login is kept in the credential store, as a built-in broker's is: no credential goes into a TOML file, into the folder, onto the command line or into a reply.
 - `auth login --adapter PATH` binds the login to the folder's canonical path, links resolved.
   A backtest or a run hands the login to the adapter only when it names that same folder; another folder, even one holding the same files, is refused (`auth.adapter_mismatch`) before anything is built.
-- So a project cloned or copied elsewhere is not handed your login, even under the same name.
+- So a copy of the folder elsewhere, even under the same name, is not handed your login.
+  A run spec that names this folder itself, by any path, does fetch with your login, through your adapter only: no other native code of that spec runs beside it (below).
 - The rule is about the folder's place, not its contents: an edit inside the folder you logged in for, or a submodule update there, is trusted without a new login.
 - Nor is it a sandbox: the adapter is native code that runs with your login and your permissions; read a folder before you log in for it.
 - A backtest that fetches with a login takes no market-price rule of your own (`fill_header` under `[replay]`), whose C++ would run in the driver that holds the login: fetch into the store first, then replay `bars.source = "store"` with the rule.
+  Nor does it take a DuckDB directory of its own (`duckdb` under `[build]`), whose library would be loaded into that driver: `DUCKDB_ROOT`, else the system's paths, finds DuckDB for the fetch.
+- A run takes no market-price rule on any account, so a run on a folder's account compiles no C++ of the run spec's own beside the login.
 - After moving the folder, log in again with its new path.
   A login stored by an earlier cmdatl is bound to no folder, and is refused until you log in again.
 - `auth status` lists a folder's login without reading it, so its `adapter` is null; `auth logout --broker NAME` removes it, with or without its folder.
@@ -86,6 +89,7 @@ cmdatl strategy backtest daily.toml
 
 - cmdatl refuses a folder, or a directory or file in it, that another user could change (by its mode or, on macOS, an access control list that allows anything), and a link in it.
 - Every directory on the way to the folder must be yours or root's, and not writable by its group or others unless its sticky bit is set (as `/tmp`'s is); a link on the way must be yours or root's.
+  Files and directories made under a umask of 002 (common on Linux) are writable by their group and refused: `chmod -R go-w` on the project fixes them.
 - It reads the folder once, checks the login against that folder, compiles the files as it read them, and names the folder and a fingerprint of its files when it builds.
 - A run's driver reads the operator's file again and refuses it when it names another folder than the one the driver was built from.
 - An adapter's error text and exception text are never shown (a vendor may put its token in a URL): a reply gives the error's category, HTTP status and code.

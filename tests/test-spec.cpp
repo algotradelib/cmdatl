@@ -758,6 +758,7 @@ TEST_CASE("a broker folder's history names the folder in the spec file, and runs
       "`bars.adapter` applies to bars.source = a broker folder's name"},
     {folder("adapter = \"v\"\n", "fill_header = \"r.hpp\"\nfill_function = \"f\"\n"),
       "hands its driver a stored login"},
+    {folder("adapter = \"v\"\n", "[build]\nduckdb = \"duck\"\n"), "`build.duckdb`: a backtest that fetches through"},
   };
   for (const auto& [src, says] : cases) {
     INFO(src);
@@ -773,6 +774,15 @@ TEST_CASE("a broker folder's history names the folder in the spec file, and runs
   const auto r = resolve({parsed.entries_, line}, p);
   REQUIRE(r.errors_.size() == 1);
   CHECK(has(r.errors_.front(), "`bars.adapter` names C++ that cmdatl compiles and runs"));
+  // DuckDB's directory is refused beside a fetch from the command line too: only DUCKDB_ROOT or the system's serve it.
+  const auto duck = resolve({parsed.entries_, cli({"build.duckdb=/opt/duck"}, errors)}, p);
+  REQUIRE(duck.errors_.size() == 1);
+  CHECK(has(duck.errors_.front(), "`build.duckdb`: a backtest that fetches through"));
+  // Beside a store, which hands its driver no login, it is DuckDB's directory as before.
+  const auto store =
+    run("strategy = \"m.atls\"\n[bars]\nstore = \"a/1d/b\"\nstore_root = \"/s\"\n[build]\nduckdb = \"d\"\n", p);
+  REQUIRE(store.errors_.empty());
+  CHECK(store.resolved_.duckdb_ == "/specs/d");
 }
 
 TEST_CASE("open points match the program and the data") {
