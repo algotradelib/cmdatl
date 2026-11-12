@@ -904,14 +904,6 @@ public:
     return client_->inputs_logged();
   }
 
-  /**
-   * @brief How many inputs were replayed.
-   * @return The count.
-   */
-  std::size_t replayed() const noexcept {
-    return replayed_;
-  }
-
 private:
   /**
    * @brief A replay failure.
@@ -1018,7 +1010,6 @@ private:
           throw broken(number, "says the market answered differently from what it answers now");
         }
         pending_of.reset();
-        ++replayed_;
         continue;
       }
       if (pending_of) {
@@ -1084,7 +1075,6 @@ private:
       } else {
         throw broken(number, "has an op the paper log never writes: " + *op);
       }
-      ++replayed_;
     }
     if (number == 0 && complete == 0 && text.size() == 0) {
       throw PaperStateError("the paper log is empty");
@@ -1107,7 +1097,6 @@ private:
   std::shared_ptr<SimMarket> market_;
   std::shared_ptr<LoggedClient> client_;
   std::unique_ptr<Session> session_;
-  std::size_t replayed_{0};
   std::optional<std::size_t> cut_to_;
   std::optional<std::string> owed_result_;
 };
