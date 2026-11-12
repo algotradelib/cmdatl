@@ -859,6 +859,7 @@ TEST_CASE("a broker folder's options are flat, typed by its broker.toml on the c
     {"exchange = \"US\"\n", {"bars.options.history=9223372036854775808"},
       "is an integer (broker.toml), not \"9223372036854775808\""},
     {"exchange = \"US\"\n", {"bars.options.rate=nan"}, "is a number (broker.toml), not \"nan\""},
+    {"exchange = \"US\"\n", {"bars.options.rate=0x1p3"}, "is a number (broker.toml), not \"0x1p3\""},
     {"exchange = \"US\"\n", {"bars.options.live=yes"}, "is true or false (broker.toml), not \"yes\""},
     {"exchange = \"US\"\n", {"bars.options.exchange=XX"}, "the command line: `bars.options.exchange` is one of"},
     {"exchange = \"US\"\n", {"bars.options.colour=red"}, "the command line: `bars.options.colour` is not an option"},
