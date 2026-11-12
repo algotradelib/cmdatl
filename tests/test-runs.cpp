@@ -811,7 +811,7 @@ TEST_CASE(
 
 TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadable calendar") {
   namespace atl = algotradelib;
-  using cmdatl::driver::placement_refusal;
+  using cmdatl::placement_refusal;
   const ScratchDir dir;
   spit(dir.path() / "armed", "");
   cmdatl::OwnerLock lock(dir.path().string());
@@ -824,7 +824,7 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
       [](const std::string&) {}
     ) == cmdatl::OwnerLock::Outcome::HELD
   );
-  cmdatl::driver::PlacementPolicy policy;
+  cmdatl::PlacementPolicy policy;
   policy.armed_ = (dir.path() / "armed").string();
   policy.lock_ = &lock;
   policy.collar_ = 0.05;
@@ -867,13 +867,13 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
   atl::mock::Market market({series}, settings);
   auto client = std::make_shared<atl::mock::MockClient>(market);
   atl::BlockingSession<atl::mock::MockClient> inner(client, atl::mock::MockAccount{});
-  std::vector<cmdatl::driver::PlacementEvent> seen;
-  cmdatl::driver::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> session(
+  std::vector<cmdatl::PlacementEvent> seen;
+  cmdatl::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> session(
     inner, policy,
     [&market] {
       return market.now();
     },
-    [&seen](const cmdatl::driver::PlacementEvent& e) {
+    [&seen](const cmdatl::PlacementEvent& e) {
       seen.push_back(e);
     }
   );
@@ -950,7 +950,7 @@ TEST_CASE("the boundary checks the lock before a cancellation and counts each se
       [](const std::string&) {}
     ) == cmdatl::OwnerLock::Outcome::HELD
   );
-  cmdatl::driver::PlacementPolicy policy;
+  cmdatl::PlacementPolicy policy;
   policy.armed_ = (dir.path() / "armed").string();
   policy.lock_ = &lock;
   policy.collar_ = 0.05;
@@ -965,7 +965,7 @@ TEST_CASE("the boundary checks the lock before a cancellation and counts each se
   const auto now = [&market] {
     return market.now();
   };
-  cmdatl::driver::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> session(inner, policy, now, {});
+  cmdatl::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> session(inner, policy, now, {});
   const auto quote = inner.quote(series.instrument_);
   REQUIRE(quote);
   atl::OrderRequest buy;
@@ -1008,7 +1008,7 @@ TEST_CASE("the boundary checks the lock before a cancellation and counts each se
   CHECK(session.sends() == 3);
   // A call that throws stays counted, placement and cancellation alike.
   ThrowingSession throwing;
-  cmdatl::driver::GuardedSession<ThrowingSession, atl::BlockingSession<atl::mock::MockClient>> thrown(
+  cmdatl::GuardedSession<ThrowingSession, atl::BlockingSession<atl::mock::MockClient>> thrown(
     throwing, inner, policy, now, {}
   );
   CHECK_THROWS(thrown.place(buy));

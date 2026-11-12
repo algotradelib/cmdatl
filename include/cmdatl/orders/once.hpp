@@ -583,14 +583,14 @@ OnceResult once(
       "holdings_unread", source.last_error() ? once_detail::described(*source.last_error()) : std::string()
     );
   }
-  if constexpr (Session::Traits::has_buying_power) {
+  if constexpr (Session::Caps::has_buying_power) {
     source.poll(PollKind::BUYING_POWER, bound);
   }
-  if constexpr (MarketSession::Traits::has_price_limits) {
+  if constexpr (MarketSession::Caps::has_price_limits) {
     source.poll(PollKind::PRICE_LIMITS, bound);
   }
   source.poll(PollKind::QUOTES, bound);
-  if constexpr (MarketSession::Traits::has_calendar) {
+  if constexpr (MarketSession::Caps::has_calendar) {
     source.poll(PollKind::CALENDAR, bound);
   }
   const auto at = now();

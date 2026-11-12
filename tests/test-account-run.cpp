@@ -1049,12 +1049,12 @@ TEST_CASE("once a stop is latched, the boundary refuses every placement before t
     std::make_shared<atl::mock::MockClient>(market), atl::mock::MockAccount{}
   );
   std::vector<std::string> reasons;
-  cmdatl::driver::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> guarded(
-    inner, cmdatl::driver::PlacementPolicy{},
+  cmdatl::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> guarded(
+    inner, cmdatl::PlacementPolicy{},
     [&market] {
       return market.now();
     },
-    [&reasons](const cmdatl::driver::PlacementEvent& event) {
+    [&reasons](const cmdatl::PlacementEvent& event) {
       reasons.push_back(event.reason_);
     }
   );

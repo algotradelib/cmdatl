@@ -294,8 +294,8 @@ inline Reply lock_lost_reply() {
 //
 // Every desk has:
 //   - `broker_name`, `env_name`: static; the operator file's `broker` word, and every reply's `env`.
-//   - `Session`, `session()`: the trading session, a library `BlockingSession`: holdings, buying power, the
-//     working-order listing, reference data, placements and cancellations. Every placement and cancellation through
+//   - `Session`, `session()`: the trading session, a session with the calls of the library's `BlockingSession`:
+//     holdings, buying power, the working-order listing, reference data, placements and cancellations. Every placement and cancellation through
 //     it passes the final checks of the operator's file (the armed file for a placement, the lock for both) before it
 //     can reach the broker.
 //   - `MarketSession`, `market_session()`: the session quotes, price bands and the calendar (so the phase) are read

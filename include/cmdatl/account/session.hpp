@@ -28,7 +28,6 @@
 #include <vector>
 
 namespace cmdatl {
-namespace driver {
 
 namespace atl = algotradelib;
 
@@ -351,5 +350,4 @@ private:
   bool closed_{false};
 };
 
-} // namespace driver
 } // namespace cmdatl
