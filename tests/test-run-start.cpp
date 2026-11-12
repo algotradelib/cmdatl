@@ -212,6 +212,14 @@ TEST_CASE("the program's header is in the shape's key by its path and bytes, and
   const auto edited = shape_of();
   CHECK(!edited.empty());
   CHECK(edited != with);
+  // The same bytes under another path are another shape too.
+  const auto first = request.header_;
+  spit(dir.path() / "other.hpp", slurp(first));
+  request.header_ = (dir.path() / "other.hpp").string();
+  const auto moved = shape_of();
+  CHECK(!moved.empty());
+  CHECK(moved != edited);
+  request.header_ = first;
   // A header that cannot be read is refused before a shape is made.
   ::chmod(request.header_.c_str(), 0);
   const auto before = files_in(drivers);
