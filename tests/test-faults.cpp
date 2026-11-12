@@ -60,8 +60,8 @@ inline std::string kill_at;
 inline std::function<void(const std::string&)> hook;
 /** @brief Whether the next `fsync` of the journal fails (Linux, through `--wrap=fsync`). */
 inline bool fail_journal_fsync = false;
-/** @brief Whether every `fsync` of the mock market's state file fails, while set. */
-inline bool fail_state_fsync = false;
+/** @brief How many `fsync`s of the mock market's state file succeed before every later one fails; -1 for no failure. */
+inline int state_fsyncs_left = -1;
 /** @brief What runs right after a `replace-lock` fault replaced the lock: another process taking the account. */
 inline std::function<void()> after_replace;
 /** @brief How many matching calls were seen. */
@@ -139,7 +139,7 @@ inline void clear() {
   hook = nullptr;
   after_replace = nullptr;
   fail_journal_fsync = false;
-  fail_state_fsync = false;
+  state_fsyncs_left = -1;
   seen = 0;
   injected = 0;
 }
@@ -265,9 +265,12 @@ extern "C" int __wrap_fsync(int fd) {
     errno = EIO;
     return -1;
   }
-  if (fault::fail_state_fsync && fault::name_of(fd) == cmdatl::MOCK_STATE_FILE) {
-    errno = EIO;
-    return -1;
+  if (fault::state_fsyncs_left >= 0 && fault::name_of(fd) == cmdatl::MOCK_STATE_FILE) {
+    if (fault::state_fsyncs_left == 0) {
+      errno = EIO;
+      return -1;
+    }
+    --fault::state_fsyncs_left;
   }
   return __real_fsync(fd);
 }
@@ -278,9 +281,12 @@ extern "C" int __wrap_fsync(int fd) {
  * @return As `fsync`.
  */
 extern "C" int fsync(int fd) {
-  if (fault::fail_state_fsync && fault::name_of(fd) == cmdatl::MOCK_STATE_FILE) {
-    errno = EIO;
-    return -1;
+  if (fault::state_fsyncs_left >= 0 && fault::name_of(fd) == cmdatl::MOCK_STATE_FILE) {
+    if (fault::state_fsyncs_left == 0) {
+      errno = EIO;
+      return -1;
+    }
+    --fault::state_fsyncs_left;
   }
   using Sync = int (*)(int);
   static const auto real = reinterpret_cast<Sync>(::dlsym(RTLD_NEXT, "fsync"));
@@ -344,92 +350,70 @@ std::string now_of(const PaperFixture& fixture) {
 
 } // namespace
 
-TEST_CASE("a read failing after a prefix of the log changes nothing, a torn tail included") {
+namespace {
+
+/** @brief The file-size limit at the state file's size, and SIGXFSZ ignored, while it lives. */
+class StateFull {
+public:
+  /**
+   * @brief Sets the limit.
+   * @param file The state file.
+   */
+  explicit StateFull(const std::filesystem::path& file) : previous_(std::signal(SIGXFSZ, SIG_IGN)) {
+    ::getrlimit(RLIMIT_FSIZE, &saved_);
+    struct stat info{};
+    REQUIRE(::stat(file.c_str(), &info) == 0);
+    auto limit = saved_;
+    limit.rlim_cur = static_cast<rlim_t>(info.st_size);
+    ::setrlimit(RLIMIT_FSIZE, &limit);
+  }
+
+  StateFull(const StateFull&) = delete;
+  StateFull& operator=(const StateFull&) = delete;
+
+  /** @brief Lifts the limit. */
+  ~StateFull() {
+    ::setrlimit(RLIMIT_FSIZE, &saved_);
+    std::signal(SIGXFSZ, previous_);
+  }
+
+private:
+  struct rlimit saved_{};
+  void (*previous_)(int);
+};
+
+} // namespace
+
+TEST_CASE("an advance the state file does not take whole leaves the clock where it was") {
   const PaperFixture fixture;
   REQUIRE(outcome(fixture, {"status"}).first == 0);
-  const auto torn = slurp(fixture.log()) + "{\"op\":\"adv";
-  spit(fixture.log(), torn);
+  const auto log = slurp(fixture.log());
   {
-    const fault::Scoped scoped({"read", "paper.jsonl", "prefix", 0, 1, EIO});
-    const auto result = outcome(fixture, {"status"});
-    CHECK(result.first == 4);
-    CHECK(result.second == "unknown.paper_state");
-    CHECK(fault::injected == 2);
+    const StateFull full(fixture.log());
+    const auto result = outcome(fixture, {"clock", "advance", "--minutes", "5"});
+    CHECK(result.first == 1);
+    CHECK(result.second == "file.unwritable");
   }
-  CHECK(slurp(fixture.log()) == torn);
-  CHECK(outcome(fixture, {"status"}).first == 0);
-  CHECK(slurp(fixture.log()) + "{\"op\":\"adv" == torn);
-}
-
-TEST_CASE("an advance not written whole leaves the clock where it was, and the next open cuts the piece") {
-  for (const auto* mode : {"short", "zero", "fail"}) {
-    INFO(mode);
-    const PaperFixture fixture;
-    REQUIRE(outcome(fixture, {"status"}).first == 0);
-    const auto log = slurp(fixture.log());
-    {
-      const fault::Scoped scoped({"write", "paper.jsonl", mode, 0, 1, ENOSPC});
-      const auto result = outcome(fixture, {"clock", "advance", "--minutes", "5"});
-      CHECK(result.first == 1);
-      CHECK(result.second == "file.unwritable");
-      CHECK(fault::injected >= 1);
-    }
-    CHECK(now_of(fixture) == "2024-03-25T16:00:00+09:00");
-    CHECK(slurp(fixture.log()) == log);
-    CHECK(outcome(fixture, {"clock", "advance", "--minutes", "5"}).first == 0);
-    CHECK(now_of(fixture) == "2024-03-25T16:05:00+09:00");
-  }
-}
-
-TEST_CASE("repeated EINTR on the append is retried, and the advance happens once") {
-  const PaperFixture fixture;
-  REQUIRE(outcome(fixture, {"status"}).first == 0);
-  {
-    const fault::Scoped scoped({"write", "paper.jsonl", "eintr", 0, 5, EINTR});
-    CHECK(outcome(fixture, {"clock", "advance", "--minutes", "5"}).first == 0);
-    CHECK(fault::injected == 5);
-  }
+  CHECK(now_of(fixture) == "2024-03-25T16:00:00+09:00");
+  CHECK(slurp(fixture.log()) == log);
+  CHECK(outcome(fixture, {"clock", "advance", "--minutes", "5"}).first == 0);
   CHECK(now_of(fixture) == "2024-03-25T16:05:00+09:00");
-  CHECK(lines_of(slurp(fixture.log())).size() == 2);
 }
 
 TEST_CASE("a whole advance whose flush failed is unknown, and the next command sees it once") {
   const PaperFixture fixture;
   REQUIRE(outcome(fixture, {"status"}).first == 0);
   {
-    const fault::Scoped scoped({"fsync", "paper.jsonl", "fail", 0, 1, EIO});
+    // The first flush is the open's; the advance's is the second.
+    const fault::Scoped scoped({});
+    fault::state_fsyncs_left = 1;
     const auto result = outcome(fixture, {"clock", "advance", "--minutes", "5"});
     CHECK(result.first == 4);
     CHECK(result.second == "unknown.clock_advance");
     CHECK(declares({"clock", "advance"}, 4, "unknown.clock_advance"));
   }
   CHECK(now_of(fixture) == "2024-03-25T16:05:00+09:00");
-  CHECK(lines_of(slurp(fixture.log())).size() == 2);
-}
-
-TEST_CASE("a failed repair appends nothing more, and a later open finishes it") {
-  const PaperFixture fixture;
-  REQUIRE(outcome(fixture, {"status"}).first == 0);
-  const auto complete = slurp(fixture.log());
-  const auto torn = complete + "{\"op\":";
-  spit(fixture.log(), torn);
-  {
-    const fault::Scoped scoped({"ftruncate", "paper.jsonl", "fail", 0, 1, EIO});
-    const auto result = outcome(fixture, {"clock", "advance", "--minutes", "5"});
-    CHECK(result.first == 4);
-    CHECK(result.second == "unknown.paper_state");
-  }
-  CHECK(slurp(fixture.log()) == torn);
-  {
-    // The cut made, its flush failed: no append after it.
-    const fault::Scoped scoped({"fsync", "paper.jsonl", "fail", 0, 1, EIO});
-    const auto result = outcome(fixture, {"clock", "advance", "--minutes", "5"});
-    CHECK(result.first == 4);
-    CHECK(result.second == "unknown.paper_state");
-  }
-  CHECK(slurp(fixture.log()) == complete);
-  CHECK(outcome(fixture, {"clock", "advance", "--minutes", "5"}).first == 0);
-  CHECK(lines_of(slurp(fixture.log())).size() == 2);
+  CHECK(ops_of(slurp(fixture.log()), "advance").size() == 1);
 }
 
 TEST_CASE("the owner record's rename failing is ignored, and its temporary removed") {
@@ -456,7 +440,7 @@ TEST_CASE("the lock lost before the owner record is written: no record replaced,
   const auto log = slurp(fixture.log());
   {
     // Replaced while the account opens, after the lock was taken and before anything is written.
-    const fault::Scoped scoped({"fstat", "paper.jsonl", "replace-lock", 0, -1, 0});
+    const fault::Scoped scoped({"fstat", "market.jsonl", "replace-lock", 0, -1, 0});
     const auto result = outcome(fixture, {"status"});
     CHECK(fault::injected > 0);
     CHECK(result.first == 4);
@@ -475,11 +459,11 @@ TEST_CASE("the lock lost before the owner record is written: no record replaced,
 TEST_CASE("a failed status read refuses before anything destructive") {
   const PaperFixture fixture;
   REQUIRE(outcome(fixture, {"status"}).first == 0);
-  const auto torn = slurp(fixture.log()) + "{\"op\":";
+  const auto torn = slurp(fixture.log()) + "{\"at\":";
   spit(fixture.log(), torn);
   const auto journal = slurp(fixture.journal());
   const std::vector<std::pair<std::string, std::string>> cases{
-    {"paper.jsonl", "unknown.paper_state"},
+    {"market.jsonl", "unknown.paper_state"},
     {"journal.jsonl", "unknown.journal_damaged"},
     {"lock", "state.unavailable"},
     {"paper.toml", "config.invalid"},
@@ -496,42 +480,7 @@ TEST_CASE("a failed status read refuses before anything destructive") {
     CHECK(slurp(fixture.log()) == torn);
     CHECK(slurp(fixture.journal()) == journal);
   }
-  // The second status read of the log (after the read, checking its size held): refused the same way.
-  {
-    const fault::Scoped scoped({"fstat", "paper.jsonl", "fail", 2, 1, EIO});
-    CHECK(outcome(fixture, {"status"}).second == "unknown.paper_state");
-  }
-  CHECK(slurp(fixture.log()) == torn);
   CHECK(outcome(fixture, {"status"}).first == 0);
-}
-
-TEST_CASE("an advance killed after its line, after its flush, or after it applied, is seen exactly once") {
-  for (const auto* point : {"advance.written", "advance.synced", "advance.applied"}) {
-    INFO(point);
-    const PaperFixture fixture;
-    REQUIRE(outcome(fixture, {"status"}).first == 0);
-    const int status = run_killed({"--json", "clock", "advance", "--minutes", "5"}, point);
-    REQUIRE(WIFSIGNALED(status));
-    CHECK(WTERMSIG(status) == SIGKILL);
-    const auto lines = lines_of(slurp(fixture.log()));
-    REQUIRE(lines.size() == 2);
-    CHECK(lines.back() == R"({"op":"advance","to":1711350300000000000})");
-    CHECK(now_of(fixture) == "2024-03-25T16:05:00+09:00");
-    CHECK(now_of(fixture) == "2024-03-25T16:05:00+09:00");
-    CHECK(lines_of(slurp(fixture.log())).size() == 2);
-  }
-}
-
-TEST_CASE("a first initialization killed during its genesis is finished by the next command") {
-  const PaperFixture fixture;
-  const int status = run_killed({"--json", "status"}, "genesis.written");
-  REQUIRE(WIFSIGNALED(status));
-  CHECK(std::filesystem::exists(fixture.log()));
-  CHECK(!std::filesystem::exists(fixture.journal()));
-  const auto genesis = slurp(fixture.log());
-  CHECK(outcome(fixture, {"status"}).first == 0);
-  CHECK(slurp(fixture.log()) == genesis);
-  CHECK(algotradelib::runner::read_journal_file(fixture.journal().string()).has_header_);
 }
 
 TEST_CASE("an initialization stopped after the journal was created, or partway through its header, fails closed") {
@@ -697,11 +646,11 @@ TEST_CASE(
 }
 
 TEST_CASE(
-  "a place killed after its PENDING and before the paper line: owed unnamed and never a second order and release"
+  "a place killed after its PENDING and before it was forwarded: owed unnamed and never a second order and release"
 ) {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
-  const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, "send.before_input");
+  const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, "send.before_forward");
   REQUIRE(WIFSIGNALED(forked.status_));
   CHECK(ops_of(slurp(fixture.log()), "place").empty());
   for (int round = 0; round < 2; ++round) {
@@ -731,29 +680,25 @@ TEST_CASE(
   CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
 }
 
-TEST_CASE("a place killed after its paper line or its result: the market has it and and the next commands name it") {
-  for (const auto* point : {"send.after_input", "send.after_result"}) {
-    INFO(point);
-    const PaperFixture fixture;
-    const auto id = ready_plan(fixture);
-    const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, point);
-    REQUIRE(WIFSIGNALED(forked.status_));
-    CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
-    const auto account = ask(fixture, {"account"});
-    REQUIRE(account.body_.at("owed").as_array().size() == 1);
-    CHECK(ops_of(slurp(fixture.log()), "result").size() == 1);
-    // A limit away from the next prices keeps it listed: the plan finds the target met by it.
-    const auto plan = ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
-    INFO(boost::json::serialize(plan.body_));
-    CHECK(plan.exit_ == 0);
-    CHECK(plan.reason_ == "met");
-    const auto reconciled = ask_checked(fixture, {"order", "reconcile"});
-    CHECK(reconciled.code_ == "refused.awaiting");
-    CHECK(reconciled.body_.at("checked").as_array()[0].as_object().at("state").as_string() == "working");
-    REQUIRE(ask(fixture, {"order", "cancel", "005930"}).reason_ == "withdrawal_sent");
-    CHECK(ask_checked(fixture, {"order", "reconcile"}).reason_ == "clean");
-    CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
-  }
+TEST_CASE("a place killed after the market answered: the market has it and the next commands name it") {
+  const PaperFixture fixture;
+  const auto id = ready_plan(fixture);
+  const auto forked = run_forked(fixture, {"order", "place", id}, nullptr, "send.after_result");
+  REQUIRE(WIFSIGNALED(forked.status_));
+  CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+  const auto account = ask(fixture, {"account"});
+  REQUIRE(account.body_.at("owed").as_array().size() == 1);
+  // A limit away from the next prices keeps it listed: the plan finds the target met by it.
+  const auto plan = ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
+  INFO(boost::json::serialize(plan.body_));
+  CHECK(plan.exit_ == 0);
+  CHECK(plan.reason_ == "met");
+  const auto reconciled = ask_checked(fixture, {"order", "reconcile"});
+  CHECK(reconciled.code_ == "refused.awaiting");
+  CHECK(reconciled.body_.at("checked").as_array()[0].as_object().at("state").as_string() == "working");
+  REQUIRE(ask(fixture, {"order", "cancel", "005930"}).reason_ == "withdrawal_sent");
+  CHECK(ask_checked(fixture, {"order", "reconcile"}).reason_ == "clean");
+  CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
 }
 
 TEST_CASE("a place killed after once() returned: owed and named and pending") {
@@ -785,7 +730,7 @@ TEST_CASE("an exception after a send and inside once() or after it and is unknow
   }
 }
 
-TEST_CASE("the armed file removed before once() or before the paper line sends nothing and names the file") {
+TEST_CASE("the armed file removed before once() or before the boundary forwards sends nothing") {
   {
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
@@ -804,16 +749,16 @@ TEST_CASE("the armed file removed before once() or before the paper line sends n
     const auto id = ready_plan(fixture);
     const auto armed = fixture.armed();
     const auto forked = run_forked(fixture, {"order", "place", id}, [armed](const std::string& name) {
-      if (name == "send.before_input") {
+      if (name == "send.before_forward") {
         std::filesystem::remove(armed);
       }
     });
     INFO(forked.out_);
     CHECK(forked.exit() == 3);
     CHECK(forked.code() == "refused.not_reached");
-    // The binding's own refusal, naming the armed file.
+    // The boundary's own refusal.
     const auto message = std::string(reply_of(forked.out_).at("error").as_object().at("message").as_string());
-    CHECK(message.find("armed file does not exist: " + armed.string()) != std::string::npos);
+    CHECK(message.find("not_armed") != std::string::npos);
     CHECK(ops_of(slurp(fixture.log()), "place").empty());
     // The journal answered the PENDING (a local refusal is journaled as REJECTED): nothing is owed.
     CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().empty());
@@ -858,38 +803,101 @@ TEST_CASE("the journal moved aside or emptied or replaced by a copy before once(
   }
 }
 
-TEST_CASE("the paper line not written whole is refused.not_reached; its fsync failing is unknown.indeterminate") {
-  for (const auto* mode : {"short", "zero", "fail"}) {
-    INFO(mode);
+namespace {
+
+/**
+ * @brief A hook that fails the state file's writes, or its flushes, only while the boundary forwards a send.
+ * @param file The state file.
+ * @param flush Whether the flush fails rather than the write.
+ * @return The hook.
+ */
+std::function<void(const std::string&)> state_fails_at_send(const std::filesystem::path& file, bool flush) {
+  auto saved = std::make_shared<struct rlimit>();
+  return [file, flush, saved](const std::string& name) {
+    if (name == "send.before_forward") {
+      if (flush) {
+        fault::state_fsyncs_left = 0;
+        return;
+      }
+      struct stat info{};
+      REQUIRE(::stat(file.c_str(), &info) == 0);
+      ::getrlimit(RLIMIT_FSIZE, saved.get());
+      auto limit = *saved;
+      limit.rlim_cur = static_cast<rlim_t>(info.st_size);
+      ::setrlimit(RLIMIT_FSIZE, &limit);
+    } else if (name == "send.after_result") {
+      fault::state_fsyncs_left = -1;
+      if (!flush) {
+        ::setrlimit(RLIMIT_FSIZE, saved.get());
+      }
+    }
+  };
+}
+
+} // namespace
+
+TEST_CASE("a send the state file does not take whole is refused.not_reached and nothing is sent") {
+  for (const auto* command : {"place", "cancel"}) {
+    INFO(command);
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
-    {
-      // The first write is the command's simulated second; the second is the place line.
-      const fault::Scoped scoped({"write", "paper.jsonl", mode, 1, 1, ENOSPC});
-      const auto result = ask(fixture, {"order", "place", id});
-      INFO(boost::json::serialize(result.body_));
-      CHECK(result.exit_ == 3);
-      CHECK(result.code_ == "refused.not_reached");
+    const bool cancel = std::string(command) == "cancel";
+    if (cancel) {
+      REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
     }
-    CHECK(ops_of(slurp(fixture.log()), "place").empty());
-    CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().empty());
-    CHECK(ops_of(slurp(fixture.log()), "place").empty());
-    const auto next = plan_id(fixture, "005930", "10", "75000");
-    CHECK(ask_checked(fixture, {"order", "place", next}).reason_ == "placed");
+    const auto before = slurp(fixture.log());
+    const auto args =
+      cancel ? std::vector<std::string>{"order", "cancel", "005930"} : std::vector<std::string>{"order", "place", id};
+    const auto forked = run_forked(fixture, args, state_fails_at_send(fixture.log(), false));
+    INFO(forked.out_);
+    CHECK(forked.exit() == 3);
+    CHECK(forked.code() == "refused.not_reached");
+    CHECK(ops_of(slurp(fixture.log()), "place").size() == ops_of(before, "place").size());
+    CHECK(ops_of(slurp(fixture.log()), "cancel").empty());
+    CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().size() == (cancel ? 1U : 0U));
+    CHECK(ask(fixture, {"order", "list"}).body_.at("orders").as_array().size() == (cancel ? 1U : 0U));
   }
-  const PaperFixture fixture;
-  const auto id = ready_plan(fixture);
-  {
-    const fault::Scoped scoped({"fsync", "paper.jsonl", "fail", 1, 1, EIO});
-    const auto result = ask(fixture, {"order", "place", id});
-    CHECK(result.exit_ == 4);
-    CHECK(result.code_ == "unknown.indeterminate");
+}
+
+TEST_CASE("a send whose state file flush is not confirmed is unknown.indeterminate and the reopened market has it") {
+  for (const auto* command : {"place", "cancel"}) {
+    INFO(command);
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const bool cancel = std::string(command) == "cancel";
+    if (cancel) {
+      REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
+    }
+    const auto args =
+      cancel ? std::vector<std::string>{"order", "cancel", "005930"} : std::vector<std::string>{"order", "place", id};
+    const auto forked = run_forked(fixture, args, state_fails_at_send(fixture.log(), true));
+    INFO(forked.out_);
+    CHECK(forked.exit() == 4);
+    CHECK(forked.code() == "unknown.indeterminate");
+    // The line survived: the replay applies it.
+    CHECK(ops_of(slurp(fixture.log()), cancel ? "cancel" : "place").size() == 1);
+    CHECK(ask(fixture, {"order", "list"}).body_.at("orders").as_array().size() == (cancel ? 0U : 1U));
+    CHECK(ask_checked(fixture, {"order", "reconcile"}).exit_ != 0);
   }
-  // The line survived: the replay applies it, and the order rests.
-  CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
-  const auto reconciled = ask_checked(fixture, {"order", "reconcile"});
-  CHECK(reconciled.exit_ != 0);
-  CHECK(ask(fixture, {"order", "list"}).body_.at("orders").as_array().size() == 1);
+}
+
+TEST_CASE("a journal failing after a forwarded send is unknown.journal_write for place and cancel") {
+  for (const auto* command : {"place", "cancel"}) {
+    INFO(command);
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const bool cancel = std::string(command) == "cancel";
+    if (cancel) {
+      REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
+    }
+    const auto args =
+      cancel ? std::vector<std::string>{"order", "cancel", "005930"} : std::vector<std::string>{"order", "place", id};
+    const auto forked = run_forked(fixture, args, limit_at("send.after_result", fixture.journal(), 0, false));
+    INFO(forked.out_);
+    CHECK(forked.exit() == 4);
+    CHECK(forked.code() == "unknown.journal_write");
+    CHECK(ops_of(slurp(fixture.log()), cancel ? "cancel" : "place").size() == 1);
+  }
 }
 
 TEST_CASE("the journal's PENDING failing at zero bytes or as a prefix: refused.journal_unwritable and nothing sent") {
@@ -961,27 +969,11 @@ TEST_CASE("the journal's answer failing after the market answered: unknown.journ
   CHECK(ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"}).reason_ == "met");
 }
 
-TEST_CASE("a market-refused place whose journal answer fails: unknown.journal_write and then unresolved") {
-  ConfigParts parts;
-  parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
-  const PaperFixture fixture(parts);
-  fixture.arm();
-  REQUIRE(outcome(fixture, {"clock", "advance", "--to", "2024-03-26T08:10"}).first == 0);
-  const auto id = plan_id(fixture, "005930", "10", "78500");
-  const auto forked =
-    run_forked(fixture, {"order", "place", id}, limit_at("send.after_result", fixture.journal(), 0, false));
-  INFO(forked.out_);
-  CHECK(forked.exit() == 4);
-  CHECK(forked.code() == "unknown.journal_write");
-  const auto plan = ask_checked(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "78500"});
-  CHECK(plan.exit_ == 4);
-}
-
-TEST_CASE("a cancel killed after its paper line: canceled on replay and unresolved until the match window closes") {
+TEST_CASE("a cancel killed after the market answered: canceled and unresolved until the match window closes") {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
   REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
-  const auto forked = run_forked(fixture, {"order", "cancel", "005930"}, nullptr, "send.after_input");
+  const auto forked = run_forked(fixture, {"order", "cancel", "005930"}, nullptr, "send.after_result");
   REQUIRE(WIFSIGNALED(forked.status_));
   CHECK(ops_of(slurp(fixture.log()), "cancel").size() == 1);
   CHECK(ask(fixture, {"order", "list"}).body_.at("orders").as_array().empty());
@@ -1020,7 +1012,7 @@ TEST_CASE("an interrupt before once() is 130 and sends nothing; after once() is 
       std::vector<std::string>{"order", "place", id} :
       std::vector<std::string>{"order", "cancel", "005930"};
     const auto forked = run_forked(fixture, args, [](const std::string& name) {
-      if (name == "send.after_input") {
+      if (name == "send.after_result") {
         cmdatl::interruption = 1;
       }
     });
@@ -1047,12 +1039,19 @@ TEST_CASE("the plan book's rename failing: exit 1 and the plan unused and nothin
   CHECK(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
 }
 
-TEST_CASE("the per-call second not written whole is exit 1 with nothing sent") {
+TEST_CASE("the per-call second not written whole or not flushed is exit 1 with nothing sent") {
   const PaperFixture fixture;
   const auto id = ready_plan(fixture);
-  for (const auto* call : {"write", "fsync"}) {
-    INFO(call);
-    const fault::Scoped scoped({call, "paper.jsonl", "fail", 0, 1, EIO});
+  {
+    const StateFull full(fixture.log());
+    const auto result = ask(fixture, {"order", "place", id});
+    CHECK(result.exit_ == 1);
+    CHECK(result.code_ == "file.unwritable");
+  }
+  {
+    // The first flush is the open's; the second is the command's second.
+    const fault::Scoped scoped({});
+    fault::state_fsyncs_left = 1;
     const auto result = ask(fixture, {"order", "place", id});
     CHECK(result.exit_ == 1);
     CHECK(result.code_ == "file.unwritable");
@@ -1066,11 +1065,16 @@ TEST_CASE("a former lock holder never publishes its plan book over a newer holde
       INFO("order " << command << ", the lock replaced " << when);
       const PaperFixture fixture;
       const auto id = ready_plan(fixture);
+      const auto book_path = fixture.account() / "plans.json";
+      const auto former_book = slurp(book_path);
+      // The newer holder's book, made beforehand: while the former holder runs, its market's state file stays locked,
+      // so the newer holder only publishes its book.
+      const auto new_id = plan_id(fixture, "000660", "1", "180000");
+      const auto newer_book = slurp(book_path);
+      spit(book_path, former_book);
       const auto journal_before = slurp(fixture.journal());
-      std::string new_id;
       const auto newer_holder = [&] {
-        new_id = plan_id(fixture, "000660", "1", "180000");
-        REQUIRE(cmdatl::PlanBook::load(fixture.account().string()).find(new_id).has_value());
+        spit(book_path, newer_book);
       };
       const auto line = std::string(command) == "place" ?
         std::vector<std::string>{"order", "place", id} :
@@ -1113,40 +1117,6 @@ TEST_CASE("a former lock holder never publishes its plan book over a newer holde
     }
   }
 }
-
-namespace {
-
-/** @brief The file-size limit at the state file's size, and SIGXFSZ ignored, while it lives. */
-class StateFull {
-public:
-  /**
-   * @brief Sets the limit.
-   * @param file The state file.
-   */
-  explicit StateFull(const std::filesystem::path& file) : previous_(std::signal(SIGXFSZ, SIG_IGN)) {
-    ::getrlimit(RLIMIT_FSIZE, &saved_);
-    struct stat info{};
-    REQUIRE(::stat(file.c_str(), &info) == 0);
-    auto limit = saved_;
-    limit.rlim_cur = static_cast<rlim_t>(info.st_size);
-    ::setrlimit(RLIMIT_FSIZE, &limit);
-  }
-
-  StateFull(const StateFull&) = delete;
-  StateFull& operator=(const StateFull&) = delete;
-
-  /** @brief Lifts the limit. */
-  ~StateFull() {
-    ::setrlimit(RLIMIT_FSIZE, &saved_);
-    std::signal(SIGXFSZ, previous_);
-  }
-
-private:
-  struct rlimit saved_{};
-  void (*previous_)(int);
-};
-
-} // namespace
 
 TEST_CASE("a mock desk whose state file takes no whole line changes nothing and counts no send") {
   const PaperFixture fixture;
@@ -1206,9 +1176,9 @@ TEST_CASE("a mock desk whose state file flush is not confirmed counts the send a
     {
       auto desk = held.desk();
       const fault::Scoped scoped({});
-      fault::fail_state_fsync = true;
+      fault::state_fsyncs_left = 0;
       const auto placed = desk->session().place(order("005930", true, "1", "78500"));
-      fault::fail_state_fsync = false;
+      fault::state_fsyncs_left = -1;
       REQUIRE_FALSE(placed);
       CHECK(placed.error().broker_code_ == "state_unconfirmed");
       CHECK(placed.error().reached_broker_);
@@ -1229,9 +1199,9 @@ TEST_CASE("a mock desk whose state file flush is not confirmed counts the send a
       whole.all_remaining_ = true;
       const auto ref = desk->session().working_orders().value().orders_.front().ref_;
       const fault::Scoped scoped({});
-      fault::fail_state_fsync = true;
+      fault::state_fsyncs_left = 0;
       const auto canceled = desk->session().cancel(ref, whole);
-      fault::fail_state_fsync = false;
+      fault::state_fsyncs_left = -1;
       REQUIRE_FALSE(canceled);
       CHECK(canceled.error().broker_code_ == "state_unconfirmed");
       CHECK(canceled.error().reached_broker_);
@@ -1245,9 +1215,9 @@ TEST_CASE("a mock desk whose state file flush is not confirmed counts the send a
     {
       auto desk = held.desk();
       const fault::Scoped scoped({});
-      fault::fail_state_fsync = true;
+      fault::state_fsyncs_left = 0;
       const auto moved = desk->advance_to(kst("2024-03-26T11:00"));
-      fault::fail_state_fsync = false;
+      fault::state_fsyncs_left = -1;
       CHECK(moved == cmdatl::Moved::UNCONFIRMED);
       CHECK(desk->now() == kst("2024-03-26T10:00"));
     }

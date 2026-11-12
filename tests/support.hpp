@@ -20,6 +20,8 @@
 #include <vector>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <spawn.h>
@@ -254,6 +256,38 @@ inline int open_fds() {
     ++n;
   }
   return n;
+}
+
+/** @brief How many descriptors `close_leaked_state_files` has closed in this process. */
+inline long leaked_state_files = 0;
+
+/**
+ * @brief Closes every descriptor left open on a mock market's state file (`market.jsonl`): the library's `MarketFile`
+ *   leaves its file open, and locked, when an allocation fails in its constructor after the file was opened.
+ *
+ * No command keeps the file open after it returns, so any descriptor on it is that leak; each is counted in
+ * `leaked_state_files`.
+ */
+inline void close_leaked_state_files() {
+  for (int fd = 3; fd < 1024; ++fd) {
+#if defined(__APPLE__)
+    char path[PATH_MAX];
+    if (::fcntl(fd, F_GETPATH, path) != 0) {
+      continue;
+    }
+#else
+    char path[4096];
+    const auto n = ::readlink(("/proc/self/fd/" + std::to_string(fd)).c_str(), path, sizeof(path) - 1);
+    if (n <= 0) {
+      continue;
+    }
+    path[n] = '\0';
+#endif
+    if (std::filesystem::path(path).filename() == "market.jsonl") {
+      ::close(fd);
+      ++leaked_state_files;
+    }
+  }
 }
 
 /**

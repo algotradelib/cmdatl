@@ -201,8 +201,8 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"a date after 2100", with("", "", paper_with("start", "start = \"2101-01-01T09:30\"")), "config.invalid", 14},
     {"a start with seconds", with("", "", paper_with("start", "start = \"2024-03-25T09:30:00\"")), "config.invalid",
       14},
-    {"a negative listing lag", with("", "", paper_plus("listing_lag = -1")), "config.invalid", 15},
-    {"a holdings lag past a day", with("", "", paper_plus("holdings_lag = 86401")), "config.invalid", 15},
+    {"a listing lag, no longer a key", with("", "", paper_plus("listing_lag = 0")), "config.invalid", 15},
+    {"a holdings lag, no longer a key", with("", "", paper_plus("holdings_lag = 0")), "config.invalid", 15},
     {"a state_dir key", with("", "", paper_plus("state_dir = \"/tmp\"")), "config.invalid", 15},
     {"an armed_file key", "armed_file = \"/tmp/a\"\n" + ConfigParts{}.text(), "config.invalid", 1},
     {"an unknown table", ConfigParts{}.text() + "\n[extra]\nx = 1\n", "config.invalid", 16},
@@ -263,14 +263,13 @@ TEST_CASE("a valid operator's file: defaults filled, paths beside it, the armed 
   CHECK(c.limits_.plan_ttl_ == 60);
   CHECK(c.limits_.portfolio_age_ == 30);
   CHECK(c.limits_.order_value_ == "5000000");
-  CHECK(c.paper_.listing_lag_ == 0);
   // A standard table for position, an order value written as a decimal, phases and bounds at their limits.
   fixture.write_config(with(
     "",
     "symbols = [\"005930\", \"000660\"]\norder_value = \"10000000000000.0\"\ndaily_orders = 0\ncollar = 0.30\n"
     "phases = [\"pre_open\", \"open\", \"post_close\"]\nplan_ttl = 3600\nportfolio_age = 86400\n"
     "[limits.position]\n\"005930\" = 100000000\n\"000660\" = 0\n",
-    "bars = \"/abs/bars.csv\"\ncash = 10000000000000\nstart = \"2100-12-31T23:59\"\nlisting_lag = 86400\nholdings_lag = 0\n"
+    "bars = \"/abs/bars.csv\"\ncash = 10000000000000\nstart = \"2100-12-31T23:59\"\n"
   ));
   snapshot = cmdatl::load_operator_config();
   REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
@@ -423,7 +422,7 @@ TEST_CASE("the state root: XDG_STATE_HOME when absolute, else HOME, else state.u
     REQUIRE(fixture.json({"status"}).exit_ == 0);
     CHECK(
       std::filesystem::exists(
-        fixture.dir() / "home" / ".local" / "state" / "cmdatl" / "accounts" / "paper-paper-paper-0001" / "paper.jsonl"
+        fixture.dir() / "home" / ".local" / "state" / "cmdatl" / "accounts" / "paper-paper-paper-0001" / "market.jsonl"
       )
     );
   }
@@ -524,8 +523,10 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
     CHECK(!body.at("capabilities").as_object().at("trigger_price").as_bool());
     CHECK(body.at("limits").as_object().at("collar").as_string() == "0.05");
     const auto& costs = body.at("paper").as_object().at("costs").as_object();
-    CHECK(costs.at("commission").as_string() == "0.00015");
-    CHECK(costs.at("sell_tax").as_string() == "0.002");
+    // The mock's own fill model charges nothing.
+    CHECK(costs.at("commission").as_string() == "0");
+    CHECK(costs.at("sell_tax").as_string() == "0");
+    CHECK(costs.at("slippage_ticks").as_int64() == 0);
     CHECK(cmdatl::decimal_text(0.3) == "0.3");
     CHECK(cmdatl::decimal_text(0.00001) == "0.00001");
     CHECK(!body.at("armed").as_object().at("exists").as_bool());

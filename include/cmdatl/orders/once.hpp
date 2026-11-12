@@ -367,7 +367,7 @@ struct Mapped {
  * 1. a send in transit: `indeterminate` (4);
  * 2. a journal write failed during the settle after an input was logged: `journal_write` (4);
  * 3. a journal write failed and no input was logged: `journal_unwritable` (3);
- * 4. a withdrawal: only withdrawals sent, `withdrawal_sent` (0), else `withdrawal` (4);
+ * 4. a withdrawal: only withdrawals sent, `withdrawal_sent` (0); nothing sent, `not_reached` (3); else `withdrawal` (4);
  * 5. a placement: only placed, `placed` (0), else `mixed` (4);
  * 6. nothing at all: `met` (0);
  * 7. nothing logged and nothing sent: `guard`, `not_reached` (the binding refused before its line, with its text) or
@@ -413,6 +413,13 @@ Mapped map_report(
   if (withdrawals > 0) {
     if (report.would_place_.empty() && places_quiet && cancels_quiet && report.would_cancel_.size() == withdrawals) {
       return {OnceExit::DONE, "withdrawal_sent", "sent, not confirmed: cmdatl order list shows when they are gone"};
+    }
+    if (logged == 0) {
+      return {
+        OnceExit::REFUSED, "not_reached",
+        "the withdrawal was refused before it reached the market" +
+          (binding_refusal.empty() ? std::string() : ": " + binding_refusal)
+      };
     }
     return {OnceExit::UNKNOWN, "withdrawal", "a withdrawal was not taken as asked; an order may have filled"};
   }

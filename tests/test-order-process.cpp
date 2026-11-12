@@ -77,9 +77,8 @@ std::string plan_of(
  * @param at The instant.
  * @return A price of the day, for the collar's check.
  */
-double day_price(const std::string& symbol, std::int64_t at) {
-  (void)at;
-  return symbol == "005930" ? 79000 : 182000;
+double day_price(const std::string& symbol) {
+  return symbol == "005930" ? 80000 : 180000;
 }
 
 } // namespace
@@ -95,60 +94,58 @@ TEST_CASE(
     "position = { \"005930\" = 100, \"000660\" = 20 }\n"
     "order_value = 5000000\n"
     "daily_orders = 20\n";
-  const PaperFixture fixture(parts);
+  // Five days whose every range holds the day's close, so a limit at the close fills on the next day's bar.
+  std::string bars = "symbol,date,open,high,low,close,volume\n";
+  for (const auto* date : {"2024-03-25", "2024-03-26", "2024-03-27", "2024-03-28", "2024-03-29"}) {
+    bars += std::string("005930,") + date + ",80000,82000,78000,80000,1000000\n";
+    bars += std::string("000660,") + date + ",180000,185000,175000,180000,500000\n";
+  }
+  const PaperFixture fixture(parts, bars);
   fixture.arm();
   REQUIRE(step(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
-  // 2024-03-26: buy both, marketable, and confirm from holdings.
-  auto id = plan_of(fixture, "005930", "10", "78500");
+  // 2024-03-26: buy both; they fill on the 27th's bars, and holdings confirm them the next morning.
+  auto id = plan_of(fixture, "005930", "10", "80000");
   auto placed = step(fixture, {"order", "place", id});
   REQUIRE(placed.reason_ == "placed");
   CHECK(placed.body_.at("order").as_object().at("side").as_string() == "buy");
-  REQUIRE(step(fixture, {"clock", "advance", "--minutes", "1"}).exit_ == 0);
-  CHECK(step(fixture, {"order", "reconcile"}).reason_ == "clean");
-  id = plan_of(fixture, "000660", "2", "181000");
+  id = plan_of(fixture, "000660", "2", "180000");
   CHECK(step(fixture, {"order", "place", id}).reason_ == "placed");
-  REQUIRE(step(fixture, {"clock", "advance", "--minutes", "30"}).exit_ == 0);
-  CHECK(step(fixture, {"order", "reconcile"}).exit_ == 0);
+  CHECK(step(fixture, {"order", "reconcile"}).code_ == "refused.awaiting");
+  REQUIRE(step(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
+  REQUIRE(step(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
+  CHECK(step(fixture, {"order", "reconcile"}).reason_ == "clean");
   auto account = step(fixture, {"account"});
   CHECK(account.body_.at("positions").as_array().size() == 2);
-  // A resting order, withdrawn disarmed.
-  id = plan_of(fixture, "005930", "15", "75500");
+  // 2024-03-28: a resting order, withdrawn disarmed.
+  id = plan_of(fixture, "005930", "15", "76500");
   CHECK(step(fixture, {"order", "place", id}).reason_ == "placed");
   std::filesystem::remove(fixture.armed());
-  CHECK(step(fixture, {"order", "plan", "005930", "--target", "16", "--limit", "75500"}).reason_ == "plan");
+  CHECK(step(fixture, {"order", "plan", "005930", "--target", "16", "--limit", "76500"}).reason_ == "plan");
   const auto canceled = step(fixture, {"order", "cancel", "005930"});
   CHECK(canceled.reason_ == "withdrawal_sent");
   CHECK(step(fixture, {"order", "cancel", "005930"}).reason_ == "nothing_working");
   CHECK(step(fixture, {"order", "reconcile"}).reason_ == "clean");
   fixture.arm();
-  // Sell 000660 out.
+  // Sell 000660 out, and 005930 in part; both fill on the 29th's bars.
   id = plan_of(fixture, "000660", "0", "180000");
   placed = step(fixture, {"order", "place", id});
   REQUIRE(placed.reason_ == "placed");
   CHECK(placed.body_.at("order").as_object().at("side").as_string() == "sell");
-  REQUIRE(step(fixture, {"clock", "advance", "--minutes", "1"}).exit_ == 0);
-  CHECK(step(fixture, {"order", "reconcile"}).reason_ == "clean");
-  // 2024-03-27: 000660 does not trade; 005930 sells part, then out.
-  REQUIRE(step(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
-  id = plan_of(fixture, "005930", "4", "79000");
+  id = plan_of(fixture, "005930", "4", "80000");
   placed = step(fixture, {"order", "place", id});
   REQUIRE(placed.reason_ == "placed");
   CHECK(placed.body_.at("order").as_object().at("quantity").as_string() == "6");
-  REQUIRE(step(fixture, {"clock", "advance", "--minutes", "1"}).exit_ == 0);
-  CHECK(step(fixture, {"order", "reconcile", "005930"}).reason_ == "clean");
-  id = plan_of(fixture, "005930", "0", "79000");
-  CHECK(step(fixture, {"order", "place", id}).reason_ == "placed");
-  REQUIRE(step(fixture, {"clock", "advance", "--minutes", "5"}).exit_ == 0);
+  REQUIRE(step(fixture, {"clock", "advance", "--to", "2024-03-29T16:00"}).exit_ == 0);
   CHECK(step(fixture, {"order", "reconcile"}).reason_ == "clean");
   account = step(fixture, {"account"});
-  CHECK(account.body_.at("positions").as_array().empty());
+  REQUIRE(account.body_.at("positions").as_array().size() == 1);
+  CHECK(account.body_.at("positions").as_array()[0].as_object().at("quantity").as_string() == "4");
   CHECK(account.body_.at("owed").as_array().empty());
   // After the close: a plan is refused by phase, a reconcile still runs.
-  REQUIRE(step(fixture, {"clock", "advance", "--hours", "8"}).exit_ == 0);
-  CHECK(step(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "80500"}).code_ == "refused.phase");
+  CHECK(step(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "80000"}).code_ == "refused.phase");
   CHECK(step(fixture, {"order", "reconcile", "005930"}).reason_ == "clean");
   const auto log = slurp(fixture.log());
-  CHECK(ops_of(log, "place").size() == 6);
+  CHECK(ops_of(log, "place").size() == 5);
   CHECK(limits_in_collar(log, 0.05, day_price));
   // The formats: jsonl and text answer too.
   Spawned text({"--format", "text", "order", "reconcile"});
@@ -283,6 +280,7 @@ Swept swept(const PaperFixture& fixture, const std::vector<std::string>& args, l
   Swept result;
   result.consumed_ = fail_at.load() == 0;
   fail_allocation(0);
+  close_leaked_state_files();
   Answer answer;
   answer.exit_ = exit;
   boost::system::error_code error;
@@ -336,7 +334,10 @@ TEST_CASE(
     }
     CHECK(ask(fixture, {"account"}).exit_ == 0);
   }
-  WARN("allocations injected: " << injected << ", first bad: " << bad);
+  WARN(
+    "allocations injected: "
+    << injected << ", first bad: " << bad << ", state files the library left open: " << leaked_state_files
+  );
   CHECK(bad == 0);
   CHECK(injected > 1000);
 }
@@ -372,7 +373,10 @@ TEST_CASE(
     const auto account = ask(fixture, {"account"});
     CHECK((account.exit_ == 0 || account.exit_ == 4));
   }
-  WARN("allocations injected: " << injected << ", first bad: " << bad);
+  WARN(
+    "allocations injected: "
+    << injected << ", first bad: " << bad << ", state files the library left open: " << leaked_state_files
+  );
   CHECK(bad == 0);
   CHECK(injected > 1000);
 }

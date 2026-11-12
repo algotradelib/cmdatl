@@ -1031,6 +1031,17 @@ TEST_CASE("the boundary checks the lock before a cancellation and counts each se
   CHECK(session.sends() == 4);
   CHECK(!session.cancelled(second.value().ref_.primary_));
   CHECK(market.working_orders().orders_.size() == 1);
+
+  // A boundary given no lock cancels nothing.
+  auto unlocked = policy;
+  unlocked.lock_ = nullptr;
+  cmdatl::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> no_lock(inner, unlocked, now, {});
+  const auto unlocked_cancel = no_lock.cancel(second.value().ref_, whole);
+  REQUIRE(!unlocked_cancel);
+  CHECK(!unlocked_cancel.error().reached_broker_);
+  CHECK(unlocked_cancel.error().broker_code_ == "lock_lost");
+  CHECK(no_lock.sends() == 0);
+  CHECK(market.working_orders().orders_.size() == 1);
 }
 #endif
 

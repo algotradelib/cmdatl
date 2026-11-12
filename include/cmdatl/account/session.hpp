@@ -212,6 +212,7 @@ public:
    */
   auto place(atl::OrderRequest order) {
     using Answer = decltype(inner_->place(order));
+    sys::kill_point("send.before_forward");
     std::optional<atl::Decimal64> mark;
     if (!closed_) {
       const auto quote = market_->quote(order.instrument_);
@@ -238,6 +239,7 @@ public:
     }
     ++sends_;
     auto answer = inner_->place(order);
+    sys::kill_point("send.after_result");
     if (answer) {
       tell("placed", order, answer.value().ref_.primary_, "");
     } else {
@@ -256,6 +258,7 @@ public:
    */
   auto cancel(const Ref& ref, const atl::AmendInstruction& instruction) {
     using Answer = decltype(inner_->cancel(ref, instruction));
+    sys::kill_point("send.before_forward");
     if (policy_.lock_ == nullptr || !policy_.lock_->still_at_path()) {
       atl::BrokerError error;
       error.category_ = atl::ErrorCategory::INVALID_ARGUMENT;
@@ -266,6 +269,7 @@ public:
     }
     ++sends_;
     auto answer = inner_->cancel(ref, instruction);
+    sys::kill_point("send.after_result");
     if (answer) {
       cancelled_.insert(ref.primary_);
     } else {

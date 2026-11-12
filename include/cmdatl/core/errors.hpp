@@ -97,7 +97,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"journal.unopened", Exit::FAILED, false, "check the account's directory and its permissions"},
     {"paper.data", Exit::FAILED, false, "the operator fixes the paper bars file their file names"},
     {"unknown.paper_state", Exit::UNKNOWN, false,
-      "stop and report to the operator, who restores paper.jsonl or moves the account's directory aside, abandoning that paper account"},
+      "stop and report to the operator, who restores the account's state file market.jsonl or moves the account's directory aside, abandoning that paper account"},
     {"quote.no_data", Exit::FAILED, false, "quote a symbol the paper bars have; cmdatl env shows the bars file"},
     {"clock.backwards", Exit::FAILED, false, "the clock only moves forward: cmdatl clock shows where it stands"},
     {"clock.past_data", Exit::FAILED, false, "the paper data ends there: cmdatl clock shows where"},

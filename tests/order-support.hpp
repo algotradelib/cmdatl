@@ -1,6 +1,6 @@
 #pragma once
 
-// What the order tests share: running an order command in process, the paper log's place and cancel lines, and the
+// What the order tests share: running an order command in process, the state file's place and cancel lines, and the
 // invariant the exit table promises about them (`no_send_ok`).
 
 #include "./paper-support.hpp"
@@ -51,9 +51,9 @@ inline Answer ask(const PaperFixture& fixture, const std::vector<std::string>& a
 }
 
 /**
- * @brief The paper log's lines of one op.
- * @param text The log.
- * @param op `place`, `cancel`, `advance` or `result`.
+ * @brief The state file's lines of one kind of change.
+ * @param text The state file.
+ * @param op `place`, `cancel` or `advance`.
  * @return The lines.
  */
 inline std::vector<boost::json::object> ops_of(const std::string& text, const std::string& op) {
@@ -64,7 +64,7 @@ inline std::vector<boost::json::object> ops_of(const std::string& text, const st
     if (error || !value.is_object()) {
       continue;
     }
-    if (value.as_object().at("op").as_string() == op) {
+    if (value.as_object().contains(op)) {
       out.push_back(value.as_object());
     }
   }
@@ -72,7 +72,7 @@ inline std::vector<boost::json::object> ops_of(const std::string& text, const st
 }
 
 /**
- * @brief The invariant the exit table promises, from the paper log's bytes before and after a command: exit 0 `plan`,
+ * @brief The invariant the exit table promises, from the state file's bytes before and after a command: exit 0 `plan`,
  *   `met`, `nothing_working`, `clean` or `released`, and exits 1, 2, 3 and 130, add no `place` or `cancel` line; exit 0
  *   `placed` adds exactly one `place`; exit 0 `withdrawal_sent` adds only `cancel` lines; exit 4 may add either.
  * @param answer The reply.
@@ -100,22 +100,26 @@ inline bool no_send_ok(const Answer& answer, const std::string& before, const st
 }
 
 /**
- * @brief The collar check over a whole paper log: every `place` line is a limit order whose price is within the collar
- *   of the price of its symbol at its instant, as the market's own path gives it.
- * @param log The log.
+ * @brief The collar check over a whole state file: every placement is a limit order whose price is within the collar
+ *   of a mark for its symbol.
+ * @param log The state file.
  * @param collar The collar.
- * @param price_at The market's price of a symbol at an instant (nanoseconds), or a negative number when none.
+ * @param mark The mark of a symbol.
  * @return Whether every line passes.
  */
-template <typename PriceAt>
-bool limits_in_collar(const std::string& log, double collar, const PriceAt& price_at) {
-  for (const auto& place : ops_of(log, "place")) {
-    if (place.at("type").as_string() != "limit" || !place.contains("price")) {
+template <typename Mark>
+bool limits_in_collar(const std::string& log, double collar, const Mark& mark) {
+  for (const auto& line : ops_of(log, "place")) {
+    const auto& place = line.at("place").as_object();
+    const auto* price = place.if_contains("price");
+    if (place.at("type").as_int64() != static_cast<std::int64_t>(algotradelib::OrderType::LIMIT) || price == nullptr) {
       return false;
     }
-    const double limit = std::stod(std::string(place.at("price").as_string()));
-    const double mark = price_at(std::string(place.at("symbol").as_string()), place.at("at").as_int64());
-    if (mark <= 0 || std::abs(limit - mark) > collar * mark + 1e-9) {
+    const auto& pair = price->as_array();
+    const double limit =
+      static_cast<double>(pair[0].as_int64()) / std::pow(10.0, static_cast<double>(pair[1].as_int64()));
+    const double at = mark(std::string(place.at("symbol").as_string()));
+    if (at <= 0 || std::abs(limit - at) > collar * at + 1e-9) {
       return false;
     }
   }

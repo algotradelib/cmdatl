@@ -1,12 +1,13 @@
 #pragma once
 
 // The account model: the state directory, the owner lock, the state files and their classification, the journal's
-// read side, and the paper desk, opened in that order by `Account::open`, the one place an account is opened.
+// read side, and the desk, opened in that order by `Account::open`, the one place an account is opened.
 
 #include "../core/reply.hpp"
 #include "../system/files.hpp"
 #include "../system/lock.hpp"
 #include "./desk.hpp"
+#include "./mock_desk.hpp"
 #include "./operator.hpp"
 
 #include <algotradelib/live>
@@ -19,6 +20,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <map>
 #include <memory>
@@ -257,8 +259,8 @@ inline int make_private_dirs(const std::filesystem::path& dir) {
 inline Reply paper_state_reply(const std::string& what) {
   return error_reply(
     Exit::UNKNOWN, "unknown.paper_state", what + "; the paper account's state cannot be rebuilt",
-    "stop and report to the operator, who restores paper.jsonl from where it was, or moves the account's whole "
-    "directory aside to abandon this paper account"
+    "stop and report to the operator, who restores the account's state file market.jsonl from where it was, or moves "
+    "the account's whole directory aside to abandon this paper account"
   );
 }
 
@@ -290,7 +292,7 @@ inline Reply lock_lost_reply() {
 
 // A desk: what the account and order commands are given of an account's broker, and all they use of it.
 // The reads (`reads.hpp`), the order commands, once() and the plan book are templates over it, or take it from
-// `Account::desk()`; `Account` is the one place a desk is built, and `paper::PaperDesk` (`desk.hpp`) the one desk.
+// `Account::desk()`; `Account` is the one place a desk is built, and `MockDesk` (`mock_desk.hpp`) the one desk.
 //
 // Every desk has:
 //   - `broker_name`, `env_name`: static; the operator file's `broker` word, and every reply's `env`.
@@ -309,14 +311,15 @@ inline Reply lock_lost_reply() {
 //
 // A simulated broker also has, with `simulated` true (a desk without them has it false, and a command that reads one
 // does not compile against that desk):
-//   - `paper_cash()`: its cash after every fill and charge.
-//   - `advance_to(target)`, `next_session_after(at)`, `clock_limit()`, `drain_events()`: its clock, moved by command
-//     (`clock advance`, and the second every order command takes), the next session's open, the latest instant the
-//     clock may reach, and what the market did since the last drain.
+//   - `paper_cash()`: its cash after every fill and charge, as whole-won text.
+//   - `advance_to(target)`, `next_session_after(at)`, `clock_limit()`, `drain_events()`, `halted()`: its clock, moved
+//     by command (`clock advance`, and the second every order command takes) and answering `Moved`, the next session's
+//     open, the latest instant the clock may reach, what the market did since the last drain (`MockEvent`), and why
+//     the market halted, if it did.
 //   - `data_end()`: the last date its data trades.
 
-/** @brief The desk an account trades through: the paper desk. */
-using AccountDesk = paper::PaperDesk;
+/** @brief The desk an account trades through: the library's mock, kept in the account's state file. */
+using AccountDesk = MockDesk;
 
 /**
  * @brief The market phase at a desk's clock: the library's KRX session window on the calendar of the desk's market
@@ -390,8 +393,8 @@ public:
 #if !defined(_WIN32)
   /**
    * @brief Opens the account: the directory, the lock (waiting at most 10 s, printing who holds it once), the bars,
-   *   the state files and their classification (initializing a fresh account), the journal, the desk, the journal's
-   *   view, and the paper log's repair only when that view is this account's and intact, in that order.
+   *   the state files and their classification, the desk on its state file, the journal (created for a fresh account
+   *   after the state file), and the journal's view, in that order.
    *
    * Each refusal changes nothing it has not said it changes.
    * @param snapshot The operator's file, read.
@@ -576,10 +579,12 @@ private:
     bool journal_{false};
     /** @brief Whether `journal.jsonl` is there at all. */
     bool journal_entry_{false};
-    /** @brief Whether `paper.jsonl` is there and not empty. */
-    bool paper_{false};
-    /** @brief Whether `paper.jsonl` is there at all. */
-    bool paper_entry_{false};
+    /** @brief Whether the state file is there and not empty. */
+    bool state_{false};
+    /** @brief Whether the state file is there at all. */
+    bool state_entry_{false};
+    /** @brief Whether `paper.jsonl`, an earlier version's account log, is there. */
+    bool old_log_{false};
     /** @brief Every other entry but `lock`. */
     std::vector<std::string> others_;
   };
@@ -606,9 +611,11 @@ private:
       if (name == "journal.jsonl") {
         found.journal_entry_ = true;
         found.journal_ = !known || info.st_size > 0 || !S_ISREG(info.st_mode);
+      } else if (name == MOCK_STATE_FILE) {
+        found.state_entry_ = true;
+        found.state_ = !known || info.st_size > 0 || !S_ISREG(info.st_mode);
       } else if (name == "paper.jsonl") {
-        found.paper_entry_ = true;
-        found.paper_ = !known || info.st_size > 0 || !S_ISREG(info.st_mode);
+        found.old_log_ = true;
       } else {
         found.others_.push_back(name);
       }
@@ -686,75 +693,16 @@ private:
   }
 
   /**
-   * @brief Initializes the paper log of a fresh account, or finishes an interrupted first initialization: a torn
-   *   genesis cut to empty and written again, the file and the directory flushed, then the journal created.
-   * @param data The bars, for the fingerprint.
-   * @param exists Whether `paper.jsonl` exists.
-   * @return The refusal, or nothing.
+   * @brief Whether the state file records any change: a whole first line with more after it.
+   * @return Whether it does; a file that cannot be read counts as used.
    */
-  std::optional<Reply> initialize(const paper::MarketData& data, bool exists) {
-    const auto path = dir() + "/paper.jsonl";
-    const auto genesis =
-      paper::genesis_line(paper::fingerprint_of(data, config_.paper_), paper::nanos(config_.paper_.start_at_));
-    const auto unwritable = [&path](const std::string& what) {
-      return error_reply(
-        Exit::FAILED, "file.unwritable", "cannot write " + path + ": " + what, "check the account's directory"
-      );
-    };
-    paper::OpsLog log(path, lock_.identity(), !exists);
-    if (log.open_error() != 0) {
-      return exists ?
-        paper_state_reply(std::string("the paper log cannot be opened: ") + std::strerror(log.open_error())) :
-        unwritable(std::strerror(log.open_error()));
+  bool state_used() const {
+    std::ifstream in(dir() + "/" + MOCK_STATE_FILE, std::ios::binary);
+    std::string header;
+    if (!in) {
+      return true;
     }
-    std::string why;
-    if (!log.check(why)) {
-      return paper_state_reply("the paper log is refused: " + why);
-    }
-    std::string text;
-    const auto read = log.read(text);
-    if (read.status_ != FileRead::Status::OK) {
-      return paper_state_reply("the paper log was not read: " + read.text(paper::MAX_LOG_BYTES));
-    }
-    if (text != genesis + "\n") {
-      if (text.find('\n') != std::string::npos) {
-        // More than an interrupted genesis: the account was used, and its journal is gone.
-        return journal_missing_reply("missing");
-      }
-      try {
-        if (!text.empty()) {
-          log.truncate_to(0);
-        }
-        int error = 0;
-        switch (log.append(genesis, "genesis", error)) {
-          case paper::Appended::OK:
-            break;
-          case paper::Appended::LOCK_LOST:
-            return lock_lost_reply();
-          case paper::Appended::NOT_WRITTEN:
-          case paper::Appended::NOT_SYNCED:
-            return unwritable(std::strerror(error));
-        }
-      } catch (const paper::LockLost&) {
-        return lock_lost_reply();
-      } catch (const paper::PaperStateError& error) {
-        return paper_state_reply(error.what());
-      }
-      if (const int error = sync_directory(dir())) {
-        return unwritable(std::string("the directory could not be flushed: ") + std::strerror(error));
-      }
-    }
-    if (!lock_.still_at_path()) {
-      return lock_lost_reply();
-    }
-    algotradelib::runner::FileJournal journal(dir() + "/journal.jsonl", config_.scope());
-    if (!journal.open()) {
-      return error_reply(
-        Exit::FAILED, "journal.unopened", "the account's journal could not be created: " + journal.rejection(),
-        "check the account's directory"
-      );
-    }
-    return std::nullopt;
+    return std::getline(in, header) && in.peek() != std::ifstream::traits_type::eof();
   }
 
   /**
@@ -773,51 +721,62 @@ private:
         "the account's directory " + dir() + " cannot be listed: " + std::strerror(error), "check its permissions"
       );
     }
-    if (!found.journal_) {
-      // Only a fresh account, or a first initialization interrupted before the journal existed, may begin here.
-      const bool fresh = !found.journal_entry_ && found.others_.empty();
-      if (!fresh) {
-        return journal_missing_reply(found.journal_entry_ ? "empty" : "missing");
-      }
-      if (auto refused = initialize(data, found.paper_entry_)) {
-        return refused;
-      }
-    } else if (!found.paper_) {
-      return paper_state_reply("the paper log is missing or empty while the journal exists");
+    if (found.old_log_) {
+      return error_reply(
+        Exit::FAILED, "state.unavailable",
+        "the account's directory " + dir() +
+          " holds paper.jsonl, an account of an earlier cmdatl, which this version "
+          "does not read",
+        "create the account again: the operator moves the account's directory aside, and the next command starts it"
+      );
     }
+    const bool starting = !found.journal_;
     std::string why;
-    if (!state_file_ok("journal.jsonl", why)) {
+    const auto journal_refused = [&why]() {
       return error_reply(
         Exit::UNKNOWN, "unknown.journal_damaged", "the account's journal is refused: " + why,
         "stop and report to the operator, who restores the journal as a regular file; nothing was written"
       );
+    };
+    if (!starting && !state_file_ok("journal.jsonl", why)) {
+      return journal_refused();
+    }
+    if (found.state_entry_ && !state_file_ok(MOCK_STATE_FILE, why)) {
+      return paper_state_reply("the account's state file is refused: " + why);
+    }
+    // Only a fresh account, or a first initialization interrupted before the journal existed, may begin here: the
+    // journal and the state file are a pair, and neither is started afresh beside the other.
+    if (starting && (found.journal_entry_ || !found.others_.empty() || (found.state_ && state_used()))) {
+      return journal_missing_reply(found.journal_entry_ ? "empty" : "missing");
+    }
+    if (!starting && !found.state_) {
+      return paper_state_reply("the account's state file is missing or empty while the journal exists");
+    }
+    desk_ = std::make_unique<AccountDesk>(MockDeskKey{}, config_, lock_, data);
+    if (!desk_->opened()) {
+      return paper_state_reply(desk_->rejection());
+    }
+    if (starting) {
+      if (!lock_.still_at_path()) {
+        return lock_lost_reply();
+      }
+      algotradelib::runner::FileJournal journal(journal_path(), config_.scope());
+      if (!journal.open()) {
+        return error_reply(
+          Exit::FAILED, "journal.unopened", "the account's journal could not be created: " + journal.rejection(),
+          "check the account's directory"
+        );
+      }
+    }
+    if (starting && !state_file_ok("journal.jsonl", why)) {
+      return journal_refused();
     }
     struct stat identity{};
     if (::lstat(journal_path().c_str(), &identity) == 0) {
       journal_identity_ = std::make_pair(identity.st_dev, identity.st_ino);
     }
-    replay_ = algotradelib::runner::read_journal_file(dir() + "/journal.jsonl");
-    try {
-      desk_ = std::make_unique<AccountDesk>(paper::DeskKey{}, config_, lock_, std::move(data));
-    } catch (const paper::LockLost&) {
-      return lock_lost_reply();
-    } catch (const paper::PaperStateError& error) {
-      return paper_state_reply(error.what());
-    } catch (const paper::OutOfRange& error) {
-      return paper_state_reply(error.what());
-    }
+    replay_ = algotradelib::runner::read_journal_file(journal_path());
     journal_ = journal_view(desk_->session(), replay_, config_.scope(), paper::kst_day(desk_->now()));
-    if (!journal_.intact_) {
-      // A journal not this account's or damaged: the reads are built from the log as it is, and nothing is written.
-      return std::nullopt;
-    }
-    try {
-      desk_->repair();
-    } catch (const paper::LockLost&) {
-      return lock_lost_reply();
-    } catch (const paper::PaperStateError& error) {
-      return paper_state_reply(error.what());
-    }
     return std::nullopt;
   }
 #endif

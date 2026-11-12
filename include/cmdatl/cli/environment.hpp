@@ -4,7 +4,6 @@
 #include "../account/capabilities.hpp"
 #include "../account/operator.hpp"
 #include "../core/reply.hpp"
-#include "../paper/market.hpp"
 #include "../strategy/atlc.hpp"
 #include "../system/lock.hpp"
 #include "./describe.hpp"
@@ -121,16 +120,18 @@ inline Reply env_reply() {
       reply.body_["paper"] = nullptr;
     } else {
       reply.body_["capabilities"] = account_capabilities<AccountDesk::Session::Caps>(AccountDesk::simulated);
-      const paper::Costs costs;
+      // The account's market fills by the mock's own model: what it charges is that model's.
+      const auto fills = algotradelib::mock::MarketSettings{}.fills_;
+      const auto tax = fills.sell_tax() ? fills.sell_tax()->rate_ : algotradelib::Decimal64(0, 0);
       reply.body_["paper"] = json::object{
         {"bars", c.paper_.bars_},
         {"start", c.paper_.start_},
         {"cash", std::to_string(c.paper_.cash_)},
         {"costs",
           json::object{
-            {"commission", decimal_text(costs.commission_)},
-            {"sell_tax", decimal_text(costs.sell_tax_)},
-            {"slippage_ticks", costs.slippage_ticks_},
+            {"commission", decimal_text_of(fills.commission().stated_model().rate_)},
+            {"sell_tax", decimal_text_of(tax)},
+            {"slippage_ticks", fills.slippage().ticks_},
           }},
       };
     }

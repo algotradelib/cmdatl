@@ -380,28 +380,30 @@ inline Started start(Account& account) {
     );
     return started;
   }
-  const auto outcome = desk.advance_to(target);
-  switch (outcome.status_) {
-    case paper::Appended::OK:
+  switch (desk.advance_to(target)) {
+    case Moved::OK:
       break;
-    case paper::Appended::LOCK_LOST:
+    case Moved::LOCK_LOST:
       started.refusal_ = lock_lost_reply();
       return started;
-    case paper::Appended::NOT_WRITTEN:
+    case Moved::NOT_WRITTEN:
       started.refusal_ = error_reply(
         Exit::FAILED, "file.unwritable",
-        "the command's simulated second could not be written to the paper log (" +
-          std::string(std::strerror(outcome.error_)) + "); the clock has not moved and nothing was sent",
+        "the command's simulated second could not be written to the account's state file; the clock has not moved "
+        "and nothing was sent",
         "check the account's directory"
       );
       return started;
-    case paper::Appended::NOT_SYNCED:
+    case Moved::UNCONFIRMED:
       started.refusal_ = error_reply(
         Exit::FAILED, "file.unwritable",
-        "the command's simulated second was written but not flushed (" + std::string(std::strerror(outcome.error_)) +
-          "); the paper clock may have moved one second and nothing was sent",
+        "the command's simulated second was written but not flushed; the paper clock may have moved one second and "
+        "nothing was sent",
         "check the account's directory"
       );
+      return started;
+    case Moved::HALTED:
+      started.refusal_ = paper_state_reply(desk.halted().value_or("the paper market halted") + "; nothing was sent");
       return started;
   }
   started.body_["now"] = paper::kst_iso(desk.now());

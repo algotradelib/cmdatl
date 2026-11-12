@@ -508,7 +508,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (auto bad = table_of(root, "paper", paper)) {
     return bad;
   }
-  if (auto bad = only_keys(*paper, "paper", {"bars", "cash", "holdings_lag", "listing_lag", "start"})) {
+  if (auto bad = only_keys(*paper, "paper", {"bars", "cash", "start"})) {
     return bad;
   }
   auto& p = config.paper_;
@@ -544,12 +544,6 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   }
   p.start_ = start->as_string()->get();
   p.start_at_ = *at;
-  if (auto bad = integer_in(*paper, "listing_lag", "paper.listing_lag", 0, 86400, p.listing_lag_)) {
-    return bad;
-  }
-  if (auto bad = integer_in(*paper, "holdings_lag", "paper.holdings_lag", 0, 86400, p.holdings_lag_)) {
-    return bad;
-  }
   return std::nullopt;
 }
 

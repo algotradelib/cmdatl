@@ -43,13 +43,11 @@ void open_session(const PaperFixture& fixture) {
 }
 
 /**
- * @brief The day's price range of a symbol in the fixture's bars, for the collar check.
+ * @brief The last price of a symbol on the fixture's second day: the first day's close.
  * @param symbol The symbol.
- * @param at The instant, nanoseconds.
- * @return A price inside the day's range nearest to nothing in particular: the day's open.
+ * @return The price.
  */
-double day_mark(const std::string& symbol, std::int64_t at) {
-  (void)at;
+double day_mark(const std::string& symbol) {
   return symbol == "005930" ? 78500 : 181000;
 }
 
@@ -98,7 +96,7 @@ void journal(const PaperFixture& fixture, const std::vector<atl::runner::Journal
 }
 
 /** @brief The report type once() maps. */
-using Report = atl::runner::DryRunReport<cmdatl::paper::PaperDesk::Session::BrokerTag>;
+using Report = atl::runner::DryRunReport<cmdatl::AccountDesk::Session::BrokerTag>;
 
 } // namespace
 
@@ -469,6 +467,9 @@ TEST_CASE("map_report: every step reached and and its precedence") {
   CHECK(mapped(withdrawn, 1, false, 1).reason_ == "withdrawal_sent");
   CHECK(mapped(withdrawn, 1, true, 1).exit_ == OnceExit::UNKNOWN);
   CHECK(mapped(withdrawn, 1, false, 2).reason_ == "withdrawal");
+  // A withdrawal that sent nothing: refused, whatever the report says.
+  CHECK(mapped(Report{}, 0, false, 1).reason_ == "not_reached");
+  CHECK(mapped(Report{}, 0, false, 1).exit_ == OnceExit::REFUSED);
   Report indeterminate = placed;
   indeterminate.indeterminate_.emplace_back();
   CHECK(mapped(indeterminate, 1, true, 0).reason_ == "indeterminate");
@@ -779,8 +780,11 @@ TEST_CASE("a place whose plan withdraws answers withdrawal_sent and exit 0 and t
 }
 
 TEST_CASE("reconcile: working while an order rests and awaiting and then clean after the fill") {
-  const PaperFixture fixture;
-  open_session(fixture);
+  ConfigParts parts;
+  parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
+  const PaperFixture fixture(parts);
+  fixture.arm();
+  REQUIRE(ask(fixture, {"clock", "advance", "--to", "2024-03-26T08:10"}).exit_ == 0);
   CHECK(ask_checked(fixture, {"order", "reconcile"}).reason_ == "clean");
   const auto id = plan_id(fixture, "005930", "10", "78000");
   REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
@@ -789,8 +793,10 @@ TEST_CASE("reconcile: working while an order rests and awaiting and then clean a
   CHECK(working.exit_ == 3);
   CHECK(working.code_ == "refused.awaiting");
   CHECK(working.body_.at("checked").as_array()[0].as_object().at("state").as_string() == "working");
-  // The price reaches 78000 within the session's first third.
-  REQUIRE(ask(fixture, {"clock", "advance", "--hours", "2"}).exit_ == 0);
+  // Accepted before the 26th's session, so the 26th's bar fills it at its close; the next morning reads it.
+  const auto advanced = ask(fixture, {"clock", "advance", "--to", "2024-03-27T09:00"});
+  INFO(boost::json::serialize(advanced.body_));
+  REQUIRE(advanced.exit_ == 0);
   const auto clean = ask_checked(fixture, {"order", "reconcile"});
   INFO(boost::json::serialize(clean.body_));
   CHECK(clean.exit_ == 0);
@@ -813,7 +819,7 @@ TEST_CASE("the per-call second: an order command past the data's end is clock.pa
 }
 
 TEST_CASE(
-  "the market refusing a logged request is unknown.broker_refused and says why and the journal's answer settles it"
+  "an order before the open is accepted when pre_open is permitted and refused before anything is recorded when not"
 ) {
   ConfigParts parts;
   parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
@@ -821,23 +827,18 @@ TEST_CASE(
   fixture.arm();
   REQUIRE(ask(fixture, {"clock", "advance", "--to", "2024-03-26T08:10"}).exit_ == 0);
   const auto id = plan_id(fixture, "005930", "10", "78500");
+  const auto placed = ask_checked(fixture, {"order", "place", id});
+  INFO(boost::json::serialize(placed.body_));
+  CHECK(placed.exit_ == 0);
+  CHECK(placed.reason_ == "placed");
+  CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+  // The operator's file without pre_open: refused at 08:10 with nothing recorded.
+  fixture.write_config(ConfigParts{}.text());
   const auto before = slurp(fixture.log());
-  const auto refused = ask_checked(fixture, {"order", "place", id});
-  INFO(boost::json::serialize(refused.body_));
-  CHECK(refused.exit_ == 4);
-  CHECK(refused.code_ == "unknown.broker_refused");
-  // The market's own reason: 08:10 is before it accepts orders (08:30), though the operator permits pre_open.
-  CHECK(
-    std::string(refused.body_.at("error").as_object().at("message").as_string()).find("not an order-acceptance time") !=
-    std::string::npos
-  );
-  const auto after = slurp(fixture.log());
-  CHECK(ops_of(after, "place").size() == ops_of(before, "place").size() + 1);
-  const auto results = ops_of(after, "result");
-  REQUIRE(!results.empty());
-  CHECK(!results.back().at("error").as_string().empty());
-  CHECK(ask_checked(fixture, {"order", "reconcile"}).reason_ == "clean");
-  CHECK(ask(fixture, {"account"}).body_.at("owed").as_array().empty());
+  const auto refused = ask_checked(fixture, {"order", "plan", "000660", "--target", "1", "--limit", "181000"});
+  CHECK(refused.exit_ == 3);
+  CHECK(refused.code_ == "refused.phase");
+  CHECK(ops_of(slurp(fixture.log()), "place").size() == ops_of(before, "place").size());
 }
 
 TEST_CASE(
@@ -1067,7 +1068,7 @@ TEST_CASE("hostile inputs: generated order command lines end in a declared exit 
 }
 
 TEST_CASE("snapshots: a failed read is written ? and never matches a good read") {
-  using Working = decltype(std::declval<paper::PaperDesk::Session&>().working_orders());
+  using Working = decltype(std::declval<cmdatl::AccountDesk::Session&>().working_orders());
   using WorkingValue = std::decay_t<decltype(std::declval<Working&>().value())>;
   struct Failing {
     bool holdings_{true};

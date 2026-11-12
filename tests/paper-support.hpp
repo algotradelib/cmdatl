@@ -136,11 +136,11 @@ public:
   }
 
   /**
-   * @brief The paper log.
+   * @brief The account's state file, the mock market's record of every change.
    * @return The path.
    */
   std::filesystem::path log() const {
-    return account() / "paper.jsonl";
+    return account() / "market.jsonl";
   }
 
   /**

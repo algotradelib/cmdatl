@@ -170,13 +170,13 @@ void initialize(const PaperFixture& fixture) {
 
 } // namespace
 
-TEST_CASE("a fresh account is initialized under the lock: the log's genesis, then the journal") {
+TEST_CASE("a fresh account is initialized under the lock: the state file's header and then the journal") {
   const PaperFixture fixture;
   const auto first = reply(fixture, {"status"});
   CHECK(first.at("env").as_string() == "paper");
   const auto log = slurp(fixture.log());
   CHECK(lines_of(log).size() == 1);
-  CHECK(log.rfind("{\"op\":\"genesis\",\"format\":1,\"market\":1,\"fingerprint\":\"", 0) == 0);
+  CHECK(log.rfind("{\"mock_market\":1,\"semantics\":1,\"fingerprint\":\"", 0) == 0);
   const auto replay = runner::read_journal_file(fixture.journal().string());
   CHECK(replay.has_header_);
   CHECK(replay.scope_ == SCOPE);
@@ -198,7 +198,7 @@ TEST_CASE("a first initialization interrupted before the journal is finished by 
   initialize(fixture);
   const auto genesis = slurp(fixture.log());
   for (const auto& left : {std::string(), genesis.substr(0, 20), genesis}) {
-    INFO("paper.jsonl: " << left);
+    INFO("market.jsonl: " << left);
     std::filesystem::remove_all(fixture.account());
     std::filesystem::create_directories(fixture.account());
     spit(fixture.account() / "lock", "");
@@ -209,7 +209,9 @@ TEST_CASE("a first initialization interrupted before the journal is finished by 
   }
 }
 
-TEST_CASE("a journal gone after the account was used, or a log gone beside a journal, is exit 4 and changes nothing") {
+TEST_CASE(
+  "a journal gone after the account was used or a state file gone beside a journal is exit 4 and changes nothing"
+) {
   const PaperFixture fixture;
   initialize(fixture);
   REQUIRE(fixture.json({"clock", "advance", "--minutes", "5"}).exit_ == 0);
@@ -257,13 +259,36 @@ TEST_CASE("a journal gone after the account was used, or a log gone beside a jou
   initialize(fixture);
 }
 
+TEST_CASE("a folder of an earlier version's paper account is refused: create the account again") {
+  const PaperFixture fixture;
+  std::filesystem::create_directories(fixture.account());
+  spit(fixture.account() / "paper.jsonl", "{\"op\":\"genesis\"}\n");
+  spit(fixture.journal(), runner::journal_header_line(SCOPE) + "\n");
+  const auto journal_text = slurp(fixture.journal());
+  for (const auto& args : std::vector<std::vector<std::string>>{{"status"}, {"order", "list"}, {"clock"}}) {
+    const auto ran = fixture.json(args);
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 1);
+    CHECK(code_of(ran.out_) == "state.unavailable");
+    const auto error = reply_of(ran.out_).at("error").as_object();
+    CHECK(std::string(error.at("message").as_string()).find("paper.jsonl") != std::string::npos);
+    CHECK(std::string(error.at("next").as_string()).find("create the account again") != std::string::npos);
+  }
+  CHECK(!std::filesystem::exists(fixture.log()));
+  CHECK(!std::filesystem::exists(fixture.account() / "owner.json"));
+  CHECK(slurp(fixture.journal()) == journal_text);
+  // Moved aside, the account starts afresh.
+  std::filesystem::rename(fixture.account(), fixture.dir() / "old-account");
+  initialize(fixture);
+}
+
 TEST_CASE("state files that are links or special files are refused before anything destructive") {
   const PaperFixture fixture;
   initialize(fixture);
   const auto log = slurp(fixture.log());
   const auto journal_text = slurp(fixture.journal());
   const auto restore = [&] {
-    for (const auto* name : {"paper.jsonl", "journal.jsonl", "lock", "owner.json"}) {
+    for (const auto* name : {"market.jsonl", "journal.jsonl", "lock", "owner.json"}) {
       std::filesystem::remove(fixture.account() / name);
     }
     spit(fixture.log(), log);
@@ -305,6 +330,12 @@ TEST_CASE("state files that are links or special files are refused before anythi
     std::filesystem::remove(fixture.journal());
     REQUIRE(::mkfifo(fixture.journal().c_str(), 0600) == 0);
     expect(4, "unknown.journal_damaged");
+    restore();
+    // A FIFO state file with no journal beside it: refused before it is read.
+    std::filesystem::remove(fixture.journal());
+    std::filesystem::remove(fixture.log());
+    REQUIRE(::mkfifo(fixture.log().c_str(), 0600) == 0);
+    expect(4, "unknown.paper_state");
     restore();
   }
   // The lock a second name of the owner record.
@@ -365,8 +396,8 @@ TEST_CASE("the journal's view: today's placements, what is owed, and what the ma
     const auto opened = open_account();
     REQUIRE(opened->account_);
     auto& desk = opened->account_->desk();
-    REQUIRE(desk.advance_to(kst("2024-03-26T09:00")).status_ == paper::Appended::OK);
-    REQUIRE(desk.session().place(order("005930", true, "10", "60000")));
+    REQUIRE(desk.advance_to(kst("2024-03-26T09:00")) == cmdatl::Moved::OK);
+    REQUIRE(desk.session().place(order("005930", true, "10", "75000")));
   }
   journal(
     fixture,
@@ -514,7 +545,7 @@ TEST_CASE("a journal that is not this account's, or damaged, makes every account
   ::chmod(fixture.journal().c_str(), 0600);
 }
 
-TEST_CASE("a journal not established leaves the paper log unrepaired and writes no owner record") {
+TEST_CASE("a journal not established writes no owner record and leaves the state file as it was") {
   const PaperFixture fixture;
   fixture.arm();
   initialize(fixture);
@@ -522,18 +553,11 @@ TEST_CASE("a journal not established leaves the paper log unrepaired and writes 
     const auto opened = open_account();
     REQUIRE(opened->account_);
     auto& desk = opened->account_->desk();
-    REQUIRE(desk.advance_to(kst("2024-03-26T09:00")).status_ == paper::Appended::OK);
-    REQUIRE(desk.session().place(order("005930", true, "10", "60000")));
+    REQUIRE(desk.advance_to(kst("2024-03-26T09:00")) == cmdatl::Moved::OK);
+    REQUIRE(desk.session().place(order("005930", true, "10", "75000")));
   }
   const auto placed = slurp(fixture.log());
-  auto lines = lines_of(placed);
-  REQUIRE(lines.size() == 4);
-  REQUIRE(lines.back().find("\"op\":\"result\"") != std::string::npos);
-  lines.pop_back();
-  std::string unanswered;
-  for (const auto& line : lines) {
-    unanswered += line + "\n";
-  }
+  REQUIRE(lines_of(placed).size() == 3);
   const auto good = slurp(fixture.journal());
   auto foreign_entry = place_entry("f1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:00"));
   foreign_entry.scope_ = "paper:paper:other";
@@ -542,44 +566,33 @@ TEST_CASE("a journal not established leaves the paper log unrepaired and writes 
     {"a foreign entry", good + runner::journal_entry_to_line(foreign_entry) + "\n"},
     {"a damaged line", good + "not a journal line\n"},
   };
-  const std::vector<std::pair<const char*, std::string>> logs{
-    {"a torn paper tail", placed + "{\"op\":\"adv"},
-    {"an unanswered input", unanswered},
-  };
   const auto owner = fixture.account() / "owner.json";
   const std::string record = "{\"role\":\"operator\",\"pid\":1}\n";
   for (const auto& j : journals) {
-    for (const auto& l : logs) {
-      INFO(j.first << " with " << l.first);
-      spit(fixture.journal(), j.second);
-      spit(fixture.log(), l.second);
-      spit(owner, record);
-      for (
-        const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
-          {"status"}, {"account"}, {"quote", "005930"}, {"clock"}, {"clock", "advance", "--minutes", "5"}
-        }
-      ) {
-        INFO(args.front());
-        const auto ran = fixture.json(args);
-        CHECK(ran.exit_ == 4);
-        CHECK(code_of(ran.out_) == "unknown.journal_damaged");
-        CHECK(slurp(fixture.log()) == l.second);
-        CHECK(slurp(fixture.journal()) == j.second);
-        CHECK(slurp(owner) == record);
+    INFO(j.first);
+    spit(fixture.journal(), j.second);
+    spit(owner, record);
+    for (
+      const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
+        {"status"}, {"account"}, {"quote", "005930"}, {"clock"}, {"clock", "advance", "--minutes", "5"}
       }
+    ) {
+      INFO(args.front());
+      const auto ran = fixture.json(args);
+      CHECK(ran.exit_ == 4);
+      CHECK(code_of(ran.out_) == "unknown.journal_damaged");
+      CHECK(slurp(fixture.log()) == placed);
+      CHECK(slurp(fixture.journal()) == j.second);
+      CHECK(slurp(owner) == record);
     }
   }
-  // Beneath this account's journal, the same logs are repaired and the record written.
-  for (const auto& l : logs) {
-    INFO(l.first);
-    spit(fixture.journal(), good);
-    spit(fixture.log(), l.second);
-    spit(owner, record);
-    CHECK(fixture.json({"status"}).exit_ == 0);
-    CHECK(slurp(fixture.log()) == placed);
-    CHECK(slurp(fixture.journal()) == good);
-    CHECK(slurp(owner) != record);
-  }
+  // Beneath this account's journal, the record is written.
+  spit(fixture.journal(), good);
+  spit(owner, record);
+  CHECK(fixture.json({"status"}).exit_ == 0);
+  CHECK(slurp(fixture.log()) == placed);
+  CHECK(slurp(fixture.journal()) == good);
+  CHECK(slurp(owner) != record);
 }
 
 namespace {
@@ -693,8 +706,8 @@ TEST_CASE("the journal's bytes from the library's writer are the fixture's") {
   CHECK(slurp(fixture_path) == text);
 }
 
-TEST_CASE("readiness: one view of armed, the day's count, the phase and the market's own hours") {
-  SECTION("pre_open at 08:00 is permitted, but the market is closed") {
+TEST_CASE("readiness: one view of armed, the day's count, the phase and the market's data") {
+  SECTION("pre_open at 08:00 is permitted, and only the operator's phases decide") {
     ConfigParts parts;
     parts.limits_ += "phases = [\"pre_open\"]\n";
     parts.paper_ = "bars = \"bars.csv\"\ncash = 100000000\nstart = \"2024-03-26T08:00\"\n";
@@ -702,8 +715,8 @@ TEST_CASE("readiness: one view of armed, the day's count, the phase and the mark
     fixture.arm();
     const auto body = reply(fixture, {"status"});
     CHECK(body.at("phase").as_string() == "pre_open");
-    CHECK(!body.at("orders_accepted_now").as_bool());
-    CHECK(words(body.at("not_accepted")) == std::vector<std::string>{"market_closed"});
+    CHECK(body.at("orders_accepted_now").as_bool());
+    CHECK(body.at("not_accepted").as_array().empty());
   }
   SECTION("post_close at 16:00 the same") {
     ConfigParts parts;
@@ -712,7 +725,7 @@ TEST_CASE("readiness: one view of armed, the day's count, the phase and the mark
     fixture.arm();
     const auto body = reply(fixture, {"status"});
     CHECK(body.at("phase").as_string() == "post_close");
-    CHECK(words(body.at("not_accepted")) == std::vector<std::string>{"market_closed"});
+    CHECK(body.at("not_accepted").as_array().empty());
   }
   SECTION("unarmed, wrong phase, closed: every gate named in order; all passing, none") {
     ConfigParts parts;
@@ -728,18 +741,23 @@ TEST_CASE("readiness: one view of armed, the day's count, the phase and the mark
       CHECK(quote.as_object().at("orders_accepted_now").as_bool());
       CHECK(quote.as_object().at("not_accepted").as_array().empty());
     }
-    // On the 27th only 005930 trades: the account accepts, 000660's quote does not.
+    // On the 27th only 005930 trades; 000660 keeps its last close and is still accepted.
     REQUIRE(fixture.json({"clock", "advance", "--to", "2024-03-27T10:00"}).exit_ == 0);
     body = reply(fixture, {"status"});
     CHECK(body.at("orders_accepted_now").as_bool());
     const auto quotes = reply(fixture, {"quote", "005930", "000660"}).at("quotes").as_array();
     CHECK(quotes[0].as_object().at("orders_accepted_now").as_bool());
-    CHECK(words(quotes[1].as_object().at("not_accepted")) == std::vector<std::string>{"market_closed"});
+    CHECK(quotes[1].as_object().at("orders_accepted_now").as_bool());
     REQUIRE(fixture.json({"clock", "advance", "--to", "2024-03-27T20:00"}).exit_ == 0);
     body = reply(fixture, {"status"});
-    CHECK(words(body.at("not_accepted")) == std::vector<std::string>{"phase", "market_closed"});
+    CHECK(words(body.at("not_accepted")) == std::vector<std::string>{"phase"});
     std::filesystem::remove(fixture.armed());
     body = reply(fixture, {"status"});
+    CHECK(words(body.at("not_accepted")) == std::vector<std::string>{"not_armed", "phase"});
+    // Past the data's calendar the phase is unknown, and the market takes nothing.
+    REQUIRE(fixture.json({"clock", "advance", "--to", "2024-03-28T10:00"}).exit_ == 0);
+    body = reply(fixture, {"status"});
+    CHECK(body.at("phase").as_string() == "unknown");
     CHECK(words(body.at("not_accepted")) == std::vector<std::string>{"not_armed", "phase", "market_closed"});
   }
   SECTION("a symbol before its first session has no price and no band, and that is not an error") {
@@ -755,12 +773,12 @@ TEST_CASE("readiness: one view of armed, the day's count, the phase and the mark
     CHECK(quote.at("upper_limit").is_null());
     CHECK(quote.at("lower_limit").is_null());
     CHECK(words(quote.at("not_accepted")).back() == "no_price");
-    // At its first open it has a price and still no band.
-    REQUIRE(fixture.json({"clock", "advance", "--to", "2024-03-27T09:00"}).exit_ == 0);
+    // At its first session's close it has a price and still no band.
+    REQUIRE(fixture.json({"clock", "advance", "--to", "2024-03-27T15:30"}).exit_ == 0);
     quote = reply(fixture, {"quote", "000660"}).at("quotes").as_array()[0].as_object();
-    CHECK(quote.at("last_price").as_string() == "180000");
+    CHECK(quote.at("last_price").as_string() == "181000");
     CHECK(quote.at("upper_limit").is_null());
-    CHECK(quote.at("orders_accepted_now").as_bool());
+    CHECK(words(quote.at("not_accepted")) == std::vector<std::string>{"phase"});
   }
 }
 
@@ -774,7 +792,7 @@ TEST_CASE("the account commands' replies, in every format, with every declared f
     const auto opened = open_account();
     REQUIRE(opened->account_);
     REQUIRE(opened->account_->desk().session().place(order("005930", true, "10", "78500")));
-    REQUIRE(opened->account_->desk().session().place(order("005930", true, "5", "60000")));
+    REQUIRE(opened->account_->desk().session().place(order("005930", true, "5", "75000")));
   }
   const cmdatl::Table table(cmdatl::command_list());
   const std::vector<std::vector<std::string>> commands{
@@ -816,7 +834,11 @@ TEST_CASE("the account commands' replies, in every format, with every declared f
   const auto quotes = reply(fixture, {"quote", "005930", "035720"}).at("quotes").as_array();
   REQUIRE(quotes.size() == 2);
   CHECK(!quotes[1].as_object().at("symbol_allowed").as_bool());
-  CHECK(words(quotes[1].as_object().at("not_accepted")) == std::vector<std::string>{"symbol_not_allowed"});
+  // 035720's first bar has not ended: no last price yet.
+  CHECK(
+    words(quotes[1].as_object().at("not_accepted")) ==
+    std::vector<std::string>{"market_closed", "symbol_not_allowed", "no_price"}
+  );
   const auto missing = fixture.json({"quote", "005930", "NOPE", "ALSO"});
   CHECK(missing.exit_ == 1);
   CHECK(code_of(missing.out_) == "quote.no_data");
@@ -839,7 +861,8 @@ TEST_CASE("the account commands' replies, in every format, with every declared f
   const auto events = advanced.at("events").as_array();
   REQUIRE(events.size() == 2);
   CHECK(events[0].as_object().at("kind").as_string() == "filled");
-  CHECK(events[0].as_object().at("at").as_string().rfind("2024-03-26T09:0", 0) == 0);
+  // Accepted at the 26th's open, so its bar fills it at its close.
+  CHECK(events[0].as_object().at("at").as_string() == "2024-03-26T15:30:00+09:00");
   CHECK(events[0].as_object().contains("commission"));
   CHECK(events[0].as_object().at("tax").as_string() == "0");
   CHECK(events[1].as_object().at("kind").as_string() == "expired");
@@ -987,11 +1010,12 @@ TEST_CASE("the lock: replaced after a holder took it, the holder's next write an
   auto& account = *opened->account_;
   std::filesystem::rename(fixture.account() / "lock", fixture.account() / "lock.old");
   spit(fixture.account() / "lock", "");
-  // A second process locks the new file and goes on.
+  // A second process locks the new file, and the market's state file, which this holder keeps open, refuses it.
   Spawned other({"--json", "status"});
   const int status = other.wait(15);
   REQUIRE(WIFEXITED(status));
-  CHECK(WEXITSTATUS(status) == 0);
+  CHECK(WEXITSTATUS(status) == 4);
+  CHECK(code_of(other.out()) == "unknown.paper_state");
   // The first holder's write refuses, appending nothing.
   const auto log = slurp(fixture.log());
   CHECK(!account.lock().still_at_path());
@@ -1114,6 +1138,7 @@ TEST_CASE("an allocation failing anywhere in an account command leaks nothing an
         }
         const bool consumed = fail_at.load() == 0;
         fail_allocation(0);
+        close_leaked_state_files();
         const bool exit_ok = exit == -1 || exit == 0 || exit == 1 || exit == 4;
         if (
           (!exit_ok || open_fds() != before || (std::filesystem::exists(fixture.account()) && !lock_free())) &&
@@ -1127,6 +1152,7 @@ TEST_CASE("an allocation failing anywhere in an account command leaks nothing an
         }
       }
       INFO("allocations swept: " << n << ", first problem at " << first_bad);
+      WARN("state files the library left open so far: " << leaked_state_files);
       CHECK(first_bad == 0);
       CHECK(n < 400000);
     }
@@ -1390,7 +1416,8 @@ TEST_CASE("a scripted session against the binary across three days of bars") {
   }
   CHECK(step({"clock", "advance", "--hours", "30"}).at("now").as_string() == "2024-03-28T15:00:00+09:00");
   status = step({"status"});
-  CHECK(status.at("phase").as_string() == "closed");
+  // Past the data, the calendar of the bars says nothing about the day.
+  CHECK(status.at("phase").as_string() == "unknown");
   CHECK(words(status.at("not_accepted")) == std::vector<std::string>{"phase", "market_closed"});
 }
 #endif

@@ -306,7 +306,7 @@ Reply status_reply(const Invocation& invocation, Account& account, Desk& desk, O
   body["not_accepted"] = words_json(failing);
   body["orders_left_today"] = orders_left_json(readiness);
   body["positions"] = positions_json(desk, std::nullopt);
-  body["cash"] = money(desk.paper_cash());
+  body["cash"] = desk.paper_cash();
   body["buying_power"] = buying_power_text(desk);
   body["owed"] = owed_json(account, desk, std::nullopt);
   body["orders"] = orders_json(desk);
@@ -337,7 +337,7 @@ Reply account_reply(const Invocation& invocation, Account& account, Desk& desk, 
   json::object body;
   body["now"] = paper::kst_iso(desk.now());
   body["positions"] = positions_json(desk, only);
-  body["cash"] = money(desk.paper_cash());
+  body["cash"] = desk.paper_cash();
   body["buying_power"] = buying_power_text(desk);
   body["owed"] = owed_json(account, desk, only);
   body["orders_left_today"] = orders_left_json(account.readiness());
@@ -521,11 +521,11 @@ json::array events_json(Desk& desk) {
     row["order_id"] = event.order_id_;
     row["symbol"] = event.symbol_;
     row["side"] = event.side_;
-    row["quantity"] = std::to_string(event.quantity_);
+    row["quantity"] = event.quantity_;
     if (event.price_) {
-      row["price"] = money(paper::amount_of(*event.price_));
-      row["commission"] = money(paper::amount_of(event.commission_));
-      row["tax"] = money(paper::amount_of(event.tax_));
+      row["price"] = *event.price_;
+      row["commission"] = event.commission_;
+      row["tax"] = event.tax_;
     }
     events.push_back(std::move(row));
   }
@@ -547,10 +547,10 @@ inline Reply advance_unknown(const std::string& what) {
 /**
  * @brief `cmdatl clock advance`: moves the paper clock, matching resting orders on the way.
  *
- * Refused before anything is appended (nothing changed): a target not after now, past the data, a journal that is
+ * Refused before anything is recorded (nothing changed): a target not after now, past the data, a journal that is
  * not intact, a lost lock.
- * A line not written whole leaves the clock where it was (exit 1); a whole line whose flush failed, or anything
- * failing after the flush, leaves the outcome unknown (exit 4).
+ * A move the state file did not record leaves the clock where it was (exit 1); one whose flush was not confirmed, a
+ * market that halted, or anything failing after the move, leaves the outcome unknown (exit 4).
  *
  * @tparam Desk The desk type.
  * @param invocation The arguments, checked by `check_advance`.
@@ -597,23 +597,21 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
       "cmdatl clock shows where the data ends"
     );
   }
-  const auto outcome = desk.advance_to(target);
-  switch (outcome.status_) {
-    case paper::Appended::OK:
+  switch (desk.advance_to(target)) {
+    case Moved::OK:
       break;
-    case paper::Appended::LOCK_LOST:
+    case Moved::LOCK_LOST:
       return lock_lost_reply();
-    case paper::Appended::NOT_WRITTEN:
+    case Moved::NOT_WRITTEN:
       return error_reply(
         Exit::FAILED, "file.unwritable",
-        "the advance could not be written to the paper log (" + std::string(std::strerror(outcome.error_)) +
-          "); the clock has not moved",
+        "the advance could not be written to the account's state file; the clock has not moved",
         "check the account's directory"
       );
-    case paper::Appended::NOT_SYNCED:
-      return advance_unknown(
-        "the advance was written but not flushed to disk (" + std::string(std::strerror(outcome.error_)) + ")"
-      );
+    case Moved::UNCONFIRMED:
+      return advance_unknown("the advance was written to the account's state file but not flushed to disk");
+    case Moved::HALTED:
+      return advance_unknown(desk.halted().value_or("the paper market halted"));
   }
   // Committed: from here a failure leaves the outcome unknown, never a plain failure.
   try {
