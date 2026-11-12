@@ -361,12 +361,12 @@ json::object identify_child(const PaperFixture& fixture, const std::string& logi
  * @param fixture The fixture.
  * @param driver The driver.
  * @param login The login.
- * @param extra More arguments.
+ * @param extra More arguments; by default the options `cmdatl run` hands an account's driver, none.
  * @return The exit and the reply.
  */
 std::pair<int, json::object> driver_child(
   const PaperFixture& fixture, const std::string& driver, const std::string& login,
-  const std::vector<std::string>& extra = {}
+  const std::vector<std::string>& extra = {"run.options={}"}
 ) {
   std::vector<std::string> args{driver, "run.id=r0123456789ab", "replay.market=kr"};
   args.insert(args.end(), extra.begin(), extra.end());
@@ -1096,6 +1096,7 @@ TEST_CASE("a run on a broker folder's account checks the operator file's options
   const std::vector<std::tuple<std::string, std::int64_t, std::string>> cases{
     {"exchange = \"US\"\n", 6, "`account.options.exchange` is one of \"KO\" (broker.toml), not \"US\""},
     {"exchange = \"KO\"\nlot = 1.5\n", 7, "`account.options.lot` is an integer (broker.toml), not 1.5E0"},
+    {"exchange = \"KO\"\nlot = true\n", 7, "`account.options.lot` is an integer (broker.toml), not true"},
     {"exchange = \"KO\"\nappKey = \"k\"\n", 7, "`account.options.appKey` is not an option"},
     {"lot = 1\n", 3, "the broker folder acme needs account.options.exchange (required in its broker.toml)"},
     {"exchange = \"KO\"\nnote = \"" + std::string(4100, 'x') + "\"\n", 3, "make more than 4096 bytes of JSON"},
@@ -1329,7 +1330,7 @@ TEST_CASE("a broker folder's driver connects only with the options cmdatl run ch
   // which would have answered auth.account_mismatch for this login.
   for (
     const auto& given :
-    std::vector<std::vector<std::string>>{{}, {"run.options={\"account\":\"acct-8\"}"}, {"run.options={}"}}
+    std::vector<std::vector<std::string>>{{"run.options={\"account\":\"acct-8\"}"}, {"run.options={}"}}
   ) {
     const auto [exit, reply] = driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"x"})", given);
     CHECK(exit == 1);
@@ -1345,6 +1346,18 @@ TEST_CASE("a broker folder's driver connects only with the options cmdatl run ch
   std::tie(exit, reply) =
     driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"x"})", {"run.options={\"account\":\"acct-9\"}"});
   CHECK(reply.at("error").at("code") == "config.invalid");
+  // Not given at all, with the file's options lost too: refused, never read as no options.
+  std::tie(exit, reply) = driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"x"})", {});
+  CHECK(reply.at("error").at("code") == "run.failed");
+  CHECK(std::string(reply.at("error").at("message").as_string()).find("no run.options") != std::string::npos);
+  // What cmdatl run hands the driver: the options on a broker's account only, before the settings.
+  CHECK(
+    cmdatl::runs::driver_args("d", "r1", true, R"({"a":1})", {"x=y"}) ==
+    std::vector<std::string>{"d", "run.id=r1", R"(run.options={"a":1})", "x=y"}
+  );
+  CHECK(
+    cmdatl::runs::driver_args("d", "r1", false, "{}", {"x=y"}) == std::vector<std::string>{"d", "run.id=r1", "x=y"}
+  );
   // Given twice: a usage error.
   std::tie(exit, reply) =
     driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"x"})", {"run.options={}", "run.options={}"});

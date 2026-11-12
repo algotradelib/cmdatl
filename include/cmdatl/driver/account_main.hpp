@@ -88,7 +88,12 @@ int account_main(int argc, char** argv, Symbols symbols_of, Make make, Broker& b
     );
   }
   // The options the adapter connects with are the ones `cmdatl run` checked against its declarations, or none is used.
-  if (options::text_of(config.options_) != args.options_) {
+  if (!args.options_) {
+    return run_error(
+      base, Exit::FAILED, "run.failed", "the driver received no run.options; start the run with cmdatl run"
+    );
+  }
+  if (options::text_of(config.options_) != *args.options_) {
     return run_error(
       base, Exit::FAILED, "config.invalid",
       "the operator's file changed after cmdatl run checked it: its [account.options] are not the ones checked; "

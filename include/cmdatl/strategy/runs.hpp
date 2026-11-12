@@ -256,6 +256,28 @@ inline std::optional<Reply> account_options(
 }
 
 /**
+ * @brief A run driver's arguments: the run's id, on a broker's account the options checked here (the driver reads the
+ *   operator's file again and connects only with these, and refuses without them), then the settings.
+ * @param driver The driver.
+ * @param id The run's id.
+ * @param broker Whether the run trades a broker's account.
+ * @param options The options' JSON text, from `account_options`.
+ * @param args The settings, `key=value`.
+ * @return The arguments.
+ */
+inline std::vector<std::string> driver_args(
+  const std::string& driver, const std::string& id, bool broker, const std::string& options,
+  const std::vector<std::string>& args
+) {
+  std::vector<std::string> out{driver, "run.id=" + id};
+  if (broker) {
+    out.push_back("run.options=" + options);
+  }
+  out.insert(out.end(), args.begin(), args.end());
+  return out;
+}
+
+/**
  * @brief `run TARGET [KEY=VALUE]...`; see the file comment. Returns only when the driver could not be started.
  * @param invocation The arguments.
  * @param snapshot The operator's file, read and `OK`.
@@ -422,12 +444,7 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       return std::move(*failed);
     }
     const auto driver = (dir / "driver").string();
-    std::vector<std::string> argv_owned{driver, "run.id=" + *id};
-    if (broker) {
-      // The options checked here: the driver reads the operator's file again and connects only with these.
-      argv_owned.push_back("run.options=" + options_text);
-    }
-    argv_owned.insert(argv_owned.end(), args.begin(), args.end());
+    auto argv_owned = driver_args(driver, *id, broker, options_text, args);
     std::vector<std::string> envp_owned;
     for (auto& entry : build::own_environment()) {
       if (entry.rfind("CMDATL_CONFIG=", 0) != 0) {

@@ -142,8 +142,8 @@ struct RunArgs {
   std::string id_;
   /** @brief The replay's `key=value` arguments, in order. */
   std::vector<std::string> atlc_;
-  /** @brief A broker folder's options as `cmdatl run` checked them (`run.options`), a JSON object's text. */
-  std::string options_{"{}"};
+  /** @brief A broker account's options as `cmdatl run` checked them (`run.options`), a JSON object's text, or none. */
+  std::optional<std::string> options_;
 };
 
 /**
@@ -156,7 +156,6 @@ struct RunArgs {
  */
 inline std::optional<std::string> read_args(int argc, char** argv, RunArgs& args) {
   bool id_seen = false;
-  bool options_seen = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     const auto eq = arg.find('=');
@@ -174,8 +173,7 @@ inline std::optional<std::string> read_args(int argc, char** argv, RunArgs& args
       }
       id_seen = true;
       args.id_ = value;
-    } else if (key == "run.options" && !options_seen) {
-      options_seen = true;
+    } else if (key == "run.options" && !args.options_) {
       args.options_ = value;
     } else if (key.rfind("run.", 0) == 0) {
       return "the run.* keys are run.id and run.options, each once (" + key + ")";
