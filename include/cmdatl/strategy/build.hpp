@@ -778,13 +778,26 @@ inline std::optional<Reply> build_driver(
       );
     }
   }
-  const auto built = run_child({*cmake, "--build", build_dir.string()}, progress, &environment);
+  // The compiler's first error names the cause, and later errors can push it out of the tail.
+  std::string first_error;
+  const auto built = run_child(
+    {*cmake, "--build", build_dir.string()},
+    [&progress, &first_error](const std::string& line) {
+      if (first_error.empty() && line.find(": error: ") != std::string::npos) {
+        first_error = line;
+      }
+      progress(line);
+    },
+    &environment
+  );
   if (built.kind_ == ChildResult::Kind::INTERRUPTED) {
     return interrupted_reply();
   }
   if (built.kind_ != ChildResult::Kind::FINISHED || built.signaled_ || built.code_ != 0) {
+    const auto tail = tail_of(built);
+    const auto cause = first_error.empty() || tail.find(first_error) != std::string::npos ? "" : first_error + "\n";
     return atlc_failure(
-      Exit::FAILED, "build.failed", "building the driver failed: " + tail_of(built), built,
+      Exit::FAILED, "build.failed", "building the driver failed: " + cause + tail, built,
       "check the compiler and the algotradelib package " + package
     );
   }
