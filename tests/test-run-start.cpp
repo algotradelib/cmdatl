@@ -230,6 +230,57 @@ TEST_CASE("the program's header is in the shape's key by its path and bytes, and
   ::chmod(request.header_.c_str(), 0600);
 }
 
+TEST_CASE("a failed driver build's message leads with its first error, colored or not, then the tail as it was") {
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+  std::filesystem::create_directories(dir.path() / "package");
+  spit(dir.path() / "package" / "algotradelibConfig.cmake", "");
+  // An atlc that writes a strategy and the runtime, and a cmake that configures and then fails as a compiler does.
+  std::filesystem::create_directories(dir.path() / "bin");
+  const auto atlc = dir.path() / "bin" / "atlc";
+  spit(atlc, "#!/bin/sh\nprintf '#pragma once\\n' > \"$4\"\nmkdir -p \"$8/atls\" && : > \"$8/atls/ops.hpp\"\n");
+  const auto stderr_text = dir.path() / "stderr.txt";
+  spit(
+    dir.path() / "bin" / "cmake",
+    "#!/bin/sh\nif [ \"$1\" = --build ]; then cat '" + stderr_text.string() + "' >&2; exit 1; fi\nexit 0\n"
+  );
+  ::chmod(atlc.c_str(), 0700);
+  ::chmod((dir.path() / "bin" / "cmake").c_str(), 0700);
+  const ScopedVariable path("PATH", (dir.path() / "bin").string() + ":/usr/bin:/bin");
+  build::Request request;
+  request.atlc_ = atlc.string();
+  request.program_ = (dir.path() / "dip.atls").string();
+  request.struct_ = "Dip";
+  request.indicators_ = "incremental";
+  request.package_ = (dir.path() / "package").string();
+  request.kind_ = build::DriverKind::BACKTEST;
+  // Clang's colors put escapes between the colon and the word; more than a tail of lines follows.
+  const std::vector<std::string> firsts{
+    "\x1b[1mstrategy.hpp:16:15: \x1b[0m\x1b[0;1;31merror: \x1b[0m\x1b[1mstatic assertion failed: X is not defined\x1b[0m",
+    "strategy.hpp:16:15: error: static assertion failed: X is not defined",
+  };
+  for (const auto& first : firsts) {
+    INFO(first);
+    std::string text = "In file included from main.cpp:7:\n" + first + "\n";
+    std::vector<std::string> later;
+    for (int k = 0; k < 25; ++k) {
+      later.push_back("note " + std::to_string(k));
+      text += later.back() + "\n";
+    }
+    spit(stderr_text, text);
+    const auto failed = build::build_driver(request, dir.path(), [](const std::string&) {});
+    REQUIRE(failed);
+    const auto& error = failed->body_.at("error").as_object();
+    CHECK(error.at("code").as_string() == "build.failed");
+    std::string tail;
+    for (std::size_t k = later.size() - cmdatl::STDERR_TAIL_LINES; k < later.size(); ++k) {
+      tail += (tail.empty() ? "" : "\n") + later[k];
+    }
+    CHECK(error.at("message").as_string() == "building the driver failed: " + first + "\n" + tail);
+    CHECK(failed->body_.at("stderr").as_array().size() == cmdatl::STDERR_TAIL_LINES);
+  }
+}
+
 TEST_CASE("a shape's key changes with each input it holds, and with nothing else") {
   std::map<std::string, std::string> env;
   const auto lookup = [&env](const std::string& name) -> std::optional<std::string> {
