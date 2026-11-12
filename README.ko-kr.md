@@ -15,7 +15,7 @@
 > 이 문서는 [README](README.md)를 짧게 요약한 안내입니다.
 > 두 문서의 내용이 다르면 영어 README를 따르세요.
 
-cmdatl은 [algotradelib](https://github.com/algotradelib/algotradelib)을 명령줄에서 쓰는 도구입니다.
+cmdatl은 [algotradelib](https://github.com/algotradelib/algotradelib)을 CLI로 쓰는 도구입니다.
 C++ 코드를 직접 작성하지 않아도 됩니다.
 전략은 [atls](https://github.com/algotradelib/atlc)로 작성하고, 실행 설정은 TOML 파일에 적은 뒤, 명령 하나로 백테스트하거나 실행합니다.
 AI 에이전트도 같은 명령으로 계좌를 조회하고, 운영자가 정한 한도 안에서 주문을 한 건씩 넣을 수 있습니다.
