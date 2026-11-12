@@ -947,6 +947,16 @@ TEST_CASE("the README's quick start runs on the example mock account and its run
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
   }
   const RunEquipped equipped(equipment->first, equipment->second);
+  // The README's lines this case runs, as the README has them.
+  const auto readme = slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "README.md");
+  const std::vector<std::string> lines{
+    "cmdatl order plan AAA --target 10 --limit 102 #", "cmdatl clock advance --to 2024-01-04T15:30 #",
+    "cmdatl order reconcile AAA #", "cmdatl run examples/run.toml #"
+  };
+  for (const auto& line : lines) {
+    INFO(line);
+    CHECK(readme.find("\n" + line) != std::string::npos);
+  }
   // A copy of the examples, as a clone holds them, with the account's state in the copy's own directory.
   const ScratchDir dir;
   std::filesystem::copy(
@@ -985,15 +995,20 @@ TEST_CASE("the README's quick start runs on the example mock account and its run
   INFO(placed.out_ << placed.err_);
   REQUIRE(placed.exit_ == 0);
   CHECK(reply_of(placed.out_).at("reason").as_string() == "placed");
-  // The README's order fills within the half hour; on the mock it fills at the close of the next day's bar, so the
-  // advance shows no fill and the reconcile finds it resting (the README is to be rewritten around the mock's timing).
-  const auto advanced = ask({"clock", "advance", "--minutes", "30"});
+  // Placed during the 3rd's session, the order fills against the 4th's bar, at its limit, at that bar's close.
+  const auto advanced = ask({"clock", "advance", "--to", "2024-01-04T15:30"});
+  INFO(advanced.out_ << advanced.err_);
   REQUIRE(advanced.exit_ == 0);
-  CHECK(reply_of(advanced.out_).at("events").as_array().empty());
+  const auto events = reply_of(advanced.out_).at("events").as_array();
+  REQUIRE(events.size() == 1);
+  CHECK(events.at(0).as_object().at("kind").as_string() == "filled");
+  CHECK(events.at(0).as_object().at("price").as_string() == "102");
+  CHECK(events.at(0).as_object().at("at").as_string() == "2024-01-04T15:30:00+09:00");
   const auto reconciled = ask({"order", "reconcile", "AAA"});
   INFO(reconciled.out_ << reconciled.err_);
-  REQUIRE(reconciled.exit_ == 3);
-  CHECK(code_of(reconciled.out_) == "refused.awaiting");
+  REQUIRE(reconciled.exit_ == 0);
+  CHECK(reply_of(reconciled.out_).at("reason").as_string() == "clean");
+  CHECK(reply_of(ask({"account"}).out_).at("cash").as_string() == "998980");
   // The run spec run accepts: it ends clean, every order placed is filled, none is refused, and it trades as the
   // backtest of the same program and bars does (10 executions).
   const auto ran = run_process({"examples/run.toml"});

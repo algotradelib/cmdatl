@@ -416,9 +416,9 @@ TEST_CASE("the agent guide's session runs as written and each reply holds what t
     "cmdatl env",
     "cmdatl clock advance --next-open",
     "cmdatl quote 005930",
-    "cmdatl order plan 005930 --target 10 --limit 78500",
+    "cmdatl order plan 005930 --target 10 --limit 79000",
     "cmdatl order place PLAN_ID",
-    "cmdatl clock advance --minutes 5",
+    "cmdatl clock advance --to 2024-03-27T15:30",
     "cmdatl order reconcile 005930",
     "cmdatl account --fields cash,positions",
   };
@@ -439,9 +439,7 @@ TEST_CASE("the agent guide's session runs as written and each reply holds what t
     const auto log_before = std::filesystem::exists(fixture.log()) ? slurp(fixture.log()) : "";
     auto answer = ask_checked(fixture, words);
     INFO(line << " -> " << boost::json::serialize(answer.body_));
-    // The guide's order fills within minutes; on the mock it fills at the close of the next day's bar, so its
-    // reconcile still finds it resting (the guide is to be rewritten around the mock's timing).
-    REQUIRE(answer.exit_ == (line == "cmdatl order reconcile 005930" ? 3 : 0));
+    REQUIRE(answer.exit_ == 0);
     const auto& body = answer.body_;
     if (line == "cmdatl status") {
       const std::vector<std::string> keys{
@@ -485,15 +483,25 @@ TEST_CASE("the agent guide's session runs as written and each reply holds what t
       CHECK(answer.reason_ == "placed");
       CHECK(body.at("result").as_string() == "done");
       CHECK(ops_of(slurp(fixture.log()), "place").size() == ops_of(log_before, "place").size() + 1);
-    } else if (line == "cmdatl clock advance --minutes 5") {
-      CHECK(body.at("events").as_array().empty());
+    } else if (line == "cmdatl clock advance --to 2024-03-27T15:30") {
+      // Placed during the 26th's session, so the 27th's bar fills it at its limit, at that bar's close.
+      const auto& events = body.at("events").as_array();
+      REQUIRE(events.size() == 1);
+      const auto& filled = events.at(0).as_object();
+      CHECK(filled.at("kind").as_string() == "filled");
+      CHECK(filled.at("at").as_string() == "2024-03-27T15:30:00+09:00");
+      CHECK(filled.at("quantity").as_string() == "10");
+      CHECK(filled.at("price").as_string() == "79000");
     } else if (line == "cmdatl order reconcile 005930") {
-      CHECK(answer.code_ == "refused.awaiting");
-      CHECK(body.at("owed").as_array().size() == 1);
-      CHECK(body.at("checked").as_array().at(0).as_object().at("state").as_string() == "working");
+      CHECK(answer.reason_ == "clean");
+      CHECK(body.at("owed").as_array().empty());
+      CHECK(body.at("checked").as_array().at(0).as_object().at("state").as_string() == "clean");
     } else if (line == "cmdatl account --fields cash,positions") {
-      CHECK(body.at("positions").as_array().empty());
-      CHECK(body.at("cash").as_string() == "100000000");
+      const auto& positions = body.at("positions").as_array();
+      REQUIRE(positions.size() == 1);
+      CHECK(positions.at(0).as_object().at("symbol").as_string() == "005930");
+      CHECK(positions.at(0).as_object().at("quantity").as_string() == "10");
+      CHECK(body.at("cash").as_string() == "99210000");
     }
     answers.push_back(std::move(answer));
   }

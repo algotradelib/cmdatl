@@ -57,7 +57,7 @@ inline std::vector<Command> command_list() {
     .returns("not_accepted", "the gates that fail, in a fixed order; empty exactly when orders_accepted_now")
     .returns("orders_left_today", "placements the operator still allows today; null when the journal is damaged")
     .returns("positions", "holdings: symbol, quantity, sellable, average_price, last_price, market_value")
-    .returns("cash", "the mock market's cash after every fill's value, commission and tax")
+    .returns("cash", "the mock market's cash after every fill, before what resting buys reserve")
     .returns("buying_power", "the broker's buying power")
     .returns("owed", "orders the journal still waits on")
     .returns("orders", "working orders")
@@ -75,7 +75,7 @@ inline std::vector<Command> command_list() {
     .option("symbol", "SYMBOL", "only this instrument's rows")
     .returns("now", "the account's time, KST with its offset")
     .returns("positions", "holdings: symbol, quantity, sellable, average_price, last_price, market_value")
-    .returns("cash", "the mock market's cash after every fill's value, commission and tax")
+    .returns("cash", "the mock market's cash after every fill, before what resting buys reserve")
     .returns("buying_power", "the broker's buying power")
     .returns(
       "owed",
@@ -89,7 +89,7 @@ inline std::vector<Command> command_list() {
       },
       check_symbols
     ));
-  add(make_command({"quote"}, "Read", "last price, price band, and whether orders are accepted now")
+  add(make_command({"quote"}, "Read", "last price, the price band if any, and whether orders are accepted now")
     .example("cmdatl quote 005930 000660")
     .arg("SYMBOL", "an instrument", true, true)
     .returns("now", "the account's time, KST with its offset")
@@ -119,7 +119,7 @@ inline std::vector<Command> command_list() {
     .returns("state_dir", "the account's state directory")
     .returns("owner", "who last held the account, or null")
     .returns("capabilities", "what the account's broker offers")
-    .returns("mock", "the mock market: bars, start, cash, costs (commission and sell tax as decimal strings)")
+    .returns("mock", "the mock market: bars, start, cash, costs (commission, sell tax, slippage ticks: all zero)")
     .returns("schema_version", "the version of cmdatl schema's format")
     .returns("modes", "the trading modes this build offers")
     .runs([](const Invocation&, const Table&, Output&) {
@@ -259,7 +259,7 @@ inline std::vector<Command> command_list() {
   add(make_command({"order", "cancel"}, "Trade", "withdraw working orders on SYMBOL (never places)")
     .example("cmdatl order cancel 005930")
     .arg("SYMBOL", "an instrument")
-    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("now", "the account's time, one simulated second on unless at the data's end, KST with its offset")
     .returns("symbol", "the instrument")
     .returns("phase", "the market phase")
     .returns("reason", "withdrawal_sent or nothing_working; on a refusal or unknown, the reason")
@@ -276,7 +276,7 @@ inline std::vector<Command> command_list() {
     .example("cmdatl order reconcile")
     .example("cmdatl order reconcile 005930")
     .arg("SYMBOL", "an instrument", false)
-    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("now", "the account's time, one simulated second on unless at the data's end, KST with its offset")
     .returns("checked", "each symbol read: symbol, state (clean, working, holding_moved or a reason), detail")
     .returns("owed", "what is still owed, after the call")
     .returns("reason", "clean, awaiting, or the first row's reason")
@@ -296,7 +296,7 @@ inline std::vector<Command> command_list() {
     .example("cmdatl order release 005930 --reason \"checked the broker's order list\"")
     .arg("SYMBOL", "an instrument")
     .option("reason", "TEXT", "why the operator settles it", true)
-    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("now", "the account's time, one simulated second on unless at the data's end, KST with its offset")
     .returns("symbol", "the instrument")
     .returns("reason", "released; on a refusal or unknown, the reason")
     .returns("detail", "what was released")

@@ -39,10 +39,10 @@ Broker logins are the operator's too: `cmdatl auth status` lists them, masked, a
 2. `cmdatl order place PLAN_ID`.
    A plan sends once and lapses after `limits.plan_ttl` simulated seconds or when anything moves (`refused.plan_used`, `refused.stale_plan`): plan again.
 3. The price: take `last_price` from the latest `cmdatl quote SYMBOL`, read after any `clock advance`.
-   On this mock market a buy limit at or a tick above it usually fills at the next advance, one below may wait (a sell the reverse); every order is a limit on the tick grid, inside the collar.
+   On the mock account an order fills at its limit at the close of its symbol's next daily bar if that bar's range reaches it, else expires; every order is a limit on the tick grid, inside the collar.
    A fill is known only from a `filled` event or `cmdatl account`, never from the price.
    To reprice a resting order: `cmdatl order cancel SYMBOL`, then plan once `cmdatl order list` shows it gone; reprice at most once without asking, unless the task gives a price bound.
-4. `cmdatl clock advance --minutes N` lets the market move; fills arrive in `events`, with `commission` and `tax`.
+4. `cmdatl clock advance --to` that bar's 15:30 close: fills and expiries arrive in `events`.
 5. After a fill: `cmdatl order reconcile SYMBOL`, then `cmdatl account`; only `order reconcile` settles an `owed` row, never reading it.
 6. `cmdatl order cancel SYMBOL` withdraws every working order on the symbol; `withdrawal_sent` means sent, not confirmed (`cmdatl order list` shows when they are gone).
 7. Before you finish, read `cmdatl order list`; report every working order, and cancel only those the task no longer wants.
@@ -91,8 +91,8 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 
 ## What the markets are
 
-Both simulated markets fill whole orders against stored daily bars.
-The mock account takes orders 08:30-15:30 KST on dates in its data; a run's market fills a limit when a later bar reaches it, as a backtest does.
+Both simulated markets fill whole limit orders when a later daily bar reaches them, as a backtest does.
+The mock account has no costs; an order whose symbol has no later bar stays pending, and `order cancel` still withdraws it.
 Neither is a broker's demo account or evidence of how one would answer.
 Money and quantities are decimal strings; `--fields a,b.c` keeps fields, `--value PATH` prints one (not for `run`).
 
@@ -105,9 +105,9 @@ cmdatl status
 cmdatl env
 cmdatl clock advance --next-open
 cmdatl quote 005930
-cmdatl order plan 005930 --target 10 --limit 78500
+cmdatl order plan 005930 --target 10 --limit 79000
 cmdatl order place PLAN_ID
-cmdatl clock advance --minutes 5
+cmdatl clock advance --to 2024-03-27T15:30
 cmdatl order reconcile 005930
 cmdatl account --fields cash,positions
 ```

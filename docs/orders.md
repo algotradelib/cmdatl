@@ -17,6 +17,8 @@ cmdatl order release 005930 --reason "read the order list and holdings"
 - A plan id is bound to what the plan saw: the account, the request, the holding and working orders of the symbol, the cash and the journal's size.
   It is used once, it lapses after `limits.plan_ttl` simulated seconds (60 by default), and anything moving makes it stale (`refused.stale_plan`): plan again.
 - Each order command takes one simulated second, as a broker call takes time; `events` is what the market did in that second, which can fill or expire an order already resting, even on a plan or a refusal.
+  When the mock clock cannot move (at the end of its data, or a halted market), `order cancel`, `order reconcile` and `order release` run without it, and a plan or a placement is refused (`clock.past_data`, or exit 4 on a halt).
+- On the mock account an order fills whole, at its limit, at the close of its symbol's next daily bar when that bar reaches the limit, and expires otherwise ([The mock account](mock-account.md#the-market)).
 - Exit 3 means nothing reached the market in this call: plan again only once its reason has passed (a lapsed plan, a closed market); a limit the operator set is not retried around.
   Exit 4 means an order may have gone out, or the journal cannot say: run `cmdatl order reconcile SYMBOL` before anything else, and read `error.next`.
   A request the market itself refused is exit 4 `unknown.broker_refused`, since it reached the market; `cmdatl order reconcile SYMBOL` then shows nothing owed.
