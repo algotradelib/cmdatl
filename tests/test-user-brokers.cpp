@@ -1,4 +1,5 @@
-// Broker folders: finding one by name, the trust checks, `broker.toml`, and the auth commands on a folder's login.
+// Broker folders: finding one by its path, the trust checks, `broker.toml`, and the auth commands on a folder's login,
+// bound to the folder.
 #include <cmdatl/auth/login.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -109,18 +110,25 @@ std::string code(const Reply& reply) {
 }
 
 /**
- * @brief `auth login --broker NAME [--env ENV] --with-secret` with a document on standard input.
+ * @brief `auth login --broker NAME [--env ENV] [--adapter PATH] --with-secret` with a document on standard input.
  * @param store The store.
  * @param broker The broker.
  * @param env The environment, or empty.
  * @param document The document.
+ * @param adapter The folder, or empty.
  * @return The reply.
  */
-Reply login_with(Store& store, const std::string& broker, const std::string& env, const std::string& document) {
+Reply login_with(
+  Store& store, const std::string& broker, const std::string& env, const std::string& document,
+  const std::string& adapter = ""
+) {
   auth::LoginRequest request;
   request.broker_ = broker;
   if (!env.empty()) {
     request.env_ = env;
+  }
+  if (!adapter.empty()) {
+    request.adapter_ = adapter;
   }
   request.with_secret_ = true;
   const Input in(document);
@@ -128,42 +136,73 @@ Reply login_with(Store& store, const std::string& broker, const std::string& env
   return auth::login(request, in.fd(), prompts, &store);
 }
 
+/**
+ * @brief Finds a broker folder at a path.
+ * @param name The broker's name.
+ * @param path The folder.
+ * @return What was found.
+ */
+auth::BrokerFound found_at(const std::string& name, const std::filesystem::path& path) {
+  return auth::lookup_broker(name, path.string()).found_;
+}
+
 } // namespace
 
-TEST_CASE("a broker folder is found by name, after the built-in brokers and never as one of cmdatl's own names") {
-  const BrokerHome home;
-  const auto folder = home.folder("vendor", VENDOR_TOML);
-  home.folder("kis", VENDOR_TOML);
+TEST_CASE("a broker folder is named by its path, and a built-in name is never one") {
+  const BrokerFolders project;
+  const auto folder = project.folder("vendor", VENDOR_TOML, "#pragma once\n#include \"src/client.hpp\"\n");
+  std::filesystem::create_directory(folder / "src");
+  ::chmod((folder / "src").c_str(), 0700);
+  BrokerFolders::file(folder / "src" / "client.hpp", "#pragma once\n");
 
-  const auto found = auth::lookup_broker("vendor");
+  const auto found = auth::lookup_broker("eodhd", folder.string());
   REQUIRE(found.found_ == auth::BrokerFound::FOLDER);
   CHECK(found.folder_->folder_ == folder);
   CHECK(found.folder_->data_only_);
+  CHECK(found.broker()->name_ == "eodhd");
   CHECK(found.broker()->read_ == nullptr);
   CHECK(found.broker()->fields_.size() == 1);
   CHECK(found.broker()->fields_[0].secret_);
   CHECK_FALSE(found.broker()->has_demo_);
+  // One read: the files compiled are the files whose broker.toml was read.
+  const auto& snapshot = found.folder_->snapshot_;
+  CHECK(snapshot.name_ == "eodhd");
+  CHECK(snapshot.folder_ == folder.string());
+  REQUIRE(snapshot.files_.size() == 3);
+  CHECK(snapshot.files_[0].first == "adapter.hpp");
+  CHECK(snapshot.files_[1] == std::make_pair(std::string("broker.toml"), VENDOR_TOML));
+  CHECK(snapshot.files_[2].first == "src/client.hpp");
 
-  // A folder named as a built-in broker is never read: the built-in one answers.
-  const auto kis = auth::lookup_broker("kis");
+  // A trailing separator is the same folder; a path through `..` is resolved by the system, never simplified first.
+  CHECK(auth::lookup_broker("eodhd", folder.string() + "/").folder_->folder_ == folder);
+  CHECK(found_at("eodhd", folder / ".." / "vendor") == auth::BrokerFound::FOLDER);
+
+  // A built-in name is never a folder, and a folder is named only for a name that is not built in.
+  const auto kis = auth::lookup_broker("kis", "");
   CHECK(kis.found_ == auth::BrokerFound::BUILT_IN);
   CHECK(kis.broker()->read_ != nullptr);
+  CHECK(found_at("kis", folder) == auth::BrokerFound::INVALID);
   for (const auto* name : {"mock", "paper", "csv", "wide", "store", "Vendor", "a_b", "-x", "1x", ""}) {
     INFO(name);
     CHECK_FALSE(cmdatl::user_broker_name(name));
+    CHECK(found_at(name, folder) != auth::BrokerFound::FOLDER);
   }
   CHECK(cmdatl::user_broker_name("eodhd"));
   CHECK(cmdatl::user_broker_name("twelve-data"));
-  CHECK(auth::lookup_broker("missing").found_ == auth::BrokerFound::NOT_FOUND);
-  CHECK(code(auth::broker_refusal(auth::lookup_broker("missing"))) == "adapter.not_found");
-  CHECK(auth::user_broker_names() == std::vector<std::string>{"vendor"});
+
+  // No path, or nothing at it: never a folder found elsewhere.
+  CHECK(auth::lookup_broker("eodhd", "").found_ == auth::BrokerFound::NOT_FOUND);
+  CHECK(found_at("eodhd", project.root() / "adapters" / "missing") == auth::BrokerFound::NOT_FOUND);
+  CHECK(code(auth::broker_refusal(auth::lookup_broker("eodhd", ""))) == "adapter.not_found");
 }
 
-TEST_CASE("a broker folder another user could change is refused, at any depth and in its parents") {
-  const BrokerHome home;
-  const auto folder = home.folder("vendor", VENDOR_TOML);
-  const auto unsafe = [] {
-    return auth::lookup_broker("vendor").found_ == auth::BrokerFound::UNSAFE;
+TEST_CASE("a broker folder another user could change is refused, in it and on the way to it") {
+  const BrokerFolders project;
+  const auto folder = project.folder("vendor", VENDOR_TOML);
+  const auto adapters = folder.parent_path();
+  auto path = folder;
+  const auto unsafe = [&path] {
+    return found_at("vendor", path) == auth::BrokerFound::UNSAFE;
   };
   REQUIRE_FALSE(unsafe());
 
@@ -181,22 +220,43 @@ TEST_CASE("a broker folder another user could change is refused, at any depth an
     ::chmod((folder / "include" / "x").c_str(), 0770);
     CHECK(unsafe());
   }
-  SECTION("brokers/ writable by others") {
-    ::chmod(home.brokers().c_str(), 0702);
+  SECTION("a directory on the way writable by its group") {
+    ::chmod(adapters.c_str(), 0770);
     CHECK(unsafe());
   }
-  SECTION("cmdatl/ writable by its group") {
-    ::chmod(home.brokers().parent_path().c_str(), 0770);
+  SECTION("the project directory writable by others") {
+    ::chmod(project.root().c_str(), 0702);
+    CHECK(unsafe());
+  }
+  SECTION("a link on the way into a directory others can write") {
+    const auto shared = project.root() / "shared";
+    std::filesystem::create_directory(shared);
+    std::filesystem::rename(folder, shared / "vendor");
+    ::chmod(shared.c_str(), 0707);
+    std::filesystem::create_directory_symlink(shared, project.root() / "link");
+    path = project.root() / "link" / "vendor";
+    CHECK(unsafe());
+  }
+  SECTION("a link before `..`, into a directory others can write") {
+    // Written link/../vendor: simplified it would be the safe adapters/vendor; the system reads open/vendor.
+    const auto open = project.root() / "open";
+    std::filesystem::create_directories(open / "deep");
+    ::chmod((open / "deep").c_str(), 0700);
+    std::filesystem::copy(folder, open / "vendor");
+    ::chmod((open / "vendor").c_str(), 0700);
+    ::chmod(open.c_str(), 0770);
+    std::filesystem::create_directory_symlink(open / "deep", adapters / "link");
+    path = adapters / "link" / ".." / "vendor";
     CHECK(unsafe());
   }
   SECTION("a link to a file") {
-    BrokerHome::file(folder / "real.hpp", "#pragma once\n");
+    BrokerFolders::file(folder / "real.hpp", "#pragma once\n");
     std::filesystem::create_symlink(folder / "real.hpp", folder / "link.hpp");
     CHECK(unsafe());
   }
   SECTION("the folder a link") {
-    std::filesystem::rename(folder, home.brokers() / "elsewhere");
-    std::filesystem::create_directory_symlink(home.brokers() / "elsewhere", folder);
+    std::filesystem::rename(folder, adapters / "elsewhere");
+    std::filesystem::create_directory_symlink(adapters / "elsewhere", folder);
     CHECK(unsafe());
   }
   SECTION("a FIFO") {
@@ -212,24 +272,38 @@ TEST_CASE("a broker folder another user could change is refused, at any depth an
     CHECK((info.st_mode & 0022) == 0);
     CHECK(unsafe());
   }
-  SECTION("an access control list on brokers/ granting a file's addition") {
-    REQUIRE(std::system(("/bin/chmod +a 'everyone allow add_file' '" + home.brokers().string() + "'").c_str()) == 0);
+  SECTION("an access control list on a directory on the way granting a file's addition") {
+    REQUIRE(std::system(("/bin/chmod +a 'everyone allow add_file' '" + adapters.string() + "'").c_str()) == 0);
     CHECK(unsafe());
   }
 #endif
-  const auto reply = auth::broker_refusal(auth::lookup_broker("vendor"));
+  const auto reply = auth::broker_refusal(auth::lookup_broker("vendor", path.string()));
   CHECK(code(reply) == "adapter.unsafe");
   CHECK(reply.exit_ == Exit::FAILED);
 }
 
+TEST_CASE("a sticky directory on the way, and a link the user owns, lead to a broker folder") {
+  const BrokerFolders project;
+  const auto folder = project.folder("vendor", VENDOR_TOML);
+  // Others may add to a sticky directory, never replace what is the user's in it.
+  ::chmod(folder.parent_path().c_str(), 01777);
+  CHECK(found_at("vendor", folder) == auth::BrokerFound::FOLDER);
+  ::chmod(folder.parent_path().c_str(), 0700);
+  // A link on the way, followed: the folder is where it leads, canonical, and that is what a login is bound to.
+  std::filesystem::create_directory_symlink(project.root(), project.root() / "here");
+  const auto found = auth::lookup_broker("vendor", (project.root() / "here" / "adapters" / "vendor").string());
+  REQUIRE(found.found_ == auth::BrokerFound::FOLDER);
+  CHECK(found.folder_->folder_ == folder);
+}
+
 TEST_CASE("a broker folder is refused beyond its bounds, or without its two files") {
-  const BrokerHome home;
-  const auto folder = home.folder("vendor", VENDOR_TOML);
+  const BrokerFolders project;
+  const auto folder = project.folder("vendor", VENDOR_TOML);
   SECTION("too many entries") {
     for (std::size_t k = 0; k < auth::MAX_ADAPTER_ENTRIES; ++k) {
-      BrokerHome::file(folder / ("f" + std::to_string(k)), "");
+      BrokerFolders::file(folder / ("f" + std::to_string(k)), "");
     }
-    CHECK(auth::lookup_broker("vendor").found_ == auth::BrokerFound::INVALID);
+    CHECK(found_at("vendor", folder) == auth::BrokerFound::INVALID);
   }
   SECTION("too deep") {
     auto path = folder;
@@ -238,15 +312,15 @@ TEST_CASE("a broker folder is refused beyond its bounds, or without its two file
       std::filesystem::create_directory(path);
       ::chmod(path.c_str(), 0700);
     }
-    CHECK(auth::lookup_broker("vendor").found_ == auth::BrokerFound::INVALID);
+    CHECK(found_at("vendor", folder) == auth::BrokerFound::INVALID);
   }
   SECTION("no adapter.hpp") {
     std::filesystem::remove(folder / "adapter.hpp");
-    CHECK(auth::lookup_broker("vendor").found_ == auth::BrokerFound::INVALID);
+    CHECK(found_at("vendor", folder) == auth::BrokerFound::INVALID);
   }
   SECTION("broker.toml too large") {
-    BrokerHome::file(folder / "broker.toml", VENDOR_TOML + std::string(auth::MAX_BROKER_TOML_BYTES, '#'));
-    CHECK(auth::lookup_broker("vendor").found_ == auth::BrokerFound::INVALID);
+    BrokerFolders::file(folder / "broker.toml", VENDOR_TOML + std::string(auth::MAX_BROKER_TOML_BYTES, '#'));
+    CHECK(found_at("vendor", folder) == auth::BrokerFound::INVALID);
   }
 }
 
@@ -293,36 +367,65 @@ TEST_CASE("broker.toml is read strictly, each refusal at its line") {
   CHECK(broker.entry_.fields_[2].default_ == std::optional<std::string>("kr"));
 }
 
-TEST_CASE("auth login stores a broker folder's login unchecked, its defaults written, and shows none of its fields") {
-  const BrokerHome home;
-  const auto folder = home.folder("acme", BROKER_TOML);
+TEST_CASE("auth login binds a broker folder's login to the folder, stores it unchecked, and shows none of its fields") {
+  const BrokerFolders project;
+  const auto folder = project.folder("acme", BROKER_TOML);
   Store store;
 
-  auto reply = login_with(store, "acme", "demo", R"({"appKey":")" + KEY + R"(","appSecret":")" + SECRET + R"("})");
+  auto reply = login_with(
+    store, "acme", "demo", R"({"appKey":")" + KEY + R"(","appSecret":")" + SECRET + R"("})", folder.string()
+  );
   REQUIRE(reply.exit_ == Exit::OK);
   CHECK(
     store.items_.at("acme/demo") ==
-    R"({"appKey":")" + KEY + R"(","appSecret":")" + SECRET + R"(","region":"kr","demo":true})"
+    R"({"version":1,"adapter":")" + folder.string() + R"(","login":{"appKey":")" + KEY + R"(","appSecret":")" + SECRET +
+      R"(","region":"kr","demo":true}})"
   );
   CHECK(reply.body_.at("adapter").as_string() == folder.string());
   CHECK_FALSE(reply.body_.contains("key"));
   CHECK(reply.body_.at("checked").as_bool() == false);
 
   // A field the folder does not declare, a missing one, and demo for a vendor without one are refused.
-  CHECK(code(login_with(store, "acme", "real", R"({"appKey":"a","appSecret":"b","x":"c"})")) == "auth.bad_document");
-  CHECK(code(login_with(store, "acme", "real", R"({"appKey":"a"})")) == "auth.bad_document");
-  home.folder("vendor", VENDOR_TOML);
-  CHECK(code(login_with(store, "vendor", "demo", R"({"api_token":"t"})")) == "usage.bad_value");
-  REQUIRE(login_with(store, "vendor", "", R"({"api_token":")" + SECRET + R"("})").exit_ == Exit::OK);
+  const auto at = folder.string();
+  CHECK(
+    code(login_with(store, "acme", "real", R"({"appKey":"a","appSecret":"b","x":"c"})", at)) == "auth.bad_document"
+  );
+  CHECK(code(login_with(store, "acme", "real", R"({"appKey":"a"})", at)) == "auth.bad_document");
+  const auto vendor = project.folder("vendor", VENDOR_TOML);
+  CHECK(code(login_with(store, "vendor", "demo", R"({"api_token":"t"})", vendor.string())) == "usage.bad_value");
+  REQUIRE(login_with(store, "vendor", "", R"({"api_token":")" + SECRET + R"("})", vendor.string()).exit_ == Exit::OK);
   CHECK(store.items_.count("vendor/real") == 1);
 
-  // An unknown name, and a folder another user could change.
-  CHECK(code(login_with(store, "nobroker", "", "{}")) == "usage.bad_value");
+  // A name that is not built in needs its folder; a built-in one takes none; --adapter needs --broker.
+  const auto before = store.items_;
+  CHECK(code(login_with(store, "nobroker", "", "{}")) == "usage.missing_argument");
+  CHECK(code(login_with(store, "kis", "demo", "{}", at)) == "usage.bad_value");
+  auth::LoginRequest unnamed;
+  unnamed.adapter_ = at;
+  unnamed.with_secret_ = true;
+  const Input none("{}");
+  std::ostringstream prompts;
+  const auto unnamed_reply = auth::login(unnamed, none.fd(), prompts, &store);
+  CHECK(code(unnamed_reply) == "usage.missing_argument");
+  CHECK(std::string(unnamed_reply.body_.at("error").at("message").as_string()).find("--adapter") != std::string::npos);
+  // No folder at the path, and a folder another user could change.
+  CHECK(code(login_with(store, "acme", "real", "{}", (project.root() / "none").string())) == "usage.bad_value");
   ::chmod(folder.c_str(), 0777);
-  CHECK(code(login_with(store, "acme", "real", R"({"appKey":"a","appSecret":"b"})")) == "adapter.unsafe");
+  CHECK(code(login_with(store, "acme", "real", R"({"appKey":"a","appSecret":"b"})", at)) == "adapter.unsafe");
   ::chmod(folder.c_str(), 0700);
+  CHECK(store.items_ == before);
 
-  // Status reads no folder login's document: only whether its folder still reads.
+  // The path against the working directory, bound as the folder's canonical path.
+  {
+    const InDir in(project.root());
+    REQUIRE(
+      login_with(store, "acme", "real", R"({"appKey":"a","appSecret":"b"})", "adapters/../adapters/acme").exit_ ==
+      Exit::OK
+    );
+  }
+  CHECK(store.items_.at("acme/real").find(R"("adapter":")" + folder.string() + R"(")") != std::string::npos);
+
+  // Status reads no folder login: neither its document nor the folder it is bound to.
   store.gets_ = 0;
   const auto status = auth::status({}, &store);
   REQUIRE(status.exit_ == Exit::OK);
@@ -332,28 +435,82 @@ TEST_CASE("auth login stores a broker folder's login unchecked, its defaults wri
   CHECK(text.find(SECRET) == std::string::npos);
   CHECK(text.find("SE****") == std::string::npos);
   const auto& rows = status.body_.at("logins").as_array();
-  REQUIRE(rows.size() == 2);
+  REQUIRE(rows.size() == 3);
   CHECK(rows[0].at("broker").as_string() == "acme");
-  CHECK(rows[0].at("adapter").as_string() == folder.string());
+  CHECK(rows[0].at("adapter").is_null());
   CHECK_FALSE(rows[0].as_object().contains("key"));
 }
 
-TEST_CASE("a broker folder's login outlives its folder: status shows it, logout removes it") {
+TEST_CASE("a broker folder's login reaches the adapter only for the folder it is bound to") {
+  const BrokerFolders project;
+  const auto folder = project.folder("vendor", VENDOR_TOML);
+  const auto copy = project.folder("copy", VENDOR_TOML);
+  const auto found = auth::lookup_broker("vendor", folder.string());
+  const auto other = auth::lookup_broker("vendor", copy.string());
+  REQUIRE(found.folder_);
+  REQUIRE(other.folder_);
+  const auto stored =
+    auth::folder_login_text(folder.string(), json::parse(R"({"api_token":")" + SECRET + R"("})").as_object());
+
+  std::string document;
+  CHECK_FALSE(auth::folder_login(stored, "vendor/real", *found.folder_, false, document));
+  CHECK(document == R"({"api_token":")" + SECRET + R"("})");
+
+  // The same files in another folder (a project cloned elsewhere), a login stored before logins were bound, and an
+  // envelope that is not cmdatl's: each refused, the stored text never quoted, nothing handed on.
+  const auto refused = [&](const std::string& text, const auth::UserBroker& broker) {
+    std::string out;
+    const auto reply = auth::folder_login(text, "vendor/real", broker, false, out);
+    REQUIRE(reply);
+    CHECK(out.empty());
+    CHECK(reply->exit_ == Exit::FAILED);
+    CHECK(json::serialize(reply->body_).find(SECRET) == std::string::npos);
+    return *reply;
+  };
+  const auto moved = refused(stored, *other.folder_);
+  CHECK(code(moved) == "auth.adapter_mismatch");
+  const std::string message(moved.body_.at("error").at("message").as_string());
+  CHECK(message.find(folder.string()) != std::string::npos);
+  CHECK(message.find(copy.string()) != std::string::npos);
+  CHECK(
+    std::string(moved.body_.at("error").at("next").as_string()) ==
+    "the operator logs in for this folder: cmdatl auth login --broker vendor --env real --adapter " + copy.string()
+  );
+  const std::string folder_text = folder.string();
+  for (
+    const auto& text : {
+      R"({"api_token":")" + SECRET + R"("})",
+      std::string("not json ") + SECRET,
+      R"({"version":2,"adapter":")" + folder_text + R"(","login":{"api_token":")" + SECRET + R"("}})",
+      R"({"version":1,"adapter":")" + folder_text + R"(","login":")" + SECRET + R"("})",
+      R"({"version":1,"adapter":")" + folder_text + R"(","login":{},"extra":")" + SECRET + R"("})",
+      R"({"version":1,"login":{"api_token":")" + SECRET + R"("}})",
+    }
+  ) {
+    INFO(text);
+    CHECK(code(refused(text, *found.folder_)) == "auth.adapter_mismatch");
+  }
+}
+
+TEST_CASE("a broker folder's login outlives its folder and its binding: status shows it, logout removes it") {
   Store store;
   {
-    const BrokerHome home;
-    home.folder("vendor", VENDOR_TOML);
-    REQUIRE(login_with(store, "vendor", "", R"({"api_token":"t"})").exit_ == Exit::OK);
+    const BrokerFolders project;
+    const auto folder = project.folder("vendor", VENDOR_TOML);
+    REQUIRE(login_with(store, "vendor", "", R"({"api_token":"t"})", folder.string()).exit_ == Exit::OK);
   }
-  const BrokerHome empty;
+  // A login stored before logins were bound to a folder: listed and removed by name all the same.
+  store.items_["acme/demo"] = R"({"appKey":"k","appSecret":"s","demo":true})";
   const auto status = auth::status({}, &store);
-  REQUIRE(status.body_.at("logins").as_array().size() == 1);
-  CHECK(status.body_.at("logins").as_array()[0].at("adapter").is_null());
+  REQUIRE(status.body_.at("logins").as_array().size() == 2);
+  CHECK(status.body_.at("logins").as_array()[1].at("adapter").is_null());
   const Input none("");
   std::ostringstream prompts;
-  const auto removed = auth::logout({std::string("vendor"), std::nullopt}, none.fd(), prompts, &store);
+  auto removed = auth::logout({std::string("vendor"), std::nullopt}, none.fd(), prompts, &store);
   REQUIRE(removed.exit_ == Exit::OK);
   CHECK(removed.body_.at("removed").as_string() == "vendor/real");
+  removed = auth::logout({std::string("acme"), std::nullopt}, none.fd(), prompts, &store);
+  REQUIRE(removed.exit_ == Exit::OK);
   CHECK(store.items_.empty());
 }
 #endif

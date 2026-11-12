@@ -305,7 +305,10 @@ TEST_CASE("auth login without a terminal never asks: each missing value is a usa
   request.broker_ = "toss";
   request.env_ = "demo";
   CHECK(code(auth::login(request, in.fd(), prompts, &store)) == "usage.bad_value");
+  // A name a broker folder can have needs its folder; no broker can have the other.
   request.broker_ = "nobroker";
+  CHECK(code(auth::login(request, in.fd(), prompts, &store)) == "usage.missing_argument");
+  request.broker_ = "No_Broker";
   CHECK(code(auth::login(request, in.fd(), prompts, &store)) == "usage.bad_value");
   CHECK(prompts.str().empty());
   CHECK(store.puts_ == 0);

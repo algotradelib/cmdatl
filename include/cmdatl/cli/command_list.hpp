@@ -130,6 +130,7 @@ inline std::vector<Command> command_list() {
     .example("cmdatl auth login")
     .example("cmdatl auth login --broker kis --env demo")
     .example("cmdatl auth login --broker toss --with-secret --force")
+    .example("cmdatl auth login --broker eodhd --adapter adapters/eodhd")
     .describe(
       "Asks on a terminal for what is not given: the broker, demo or real (for a broker with a demo), and the\n"
       "broker's fields (KIS: app key, app secret, account number, product code; Kiwoom: app key, secret key;\n"
@@ -138,11 +139,12 @@ inline std::vector<Command> command_list() {
       "macOS keychain (no other store in this version), one login per broker and environment. Nothing is sent to\n"
       "the broker: the key is first used, and so first checked, by a demo or real run. Without a terminal nothing\n"
       "is asked. A macOS keychain dialog is the system's: a signal does not dismiss it.\n"
-      "A broker or data vendor cmdatl was not built for is a folder the operator installs in\n"
-      "$XDG_CONFIG_HOME/cmdatl/brokers/NAME (else ~/.config/cmdatl/brokers/NAME): its broker.toml says what is\n"
-      "asked, and its document is stored unchecked, read by the folder's adapter at a run or a backtest."
+      "A broker or data vendor cmdatl was not built for is a broker folder, named by its path with --adapter: its\n"
+      "broker.toml says what is asked, and its document is stored unchecked, bound to the folder's path, and read\n"
+      "by the folder's adapter at a run or a backtest that names the same folder."
     )
     .option("broker", "NAME", "kis, kiwoom, toss or a broker folder's name; asked on a terminal when not given")
+    .option("adapter", "PATH", "the broker folder of a broker that is not built in, against the working directory")
     .option("env", "ENV", "demo or real, for a broker with a demo; asked on a terminal when not given")
     .flag("with-secret", "read the broker's credential document as JSON from standard input")
     .flag("force", "replace a stored login for the same broker and environment without asking")
@@ -150,7 +152,7 @@ inline std::vector<Command> command_list() {
     .returns("environment", "demo or real")
     .returns("key", "the key, masked")
     .returns("account", "the account number, masked, for a broker whose login has one (KIS)")
-    .returns("adapter", "a broker folder's login: the folder (no field of the login is shown)")
+    .returns("adapter", "a broker folder's login: the folder it is bound to, canonical (no field of the login is shown)")
     .returns("store", "keychain")
     .returns("checked", "false: the broker has not seen the login")
     .returns("replaced", "whether a stored login was replaced")
@@ -179,8 +181,8 @@ inline std::vector<Command> command_list() {
     .returns(
       "logins",
       "one per stored login: broker, environment, key (masked), account (masked, KIS), store, checked, and locked "
-      "when the store would not open it; a broker folder's login shows adapter (the folder, null when it no longer "
-      "reads) and no field"
+      "when the store would not open it; a broker folder's login shows adapter (null: the login, which holds its folder, "
+      "is not read) and no field"
     )
     .returns("environment_variables", "per broker, which of its environment variables are set (names only)")
     .error("usage.bad_value")
@@ -376,6 +378,7 @@ inline std::vector<Command> command_list() {
     .error("auth.no_store")
     .error("auth.store_locked")
     .error("auth.not_found")
+    .error("auth.adapter_mismatch")
     .error("fetch.failed")
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return backtest_reply(invocation, output);

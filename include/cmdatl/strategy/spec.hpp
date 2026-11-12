@@ -112,6 +112,7 @@ inline const std::vector<Key>& keys() {
   static const std::vector<Key> table{
     {"strategy", Kind::PATH, {}, {}},
     {"bars.source", Kind::CHOICE, {}, {"wide", "csv", "store"}},
+    {"bars.adapter", Kind::PATH, folder, {}},
     {"bars.file", Kind::PATH, {"wide", "csv"}, {}},
     {"bars.close", Kind::PATH, wide, {}},
     {"bars.open", Kind::PATH, wide, {}},
@@ -1206,6 +1207,8 @@ struct Resolved {
   bool store_{false};
   /** @brief The broker folder whose adapter fetches the bars (`bars.source`), or empty. */
   std::string fetch_source_;
+  /** @brief That folder's path (`bars.adapter`), absolute as written, or empty. */
+  std::string fetch_adapter_;
   /** @brief `build.duckdb`, absolute, or empty. */
   std::string duckdb_;
   /** @brief `market` or `limit`. */
@@ -1312,8 +1315,9 @@ inline std::vector<Error> resolve(
       }
     }
   } else if (folder) {
-    // The bars of a broker folder's history: how many, where they are kept, and the market they are quoted in.
-    for (const auto* k : {"bars.count", "bars.store_root", "replay.market"}) {
+    // The bars of a broker folder's history: its folder, how many, where they are kept, and the market they are quoted
+    // in.
+    for (const auto* k : {"bars.adapter", "bars.count", "bars.store_root", "replay.market"}) {
       if (get(k) == nullptr) {
         errors.push_back(
           Error::nowhere(
@@ -1455,8 +1459,20 @@ inline std::vector<Error> resolve(
       )
     );
   }
-  // A rule is C++ compiled into the driver cmdatl runs, so it comes from the spec file, never the command line.
-  for (const auto* k : {"replay.fill_header", "replay.fill_function"}) {
+  // A fetch hands the driver a stored login: no C++ but the adapter's may run beside it.
+  if (folder && fill_header != nullptr) {
+    errors.push_back(
+      Error::at(
+        fill_header->origin_,
+        "`replay.fill_header`: a backtest that fetches through a broker folder hands its driver a stored login, and "
+        "the rule's C++ would run beside it: fetch into the store without the rule, then replay bars.source = "
+        "\"store\" with it"
+      )
+    );
+  }
+  // A rule, and a broker folder, are C++ compiled into the driver cmdatl runs, so they come from the spec file, never
+  // the command line.
+  for (const auto* k : {"replay.fill_header", "replay.fill_function", "bars.adapter"}) {
     if (const auto* e = get(k); e != nullptr && e->origin_.file_.empty()) {
       errors.push_back(
         Error::at(
@@ -1721,7 +1737,8 @@ inline std::vector<Error> resolve(
   for (const auto& e : merged) {
     if (
       e.key_ == "strategy" || e.key_ == "bars.source" || e.key_.rfind("build.", 0) == 0 ||
-      e.key_.rfind("params.", 0) == 0 || e.key_ == "replay.fill_header" || e.key_ == "replay.fill_function"
+      e.key_.rfind("params.", 0) == 0 || e.key_ == "replay.fill_header" || e.key_ == "replay.fill_function" ||
+      e.key_ == "bars.adapter"
     ) {
       continue;
     }
@@ -1731,6 +1748,9 @@ inline std::vector<Error> resolve(
   out.args_.insert(out.args_.end(), params.begin(), params.end());
   out.store_ = source == "store" || folder;
   out.fetch_source_ = folder ? source : std::string();
+  if (const auto* e = get("bars.adapter"); e != nullptr && folder) {
+    out.fetch_adapter_ = e->value_.text();
+  }
   // DuckDB's directory reaches CMake only for a store run, so only then must it be one CMake can take.
   if (const auto* e = get("build.duckdb"); e != nullptr && out.store_) {
     if (const auto refused = cmake_refuses(e->value_.text(), "build.duckdb")) {

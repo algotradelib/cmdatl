@@ -14,8 +14,10 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cstdint>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -33,6 +35,8 @@ struct LoginRequest {
   std::optional<std::string> broker_;
   /** @brief `--env`, if given. */
   std::optional<std::string> env_;
+  /** @brief `--adapter`, the broker folder's path as given (against the working directory), if given. */
+  std::optional<std::string> adapter_;
   /** @brief `--with-secret`: the document comes on standard input. */
   bool with_secret_{false};
   /** @brief `--force`: replace a stored login without asking. */
@@ -101,8 +105,8 @@ inline std::string masked(const std::string& value) {
 }
 
 /**
- * @brief The row of a broker folder's login: broker, environment, the folder (or null when it no longer reads), the
- *   store and `checked: false`; no field of the document, whose schema may have changed since the login.
+ * @brief The row of a broker folder's login: broker, environment, the folder it is bound to (null where the stored
+ *   login is not read), the store and `checked: false`; no field of the document.
  * @param name The broker's name.
  * @param demo Whether it is the demo environment.
  * @param folder The folder, or none.
@@ -119,6 +123,60 @@ inline json::object folder_login_row(
   row["store"] = store;
   row["checked"] = false;
   return row;
+}
+
+/** @brief The version of the envelope cmdatl stores a broker folder's login in. */
+inline constexpr std::int64_t FOLDER_LOGIN_VERSION = 1;
+
+/**
+ * @brief A broker folder's login as stored: an envelope cmdatl makes, `{"version":1,"adapter":FOLDER,"login":{...}}`,
+ *   binding the document to the folder's canonical path; only the document reaches the adapter.
+ * @param folder The folder, canonical.
+ * @param document The canonical document.
+ * @return The text stored.
+ */
+inline std::string folder_login_text(const std::string& folder, const json::object& document) {
+  return json::serialize(json::object{{"version", FOLDER_LOGIN_VERSION}, {"adapter", folder}, {"login", document}});
+}
+
+/**
+ * @brief Takes a broker folder's login out of its stored envelope, for the folder named now: the envelope must be
+ *   cmdatl's, of this version, and bound to that folder; a login stored for another folder, before logins were bound,
+ *   or changed outside cmdatl is refused, and nothing is handed on. The stored text is never quoted.
+ * @param stored The stored text.
+ * @param name The login's name (`<broker>/<env>`).
+ * @param broker The folder, read.
+ * @param demo Whether it is the demo environment.
+ * @param document Set to the document the adapter reads.
+ * @return `auth.adapter_mismatch` (exit 1), or none.
+ */
+inline std::optional<Reply> folder_login(
+  const std::string& stored, const std::string& name, const UserBroker& broker, bool demo, std::string& document
+) {
+  const auto folder = broker.folder_.string();
+  std::string message = "the login " + name + " is bound to no broker folder (stored before logins were bound to " +
+    "a folder, or changed outside cmdatl)";
+  boost::system::error_code ec;
+  const auto parsed = json::parse(stored, ec);
+  const auto* envelope = !ec && parsed.is_object() ? &parsed.as_object() : nullptr;
+  if (
+    envelope != nullptr && envelope->size() == 3 && envelope->contains("version") &&
+    envelope->at("version").is_int64() && envelope->at("version").as_int64() == FOLDER_LOGIN_VERSION &&
+    envelope->contains("adapter") && envelope->at("adapter").is_string() && envelope->contains("login") &&
+    envelope->at("login").is_object()
+  ) {
+    const std::string bound(envelope->at("adapter").as_string());
+    if (bound == folder) {
+      document = json::serialize(envelope->at("login"));
+      return std::nullopt;
+    }
+    message = "the login " + name + " is bound to the broker folder " + bound + ", not " + folder;
+  }
+  return error_reply(
+    Exit::FAILED, "auth.adapter_mismatch", message + "; nothing was handed to an adapter",
+    "the operator logs in for this folder: cmdatl auth login --broker " + broker.entry_.name_ + " --env " +
+      (demo ? "demo" : "real") + " --adapter " + folder
+  );
 }
 
 /**
@@ -276,19 +334,18 @@ inline Reply bad_document(const std::string& problem) {
 }
 
 /**
- * @brief Where an unknown broker's message points: the built-in brokers and the folders' directory.
+ * @brief Where an unknown broker's message points: the built-in brokers and broker folders.
  * @return The text.
  */
 inline std::string brokers_hint() {
-  const auto root = brokers_root();
-  return "the brokers are: " + broker_names() + ", or a folder installed in " +
-    (root ? root->string() : std::string("<config>/cmdatl/brokers"));
+  return "the brokers are: " + broker_names() + "; another broker's login names its folder with --adapter PATH";
 }
 
 /**
  * @brief `auth login`: asks for what was not given (on a terminal), checks the document locally with the library's
- *   loaders (a broker folder's is stored unchecked: its adapter reads it at the run), and stores it; the saved access
- *   token of a login it replaces is removed first, as far as it can be. Sends nothing to a broker.
+ *   loaders (a broker folder's is stored unchecked, bound to the folder's path: its adapter reads it at the run), and
+ *   stores it; the saved access token of a login it replaces is removed first, as far as it can be. Sends nothing to a
+ *   broker.
  * @param request What was given.
  * @param in Standard input.
  * @param prompts Where questions go (stderr).
@@ -298,8 +355,28 @@ inline std::string brokers_hint() {
 inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, CredentialStore* store) {
   // The flags given are checked first, so a wrong one is reported as such wherever cmdatl runs.
   std::optional<BrokerLookup> named;
+  if (request.adapter_ && !request.broker_) {
+    return error_reply(
+      Exit::USAGE, "usage.missing_argument", "--adapter names the folder of the broker --broker names: give --broker"
+    );
+  }
   if (request.broker_) {
-    named = lookup_broker(*request.broker_);
+    const bool built_in = find_broker(*request.broker_) != nullptr;
+    if (built_in && request.adapter_) {
+      return error_reply(
+        Exit::USAGE, "usage.bad_value", *request.broker_ + " is a built-in broker: --adapter names another's folder",
+        "leave out --adapter"
+      );
+    }
+    if (!built_in && user_broker_name(*request.broker_) && !request.adapter_) {
+      return error_reply(
+        Exit::USAGE, "usage.missing_argument",
+        *request.broker_ + " is not a built-in broker: give --adapter, the path of its broker folder", brokers_hint()
+      );
+    }
+    std::error_code ec;
+    const auto folder = request.adapter_ ? std::filesystem::absolute(*request.adapter_, ec) : std::filesystem::path();
+    named = lookup_broker(*request.broker_, folder.string());
     if (named->found_ == BrokerFound::NOT_FOUND) {
       return error_reply(Exit::USAGE, "usage.bad_value", named->problem_, brokers_hint());
     }
@@ -322,21 +399,12 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
   const bool terminal = sys::is_terminal(in);
 
   const Broker* broker = nullptr;
-  // The folders offered on a terminal, after the built-in brokers; kept while `broker` points into them.
-  std::vector<BrokerLookup> folders;
   if (named) {
     broker = named->broker();
   } else if (terminal) {
     std::vector<std::string> choices;
     for (const auto& entry : brokers()) {
       choices.push_back(entry.display_ + " (" + entry.name_ + ")");
-    }
-    for (const auto& name : user_broker_names()) {
-      auto found = lookup_broker(name);
-      if (found.found_ == BrokerFound::FOLDER) {
-        choices.push_back(found.folder_->entry_.display_ + " (" + name + ", a broker folder)");
-        folders.push_back(std::move(found));
-      }
     }
     std::size_t chosen = 0;
     const auto read = sys::choose(in, prompts, "Which broker?", choices, std::nullopt, chosen);
@@ -346,7 +414,7 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
     if (read.status_ != sys::ReadStatus::OK) {
       return no_answer(read.status_);
     }
-    broker = chosen < brokers().size() ? &brokers()[chosen] : folders[chosen - brokers().size()].broker();
+    broker = &brokers()[chosen];
   } else {
     return error_reply(
       Exit::USAGE, "usage.missing_argument", "--broker is needed when standard input is not a terminal", brokers_hint()
@@ -452,7 +520,9 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
   if (const auto problem = canonical_document(*broker, demo, document, canonical)) {
     return bad_document(*problem);
   }
-  const auto text = json::serialize(canonical);
+  const auto text = named && named->folder_ ?
+    folder_login_text(named->folder_->folder_.string(), canonical) :
+    json::serialize(canonical);
   if (broker->read_ != nullptr) {
     try {
       broker->read_(text, "stored login " + name);
@@ -470,12 +540,8 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
     return store_failure(store->kind(), stored.status_, stored.detail_, true);
   }
   Reply reply;
-  if (broker->read_ == nullptr) {
-    const auto folder = brokers_root();
-    reply.body_ = folder_login_row(
-      broker->name_, demo, folder ? std::optional<std::string>((*folder / broker->name_).string()) : std::nullopt,
-      store->kind()
-    );
+  if (named && named->folder_) {
+    reply.body_ = folder_login_row(broker->name_, demo, named->folder_->folder_.string(), store->kind());
   } else {
     reply.body_ = login_row(*broker, demo, canonical, store->kind());
   }
@@ -566,15 +632,8 @@ inline Reply status(const LoginFilter& filter, CredentialStore* store) {
     }
     const auto* broker = find_broker(broker_name);
     if (broker == nullptr) {
-      // A broker folder's login: its document is not read, only whether the folder still reads.
-      const auto folder = lookup_broker(broker_name);
-      rows.emplace_back(folder_login_row(
-        broker_name, demo,
-        folder.found_ == BrokerFound::FOLDER ?
-          std::optional<std::string>(folder.folder_->folder_.string()) :
-          std::nullopt,
-        store->kind()
-      ));
+      // A broker folder's login: not read, so neither its document nor the folder it is bound to is shown.
+      rows.emplace_back(folder_login_row(broker_name, demo, std::nullopt, store->kind()));
       continue;
     }
     const auto found = store->get(name);
@@ -700,6 +759,7 @@ inline Reply login_command(const Invocation& invocation, Output& output) {
   LoginRequest request;
   request.broker_ = option_of(invocation, "broker");
   request.env_ = option_of(invocation, "env");
+  request.adapter_ = option_of(invocation, "adapter");
   request.with_secret_ = invocation.has("with-secret");
   request.force_ = invocation.has("force");
   const auto store = open_store(interaction_allowed(STANDARD_INPUT));

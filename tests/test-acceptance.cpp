@@ -722,20 +722,26 @@ TEST_CASE(
   }
   const Equipped equipped(*equip);
   const ScopedVariable root("DUCKDB_ROOT", std::string(CMDATL_TEST_DUCKDB));
-  const BrokerHome home;
+  // The folder in another project directory, named relative to the spec.
+  const BrokerFolders project;
   const std::filesystem::path fixture = std::string(CMDATL_SOURCE_DIR) + "/tests/fixtures/adapters/vendor/adapter";
-  home.folder("fixture", slurp(fixture / "broker.toml"), slurp(fixture / "adapter.hpp"));
+  const auto folder = project.folder("fixture", slurp(fixture / "broker.toml"), slurp(fixture / "adapter.hpp"));
   const ScratchDir dir;
   REQUIRE(run({"strategy", "new", "dip", "--dir", dir.path().string()}).exit_ == 0);
   const auto at = [&dir](const std::string& file) {
     return (dir.path() / file).string();
   };
+  const auto relative = std::filesystem::relative(folder, dir.path()).string();
   spit(
     at("vendor.toml"),
-    "strategy = 'dip.atls'\n[bars]\nsource = 'fixture'\ncount = 150\nstore_root = 'store'\n[instruments]\nstock = "
-    "'AAA'\n[replay]\nmarket = 'us'\n"
+    "strategy = 'dip.atls'\n[bars]\nsource = 'fixture'\nadapter = '" + relative +
+      "'\ncount = 150\nstore_root = 'store'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
   );
-  spit(at("login.json"), "{\"api_token\":\"T-0123456789\"}");
+  // The login as auth login stores it: bound to the folder's canonical path.
+  const auto login_for = [](const std::filesystem::path& bound, const std::string& token) {
+    return "{\"version\":1,\"adapter\":\"" + bound.string() + "\",\"login\":{\"api_token\":\"" + token + "\"}}";
+  };
+  spit(at("login.json"), login_for(folder, "T-0123456789"));
   const ScopedVariable login("CMDATL_TEST_FETCH_LOGIN", at("login.json"));
   auto ran = backtest({at("vendor.toml")});
   INFO(ran.out_ << "\n" << ran.err_);
@@ -799,13 +805,13 @@ TEST_CASE(
   CHECK(reply_of(ran.out_).at("report").at("bars").as_int64() == 20);
 
   // No bars at all: refused, never replaced by the bars the store already holds.
-  spit(at("login.json"), "{\"api_token\":\"empty-1\"}");
+  spit(at("login.json"), login_for(folder, "empty-1"));
   ran = backtest({at("vendor.toml")});
   CHECK(code_of(ran.out_) == "fetch.failed");
   CHECK(ran.out_.find("no bars") != std::string::npos);
 
   // A token the vendor answers 401 with, in its text: the reply names the status, never the token.
-  spit(at("login.json"), "{\"api_token\":\"fail-SECRET-987\"}");
+  spit(at("login.json"), login_for(folder, "fail-SECRET-987"));
   ran = backtest({at("vendor.toml")});
   CHECK(ran.exit_ == 1);
   CHECK(code_of(ran.out_) == "fetch.failed");
@@ -813,12 +819,40 @@ TEST_CASE(
   CHECK(ran.out_.find("SECRET-987") == std::string::npos);
   CHECK(ran.err_.find("SECRET-987") == std::string::npos);
 
-  // No login, no folder, and a spec without what the fetch needs.
+  // A login bound to another folder (the same files in a project cloned elsewhere), and one stored before logins were
+  // bound: refused before anything is built or handed on.
+  const auto copy = project.folder("copy", slurp(fixture / "broker.toml"), slurp(fixture / "adapter.hpp"));
+  spit(at("login.json"), login_for(copy, "OTHER-SECRET-1"));
+  ran = backtest({at("vendor.toml")});
+  CHECK(code_of(ran.out_) == "auth.adapter_mismatch");
+  CHECK(ran.err_.find("building") == std::string::npos);
+  CHECK((ran.out_ + ran.err_).find("OTHER-SECRET-1") == std::string::npos);
+  spit(at("login.json"), "{\"api_token\":\"OLD-SECRET-1\"}");
+  ran = backtest({at("vendor.toml")});
+  CHECK(code_of(ran.out_) == "auth.adapter_mismatch");
+  CHECK((ran.out_ + ran.err_).find("OLD-SECRET-1") == std::string::npos);
+
+  // No folder at the path, no path, the path on the command line, a fill rule beside the login, no login, and a spec
+  // without what the fetch needs.
+  const auto other = [&](const std::string& lines) {
+    spit(
+      at("other.toml"),
+      "strategy = 'dip.atls'\n[bars]\nsource = 'fixture'\ncount = 5\nstore_root = 'store'\n" + lines +
+        "[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
+    );
+    return code_of(backtest({at("other.toml")}).out_);
+  };
+  CHECK(other("adapter = 'nofolder'\n") == "adapter.not_found");
+  CHECK(other("") == "spec.invalid");
+  CHECK(code_of(backtest({at("vendor.toml"), "bars.adapter=" + copy.string()}).out_) == "spec.invalid");
+  spit(at("rule.hpp"), "#pragma once\n");
   spit(
-    at("other.toml"),
-    "strategy = 'dip.atls'\n[bars]\nsource = 'nofolder'\ncount = 5\nstore_root = 'store'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
+    at("rule.toml"),
+    "strategy = 'dip.atls'\n[bars]\nsource = 'fixture'\nadapter = '" + relative +
+      "'\ncount = 5\nstore_root = 'store'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
+      "fill_header = 'rule.hpp'\nfill_function = 'rule'\n"
   );
-  CHECK(code_of(backtest({at("other.toml")}).out_) == "adapter.not_found");
+  CHECK(code_of(backtest({at("rule.toml")}).out_) == "spec.invalid");
   CHECK(code_of(backtest({at("vendor.toml"), "bars.count=0"}).out_) == "spec.invalid");
   std::filesystem::remove(at("login.json"));
   CHECK(code_of(backtest({at("vendor.toml")}).out_) == "auth.not_found");

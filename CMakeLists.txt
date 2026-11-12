@@ -300,16 +300,19 @@ if(CMDATL_BUILD_TESTS)
   # A broker folder's account driver, compiled here as a run's build compiles it, against a fixture adapter over the
   # library's mock broker and one whose client states none of what a run reads at its start (it must compile, and
   # refuse at start).
+  # Each is built from its fixture folder, which a test's operator file names.
   foreach(adapter IN ITEMS mockbroker limited)
+    file(REAL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/${adapter}/adapter" folder)
     add_executable(driver-adapter-${adapter} driver/main.cpp)
     target_include_directories(driver-adapter-${adapter} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/${adapter}
     )
     target_compile_definitions(driver-adapter-${adapter} PRIVATE
-      TOML_HEADER_ONLY=1 CMDATL_DRIVER_USER=1 CMDATL_ADAPTER_NAME="${adapter}"
+      TOML_HEADER_ONLY=1 CMDATL_DRIVER_USER=1 CMDATL_ADAPTER_NAME="${adapter}" CMDATL_ADAPTER_FOLDER="${folder}"
     )
     target_link_libraries(driver-adapter-${adapter} PRIVATE cmdatl_core)
   endforeach()
+  file(REAL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/mockbroker/adapter" folder_mockbroker)
   add_executable(test-runs tests/test-runs.cpp tests/test-account-run.cpp tests/test-owed-recovery.cpp)
   target_include_directories(test-runs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/mockbroker)
   target_link_libraries(test-runs PRIVATE cmdatl_core Catch2::Catch2WithMain)
@@ -317,6 +320,7 @@ if(CMDATL_BUILD_TESTS)
   target_compile_definitions(test-runs PRIVATE
     CMDATL_RUN_TEST_HOOKS
     CMDATL_ADAPTER_NAME="mockbroker"
+    CMDATL_ADAPTER_FOLDER="${folder_mockbroker}"
     CMDATL_DRIVER_LIMITED="$<TARGET_FILE:driver-adapter-limited>"
     CMDATL_DRIVER_MOCKBROKER="$<TARGET_FILE:driver-adapter-mockbroker>"
     CMDATL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"

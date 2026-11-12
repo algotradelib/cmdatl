@@ -36,7 +36,7 @@ inline bool account_number_text(const std::string& text) {
 }
 
 /**
- * @brief Whether a name can be a broker folder's (`<config>/cmdatl/brokers/<name>/`): a lowercase letter, then at most
+ * @brief Whether a name can be a broker folder's (what its login is stored under): a lowercase letter, then at most
  *   31 lowercase letters, digits or `-`, and not a name cmdatl itself gives a meaning (`mock`, `paper`, the built-in brokers
  *   `kis`, `kiwoom` and `toss`, and the bar sources `csv`, `wide` and `store`).
  * @param name The name.

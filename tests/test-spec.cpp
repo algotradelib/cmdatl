@@ -738,6 +738,43 @@ TEST_CASE("data keys belong to their source") {
   CHECK(csv.arg("bars.symbols") == std::optional<std::string>("A,B"));
 }
 
+TEST_CASE("a broker folder's history names the folder in the spec file, and runs no other C++ beside its login") {
+  const auto p = single();
+  const auto folder = [](const std::string& adapter, const std::string& more = "") {
+    return "strategy = \"m.atls\"\n[bars]\nsource = \"vendor\"\ncount = 5\nstore_root = \"s\"\n" + adapter +
+      "[replay]\nmarket = \"us\"\n" + more;
+  };
+  // The folder relative to the spec, as written: `..` is left for the system to resolve.
+  const auto with = run(folder("adapter = \"../adapters/v\"\n"), p);
+  REQUIRE(with.errors_.empty());
+  CHECK(with.resolved_.fetch_source_ == "vendor");
+  CHECK(with.resolved_.fetch_adapter_ == "/specs/../adapters/v");
+  CHECK_FALSE(with.arg("bars.adapter"));
+  CHECK(run(folder("adapter = \"/a/v\"\n"), p).resolved_.fetch_adapter_ == "/a/v");
+
+  const std::vector<std::pair<std::string, std::string>> cases{
+    {folder(""), "give `bars.adapter`"},
+    {"strategy = \"m.atls\"\n[bars]\nfile = \"c.csv\"\nadapter = \"v\"\n",
+      "`bars.adapter` applies to bars.source = a broker folder's name"},
+    {folder("adapter = \"v\"\n", "fill_header = \"r.hpp\"\nfill_function = \"f\"\n"),
+      "hands its driver a stored login"},
+  };
+  for (const auto& [src, says] : cases) {
+    INFO(src);
+    const auto r = run(src, p);
+    REQUIRE(r.errors_.size() == 1);
+    CHECK(has(r.errors_.front(), says));
+  }
+  // The folder is native code: named in the spec file, never on the command line.
+  const auto parsed = spec(folder("adapter = \"v\"\n"));
+  std::vector<std::string> errors;
+  const auto line = cli({"bars.adapter=elsewhere"}, errors);
+  REQUIRE(errors.empty());
+  const auto r = resolve({parsed.entries_, line}, p);
+  REQUIRE(r.errors_.size() == 1);
+  CHECK(has(r.errors_.front(), "`bars.adapter` names C++ that cmdatl compiles and runs"));
+}
+
 TEST_CASE("open points match the program and the data") {
   sp::Program session;
   session.mode_ = "universe";

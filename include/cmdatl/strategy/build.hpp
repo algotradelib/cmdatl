@@ -467,6 +467,17 @@ inline std::string program_header(const Request& request) {
   }
   out += "\n#include <algotradelib/backtest>\n\n#include <optional>\n#include <type_traits>\n\nusing Program = atls::" +
     request.struct_ + ";\n\n";
+  if (request.adapter_) {
+    // The broker folder the driver is built from, each byte escaped: a run's driver refuses an operator file naming
+    // another.
+    out += "#define CMDATL_ADAPTER_FOLDER \"";
+    for (const unsigned char c : request.adapter_->folder_) {
+      char escaped[5];
+      std::snprintf(escaped, sizeof(escaped), "\\%03o", c);
+      out += escaped;
+    }
+    out += "\"\n\n";
+  }
   out += "// The fill model, with the run's market-price rule when it has one.\n";
   out +=
     "inline algotradelib::backtest::NextBarFillModel program_fills(algotradelib::backtest::NextBarFillModel model) "

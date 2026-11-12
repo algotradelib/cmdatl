@@ -1,13 +1,11 @@
 #pragma once
 
-// Broker folders for tests: a scratch configuration directory named by XDG_CONFIG_HOME while its owner lives, with
-// `cmdatl/brokers/<name>/` folders written private to the user, as the operator would install them.
+// Broker folders for tests: a scratch project directory, private to the user, holding `adapters/<name>/` folders
+// written private to the user, as a user keeps them beside their strategies.
 
 #include "support.hpp"
 
-#include <cstdlib>
 #include <filesystem>
-#include <optional>
 #include <string>
 
 #if !defined(_WIN32)
@@ -15,53 +13,39 @@
 
 namespace support {
 
-/** @brief A scratch XDG_CONFIG_HOME holding `cmdatl/brokers`, restored when its owner goes. */
-class BrokerHome {
+/** @brief A scratch project directory holding broker folders under `adapters/`, removed when its owner goes. */
+class BrokerFolders {
 public:
-  /** @brief Creates it and points XDG_CONFIG_HOME at it. */
-  BrokerHome() {
-    if (const char* before = std::getenv("XDG_CONFIG_HOME")) {
-      before_ = before;
-    }
-    brokers_ = dir_.path() / "cmdatl" / "brokers";
-    std::filesystem::create_directories(brokers_);
-    ::chmod((dir_.path() / "cmdatl").c_str(), 0700);
-    ::chmod(brokers_.c_str(), 0700);
-    ::setenv("XDG_CONFIG_HOME", dir_.path().c_str(), 1);
+  /** @brief Creates it, private to the user. */
+  BrokerFolders() {
+    ::chmod(dir_.path().c_str(), 0700);
   }
 
-  BrokerHome(const BrokerHome&) = delete;
-  BrokerHome& operator=(const BrokerHome&) = delete;
-
-  /** @brief Restores XDG_CONFIG_HOME. */
-  ~BrokerHome() {
-    if (before_) {
-      ::setenv("XDG_CONFIG_HOME", before_->c_str(), 1);
-    } else {
-      ::unsetenv("XDG_CONFIG_HOME");
-    }
-  }
+  BrokerFolders(const BrokerFolders&) = delete;
+  BrokerFolders& operator=(const BrokerFolders&) = delete;
 
   /**
-   * @brief `cmdatl/brokers`.
+   * @brief The project directory, canonical.
    * @return The path.
    */
-  const std::filesystem::path& brokers() const noexcept {
-    return brokers_;
+  const std::filesystem::path& root() const noexcept {
+    return dir_.path();
   }
 
   /**
-   * @brief Writes a broker folder: `broker.toml` and `adapter.hpp`, the folder 0700 and the files 0600.
+   * @brief Writes a broker folder `adapters/<name>`: `broker.toml` and `adapter.hpp`, the directories 0700 and the
+   *   files 0600.
    * @param name The folder's name.
    * @param toml `broker.toml`.
    * @param adapter `adapter.hpp`.
-   * @return The folder.
+   * @return The folder, canonical.
    */
   std::filesystem::path folder(
     const std::string& name, const std::string& toml, const std::string& adapter = "#pragma once\n"
   ) const {
-    const auto path = brokers_ / name;
+    const auto path = dir_.path() / "adapters" / name;
     std::filesystem::create_directories(path);
+    ::chmod(path.parent_path().c_str(), 0700);
     ::chmod(path.c_str(), 0700);
     file(path / "broker.toml", toml);
     file(path / "adapter.hpp", adapter);
@@ -80,8 +64,6 @@ public:
 
 private:
   ScratchDir dir_;
-  std::filesystem::path brokers_;
-  std::optional<std::string> before_;
 };
 
 /** @brief A token-only vendor's `broker.toml`: one secret field, no demo. */

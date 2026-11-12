@@ -92,8 +92,10 @@ struct OperatorConfig {
   std::string dir_;
   /** @brief The `atlc` key, absolute, or empty. */
   std::string atlc_;
-  /** @brief The broker: `mock` or `kis`. */
+  /** @brief The broker: `mock`, `kis` or a broker folder's name. */
   std::string broker_;
+  /** @brief A broker folder's path (`account.adapter`), absolute as written, or empty for a built-in broker. */
+  std::string adapter_;
   /** @brief The environment: `mock` for the mock broker, else `demo` or `real`. */
   std::string env_;
   /** @brief The account's number; empty for a KIS account whose login names it (the run fills it from the login). */
@@ -285,7 +287,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (auto bad = table_of(root, "account", account)) {
     return bad;
   }
-  if (auto bad = only_keys(*account, "account", {"broker", "env", "number"})) {
+  if (auto bad = only_keys(*account, "account", {"broker", "env", "number", "adapter"})) {
     return bad;
   }
   const auto* broker = account->get("broker");
@@ -311,6 +313,27 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
       broker->source(),
       "account.broker must be \"kis\", \"mock\" or a broker folder's name, not \"" + config.broker_ + "\""
     );
+  }
+  text = std::nullopt;
+  if (auto bad = string_of(*account, "adapter", "account.adapter", text)) {
+    return bad;
+  }
+  const bool folder = config.broker_ != "mock" && config.broker_ != "kis";
+  if (folder && (!text || text->empty())) {
+    return refuse(
+      text ? account->get("adapter")->source() : account->source(),
+      "[account] needs adapter = \"PATH\", the path of the broker folder " + config.broker_ + " (relative to this file)"
+    );
+  }
+  if (!folder && text) {
+    return refuse(
+      account->get("adapter")->source(),
+      "account.adapter names a broker folder, and " + config.broker_ + " is built in: remove it"
+    );
+  }
+  if (text) {
+    // As written, never simplified: the folder's checks see every directory on the way to it.
+    config.adapter_ = (std::filesystem::path(config.dir_) / *text).string();
   }
   text = std::nullopt;
   if (auto bad = string_of(*account, "env", "account.env", text)) {

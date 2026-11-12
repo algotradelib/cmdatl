@@ -80,7 +80,7 @@ Backtests and runs also need CMake, a C++17 compiler and atlc at run time: see [
 - [Orders](docs/orders.md): plans, placements, cancels, reconciling and releasing.
 - [Runs](docs/runs.md): a strategy on the live runner, on a mock market or a KIS account.
 - [Broker logins](docs/logins.md): `cmdatl auth`.
-- [Your own broker or data vendor](docs/brokers.md): broker folders.
+- [Your own broker or data vendor](docs/brokers.md): broker folders in your project, named by their path.
 - [Output](docs/output.md): formats, fields and exit codes.
 - [Your own replay](docs/replay.md): the installed replay headers.
 - [Guides and skills](docs/guides.md): the agent and strategy guides.

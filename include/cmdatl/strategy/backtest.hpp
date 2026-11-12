@@ -215,16 +215,18 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   if (auto refused = check_given(given, atlc.path_, output, false, checked)) {
     return std::move(*refused);
   }
-  // A broker folder's history: the folder found, its login read, its files read once to be compiled as read.
+  // A broker folder's history: the folder found and its files read once, its login read and checked against that
+  // folder, and the files compiled as read.
   const auto& fetching = checked.resolved_.fetch_source_;
   std::optional<auth::AdapterSnapshot> adapter;
   std::string login;
   if (!fetching.empty()) {
-    const auto found = auth::lookup_broker(fetching);
+    auto found = auth::lookup_broker(fetching, checked.resolved_.fetch_adapter_);
     if (found.found_ != auth::BrokerFound::FOLDER) {
       return auth::broker_refusal(found);
     }
-    const auto name = auth::login_name(found.folder_->entry_, false);
+    const auto& folder = *found.folder_;
+    const auto name = auth::login_name(folder.entry_, false);
     auth::StoreAnswer answer;
     std::string kind = "store";
     bool hooked = false;
@@ -246,26 +248,20 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     if (answer.status_ == auth::StoreStatus::NOT_FOUND) {
       return error_reply(
         Exit::FAILED, "auth.not_found", "no login " + name + " in the credential store: the backtest fetches with it",
-        "the operator runs cmdatl auth login --broker " + fetching
+        "the operator runs cmdatl auth login --broker " + fetching + " --adapter " + folder.folder_.string()
       );
     }
     if (answer.status_ != auth::StoreStatus::OK) {
       return auth::store_failure(kind, answer.status_, answer.detail_);
     }
-    login = answer.value_;
-    auth::AdapterSnapshot snapshot;
-    std::string problem;
-    const auto read = auth::snapshot_folder(*found.folder_, snapshot, problem);
-    if (read != auth::BrokerFound::FOLDER) {
-      auth::BrokerLookup failed;
-      failed.found_ = read;
-      failed.problem_ = problem;
-      return auth::broker_refusal(failed);
+    if (auto refused = auth::folder_login(answer.value_, name, folder, false, login)) {
+      return std::move(*refused);
     }
     output.progress(
-      "cmdatl: fetching through the broker folder " + snapshot.folder_ + " (" + build::adapter_digest(snapshot) + ")"
+      "cmdatl: fetching through the broker folder " + folder.snapshot_.folder_ + " (" +
+      build::adapter_digest(folder.snapshot_) + ")"
     );
-    adapter = std::move(snapshot);
+    adapter = std::move(found.folder_->snapshot_);
   }
   std::vector<std::string> argv;
   std::optional<ScratchCopy> scratch;

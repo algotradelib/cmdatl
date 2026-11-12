@@ -1,12 +1,14 @@
 #pragma once
 
-// A broker or data vendor cmdatl was not built for: a folder the operator installs, found by name as gh finds its
-// configuration, `$XDG_CONFIG_HOME/cmdatl/brokers/<name>/` (else `~/.config/cmdatl/brokers/<name>/`).
+// A broker or data vendor cmdatl was not built for: a folder the user keeps where they like (in a project, or in a git
+// submodule of one), named by its path: `bars.adapter` in a run spec, `account.adapter` in the operator's file,
+// `--adapter` for `auth login`.
 //
 // The folder holds `broker.toml` (what `auth login` asks) and `adapter.hpp` (the C++ a run's or a backtest's driver
-// compiles). It is native code: the checks here keep other users from replacing it (every directory from
-// `<config>/cmdatl` down, and every file, owned by the user and not writable by group or others, no link), they do not
-// confine it. A built-in name cannot be taken, as a gh extension cannot override a core command.
+// compiles). It is native code: the checks here keep other users from replacing it (every file and directory in it
+// owned by the user and not writable by group or others, no link; every directory on the way to it owned by the user
+// or root, and not writable by others unless its sticky bit is set), they do not confine it. A built-in name cannot be
+// taken.
 
 #include "../core/reply.hpp"
 #include "../core/runs.hpp"
@@ -17,7 +19,6 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
-#include <cstdlib>
 #include <filesystem>
 #include <optional>
 #include <set>
@@ -56,7 +57,7 @@ enum class BrokerFound {
   BUILT_IN,
   /** @brief A broker folder, read and trusted. */
   FOLDER,
-  /** @brief Neither: no built-in broker and no folder of that name. */
+  /** @brief Neither: no built-in broker of that name, or no folder at the path. */
   NOT_FOUND,
   /** @brief A folder whose `broker.toml` cannot be read or is refused. */
   INVALID,
@@ -64,17 +65,29 @@ enum class BrokerFound {
   UNSAFE,
 };
 
+/** @brief A broker folder's files as read once: what a driver's build compiles, whatever the folder holds later. */
+struct AdapterSnapshot {
+  /** @brief The broker's name. */
+  std::string name_;
+  /** @brief The folder, absolute and canonical. */
+  std::string folder_;
+  /** @brief Each file's path relative to the folder, and its bytes, sorted by path. */
+  std::vector<std::pair<std::string, std::string>> files_;
+};
+
 /** @brief A broker folder, read. */
 struct UserBroker {
   /** @brief Its entry, as `auth login` reads it; `read_` is null: the document is stored unchecked. */
   Broker entry_;
-  /** @brief The folder, absolute. */
+  /** @brief The folder, absolute and canonical: what a login is bound to. */
   std::filesystem::path folder_;
   /** @brief A market-data vendor: a bar source, never an account. */
   bool data_only_{false};
+  /** @brief Its files, read once with `broker.toml`: the bytes checked are the bytes compiled. */
+  AdapterSnapshot snapshot_;
 };
 
-/** @brief A broker found by name. */
+/** @brief A broker found by name and, for a broker folder, its path. */
 struct BrokerLookup {
   /** @brief What was found. */
   BrokerFound found_{BrokerFound::NOT_FOUND};
@@ -101,35 +114,6 @@ struct AdapterFile {
   /** @brief Its size when it was checked. */
   std::uint64_t size_{0};
 };
-
-/**
- * @brief cmdatl's configuration directory: `$XDG_CONFIG_HOME/cmdatl` when that is set and absolute, else
- *   `$HOME/.config/cmdatl`.
- * @return It, or none when neither names an absolute directory.
- */
-inline std::optional<std::filesystem::path> config_root() {
-  const char* xdg = std::getenv("XDG_CONFIG_HOME");
-  if (xdg != nullptr && std::filesystem::path(xdg).is_absolute()) {
-    return std::filesystem::path(xdg) / "cmdatl";
-  }
-  const char* home = std::getenv("HOME");
-  if (home != nullptr && std::filesystem::path(home).is_absolute()) {
-    return std::filesystem::path(home) / ".config" / "cmdatl";
-  }
-  return std::nullopt;
-}
-
-/**
- * @brief Where broker folders are found: `<config_root>/brokers`.
- * @return It, or none.
- */
-inline std::optional<std::filesystem::path> brokers_root() {
-  const auto root = config_root();
-  if (!root) {
-    return std::nullopt;
-  }
-  return *root / "brokers";
-}
 
 #if !defined(_WIN32)
 /**
@@ -190,16 +174,40 @@ inline std::optional<std::string> untrusted(
 }
 
 /**
- * @brief Checks a directory cmdatl reads a broker folder through: `<config>/cmdatl` and `brokers`.
- * @param path The directory.
- * @return Why it cannot be trusted, or none.
+ * @brief Checks every directory on the way to a broker folder, as the path is written (never simplified, so a link
+ *   before a `..` is seen): each is owned by the user or root, and is not writable by its group or others unless its
+ *   sticky bit is set, nor through an access control list; a link on the way is owned by the user or root, and the
+ *   directories it leads to are checked when the canonical path is.
+ * @param folder The folder, absolute; the folder itself is not checked here.
+ * @return Why another user could replace the folder, or none.
  */
-inline std::optional<std::string> untrusted_directory(const std::filesystem::path& path) {
-  struct stat info{};
-  if (::lstat(path.c_str(), &info) != 0) {
-    return path.string() + " cannot be read";
+inline std::optional<std::string> unsafe_way(const std::filesystem::path& folder) {
+  std::filesystem::path at;
+  for (const auto& part : folder.parent_path()) {
+    at /= part;
+    struct stat info{};
+    if (::lstat(at.c_str(), &info) != 0) {
+      return at.string() + " cannot be read";
+    }
+    const bool owned = info.st_uid == ::geteuid() || info.st_uid == 0;
+    if (!owned) {
+      return at.string() + " belongs to another user, who could replace what is in it";
+    }
+    if (S_ISLNK(info.st_mode)) {
+      continue;
+    }
+    if (!S_ISDIR(info.st_mode)) {
+      return at.string() + " is not a directory";
+    }
+    const bool sticky = (info.st_mode & S_ISVTX) != 0;
+    if ((info.st_mode & (S_IWGRP | S_IWOTH)) != 0 && !sticky) {
+      return at.string() + " is writable by its group or others, who could replace what is in it";
+    }
+    if (acl_allows(at)) {
+      return at.string() + " has an access control list allowing access (ls -le shows it; chmod -N removes it)";
+    }
   }
-  return untrusted(path, info, true);
+  return std::nullopt;
 }
 
 /**
@@ -455,127 +463,29 @@ inline std::optional<std::string> read_broker_toml(const std::string& name, cons
 }
 
 /**
- * @brief Finds a broker by name: a built-in one first, else a folder under `brokers_root()`, read and checked.
- * @param name The name.
- * @return What was found.
- */
-inline BrokerLookup lookup_broker(const std::string& name) {
-  BrokerLookup found;
-  if (const auto* built_in = find_broker(name)) {
-    found.found_ = BrokerFound::BUILT_IN;
-    found.built_in_ = built_in;
-    return found;
-  }
-  if (!user_broker_name(name)) {
-    found.problem_ = "no broker " + name;
-    return found;
-  }
-#if defined(_WIN32)
-  found.problem_ = "broker folders are read on macOS and Linux only in this version";
-  return found;
-#else
-  const auto root = brokers_root();
-  if (!root) {
-    found.problem_ = "no broker " + name + ": neither XDG_CONFIG_HOME nor HOME names an absolute directory";
-    return found;
-  }
-  const auto folder = *root / name;
-  struct stat info{};
-  if (::lstat(folder.c_str(), &info) != 0) {
-    found.problem_ = "no broker " + name + " (no folder " + folder.string() + ")";
-    return found;
-  }
-  for (const auto& directory : {root->parent_path(), *root}) {
-    if (const auto reason = untrusted_directory(directory)) {
-      found.found_ = BrokerFound::UNSAFE;
-      found.problem_ = *reason;
-      return found;
-    }
-  }
-  std::vector<AdapterFile> files;
-  const auto listed = list_folder(folder, files, found.problem_);
-  if (listed != BrokerFound::FOLDER) {
-    found.found_ = listed;
-    return found;
-  }
-  const auto has = [&files](const std::string& relative) {
-    return std::any_of(files.begin(), files.end(), [&relative](const AdapterFile& file) {
-      return file.relative_ == relative;
-    });
-  };
-  if (!has("broker.toml") || !has("adapter.hpp")) {
-    found.found_ = BrokerFound::INVALID;
-    found.problem_ = folder.string() + " needs broker.toml and adapter.hpp";
-    return found;
-  }
-  const auto path = folder / "broker.toml";
-  ScopedFd fd(open_lifted(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
-  struct stat opened{};
-  if (fd.get() < 0 || ::fstat(fd.get(), &opened) != 0) {
-    found.found_ = BrokerFound::INVALID;
-    found.problem_ = path.string() + " cannot be opened";
-    return found;
-  }
-  if (const auto reason = untrusted(path, opened, false)) {
-    found.found_ = BrokerFound::UNSAFE;
-    found.problem_ = *reason;
-    return found;
-  }
-  std::string text;
-  const auto read = read_whole(fd.get(), MAX_BROKER_TOML_BYTES, text);
-  if (read.status_ != FileRead::Status::OK) {
-    found.found_ = BrokerFound::INVALID;
-    found.problem_ = path.string() + " was not read: " + read.text(MAX_BROKER_TOML_BYTES);
-    return found;
-  }
-  UserBroker broker;
-  if (const auto problem = read_broker_toml(name, text, broker)) {
-    found.found_ = BrokerFound::INVALID;
-    found.problem_ = path.string() + ":" + *problem;
-    return found;
-  }
-  broker.folder_ = folder;
-  found.found_ = BrokerFound::FOLDER;
-  found.folder_ = std::move(broker);
-  return found;
-#endif
-}
-
-/** @brief A broker folder's files as read once: what a driver's build compiles, whatever the folder holds later. */
-struct AdapterSnapshot {
-  /** @brief The broker's name. */
-  std::string name_;
-  /** @brief The folder, absolute. */
-  std::string folder_;
-  /** @brief Each file's path relative to the folder, and its bytes, sorted by path. */
-  std::vector<std::pair<std::string, std::string>> files_;
-};
-
-/**
  * @brief Reads a broker folder's files, each checked again through the descriptor it is read from, within the bounds.
- * @param broker The folder, found by `lookup_broker`.
+ * @param folder The folder, canonical.
  * @param out The files read.
  * @param problem Why not.
  * @return `FOLDER`, `INVALID` or `UNSAFE`.
  */
-inline BrokerFound snapshot_folder(const UserBroker& broker, AdapterSnapshot& out, std::string& problem) {
+inline BrokerFound read_folder(const std::filesystem::path& folder, AdapterSnapshot& out, std::string& problem) {
 #if defined(_WIN32)
-  (void)broker;
+  (void)folder;
   (void)out;
   problem = "broker folders are read on macOS and Linux only in this version";
   return BrokerFound::INVALID;
 #else
   std::vector<AdapterFile> files;
-  const auto listed = list_folder(broker.folder_, files, problem);
+  const auto listed = list_folder(folder, files, problem);
   if (listed != BrokerFound::FOLDER) {
     return listed;
   }
-  AdapterSnapshot snapshot;
-  snapshot.name_ = broker.entry_.name_;
-  snapshot.folder_ = broker.folder_.string();
+  out.folder_ = folder.string();
+  out.files_.clear();
   std::uint64_t total = 0;
   for (const auto& file : files) {
-    const auto path = broker.folder_ / file.relative_;
+    const auto path = folder / file.relative_;
     ScopedFd fd(open_lifted(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC));
     struct stat info{};
     if (fd.get() < 0 || ::fstat(fd.get(), &info) != 0) {
@@ -593,56 +503,136 @@ inline BrokerFound snapshot_folder(const UserBroker& broker, AdapterSnapshot& ou
       return BrokerFound::INVALID;
     }
     total += bytes.size();
-    snapshot.files_.emplace_back(file.relative_, std::move(bytes));
+    out.files_.emplace_back(file.relative_, std::move(bytes));
   }
-  out = std::move(snapshot);
   return BrokerFound::FOLDER;
 #endif
 }
 
 /**
- * @brief The names of the broker folders that read and pass the checks, sorted.
- * @return The names.
+ * @brief Finds a broker: a built-in one by name, else the broker folder at a path, checked (the directories on the way
+ *   to it, then the folder's tree) and read once: `broker.toml` is read from the same snapshot that is compiled.
+ * @param name The name.
+ * @param adapter The folder's path, absolute and as written, for a name that is not built-in; empty for a built-in one.
+ * @return What was found.
  */
-inline std::vector<std::string> user_broker_names() {
-  std::vector<std::string> names;
-  const auto root = brokers_root();
-  std::error_code ec;
-  if (!root || !std::filesystem::is_directory(*root, ec)) {
-    return names;
-  }
-  std::filesystem::directory_iterator it(*root, ec);
-  for (std::size_t seen = 0; !ec && it != std::filesystem::directory_iterator() && seen < MAX_ADAPTER_ENTRIES; ++seen) {
-    const auto name = it->path().filename().string();
-    if (user_broker_name(name) && lookup_broker(name).found_ == BrokerFound::FOLDER) {
-      names.push_back(name);
+inline BrokerLookup lookup_broker(const std::string& name, const std::string& adapter) {
+  BrokerLookup found;
+  if (const auto* built_in = find_broker(name)) {
+    if (!adapter.empty()) {
+      found.found_ = BrokerFound::INVALID;
+      found.problem_ = name + " is a built-in broker: a broker folder is named for another name only";
+      return found;
     }
-    it.increment(ec);
+    found.found_ = BrokerFound::BUILT_IN;
+    found.built_in_ = built_in;
+    return found;
   }
-  std::sort(names.begin(), names.end());
-  return names;
+  if (!user_broker_name(name)) {
+    found.problem_ = "no broker " + name;
+    return found;
+  }
+  if (adapter.empty()) {
+    found.problem_ = name + " is not a built-in broker, and no broker folder is named for it";
+    return found;
+  }
+#if defined(_WIN32)
+  found.problem_ = "broker folders are read on macOS and Linux only in this version";
+  return found;
+#else
+  std::string written = adapter;
+  while (written.size() > 1 && written.back() == '/') {
+    written.pop_back();
+  }
+  const std::filesystem::path given(written);
+  struct stat info{};
+  if (::lstat(given.c_str(), &info) != 0) {
+    found.problem_ = "no broker folder " + given.string();
+    return found;
+  }
+  if (auto reason = untrusted(given, info, true)) {
+    found.found_ = BrokerFound::UNSAFE;
+    found.problem_ = std::move(*reason);
+    return found;
+  }
+  std::error_code ec;
+  const auto folder = std::filesystem::canonical(given, ec);
+  if (ec) {
+    found.found_ = BrokerFound::INVALID;
+    found.problem_ = given.string() + " cannot be resolved";
+    return found;
+  }
+  // The path as written, then where it leads: a link on the way is followed only into directories that are checked.
+  for (const auto& path : {given, folder}) {
+    if (auto reason = unsafe_way(path)) {
+      found.found_ = BrokerFound::UNSAFE;
+      found.problem_ = std::move(*reason);
+      return found;
+    }
+  }
+  UserBroker broker;
+  const auto read = read_folder(folder, broker.snapshot_, found.problem_);
+  if (read != BrokerFound::FOLDER) {
+    found.found_ = read;
+    return found;
+  }
+  const auto& files = broker.snapshot_.files_;
+  const auto file = [&files](const std::string& relative) -> const std::string* {
+    for (const auto& entry : files) {
+      if (entry.first == relative) {
+        return &entry.second;
+      }
+    }
+    return nullptr;
+  };
+  const auto* toml = file("broker.toml");
+  if (toml == nullptr || file("adapter.hpp") == nullptr) {
+    found.found_ = BrokerFound::INVALID;
+    found.problem_ = folder.string() + " needs broker.toml and adapter.hpp";
+    return found;
+  }
+  const auto path = folder / "broker.toml";
+  if (toml->size() > MAX_BROKER_TOML_BYTES) {
+    found.found_ = BrokerFound::INVALID;
+    found.problem_ = path.string() + " holds more than " + std::to_string(MAX_BROKER_TOML_BYTES >> 10) + " KiB";
+    return found;
+  }
+  auto snapshot = std::move(broker.snapshot_);
+  if (const auto problem = read_broker_toml(name, *toml, broker)) {
+    found.found_ = BrokerFound::INVALID;
+    found.problem_ = path.string() + ":" + *problem;
+    return found;
+  }
+  snapshot.name_ = name;
+  broker.folder_ = folder;
+  broker.snapshot_ = std::move(snapshot);
+  found.found_ = BrokerFound::FOLDER;
+  found.folder_ = std::move(broker);
+  return found;
+#endif
 }
 
 /**
- * @brief The refusal for a broker name that found no usable folder.
+ * @brief The refusal for a broker that found no usable folder.
  * @param found What was found: `NOT_FOUND`, `INVALID` or `UNSAFE`.
  * @return `adapter.not_found`, `adapter.invalid` or `adapter.unsafe` (exit 1).
  */
 inline Reply broker_refusal(const BrokerLookup& found) {
-  const auto root = brokers_root();
-  const std::string where = root ? root->string() : std::string("<config>/cmdatl/brokers");
   switch (found.found_) {
     case BrokerFound::INVALID:
       return error_reply(Exit::FAILED, "adapter.invalid", found.problem_, "the operator fixes the broker folder");
     case BrokerFound::UNSAFE:
       return error_reply(
         Exit::FAILED, "adapter.unsafe", found.problem_ + "; another user could change the code cmdatl would compile",
-        "the operator makes the folder theirs and not writable by others (chmod go-w)"
+        "the operator makes the folder, and each directory on the way to it, theirs and not writable by others "
+        "(chmod go-w)"
       );
     default:
       return error_reply(
         Exit::FAILED, "adapter.not_found", found.problem_,
-        "the brokers are " + broker_names() + ", or a folder the operator installs in " + where
+        "the brokers are " + broker_names() +
+          "; another is a broker folder named by its path (bars.adapter in a run spec, account.adapter in the "
+          "operator's file)"
       );
   }
 }

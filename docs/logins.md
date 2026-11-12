@@ -5,6 +5,7 @@
 ```sh
 cmdatl auth login # asks for the broker, demo or real, and the broker's fields
 cmdatl auth login --broker kis --env demo # skips those two questions
+cmdatl auth login --broker myvendor --adapter adapters/myvendor # a broker folder's login
 cmdatl auth status # the stored logins, masked
 cmdatl auth logout --broker kis --env demo
 ```
@@ -14,6 +15,8 @@ cmdatl auth logout --broker kis --env demo
 - One login per broker and environment, in the macOS keychain; on other systems this version has no store, and `auth login` refuses.
   A login replaces a stored one only when you answer yes, or with `--force`.
 - The document is checked with algotradelib's loaders, not with the broker: `auth status` shows `checked: false` until a run first uses the key.
+- A broker or vendor cmdatl was not built for is a [broker folder](brokers.md): `--adapter PATH` names it, its `broker.toml` says what is asked, and the login is stored unchecked, bound to that folder's path, for the adapter to read at a backtest or a run that names the same folder.
+  On a terminal without `--broker`, only the built-in brokers are offered.
 - No command prints a secret.
   Without a terminal, or without a graphical session, cmdatl never waits on the keychain's own dialog: it answers `auth.store_locked`.
 - A run saves each key's access token in `$XDG_CACHE_HOME/cmdatl/tokens/`, else `~/.cache/cmdatl/tokens/`: one file per broker, environment and key, and every run on that key uses it until the token expires.

@@ -24,10 +24,12 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -35,6 +37,9 @@
 // The driver includes the folder's `adapter.hpp` (copied into the build as `adapter/adapter.hpp`) before this file.
 #if !defined(CMDATL_ADAPTER_NAME)
 #error "CMDATL_ADAPTER_NAME names the broker folder this driver is built for"
+#endif
+#if !defined(CMDATL_ADAPTER_FOLDER)
+#error "CMDATL_ADAPTER_FOLDER is the canonical path of the broker folder this driver is built from"
 #endif
 
 namespace cmdatl {
@@ -200,6 +205,16 @@ public:
     const json::object& base, const OperatorConfig& config, const std::vector<std::string>& documents,
     OperatorConfig& effective, std::string& market_data
   ) {
+    // The operator file, read again by this driver, names the folder it was built from, or nothing is read or sent.
+    std::error_code ec;
+    const auto folder = std::filesystem::canonical(config.adapter_, ec);
+    if (ec || folder.string() != CMDATL_ADAPTER_FOLDER) {
+      return run_error(
+        base, Exit::FAILED, "unsupported.broker",
+        std::string("this driver was built from the broker folder ") + CMDATL_ADAPTER_FOLDER +
+          ", and the operator file names " + config.adapter_
+      );
+    }
     json::array missing;
     if (Caps::data_only) {
       missing.emplace_back("data_only");

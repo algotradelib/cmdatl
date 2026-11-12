@@ -22,7 +22,10 @@ enum class StoreStatus {
 struct StoreAnswer {
   /** @brief How it answered. */
   StoreStatus status_{StoreStatus::UNAVAILABLE};
-  /** @brief The login's document, for a `get` that found it; never shown. */
+  /**
+   * @brief The login as stored, for a `get` that found it; never shown: a built-in broker's document, or the envelope
+   *   binding a broker folder's document to the folder (`folder_login_text`).
+   */
   std::string value_;
   /** @brief Why it failed, for a person; never a secret (an OS status code, a service's error). */
   std::string detail_;

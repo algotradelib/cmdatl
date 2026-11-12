@@ -282,7 +282,7 @@ TEST_CASE("tune and check are gone; new and backtest and reference are the strat
     }
   }
   CHECK(available == std::vector<std::string>{"strategy new", "strategy backtest", "strategy reference"});
-  CHECK(cmdatl::SCHEMA_VERSION == 14);
+  CHECK(cmdatl::SCHEMA_VERSION == 15);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
   CHECK(backtest.at("returns").as_object().contains("settings_given"));
   CHECK(backtest.at("returns").as_object().contains("program"));

@@ -391,12 +391,15 @@ std::pair<int, json::object> driver_child(
 
 /**
  * @brief The operator's file for a broker folder's real account.
- * @param broker The folder's name.
+ * @param broker The broker's name.
  * @param number The account's number, or empty for none.
+ * @param adapter The folder, or empty for the fixture folder of that name the test drivers are built from.
  * @return The text.
  */
-std::string folder_config(const std::string& broker, const std::string& number = "") {
-  std::string text = "[account]\nbroker = \"" + broker + "\"\nenv = \"real\"\n";
+std::string folder_config(const std::string& broker, const std::string& number = "", const std::string& adapter = "") {
+  const auto folder =
+    adapter.empty() ? std::string(CMDATL_SOURCE_DIR) + "/tests/fixtures/adapters/" + broker + "/adapter" : adapter;
+  std::string text = "[account]\nbroker = \"" + broker + "\"\nadapter = \"" + folder + "\"\nenv = \"real\"\n";
   if (!number.empty()) {
     text += "number = \"" + number + "\"\n";
   }
@@ -957,13 +960,14 @@ TEST_CASE("a run on a KIS account reads its own login, and on demo the real one 
   fixture.write_config(kis_config());
   const auto demo = cmdatl::load_operator_config();
   REQUIRE(demo.state_ == cmdatl::ConfigSnapshot::State::OK);
+  const auto kis = cmdatl::auth::lookup_broker("kis", "");
   Logins store;
   std::vector<std::string> documents;
-  auto refused = cmdatl::runs::read_run_logins(*demo.config_, &store, documents);
+  auto refused = cmdatl::runs::read_run_logins(*demo.config_, kis, &store, documents);
   REQUIRE(refused);
   CHECK(refused->body_.at("error").as_object().at("code").as_string() == "auth.not_found");
   store.items_["kis/demo"] = "{\"demo\":true}";
-  refused = cmdatl::runs::read_run_logins(*demo.config_, &store, documents);
+  refused = cmdatl::runs::read_run_logins(*demo.config_, kis, &store, documents);
   REQUIRE(refused);
   CHECK(refused->body_.at("error").as_object().at("code").as_string() == "auth.not_found");
   CHECK(
@@ -971,56 +975,86 @@ TEST_CASE("a run on a KIS account reads its own login, and on demo the real one 
     std::string::npos
   );
   store.items_["kis/real"] = "{\"demo\":false}";
-  CHECK(!cmdatl::runs::read_run_logins(*demo.config_, &store, documents));
+  CHECK(!cmdatl::runs::read_run_logins(*demo.config_, kis, &store, documents));
   REQUIRE(documents.size() == 2);
   CHECK(documents[0] == "{\"demo\":true}");
   CHECK(documents[1] == "{\"demo\":false}");
-  CHECK(cmdatl::runs::read_run_logins(*demo.config_, nullptr, documents));
+  CHECK(cmdatl::runs::read_run_logins(*demo.config_, kis, nullptr, documents));
   auto text = kis_config();
   text.replace(text.find("number"), 0, "env = \"real\"\n");
   fixture.write_config(text);
   const auto real = cmdatl::load_operator_config();
   REQUIRE(real.state_ == cmdatl::ConfigSnapshot::State::OK);
   store.asked_.clear();
-  CHECK(!cmdatl::runs::read_run_logins(*real.config_, &store, documents));
+  CHECK(!cmdatl::runs::read_run_logins(*real.config_, kis, &store, documents));
   CHECK(store.asked_ == std::vector<std::string>{"kis/real"});
   CHECK(documents[1].empty());
 }
 
-TEST_CASE("a run on a broker folder's account reads its own login only, and never a data vendor's or a missing demo") {
-  const BrokerHome home;
-  home.folder("acme", BROKER_TOML);
-  home.folder("vendor", VENDOR_TOML);
+TEST_CASE("a run on a broker folder's account reads its own login, bound to the folder, never a data vendor's") {
+  const BrokerFolders project;
+  const auto acme = project.folder("acme", BROKER_TOML);
+  const auto vendor = project.folder("vendor", VENDOR_TOML);
   PaperFixture fixture;
   Logins store;
   std::vector<std::string> documents;
   const auto code = [&]() {
     const auto snapshot = cmdatl::load_operator_config();
-    REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
-    const auto refused = cmdatl::runs::read_run_logins(*snapshot.config_, &store, documents);
+    if (snapshot.state_ != cmdatl::ConfigSnapshot::State::OK) {
+      return std::string(snapshot.error_.code_);
+    }
+    const auto found = cmdatl::auth::lookup_broker(snapshot.config_->broker_, snapshot.config_->adapter_);
+    const auto refused = cmdatl::runs::read_run_logins(*snapshot.config_, found, &store, documents);
     return refused ? std::string(refused->body_.at("error").as_object().at("code").as_string()) : std::string();
   };
-  fixture.write_config(folder_config("acme"));
+  fixture.write_config(folder_config("acme", "", acme.string()));
   CHECK(code() == "auth.not_found");
-  store.items_["acme/real"] = "{\"appKey\":\"k\"}";
+  const std::string document = "{\"appKey\":\"k\"}";
+  store.items_["acme/real"] = cmdatl::auth::folder_login_text(acme.string(), json::parse(document).as_object());
   store.asked_.clear();
   CHECK(code().empty());
   CHECK(store.asked_ == std::vector<std::string>{"acme/real"});
-  CHECK(documents == std::vector<std::string>{"{\"appKey\":\"k\"}"});
+  CHECK(documents == std::vector<std::string>{document});
 
-  fixture.write_config(folder_config("vendor"));
+  // The same name for another folder, and a login stored before logins were bound: refused, nothing handed on.
+  documents.clear();
+  const auto copy = project.folder("copy", BROKER_TOML);
+  fixture.write_config(folder_config("acme", "", copy.string()));
+  CHECK(code() == "auth.adapter_mismatch");
+  fixture.write_config(folder_config("acme", "", acme.string()));
+  store.items_["acme/real"] = document;
+  CHECK(code() == "auth.adapter_mismatch");
+  CHECK(documents.empty());
+
+  // The folder named relative to the operator's file.
+  store.items_["acme/real"] = cmdatl::auth::folder_login_text(acme.string(), json::parse(document).as_object());
+  const auto relative = std::filesystem::relative(acme, fixture.dir()).string();
+  fixture.write_config(folder_config("acme", "", relative));
+  CHECK(code().empty());
+
+  fixture.write_config(folder_config("vendor", "", vendor.string()));
   CHECK(code() == "unsupported.broker");
-  auto text = folder_config("vendor");
+  auto text = folder_config("vendor", "", vendor.string());
   text.replace(text.find("env = \"real\""), 12, "env = \"demo\"");
   fixture.write_config(text);
   CHECK(code() == "unsupported.broker");
-  home.folder("plain", "display = \"P\"\n[[fields]]\nname = \"k\"\nprompt = \"K\"\n");
-  text = folder_config("plain");
+  const auto plain = project.folder("plain", "display = \"P\"\n[[fields]]\nname = \"k\"\nprompt = \"K\"\n");
+  text = folder_config("plain", "", plain.string());
   text.replace(text.find("env = \"real\""), 12, "env = \"demo\"");
   fixture.write_config(text);
   CHECK(code() == "config.invalid");
-  fixture.write_config(folder_config("missing"));
+  fixture.write_config(folder_config("missing", "", (project.root() / "missing").string()));
   CHECK(code() == "adapter.not_found");
+
+  // The operator's file names a broker folder's path for a name that is not built in, and only then.
+  text = folder_config("acme", "", acme.string());
+  text.erase(text.find("adapter"), text.find("env") - text.find("adapter"));
+  fixture.write_config(text);
+  CHECK(code() == "config.invalid");
+  text = kis_config();
+  text.replace(text.find("number"), 0, "adapter = \"" + acme.string() + "\"\n");
+  fixture.write_config(text);
+  CHECK(code() == "config.invalid");
 }
 
 TEST_CASE("the account and order commands refuse a KIS account, and the reply names it kis-demo") {
@@ -1108,6 +1142,17 @@ TEST_CASE("a broker folder's run checks the login the adapter connects with agai
   const auto failed = identify_child(fixture, R"({"fail":"SECRET-TOKEN-123"})", number);
   CHECK(failed.at("error").at("code") == "auth.account_mismatch");
   CHECK(json::serialize(failed).find("SECRET-TOKEN-123") == std::string::npos);
+
+  // The operator file, read again by the driver, names another folder than the one it was built from, or none that
+  // exists: refused before the adapter connects (a login it cannot use would answer auth.account_mismatch).
+  const std::string fixtures = std::string(CMDATL_SOURCE_DIR) + "/tests/fixtures/adapters/";
+  fixture.write_config(folder_config("mockbroker", "", fixtures + "limited/adapter"));
+  CHECK(identify_child(fixture, R"({"fail":"x"})", number).at("error").at("code") == "unsupported.broker");
+  fixture.write_config(folder_config("mockbroker", "", fixtures + "none"));
+  CHECK(identify_child(fixture, R"({"fail":"x"})", number).at("error").at("code") == "unsupported.broker");
+  // The same folder written another way is the same folder.
+  fixture.write_config(folder_config("mockbroker", "", fixtures + "mockbroker/adapter/../adapter"));
+  CHECK(identify_child(fixture, R"({"account":"acct-1"})", number).empty());
 
   // The operator file's number is a pin.
   fixture.write_config(folder_config("mockbroker", "acct-2"));

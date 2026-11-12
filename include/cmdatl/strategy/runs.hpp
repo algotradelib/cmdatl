@@ -123,16 +123,18 @@ private:
  * @brief Reads the logins a run on a broker's account needs, in this process (the store's access list names `cmdatl`):
  *   the account's (`<broker>/<env>`), then on a KIS demo account the real login, read only for market data (a KIS demo
  *   host refuses reference data and the calendar); an empty document for none. A broker folder's run reads its own
- *   login only, and is refused for a data vendor's folder or a demo account its broker does not have.
+ *   login only, bound to the folder found, and is refused for a data vendor's folder or a demo account its broker does
+ *   not have.
  * @param config The operator's file, for a broker's account.
+ * @param found The broker, found once from the operator's file (`lookup_broker`); a folder's files are compiled from it.
  * @param store The credential store, or null where the system has none.
  * @param documents Set to the documents, in that order.
  * @return The refusal, or nothing.
  */
 inline std::optional<Reply> read_run_logins(
-  const OperatorConfig& config, auth::CredentialStore* store, std::vector<std::string>& documents
+  const OperatorConfig& config, const auth::BrokerLookup& found, auth::CredentialStore* store,
+  std::vector<std::string>& documents
 ) {
-  const auto found = auth::lookup_broker(config.broker_);
   const auto* broker = found.broker();
   if (broker == nullptr) {
     return auth::broker_refusal(found);
@@ -174,10 +176,19 @@ inline std::optional<Reply> read_run_logins(
   if (
     auto refused = read(
       own, "no login " + own + " in the credential store",
-      "cmdatl auth login --broker " + config.broker_ + " --env " + config.env_, account
+      "cmdatl auth login --broker " + config.broker_ + " --env " + config.env_ +
+        (found.folder_ ? " --adapter " + found.folder_->folder_.string() : std::string()),
+      account
     )
   ) {
     return refused;
+  }
+  if (found.folder_) {
+    std::string document;
+    if (auto refused = auth::folder_login(account, own, *found.folder_, demo, document)) {
+      return refused;
+    }
+    account = std::move(document);
   }
   std::string market;
   if (config.broker_ == "kis" && demo) {
@@ -315,10 +326,13 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
         Exit::REFUSED, "refused.not_armed", "the operator's armed file does not exist", next_for("refused.not_armed")
       );
     }
+    // The broker found once: a broker folder's login is checked against the files that are compiled.
     std::vector<std::string> logins;
+    auth::BrokerLookup found;
     if (broker) {
+      found = auth::lookup_broker(config.broker_, config.adapter_);
       const auto store = auth::open_store(auth::interaction_allowed(0));
-      if (auto refused = read_run_logins(config, store.get(), logins)) {
+      if (auto refused = read_run_logins(config, found, store.get(), logins)) {
         return std::move(*refused);
       }
     }
@@ -345,24 +359,12 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     if (broker && auth::find_broker(config.broker_) != nullptr) {
       request.broker_ = config.broker_;
     } else if (broker) {
-      // A broker folder: its files read once, checked again, and compiled as read.
-      const auto found = auth::lookup_broker(config.broker_);
-      std::string problem;
-      auth::AdapterSnapshot snapshot;
-      if (!found.folder_) {
-        return auth::broker_refusal(found);
-      }
-      const auto read = auth::snapshot_folder(*found.folder_, snapshot, problem);
-      if (read != auth::BrokerFound::FOLDER) {
-        auth::BrokerLookup failed;
-        failed.found_ = read;
-        failed.problem_ = problem;
-        return auth::broker_refusal(failed);
-      }
+      // A broker folder: compiled as it was read when its login was checked.
+      const auto& snapshot = found.folder_->snapshot_;
       output.progress(
         "cmdatl: compiling the broker folder " + snapshot.folder_ + " (" + build::adapter_digest(snapshot) + ")"
       );
-      request.adapter_ = std::move(snapshot);
+      request.adapter_ = std::move(found.folder_->snapshot_);
     }
     const auto progress = [&output](const std::string& line) {
       output.progress(line);
