@@ -258,6 +258,38 @@ TEST_CASE(
   initialize(fixture);
 }
 
+TEST_CASE("a state file cut inside its first line beside a journal is exit 4 and both files stay as they were") {
+  const PaperFixture fixture;
+  fixture.arm();
+  initialize(fixture);
+  REQUIRE(fixture.json({"clock", "advance", "--next-open"}).exit_ == 0);
+  const auto planned = reply(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "79000"});
+  REQUIRE(fixture.json({"order", "place", std::string(planned.at("plan_id").as_string())}).exit_ == 0);
+  REQUIRE(fixture.json({"clock", "advance", "--to", "2024-03-28T09:00"}).exit_ == 0);
+  REQUIRE(fixture.json({"order", "reconcile"}).exit_ == 0);
+  const auto log = slurp(fixture.log());
+  const auto header = log.substr(0, log.find('\n') + 1);
+  const auto journal_text = slurp(fixture.journal());
+  for (const auto& left : {log.substr(0, 20), header.substr(0, header.size() - 1)}) {
+    INFO("market.jsonl: " << left);
+    spit(fixture.log(), left);
+    for (const auto& args : std::vector<std::vector<std::string>>{{"status"}, {"order", "list"}, {"clock"}}) {
+      const auto ran = fixture.json(args);
+      INFO(ran.out_);
+      CHECK(ran.exit_ == 4);
+      CHECK(code_of(ran.out_) == "unknown.mock_state");
+    }
+    CHECK(slurp(fixture.log()) == left);
+    CHECK(slurp(fixture.journal()) == journal_text);
+  }
+  // Restored, the account holds its shares again.
+  spit(fixture.log(), log);
+  const auto held = reply(fixture, {"account"});
+  INFO(boost::json::serialize(held));
+  CHECK(held.at("now").as_string() != "2024-03-25T16:00:00+09:00");
+  CHECK(held.at("cash").as_string() == "99210000");
+}
+
 TEST_CASE("a folder of an earlier version's paper account is refused: create the account again") {
   const PaperFixture fixture;
   std::filesystem::create_directories(fixture.account());

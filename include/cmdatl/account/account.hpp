@@ -714,6 +714,16 @@ private:
   }
 
   /**
+   * @brief Whether the state file begins with a whole line, one ending in a newline.
+   * @return Whether it does; a file that cannot be read does not.
+   */
+  bool state_header_whole() const {
+    std::ifstream in(dir() + "/" + MOCK_STATE_FILE, std::ios::binary);
+    std::string header;
+    return in && std::getline(in, header) && !in.eof();
+  }
+
+  /**
    * @brief Everything `open` does once the lock is held.
    * @return The refusal, or nothing when the account is open.
    */
@@ -759,6 +769,10 @@ private:
     }
     if (!starting && !found.state_) {
       return paper_state_reply("the account's state file is missing or empty while the journal exists");
+    }
+    // The library rebuilds the original market over a header cut short, which only a first initialization may need.
+    if (!starting && !state_header_whole()) {
+      return paper_state_reply("the account's state file has no whole first line while the journal exists");
     }
     desk_ = std::make_unique<AccountDesk>(MockDeskKey{}, config_, lock_, data);
     if (!desk_->opened()) {
