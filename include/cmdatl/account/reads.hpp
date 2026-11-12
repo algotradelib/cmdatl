@@ -2,7 +2,7 @@
 
 // The account commands: `status`, `account`, `quote`, `order list`, `clock` and `clock advance`, as reply builders on
 // an open account.
-// Common reads go through the library's session; what only the paper market knows goes through the desk.
+// Every read goes through the account's desk (`account.hpp`): its sessions, and what the desk itself answers.
 // Money and quantities are strings; every instant is KST with its offset.
 
 #include "../core/table.hpp"
@@ -16,7 +16,6 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 namespace cmdatl {
@@ -134,12 +133,18 @@ json::object quote_row(Account& account, Desk& desk, const std::string& symbol) 
   const auto& readiness = account.readiness();
   json::object row;
   row["symbol"] = symbol;
-  const auto quote = desk.session().quote(paper::kr(symbol));
+  const auto quote = desk.market_session().quote(paper::kr(symbol));
   row["last_price"] = quote ? json::value(quote.value().last_price_.str()) : json::value(nullptr);
-  const auto band = desk.session().client().price_limits(paper::kr(symbol));
-  const bool banded = band && band.value().upper_ && band.value().lower_;
-  row["upper_limit"] = banded ? json::value(band.value().upper_->str()) : json::value(nullptr);
-  row["lower_limit"] = banded ? json::value(band.value().lower_->str()) : json::value(nullptr);
+  std::optional<algotradelib::PriceLimits> band;
+  if constexpr (Desk::MarketSession::Caps::has_price_limits) {
+    auto read = desk.market_session().price_limits(paper::kr(symbol));
+    if (read) {
+      band = std::move(read.value());
+    }
+  }
+  const bool banded = band && band->upper_ && band->lower_;
+  row["upper_limit"] = banded ? json::value(band->upper_->str()) : json::value(nullptr);
+  row["lower_limit"] = banded ? json::value(band->lower_->str()) : json::value(nullptr);
   const bool allowed = account.config().allows(symbol);
   row["symbol_allowed"] = allowed;
   auto failing = account_gates(readiness);
@@ -311,7 +316,7 @@ Reply status_reply(const Invocation& invocation, Account& account, Desk& desk, O
   }
   body["quotes"] = std::move(quotes);
   body["data_end"] = data_end_text(desk);
-  body["capabilities"] = account_capabilities<std::decay_t<decltype(desk.session().client())>>(true);
+  body["capabilities"] = account_capabilities<typename Desk::Session::Caps>(Desk::simulated);
   body["state_dir"] = account.dir();
   return read_reply(account, std::move(body));
 }

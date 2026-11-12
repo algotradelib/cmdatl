@@ -288,8 +288,39 @@ inline Reply lock_lost_reply() {
   );
 }
 
+// A desk: what the account and order commands are given of an account's broker, and all they use of it.
+// The reads (`reads.hpp`), the order commands, once() and the plan book are templates over it, or take it from
+// `Account::desk()`; `Account` is the one place a desk is built, and `paper::PaperDesk` (`desk.hpp`) the one desk.
+//
+// Every desk has:
+//   - `broker_name`, `env_name`: static; the operator file's `broker` word, and every reply's `env`.
+//   - `Session`, `session()`: the trading session, a library `BlockingSession`: holdings, buying power, the
+//     working-order listing, reference data, placements and cancellations. Every placement and cancellation through
+//     it passes the final checks of the operator's file (the armed file for a placement, the lock for both) before it
+//     can reach the broker.
+//   - `MarketSession`, `market_session()`: the session quotes, price bands and the calendar (so the phase) are read
+//     from, each as its own capabilities allow; the trading session itself where the broker needs no other.
+//   - `now()`: the account's clock, which dates the phase, the journal's lines and plans.
+//   - `sends()`: how many placements and cancellations this process has sent towards the broker, counted before the
+//     outcome is known; once() decides by its growth during a call whether anything may have reached the broker.
+//   - `has_symbol(symbol)`: whether the account's market has the symbol.
+//   - `order_status(id)`: what the broker shows for an order it named (`pending`, `filled`, `canceled`), or nothing.
+//   - `accepts_orders_at(symbol, at)`: whether the broker takes an order on the symbol at an instant.
+//
+// A simulated broker also has, with `simulated` true (a desk without them has it false, and a command that reads one
+// does not compile against that desk):
+//   - `paper_cash()`: its cash after every fill and charge.
+//   - `advance_to(target)`, `next_session_after(at)`, `clock_limit()`, `drain_events()`: its clock, moved by command
+//     (`clock advance`, and the second every order command takes), the next session's open, the latest instant the
+//     clock may reach, and what the market did since the last drain.
+//   - `data_end()`: the last date its data trades.
+
+/** @brief The desk an account trades through: the paper desk. */
+using AccountDesk = paper::PaperDesk;
+
 /**
- * @brief The market phase at a desk's clock: the library's KRX session window on the broker's calendar.
+ * @brief The market phase at a desk's clock: the library's KRX session window on the calendar of the desk's market
+ *   session; unknown whether today trades when it has no calendar or the calendar cannot be read.
  * @tparam Desk The desk type.
  * @param desk The desk.
  * @return The phase's name, such as `open`.
@@ -298,10 +329,12 @@ template <typename Desk>
 std::string phase_of(Desk& desk) {
   const auto window = algotradelib::strategy::SessionWindow::krx();
   const auto now = desk.now();
-  const auto calendar = desk.session().client().calendar(std::nullopt);
   std::optional<bool> trading;
-  if (calendar) {
-    trading = calendar.value().is_trading_day(window.local_date(now));
+  if constexpr (Desk::MarketSession::Caps::has_calendar) {
+    const auto calendar = desk.market_session().calendar(algotradelib::Country::KR);
+    if (calendar) {
+      trading = calendar.value().is_trading_day(window.local_date(now));
+    }
   }
   return std::string(algotradelib::strategy::market_phase_name(window.phase(now, trading)));
 }
@@ -455,10 +488,10 @@ public:
   }
 
   /**
-   * @brief The paper desk.
+   * @brief The account's desk.
    * @return The desk.
    */
-  paper::PaperDesk& desk() {
+  AccountDesk& desk() {
     return *desk_;
   }
 
@@ -765,7 +798,7 @@ private:
     }
     replay_ = algotradelib::runner::read_journal_file(dir() + "/journal.jsonl");
     try {
-      desk_ = std::make_unique<paper::PaperDesk>(paper::DeskKey{}, config_, lock_, std::move(data));
+      desk_ = std::make_unique<AccountDesk>(paper::DeskKey{}, config_, lock_, std::move(data));
     } catch (const paper::LockLost&) {
       return lock_lost_reply();
     } catch (const paper::PaperStateError& error) {
@@ -808,7 +841,7 @@ private:
   OwnerLock lock_;
   algotradelib::runner::JournalReplay replay_;
   JournalView journal_;
-  std::unique_ptr<paper::PaperDesk> desk_;
+  std::unique_ptr<AccountDesk> desk_;
   std::optional<Readiness> readiness_;
 #if !defined(_WIN32)
   std::optional<std::pair<dev_t, ino_t>> journal_identity_;

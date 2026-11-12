@@ -706,16 +706,23 @@ struct AdvanceOutcome {
   int error_{0};
 };
 
-/** @brief The paper market, account and clock of one account, as its log leaves them. */
+/**
+ * @brief The paper market, account and clock of one account, as its log leaves them: the one desk (the interface the
+ *   commands use, written out in `account.hpp`).
+ */
 class PaperDesk {
 public:
   /** @brief The environment this session is: every reply's `env`. */
   static constexpr const char* env_name = "paper";
   /** @brief The broker this session is. */
   static constexpr const char* broker_name = "paper";
+  /** @brief A simulated broker: it has its own cash, a clock moved by command and an end to its data. */
+  static constexpr bool simulated = true;
 
-  /** @brief The session the reads use. */
+  /** @brief The trading session: every read, placement and cancellation. */
   using Session = atl::BlockingSession<LoggedClient>;
+  /** @brief The session market data is read from: the trading session itself. */
+  using MarketSession = Session;
 
   /**
    * @brief Builds the market from the bars and replays the log, writing nothing: the log stays held until `repair`.
@@ -784,6 +791,14 @@ public:
    * @return The session.
    */
   Session& session() {
+    return *session_;
+  }
+
+  /**
+   * @brief The session quotes, price bands and the calendar are read from, borrowed: the trading session.
+   * @return The session.
+   */
+  MarketSession& market_session() {
     return *session_;
   }
 
@@ -897,10 +912,11 @@ public:
   }
 
   /**
-   * @brief How many `place` and `cancel` lines this process wrote whole (not those replayed at open).
+   * @brief How many placements and cancellations this process sent: the `place` and `cancel` lines it wrote whole
+   *   (not those replayed at open).
    * @return The count.
    */
-  std::uint64_t inputs_logged() const noexcept {
+  std::uint64_t sends() const noexcept {
     return client_->inputs_logged();
   }
 

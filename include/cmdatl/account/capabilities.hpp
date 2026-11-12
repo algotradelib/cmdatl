@@ -9,13 +9,12 @@ namespace cmdatl {
 /**
  * @brief What an account's broker offers, by cmdatl's own names, from the library's compile-time constants a command
  *   reads.
- * @tparam Client The broker client type.
- * @param clock Whether the account's time moves by command (`clock advance`): the paper broker only.
+ * @tparam Caps The broker's capabilities (`algotradelib::BrokerCaps`), as a session names them.
+ * @param clock Whether the account's time moves by command (`clock advance`): a simulated broker only.
  * @return `working_orders`, `price_limits`, `buying_power`, `calendar`, `trigger_price` and `clock`.
  */
-template <typename Client>
+template <typename Caps>
 boost::json::object account_capabilities(bool clock) {
-  using Caps = algotradelib::BrokerCaps<Client>;
   return boost::json::object{
     {"working_orders", Caps::has_working_orders},
     {"price_limits", Caps::has_price_limits},

@@ -15,8 +15,8 @@
 //   7. Targets only, limit orders only, the limit inside a collar around the last price and on the tick grid.
 //   8. A cancel and a placement never go out in one call: with an order working, the call finds the target met by it
 //      or withdraws it, and the placement waits for a call that sees it gone.
-//   9. Unknown is never reported as anything else: the reply after the send is mapped by whether a paper input was
-//      logged (`map_report`), and anything unmapped or thrown after a send is an unknown.
+//   9. Unknown is never reported as anything else: the reply after the send is mapped by whether the desk counted a
+//      send in the call (`map_report`), and anything unmapped or thrown after a send is an unknown.
 //  10. Only in a permitted phase, except a withdrawal.
 //
 // The options a caller turns on: `dry_run_` (a plan, and how reconcile runs), `withdraw_only_` (a cancel),
@@ -463,14 +463,14 @@ Mapped map_report(
  * Only a caller that holds the account's lock and has opened its journal can call it; the journal must outlive the
  * call, and the desk's clock dates the decision and the journal's lines.
  *
- * @tparam Desk The desk: `session()`, `now()`, `inputs_logged()` and `env_name`.
+ * @tparam Desk The desk (`account/account.hpp`): `session()`, `market_session()`, `now()` and `sends()`.
  * @param desk The desk.
  * @param journal The account's journal, opened by the caller.
  * @param lock The account's lock, held.
  * @param request The target.
  * @param config How to run.
  * @return The outcome.
- * @throws std::logic_error On a defect: a desk that is not paper, or a placement without a limit.
+ * @throws std::logic_error On a defect: a target below zero, or a placement without a limit.
  */
 template <typename Desk>
 OnceResult once(
@@ -478,10 +478,8 @@ OnceResult once(
   const OnceConfig& config
 ) {
   using atl::runner::PollKind;
-  using Session = std::decay_t<decltype(desk.session())>;
-  if (std::string_view(Desk::env_name) != "paper") {
-    throw std::logic_error("once() runs on the paper desk only in this version");
-  }
+  using Session = typename Desk::Session;
+  using MarketSession = typename Desk::MarketSession;
   if (request.target_quantity_.coefficient() < 0) {
     throw std::logic_error("once() takes no target below zero");
   }
@@ -553,7 +551,9 @@ OnceResult once(
   bound.context().set_instrument(std::move(reference.value()));
 
   // 4. The working-order listing, then the rest of the book.
-  atl::live::SessionSource<Session, atl::runner::FileJournal> source(session, {request.instrument_});
+  atl::live::SessionSource<Session, atl::runner::FileJournal, MarketSession> source(
+    session, desk.market_session(), {request.instrument_}
+  );
   source.set_journal(journal);
   source.set_buying_power_currencies({currency});
   once_detail::arm(bound, now(), config.maximum_portfolio_age_);
@@ -586,11 +586,11 @@ OnceResult once(
   if constexpr (Session::Traits::has_buying_power) {
     source.poll(PollKind::BUYING_POWER, bound);
   }
-  if constexpr (Session::Traits::has_price_limits) {
+  if constexpr (MarketSession::Traits::has_price_limits) {
     source.poll(PollKind::PRICE_LIMITS, bound);
   }
   source.poll(PollKind::QUOTES, bound);
-  if constexpr (Session::Traits::has_calendar) {
+  if constexpr (MarketSession::Traits::has_calendar) {
     source.poll(PollKind::CALENDAR, bound);
   }
   const auto at = now();
@@ -717,7 +717,7 @@ OnceResult once(
       }
     }
   }
-  const auto logged_before = desk.inputs_logged();
+  const auto logged_before = desk.sends();
   const bool failed_before = bound.local_failure().has_value();
   if (config.withdraw_only_) {
     if (working_refs.empty()) {
@@ -794,7 +794,7 @@ OnceResult once(
   try {
     const auto report = bound.settle_closing();
     bound.clear_retained_targets();
-    const auto logged = desk.inputs_logged() - logged_before;
+    const auto logged = desk.sends() - logged_before;
     const bool failed = !failed_before && bound.local_failure().has_value();
     // Read right after the settle: the executor's error is its last request's, and the runner keeps the market's
     // last refusal.

@@ -334,8 +334,8 @@ inline int report_lost_outcome(std::ostream& err, bool may_send, const std::stri
  * @return The environment, such as `paper`.
  */
 inline std::string account_env(const OperatorConfig& config) {
-  if (config.broker_ == paper::PaperDesk::broker_name) {
-    return paper::PaperDesk::env_name;
+  if (config.broker_ == AccountDesk::broker_name) {
+    return AccountDesk::env_name;
   }
   // A broker's account, as its run names it: `kis-demo` or `kis-real`.
   return config.broker_ + "-" + config.env_;

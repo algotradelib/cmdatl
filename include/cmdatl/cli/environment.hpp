@@ -1,9 +1,10 @@
 #pragma once
 
+#include "../account/account.hpp"
 #include "../account/capabilities.hpp"
 #include "../account/operator.hpp"
 #include "../core/reply.hpp"
-#include "../paper/broker.hpp"
+#include "../paper/market.hpp"
 #include "../strategy/atlc.hpp"
 #include "../system/lock.hpp"
 #include "./describe.hpp"
@@ -119,7 +120,7 @@ inline Reply env_reply() {
       reply.body_["capabilities"] = nullptr;
       reply.body_["paper"] = nullptr;
     } else {
-      reply.body_["capabilities"] = account_capabilities<paper::PaperClient>(true);
+      reply.body_["capabilities"] = account_capabilities<AccountDesk::Session::Caps>(AccountDesk::simulated);
       const paper::Costs costs;
       reply.body_["paper"] = json::object{
         {"bars", c.paper_.bars_},
