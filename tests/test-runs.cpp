@@ -14,8 +14,11 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -893,6 +896,141 @@ TEST_CASE("the boundary's own checks, one by one, and the phase from an unreadab
   CHECK(!closed.error().reached_broker_);
   CHECK(closed.error().broker_code_ == "closed");
   CHECK(market.order_history({}).orders_.empty());
+}
+
+/** @brief A broker session whose placements and cancellations throw, as a call that fails midway does. */
+struct ThrowingSession {
+  /** @brief The session it stands in for. */
+  using Inner = algotradelib::BlockingSession<algotradelib::mock::MockClient>;
+  /** @brief The broker's capabilities. */
+  using Caps = Inner::Caps;
+  /** @brief The broker's tag. */
+  using BrokerTag = Inner::BrokerTag;
+  /** @brief The broker's traits. */
+  using Traits = Inner::Traits;
+  /** @brief An order reference. */
+  using Ref = Inner::Ref;
+  /** @brief What a placement or cancellation answers. */
+  using Answer = decltype(std::declval<Inner&>().place(algotradelib::OrderRequest{}));
+
+  /**
+   * @brief Throws.
+   * @param order The order.
+   * @return Never.
+   */
+  Answer place(const algotradelib::OrderRequest& order) {
+    (void)order;
+    throw std::runtime_error("the connection dropped during the call");
+  }
+
+  /**
+   * @brief Throws.
+   * @param ref The order.
+   * @param instruction What to cancel.
+   * @return Never.
+   */
+  Answer cancel(const Ref& ref, const algotradelib::AmendInstruction& instruction) {
+    (void)ref;
+    (void)instruction;
+    throw std::runtime_error("the connection dropped during the call");
+  }
+};
+
+TEST_CASE("the boundary checks the lock before a cancellation and counts each send until it is known not to arrive") {
+  namespace atl = algotradelib;
+  const ScratchDir dir;
+  spit(dir.path() / "armed", "");
+  cmdatl::OwnerLock lock(dir.path().string());
+  REQUIRE(
+    lock.acquire(
+      std::chrono::milliseconds(0),
+      [] {
+        return false;
+      },
+      [](const std::string&) {}
+    ) == cmdatl::OwnerLock::Outcome::HELD
+  );
+  cmdatl::driver::PlacementPolicy policy;
+  policy.armed_ = (dir.path() / "armed").string();
+  policy.lock_ = &lock;
+  policy.collar_ = 0.05;
+  policy.phases_ = {atl::strategy::MarketPhase::OPEN};
+  const auto series = runtest::bars_of("005930", 5, atl::BarInterval::ONE_DAY);
+  atl::mock::MarketSettings settings;
+  settings.cash_ = atl::Money{atl::Decimal64::parse("100000000"), atl::Currency::krw()};
+  settings.start_ = series.bars_.front().timestamp_;
+  atl::mock::Market market({series}, settings);
+  auto client = std::make_shared<atl::mock::MockClient>(market);
+  atl::BlockingSession<atl::mock::MockClient> inner(client, atl::mock::MockAccount{});
+  const auto now = [&market] {
+    return market.now();
+  };
+  cmdatl::driver::GuardedSession<atl::BlockingSession<atl::mock::MockClient>> session(inner, policy, now, {});
+  const auto quote = inner.quote(series.instrument_);
+  REQUIRE(quote);
+  atl::OrderRequest buy;
+  buy.instrument_ = series.instrument_;
+  buy.side_ = atl::OrderSide::BUY;
+  buy.type_ = atl::OrderType::LIMIT;
+  buy.quantity_ = atl::Decimal64::parse("1");
+  buy.price_ = quote.value().last_price_;
+  atl::AmendInstruction whole;
+  whole.all_remaining_ = true;
+
+  // Forwarded and accepted: counted.
+  const auto first = session.place(buy);
+  REQUIRE(first);
+  CHECK(session.sends() == 1);
+  const auto second = session.place(buy);
+  REQUIRE(second);
+  CHECK(session.sends() == 2);
+  // Refused here, before forwarding: not counted.
+  std::filesystem::remove(dir.path() / "armed");
+  CHECK(!session.place(buy));
+  CHECK(session.sends() == 2);
+  spit(dir.path() / "armed", "");
+  // Forwarded, and answered that it did not reach the broker: given back.
+  atl::BrokerError unsent;
+  unsent.category_ = atl::ErrorCategory::TRANSPORT;
+  unsent.reached_broker_ = false;
+  unsent.message_ = "scripted";
+  client->fail_next(atl::mock::Call::PLACE, unsent);
+  const auto refused = session.place(buy);
+  REQUIRE(!refused);
+  CHECK(!refused.error().reached_broker_);
+  CHECK(session.sends() == 2);
+  client->fail_next(atl::mock::Call::CANCEL, unsent);
+  CHECK(!session.cancel(first.value().ref_, whole));
+  CHECK(session.sends() == 2);
+  // Forwarded, and answered by an error that reached the broker: stays counted.
+  client->fail_next(atl::mock::Call::PLACE, broker_error(atl::ErrorCategory::TRANSPORT));
+  CHECK(!session.place(buy));
+  CHECK(session.sends() == 3);
+  // A call that throws stays counted, placement and cancellation alike.
+  ThrowingSession throwing;
+  cmdatl::driver::GuardedSession<ThrowingSession, atl::BlockingSession<atl::mock::MockClient>> thrown(
+    throwing, inner, policy, now, {}
+  );
+  CHECK_THROWS(thrown.place(buy));
+  CHECK(thrown.sends() == 1);
+  CHECK_THROWS(thrown.cancel(first.value().ref_, whole));
+  CHECK(thrown.sends() == 2);
+  // Disarmed, a cancellation still goes out, and counts.
+  std::filesystem::remove(dir.path() / "armed");
+  REQUIRE(session.cancel(first.value().ref_, whole));
+  CHECK(session.sends() == 4);
+  CHECK(session.cancelled(first.value().ref_.primary_));
+  REQUIRE(market.working_orders().orders_.size() == 1);
+  // With the lock replaced, a cancellation is refused before the broker sees it, and does not count.
+  std::filesystem::remove(dir.path() / "lock");
+  spit(dir.path() / "lock", "");
+  const auto lost = session.cancel(second.value().ref_, whole);
+  REQUIRE(!lost);
+  CHECK(!lost.error().reached_broker_);
+  CHECK(lost.error().broker_code_ == "lock_lost");
+  CHECK(session.sends() == 4);
+  CHECK(!session.cancelled(second.value().ref_.primary_));
+  CHECK(market.working_orders().orders_.size() == 1);
 }
 #endif
 

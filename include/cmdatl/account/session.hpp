@@ -1,12 +1,13 @@
 #pragma once
 
-// The run's placement boundary: a session that forwards every call to the broker's session and, before forwarding a
-// placement, checks the operator's ceilings once more, as the last thing between the runner and the broker.
+// The placement boundary runs trade through: a session that forwards every call to the broker's session and, before
+// forwarding a placement, checks the operator's ceilings once more, as the last thing between the runner and the broker.
 //
 // The runner's own guard stays on; this repeats what the operator's file decides, at the final boundary, because the
 // library's guard admits an order closing toward flat outside the permitted phases, and a broker (the mock among them)
-// accepts orders at any instant. Cancellations are forwarded unchecked, so withdrawals stay available while disarmed or
-// outside a permitted phase.
+// accepts orders at any instant. A cancellation is checked only for the lock, so withdrawals stay available while
+// disarmed or outside a permitted phase.
+// It counts what it sends, so a caller can tell a call that sent nothing from one whose outcome may be at the broker.
 
 #include "../system/lock.hpp"
 #include "../system/process.hpp"
@@ -16,6 +17,7 @@
 #include <algotradelib/strategy>
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -34,7 +36,7 @@ namespace atl = algotradelib;
 struct PlacementPolicy {
   /** @brief The operator's armed file: without it nothing is placed. */
   std::string armed_;
-  /** @brief The run's lock: once it is no longer at its path, nothing is placed. */
+  /** @brief The run's lock: once it is no longer at its path, nothing is placed or cancelled. */
   const OwnerLock* lock_{nullptr};
   /** @brief Whether only limit orders may be placed. */
   bool limit_only_{true};
@@ -105,7 +107,8 @@ inline std::optional<std::string> placement_refusal(
 }
 
 /**
- * @brief A session that forwards to another and checks the operator's ceilings before every placement.
+ * @brief A session that forwards to another and checks the operator's ceilings before every placement, and the lock
+ *   before every cancellation.
  *
  * It exposes the inner session's `Caps`, `BrokerTag` and `Traits` and its call signatures, so the library's binding,
  * executor and source take it as they take the inner session.
@@ -182,6 +185,15 @@ public:
   }
 
   /**
+   * @brief How many placements and cancellations were sent towards the broker: each counted before it is forwarded, and
+   *   given back only for an answer that says it did not reach the broker; a call that throws stays counted.
+   * @return The count.
+   */
+  std::uint64_t sends() const noexcept {
+    return sends_;
+  }
+
+  /**
    * @brief The market's phase now, from the calendar read through the market session: `UNKNOWN` when it cannot be read.
    * @return The phase.
    */
@@ -225,25 +237,40 @@ public:
       error.message_ = "refused by the operator's limits before sending: " + *reason;
       return Answer(std::move(error));
     }
+    ++sends_;
     auto answer = inner_->place(order);
     if (answer) {
       tell("placed", order, answer.value().ref_.primary_, "");
     } else {
+      give_back(answer.error());
       tell("refused", order, "", answer.error().broker_code_.empty() ? "broker" : answer.error().broker_code_);
     }
     return answer;
   }
 
   /**
-   * @brief Cancels an order, unchecked; an accepted cancellation is remembered.
+   * @brief Cancels an order once the lock is checked, whether armed or not and in any phase; an accepted cancellation
+   *   is remembered.
    * @param ref The order.
    * @param instruction What to cancel.
-   * @return The broker's answer.
+   * @return The broker's answer, or the refusal `lock_lost`, which reaches no broker.
    */
   auto cancel(const Ref& ref, const atl::AmendInstruction& instruction) {
+    using Answer = decltype(inner_->cancel(ref, instruction));
+    if (policy_.lock_ == nullptr || !policy_.lock_->still_at_path()) {
+      atl::BrokerError error;
+      error.category_ = atl::ErrorCategory::INVALID_ARGUMENT;
+      error.reached_broker_ = false;
+      error.broker_code_ = "lock_lost";
+      error.message_ = "refused before sending: the lock file was replaced";
+      return Answer(std::move(error));
+    }
+    ++sends_;
     auto answer = inner_->cancel(ref, instruction);
     if (answer) {
       cancelled_.insert(ref.primary_);
+    } else {
+      give_back(answer.error());
     }
     return answer;
   }
@@ -290,6 +317,16 @@ public:
   }
 
 private:
+  /**
+   * @brief Takes a send back off the count when its answer says it did not reach the broker.
+   * @param error The answer.
+   */
+  void give_back(const atl::BrokerError& error) noexcept {
+    if (!error.reached_broker_) {
+      --sends_;
+    }
+  }
+
   void tell(const char* kind, const atl::OrderRequest& order, std::string order_id, std::string reason) {
     if (!observer_) {
       return;
@@ -310,6 +347,7 @@ private:
   std::function<void(const PlacementEvent&)> observer_;
   std::set<std::string> cancelled_;
   std::function<bool()> stopping_;
+  std::uint64_t sends_{0};
   bool closed_{false};
 };
 
