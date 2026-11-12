@@ -378,6 +378,10 @@ TEST_CASE("broker.toml declares its adapter's options strictly, each refusal at 
     {"an unknown key", head + good + "default = \"US\"\n", "9:", "has no key default"},
     {"no name", head + "type = \"string\"\nrequired = true\n", "5:", "options.name"},
     {"a name with a dot", head + "name = \"a.b\"\ntype = \"string\"\nrequired = true\n", "6:", "options.name"},
+    {"a name starting with a digit", head + "name = \"1a\"\ntype = \"string\"\nrequired = true\n",
+      "6:", "options.name"},
+    {"a name of 65 characters", head + "name = \"" + std::string(65, 'a') + "\"\ntype = \"string\"\nrequired = true\n",
+      "6:", "options.name"},
     {"a login's field", head + "name = \"api_token\"\ntype = \"string\"\nrequired = true\n",
       "6:", "a credential is never an option"},
     {"a name twice", head + good + "[[options]]\n" + good, "10:", "given twice"},
@@ -424,6 +428,13 @@ TEST_CASE("broker.toml declares its adapter's options strictly, each refusal at 
   CHECK(broker.options_[1].choices_ == std::vector<json::value>{1, 10});
   CHECK(broker.options_[2].type_ == cmdatl::options::Type::NUMBER);
   CHECK_FALSE(broker.options_[3].required_);
+  // A name of 64 characters, and `_` first.
+  REQUIRE_FALSE(
+    auth::read_broker_toml(
+      "x", head + "name = \"_" + std::string(63, 'a') + "\"\ntype = \"string\"\nrequired = true\n", broker
+    )
+  );
+  CHECK(broker.options_.size() == 1);
   // A folder without [[options]] declares none.
   REQUIRE_FALSE(auth::read_broker_toml("x", BROKER_TOML, broker));
   CHECK(broker.options_.empty());
