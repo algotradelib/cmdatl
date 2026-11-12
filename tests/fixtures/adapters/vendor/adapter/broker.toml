@@ -15,4 +15,4 @@ choices = ["US", "KO"]
 [[options]]
 name = "history"
 type = "integer"
-required = false
+required = true

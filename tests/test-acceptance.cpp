@@ -735,7 +735,7 @@ TEST_CASE(
   spit(
     at("vendor.toml"),
     "strategy = 'dip.atls'\n[bars]\nsource = 'fixture'\nadapter = '" + relative +
-      "'\ncount = 150\nstore_root = 'store'\n[bars.options]\nexchange = 'US'\n[instruments]\nstock = 'AAA'\n"
+      "'\ncount = 150\nstore_root = 'store'\n[bars.options]\nexchange = 'US'\nhistory = 200\n[instruments]\nstock = 'AAA'\n"
       "[replay]\nmarket = 'us'\n"
   );
   // The login as auth login stores it: bound to the folder's canonical path.
@@ -795,7 +795,7 @@ TEST_CASE(
     CHECK(ran.err_.find("building") == std::string::npos);
   }
   auto bare = slurp(at("vendor.toml"));
-  spit(at("bare.toml"), bare.replace(bare.find("[bars.options]\nexchange = 'US'\n"), 31, ""));
+  spit(at("bare.toml"), bare.replace(bare.find("exchange = 'US'\n"), 16, ""));
   ran = backtest({at("bare.toml")});
   CHECK(code_of(ran.out_) == "spec.invalid");
   CHECK(ran.out_.find("needs `bars.options.exchange`") != std::string::npos);

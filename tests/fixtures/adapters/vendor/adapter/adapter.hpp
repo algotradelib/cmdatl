@@ -3,8 +3,8 @@
 // A broker folder's adapter for tests: a data vendor on the library's DataOnlyTraits, serving a fixed daily history
 // (`history` bars from 2024-01-01, prices to the cent) of any symbol, the last `count` of them. A login whose token
 // starts with `fail` is answered with an HTTP 401 whose text holds the token, as a vendor putting its token in a URL
-// would; one starting with `empty` is answered with no bars. Its options (broker.toml): `exchange`, which it needs as a
-// string, and `history`, an integer.
+// would; one starting with `empty` is answered with no bars. Its options (broker.toml), both required: `exchange`, a
+// string, and `history`, an integer; it has no default of its own.
 
 #include <algotradelib/broker>
 
@@ -29,7 +29,7 @@ struct Client {
   /** @brief The token. */
   std::string token_;
   /** @brief How many bars the history holds. */
-  int history_{200};
+  int history_{0};
 };
 
 /**
@@ -155,9 +155,7 @@ inline Connection connect(const std::string& login, const std::string& options) 
   Connection connection;
   connection.client_ = std::make_shared<Client>();
   connection.client_->token_ = std::string(boost::json::parse(login).as_object().at("api_token").as_string());
-  if (const auto* history = given.if_contains("history")) {
-    connection.client_->history_ = static_cast<int>(history->as_int64());
-  }
+  connection.client_->history_ = static_cast<int>(given.at("history").as_int64());
   return connection;
 }
 
