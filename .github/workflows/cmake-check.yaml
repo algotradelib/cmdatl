@@ -70,7 +70,6 @@ jobs:
         with:
           run-build: true
           options: |
-            CMAKE_BUILD_TYPE=Release
             CMDATL_FETCH_DEPS=ON
             "CMAKE_PREFIX_PATH=${{ steps.atl.outputs.path }}"
 
