@@ -757,9 +757,7 @@ TEST_CASE("an exception after a send and inside once() or after it and is unknow
   }
 }
 
-TEST_CASE(
-  "B1: the armed file removed before once() and or before the paper line and sends nothing and names the file"
-) {
+TEST_CASE("the armed file removed before once() or before the paper line sends nothing and names the file") {
   {
     const PaperFixture fixture;
     const auto id = ready_plan(fixture);
@@ -797,9 +795,7 @@ TEST_CASE(
   }
 }
 
-TEST_CASE(
-  "B5: the journal moved aside and emptied or replaced by a copy before once(): journal_missing and none created"
-) {
+TEST_CASE("the journal moved aside or emptied or replaced by a copy before once(): journal_missing and none created") {
   for (const auto* how : {"moved", "emptied", "copied"}) {
     INFO(how);
     const PaperFixture fixture;

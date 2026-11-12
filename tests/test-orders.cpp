@@ -171,7 +171,7 @@ TEST_CASE("plan and then place by id: one limit order and once and and the plan 
   const auto log = slurp(fixture.log());
   CHECK(ops_of(log, "place").size() == 1);
   CHECK(limits_in_collar(log, 0.05, day_mark));
-  // B3: the journal once() wrote carries the account's scope.
+  // The journal once() wrote carries the account's scope.
   CHECK(atl::runner::read_journal_file(fixture.journal().string()).scope_ == SCOPE);
 }
 
@@ -653,7 +653,7 @@ TEST_CASE("order release refuses a named order and which waits for holdings") {
   CHECK(ask_checked(fixture, {"order", "release", "005930", "--reason", "read"}).code_ == "refused.named");
 }
 
-TEST_CASE("H5: a cancel needs no armed file and no permitted phase and and never places") {
+TEST_CASE("a cancel needs no armed file and no permitted phase and never places") {
   ConfigParts parts;
   parts.limits_ += "phases = [\"pre_open\", \"open\"]\n";
   const PaperFixture fixture(parts);
@@ -676,7 +676,7 @@ TEST_CASE("H5: a cancel needs no armed file and no permitted phase and and never
   CHECK(ops_of(slurp(fixture.log()), "cancel").size() == 1);
 }
 
-TEST_CASE("H6: a cancel reports what it sent and never met; nothing listed is nothing_working") {
+TEST_CASE("a cancel reports what it sent and never met; nothing listed is nothing_working") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto empty = ask_checked(fixture, {"order", "cancel", "005930"});
@@ -738,7 +738,7 @@ TEST_CASE("two journaled orders on one symbol are the operator's: a cancel sends
   CHECK(ops_of(slurp(fixture.log()), "cancel").size() == ops_of(log, "cancel").size());
 }
 
-TEST_CASE("H12: an order the journal does not name refuses plan and place and cancel and and reconcile says so") {
+TEST_CASE("an order the journal does not name refuses plan and place and cancel; reconcile says so") {
   const PaperFixture fixture;
   open_session(fixture);
   const auto id = plan_id(fixture, "005930", "10", "75000");
@@ -841,7 +841,7 @@ TEST_CASE(
 }
 
 TEST_CASE(
-  "B2 and the table: no order option names a ceiling; each catalogued once() reason is declared by the order commands"
+  "the table: no order option names a ceiling; each catalogued once() reason is declared by the order commands"
 ) {
   const cmdatl::Table table(cmdatl::command_list());
   std::vector<std::string> options;
