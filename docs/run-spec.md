@@ -121,7 +121,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 
 - `replay.market` is required: it gives the instruments' country, which the adapter is asked for.
 - The symbols come from `[instruments]`; a symbol holding `/`, `\`, `=`, `,`, a glob character (`*?[]{}`), a control character or a space at either end, or being `.` or `..`, is refused before anything is fetched.
-- The store is written as `labs`-style fetchers write it: `source=NAME`, every version kept, a bar appended only when it is new or changed, under the series directory's `.lock`.
+- The store is written in its own layout and by its own rule: `source=NAME`, every version kept, a bar appended only when it is new or changed, under the series directory's `.lock`.
 - The replay is exactly the bars this fetch received (a later fetch by another writer and an older history already in the store are left out); `replay.from` and `replay.to` narrow it further, and a symbol answered with no bars is refused (`fetch.failed`).
 - The reply's `fetched` gives `fetched_at` (to the microsecond) and, per symbol, the bars fetched, those new to the store and the first and last date.
   `bars.source = "store"` with `bars.as_of = fetched_at` reads the store as it stood after the fetch: every bar's latest version up to that instant, which can include bars this fetch did not return (an older history, or bars an earlier fetch had and this one did not); it is the same history only when the store held nothing else for those series.
