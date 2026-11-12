@@ -830,6 +830,36 @@ TEST_CASE("the per-call second: an order command past the data's end is clock.pa
   CHECK(slurp(fixture.log()) == log);
 }
 
+TEST_CASE("an order pending at the data's end is cancelled and reconciled without the per-call second") {
+  const PaperFixture fixture;
+  fixture.arm();
+  REQUIRE(ask(fixture, {"clock", "advance", "--to", "2024-03-26T10:00"}).exit_ == 0);
+  const auto id = plan_id(fixture, "000660", "1", "180000");
+  REQUIRE(ask_checked(fixture, {"order", "place", id}).reason_ == "placed");
+  // 000660 has no bar after the 26th, so the order stays pending at the clock's limit.
+  REQUIRE(ask(fixture, {"clock", "advance", "--to", "2024-03-28T15:30"}).exit_ == 0);
+  const auto plan = ask_checked(fixture, {"order", "plan", "005930", "--target", "1", "--limit", "80000"});
+  CHECK(plan.exit_ == 1);
+  CHECK(plan.code_ == "clock.past_data");
+  for (const auto* reason : {"withdrawal_sent", "nothing_working"}) {
+    const auto canceled = ask_checked(fixture, {"order", "cancel", "000660"});
+    INFO(boost::json::serialize(canceled.body_));
+    CHECK(canceled.exit_ == 0);
+    CHECK(canceled.reason_ == reason);
+    CHECK(canceled.body_.at("now").as_string() == "2024-03-28T15:30:00+09:00");
+  }
+  CHECK(ops_of(slurp(fixture.log()), "cancel").size() == 1);
+  for (int i = 0; i < 2; ++i) {
+    const auto clean = ask_checked(fixture, {"order", "reconcile"});
+    INFO(boost::json::serialize(clean.body_));
+    CHECK(clean.exit_ == 0);
+    CHECK(clean.reason_ == "clean");
+    CHECK(clean.body_.at("owed").as_array().empty());
+    CHECK(clean.body_.at("now").as_string() == "2024-03-28T15:30:00+09:00");
+  }
+  CHECK(ask(fixture, {"order", "list"}).body_.at("orders").as_array().empty());
+}
+
 TEST_CASE(
   "an order before the open is accepted when pre_open is permitted and refused before anything is recorded when not"
 ) {

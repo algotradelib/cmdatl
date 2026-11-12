@@ -362,9 +362,12 @@ struct Started {
  * @brief Refuses a journal that is not intact, then takes the per-call second: the clock moved one second, and what
  *   the market did in it as `events`.
  * @param account The account.
+ * @param second_needed Whether the command needs the second; a cancel, a reconcile or a release does without it when
+ *   the clock cannot move, at the data's end or with the market halted, so an order left pending there can still be
+ *   withdrawn and recorded.
  * @return The start.
  */
-inline Started start(Account& account) {
+inline Started start(Account& account, bool second_needed = true) {
   Started started;
   if (!account.journal_intact()) {
     started.refusal_ = account.journal_damaged_reply();
@@ -372,6 +375,11 @@ inline Started start(Account& account) {
   }
   auto& desk = account.desk();
   const auto target = desk.now() + std::chrono::seconds(1);
+  if (!second_needed && (target > desk.clock_limit() || desk.halted())) {
+    started.body_["now"] = kst_iso(desk.now());
+    started.body_["events"] = events_json(desk);
+    return started;
+  }
   if (target > desk.clock_limit()) {
     started.refusal_ = error_reply(
       Exit::FAILED, "clock.past_data",
@@ -742,7 +750,7 @@ inline Reply place_reply(const Invocation& invocation, Account& account, Output&
 inline Reply cancel_reply(const Invocation& invocation, Account& account, Output& output) {
   (void)output;
   using namespace orders_detail;
-  auto started = start(account);
+  auto started = start(account, false);
   if (started.refusal_) {
     return std::move(*started.refusal_);
   }
@@ -789,7 +797,7 @@ inline Reply cancel_reply(const Invocation& invocation, Account& account, Output
 inline Reply reconcile_reply(const Invocation& invocation, Account& account, Output& output) {
   (void)output;
   using namespace orders_detail;
-  auto started = start(account);
+  auto started = start(account, false);
   if (started.refusal_) {
     return std::move(*started.refusal_);
   }
@@ -889,7 +897,7 @@ inline Reply reconcile_reply(const Invocation& invocation, Account& account, Out
 inline Reply release_reply(const Invocation& invocation, Account& account, Output& output) {
   (void)output;
   using namespace orders_detail;
-  auto started = start(account);
+  auto started = start(account, false);
   if (started.refusal_) {
     return std::move(*started.refusal_);
   }
