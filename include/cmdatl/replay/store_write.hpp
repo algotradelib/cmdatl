@@ -1,12 +1,11 @@
 #pragma once
 
-// Writing fetched bars into the Parquet store `bars.source = "store"` reads, in the layout and by the rule the lab's
-// fetcher keeps (`labs/atl-data`): `<root>/bars/source=S/interval=I/symbol=SYM/bars.parquet`, the columns `source,
-// interval, symbol, ts, stamp, open, high, low, close, volume, adj_close, currency, basis, fetched_at`, prices
-// DECIMAL(18,4) and volume DECIMAL(24,4), every version kept. A bar is appended when its `ts` is new or any value
-// differs from the latest stored version (null equal to null); the file is rewritten whole under the symbol
-// directory's `.lock`, held across the read, the comparison and the rename, so two writers never lose each other's
-// versions.
+// Writing fetched bars into the Parquet store `bars.source = "store"` reads, in its layout and by its rule:
+// `<root>/bars/source=S/interval=I/symbol=SYM/bars.parquet`, the columns `source, interval, symbol, ts, stamp, open,
+// high, low, close, volume, adj_close, currency, basis, fetched_at`, prices DECIMAL(18,4) and volume DECIMAL(24,4),
+// every version kept. A bar is appended when its `ts` is new or any value differs from the latest stored version (null
+// equal to null); the file is rewritten whole under the symbol directory's `.lock`, held across the read, the
+// comparison and the rename, so two writers never lose each other's versions.
 
 #include "./replay.hpp"
 
