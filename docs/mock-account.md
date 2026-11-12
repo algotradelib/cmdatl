@@ -22,7 +22,7 @@ phases = ["open"] # optional: pre_open, open, post_close
 [mock]
 bars = "bars.csv" # the columns symbol,date,open,high,low,close,volume in any order, beside this file
 cash = 100000000
-start = "2024-03-25T09:30" # KST, at or after the first date's close
+start = "2024-03-25T16:00" # KST, at or after the first date's close
 ```
 
 - Every key is checked: an unknown key, a value of another type or out of range is refused with the file, the line and the column (`config.invalid`); `cmdatl env` shows what was read.
