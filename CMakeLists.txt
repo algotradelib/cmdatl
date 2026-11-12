@@ -202,8 +202,9 @@ if(CMDATL_BUILD_TESTS)
   add_executable(hold-lock tests/hold-lock.cpp)
   add_executable(test-cli
     tests/test-cli.cpp tests/test-process.cpp tests/test-strategy.cpp tests/test-acceptance.cpp tests/test-operator.cpp
-    tests/test-account.cpp tests/test-paper.cpp tests/test-orders.cpp tests/test-order-process.cpp
-    tests/test-run-start.cpp tests/test-guides.cpp tests/test-spec.cpp tests/test-auth.cpp tests/test-user-brokers.cpp
+    tests/test-account.cpp tests/test-paper.cpp tests/test-mock-desk.cpp tests/test-orders.cpp
+    tests/test-order-process.cpp tests/test-run-start.cpp tests/test-guides.cpp tests/test-spec.cpp tests/test-auth.cpp
+    tests/test-user-brokers.cpp
   )
   target_link_libraries(test-cli PRIVATE cmdatl_core Catch2::Catch2WithMain)
   # forkpty, for the terminal cases of test-auth.

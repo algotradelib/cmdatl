@@ -2,6 +2,7 @@
 // cmdatl::sys below.
 // So no translation unit sees both the inline system calls and these stand-ins.
 
+#include "./mock-desk-support.hpp"
 #include "./order-support.hpp"
 
 #include <cmdatl/cmdatl>
@@ -22,6 +23,7 @@
 #error "test-faults is built with CMDATL_FAULT_HOOKS"
 #endif
 
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/param.h>
 #include <sys/resource.h>
@@ -58,6 +60,8 @@ inline std::string kill_at;
 inline std::function<void(const std::string&)> hook;
 /** @brief Whether the next `fsync` of the journal fails (Linux, through `--wrap=fsync`). */
 inline bool fail_journal_fsync = false;
+/** @brief Whether every `fsync` of the mock market's state file fails, while set. */
+inline bool fail_state_fsync = false;
 /** @brief What runs right after a `replace-lock` fault replaced the lock: another process taking the account. */
 inline std::function<void()> after_replace;
 /** @brief How many matching calls were seen. */
@@ -135,6 +139,7 @@ inline void clear() {
   hook = nullptr;
   after_replace = nullptr;
   fail_journal_fsync = false;
+  fail_state_fsync = false;
   seen = 0;
   injected = 0;
 }
@@ -260,7 +265,30 @@ extern "C" int __wrap_fsync(int fd) {
     errno = EIO;
     return -1;
   }
+  if (fault::fail_state_fsync && fault::name_of(fd) == cmdatl::MOCK_STATE_FILE) {
+    errno = EIO;
+    return -1;
+  }
   return __real_fsync(fd);
+}
+#else
+/**
+ * @brief The C library's `fsync`, replaced in this executable only: fails the mock market's state file while asked.
+ * @param fd The descriptor.
+ * @return As `fsync`.
+ */
+extern "C" int fsync(int fd) {
+  if (fault::fail_state_fsync && fault::name_of(fd) == cmdatl::MOCK_STATE_FILE) {
+    errno = EIO;
+    return -1;
+  }
+  using Sync = int (*)(int);
+  static const auto real = reinterpret_cast<Sync>(::dlsym(RTLD_NEXT, "fsync"));
+  if (real == nullptr) {
+    std::fputs("test-faults: the C library's fsync was not found\n", stderr);
+    std::abort();
+  }
+  return real(fd);
 }
 #endif
 
@@ -1083,5 +1111,147 @@ TEST_CASE("a former lock holder never publishes its plan book over a newer holde
         CHECK(entry.path().extension() != ".tmp");
       }
     }
+  }
+}
+
+namespace {
+
+/** @brief The file-size limit at the state file's size, and SIGXFSZ ignored, while it lives. */
+class StateFull {
+public:
+  /**
+   * @brief Sets the limit.
+   * @param file The state file.
+   */
+  explicit StateFull(const std::filesystem::path& file) : previous_(std::signal(SIGXFSZ, SIG_IGN)) {
+    ::getrlimit(RLIMIT_FSIZE, &saved_);
+    struct stat info{};
+    REQUIRE(::stat(file.c_str(), &info) == 0);
+    auto limit = saved_;
+    limit.rlim_cur = static_cast<rlim_t>(info.st_size);
+    ::setrlimit(RLIMIT_FSIZE, &limit);
+  }
+
+  StateFull(const StateFull&) = delete;
+  StateFull& operator=(const StateFull&) = delete;
+
+  /** @brief Lifts the limit. */
+  ~StateFull() {
+    ::setrlimit(RLIMIT_FSIZE, &saved_);
+    std::signal(SIGXFSZ, previous_);
+  }
+
+private:
+  struct rlimit saved_{};
+  void (*previous_)(int);
+};
+
+} // namespace
+
+TEST_CASE("a mock desk whose state file takes no whole line changes nothing and counts no send") {
+  const PaperFixture fixture;
+  fixture.arm();
+  const HeldAccount held(fixture);
+  {
+    auto desk = held.desk();
+    REQUIRE(desk->advance_to(kst("2024-03-26T10:00")) == cmdatl::Moved::OK);
+    REQUIRE(desk->session().place(order("005930", true, "1", "78500")));
+  }
+  const auto before = slurp(state_file(fixture));
+  auto desk = held.desk();
+  SECTION("a placement") {
+    const StateFull full(state_file(fixture));
+    const auto placed = desk->session().place(order("005930", true, "1", "78500"));
+    REQUIRE_FALSE(placed);
+    CHECK(placed.error().broker_code_ == "state_not_written");
+    CHECK_FALSE(placed.error().reached_broker_);
+  }
+  SECTION("a cancellation") {
+    algotradelib::AmendInstruction whole;
+    whole.all_remaining_ = true;
+    const auto ref = desk->session().working_orders().value().orders_.front().ref_;
+    const StateFull full(state_file(fixture));
+    const auto canceled = desk->session().cancel(ref, whole);
+    REQUIRE_FALSE(canceled);
+    CHECK(canceled.error().broker_code_ == "state_not_written");
+    CHECK_FALSE(canceled.error().reached_broker_);
+  }
+  SECTION("a clock move") {
+    const StateFull full(state_file(fixture));
+    CHECK(desk->advance_to(kst("2024-03-26T11:00")) == cmdatl::Moved::NOT_WRITTEN);
+  }
+  CHECK(desk->sends() == 0);
+  CHECK(desk->now() == kst("2024-03-26T10:00"));
+  CHECK(desk->order_status("1") == std::optional<std::string>("pending"));
+  CHECK_FALSE(desk->order_status("2"));
+  // After a failed write the market takes no change until it is opened again.
+  CHECK(desk->advance_to(kst("2024-03-26T11:00")) == cmdatl::Moved::NOT_WRITTEN);
+  CHECK(slurp(state_file(fixture)) == before);
+  desk.reset();
+  auto reopened = held.desk();
+  CHECK(reopened->now() == kst("2024-03-26T10:00"));
+  CHECK(reopened->order_status("1") == std::optional<std::string>("pending"));
+  CHECK_FALSE(reopened->order_status("2"));
+}
+
+TEST_CASE("a mock desk whose state file flush is not confirmed counts the send and a reopening makes the change") {
+  const PaperFixture fixture;
+  fixture.arm();
+  const HeldAccount held(fixture);
+  {
+    auto desk = held.desk();
+    REQUIRE(desk->advance_to(kst("2024-03-26T10:00")) == cmdatl::Moved::OK);
+  }
+  SECTION("a placement") {
+    {
+      auto desk = held.desk();
+      const fault::Scoped scoped({});
+      fault::fail_state_fsync = true;
+      const auto placed = desk->session().place(order("005930", true, "1", "78500"));
+      fault::fail_state_fsync = false;
+      REQUIRE_FALSE(placed);
+      CHECK(placed.error().broker_code_ == "state_unconfirmed");
+      CHECK(placed.error().reached_broker_);
+      CHECK(desk->sends() == 1);
+      CHECK_FALSE(desk->order_status("1"));
+    }
+    auto reopened = held.desk();
+    CHECK(reopened->order_status("1") == std::optional<std::string>("pending"));
+  }
+  SECTION("a cancellation") {
+    {
+      auto desk = held.desk();
+      REQUIRE(desk->session().place(order("005930", true, "1", "78500")));
+    }
+    {
+      auto desk = held.desk();
+      algotradelib::AmendInstruction whole;
+      whole.all_remaining_ = true;
+      const auto ref = desk->session().working_orders().value().orders_.front().ref_;
+      const fault::Scoped scoped({});
+      fault::fail_state_fsync = true;
+      const auto canceled = desk->session().cancel(ref, whole);
+      fault::fail_state_fsync = false;
+      REQUIRE_FALSE(canceled);
+      CHECK(canceled.error().broker_code_ == "state_unconfirmed");
+      CHECK(canceled.error().reached_broker_);
+      CHECK(desk->sends() == 1);
+      CHECK(desk->order_status("1") == std::optional<std::string>("pending"));
+    }
+    auto reopened = held.desk();
+    CHECK(reopened->order_status("1") == std::optional<std::string>("canceled"));
+  }
+  SECTION("a clock move") {
+    {
+      auto desk = held.desk();
+      const fault::Scoped scoped({});
+      fault::fail_state_fsync = true;
+      const auto moved = desk->advance_to(kst("2024-03-26T11:00"));
+      fault::fail_state_fsync = false;
+      CHECK(moved == cmdatl::Moved::UNCONFIRMED);
+      CHECK(desk->now() == kst("2024-03-26T10:00"));
+    }
+    auto reopened = held.desk();
+    CHECK(reopened->now() == kst("2024-03-26T11:00"));
   }
 }
