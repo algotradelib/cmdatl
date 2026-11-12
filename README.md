@@ -17,6 +17,7 @@ With [algotradelib](https://github.com/algotradelib/algotradelib) alone you writ
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
 In this version the account and order commands work on a paper account: a market simulated from stored daily bars, with no broker and no network.
 `cmdatl run` also trades a KIS account the operator's file names, a demo account (모의투자) unless the file says otherwise; see [Runs](docs/runs.md).
+Broker logins are kept in the macOS keychain, so a run on a broker's account, or a backtest that fetches its bars through a broker folder, needs macOS; other backtests, the paper account and runs on a mock market work on Linux too.
 
 From a clone, with cmdatl and atlc installed (below):
 
