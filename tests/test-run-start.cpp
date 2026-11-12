@@ -97,6 +97,34 @@ TEST_CASE("a driver's program header gives the fill model the run's market-price
   );
 }
 
+TEST_CASE("a broker folder's driver header names the folder it is built from, every byte escaped") {
+  build::Request request;
+  request.struct_ = "Dip";
+  CHECK(build::program_header(request).find("CMDATL_ADAPTER_FOLDER") == std::string::npos);
+  // A folder whose path holds a quote, a backslash, a space, a line break, a digit after an escape and UTF-8.
+  const std::string folder = "/p/a \"b\\c\n7/\xed\x8f\xb4\xeb\x8d\x94";
+  request.adapter_ = cmdatl::auth::AdapterSnapshot{"vendor", folder, {}};
+  const auto header = build::program_header(request);
+  const std::string define = "#define CMDATL_ADAPTER_FOLDER \"";
+  const auto at = header.find(define);
+  REQUIRE(at != std::string::npos);
+  const auto begin = at + define.size();
+  const auto end = header.find('"', begin);
+  REQUIRE(end != std::string::npos);
+  // The literal is only three-digit octal escapes, which a C++ compiler reads back byte for byte.
+  const auto literal = header.substr(begin, end - begin);
+  REQUIRE(literal.size() == 4 * folder.size());
+  std::string decoded;
+  for (std::size_t k = 0; k < literal.size(); k += 4) {
+    REQUIRE(literal[k] == '\\');
+    for (std::size_t d = 1; d <= 3; ++d) {
+      REQUIRE((literal[k + d] >= '0' && literal[k + d] <= '7'));
+    }
+    decoded.push_back(static_cast<char>(std::stoi(literal.substr(k + 1, 3), nullptr, 8)));
+  }
+  CHECK(decoded == folder);
+}
+
 TEST_CASE("a shape's key changes with each input it holds, and with nothing else") {
   std::map<std::string, std::string> env;
   const auto lookup = [&env](const std::string& name) -> std::optional<std::string> {
