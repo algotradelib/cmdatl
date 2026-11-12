@@ -6,6 +6,7 @@
 // bare word as a value, text that is not UTF-8); the validator below then refuses any key it does not list, any
 // value of another TOML type, and any value outside its range, with the file, the line and the column.
 
+#include "../core/options.hpp"
 #include "../core/reply.hpp"
 #include "../core/runs.hpp"
 #include "../core/time.hpp"
@@ -96,6 +97,10 @@ struct OperatorConfig {
   std::string broker_;
   /** @brief A broker folder's path (`account.adapter`), absolute as written, or empty for a built-in broker. */
   std::string adapter_;
+  /** @brief Where `account.adapter` is written. */
+  toml::source_position adapter_at_{};
+  /** @brief A broker folder's options (`[account.options]`), as written; checked against its declarations by the run. */
+  std::vector<options::Given> options_;
   /** @brief The environment: `mock` for the mock broker, else `demo` or `real`. */
   std::string env_;
   /** @brief The account's number; empty for a KIS account whose login names it (the run fills it from the login). */
@@ -287,7 +292,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (auto bad = table_of(root, "account", account)) {
     return bad;
   }
-  if (auto bad = only_keys(*account, "account", {"broker", "env", "number", "adapter"})) {
+  if (auto bad = only_keys(*account, "account", {"broker", "env", "number", "adapter", "options"})) {
     return bad;
   }
   const auto* broker = account->get("broker");
@@ -334,6 +339,28 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (text) {
     // As written, never simplified: the folder's checks see every directory on the way to it.
     config.adapter_ = (std::filesystem::path(config.dir_) / *text).string();
+    config.adapter_at_ = account->get("adapter")->source().begin;
+  }
+  if (const auto* node = account->get("options")) {
+    if (!folder) {
+      return refuse(
+        node->source(), "account.options are a broker folder's, and " + config.broker_ + " is built in: remove them"
+      );
+    }
+    if (node->as_table() == nullptr) {
+      return refuse(node->source(), "account.options must be a table, not " + type_name(*node));
+    }
+    for (const auto& [key, value] : *node->as_table()) {
+      options::Given given{std::string(key.str()), {}, value.source().begin};
+      if (!options::from_node(value, given.value_)) {
+        return refuse(
+          value.source(),
+          "account.options." + given.name_ + " must be a string, an integer, a number or a boolean, not " +
+            type_name(value)
+        );
+      }
+      config.options_.push_back(std::move(given));
+    }
   }
   text = std::nullopt;
   if (auto bad = string_of(*account, "env", "account.env", text)) {

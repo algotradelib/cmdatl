@@ -87,6 +87,15 @@ int account_main(int argc, char** argv, Symbols symbols_of, Make make, Broker& b
       "this driver trades a " + broker.name() + " account, and the operator file names " + config.broker_
     );
   }
+  // The options the adapter connects with are the ones `cmdatl run` checked against its declarations, or none is used.
+  if (options::text_of(config.options_) != args.options_) {
+    return run_error(
+      base, Exit::FAILED, "config.invalid",
+      "the operator's file changed after cmdatl run checked it: its [account.options] are not the ones checked; "
+      "nothing was read or sent",
+      "start the run again"
+    );
+  }
   base["env"] = broker.name() + "-" + config.env_;
   const auto documents = payload ? sys::unframe_credentials(*payload, broker.logins()) : std::nullopt;
   if (!documents) {

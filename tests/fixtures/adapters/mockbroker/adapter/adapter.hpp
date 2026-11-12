@@ -2,7 +2,7 @@
 
 // A broker folder's adapter for tests: the library's mock broker behind the contract `user_account.hpp` reads. The
 // login is `{"account": ID, "demo": BOOL}`; `{"fail": TEXT}` makes `connect` throw with TEXT in its message, as an
-// adapter quoting a login would.
+// adapter quoting a login would. An option `account` names the account instead of the login.
 
 #include <algotradelib/mock>
 
@@ -41,10 +41,12 @@ struct Connection {
 /**
  * @brief Connects with a login.
  * @param login The login's JSON text.
+ * @param options The options' JSON text.
  * @return The connection.
  */
-inline Connection connect(const std::string& login) {
+inline Connection connect(const std::string& login, const std::string& options) {
   const auto document = boost::json::parse(login).as_object();
+  const auto given = boost::json::parse(options).as_object();
   if (const auto* fail = document.if_contains("fail")) {
     throw std::runtime_error("cannot use the login " + std::string(fail->as_string()));
   }
@@ -53,7 +55,7 @@ inline Connection connect(const std::string& login) {
   }
   Connection connection;
   connection.client_ = std::make_shared<Client>(*market());
-  connection.account_id_ = std::string(document.at("account").as_string());
+  connection.account_id_ = std::string((given.contains("account") ? given : document).at("account").as_string());
   connection.demo_ = document.contains("demo") && document.at("demo").as_bool();
   return connection;
 }

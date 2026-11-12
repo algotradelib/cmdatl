@@ -49,7 +49,7 @@ struct Connection {
  * @brief Never connects: the driver refuses this client before it would.
  * @return Nothing usable.
  */
-inline Connection connect(const std::string&) {
+inline Connection connect(const std::string&, const std::string&) {
   return Connection{};
 }
 

@@ -40,6 +40,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -360,11 +361,20 @@ json::object identify_child(const PaperFixture& fixture, const std::string& logi
  * @param fixture The fixture.
  * @param driver The driver.
  * @param login The login.
+ * @param extra More arguments.
  * @return The exit and the reply.
  */
 std::pair<int, json::object> driver_child(
-  const PaperFixture& fixture, const std::string& driver, const std::string& login
+  const PaperFixture& fixture, const std::string& driver, const std::string& login,
+  const std::vector<std::string>& extra = {}
 ) {
+  std::vector<std::string> args{driver, "run.id=r0123456789ab", "replay.market=kr"};
+  args.insert(args.end(), extra.begin(), extra.end());
+  std::vector<char*> argv;
+  for (auto& arg : args) {
+    argv.push_back(arg.data());
+  }
+  argv.push_back(nullptr);
   const auto out = fixture.dir() / "driver.out";
   std::fflush(nullptr);
   const pid_t pid = ::fork();
@@ -379,7 +389,7 @@ std::pair<int, json::object> driver_child(
       ::_exit(91);
     }
     ::setenv("CMDATL_CONFIG", fixture.config().c_str(), 1);
-    ::execl(driver.c_str(), driver.c_str(), "run.id=r0123456789ab", "replay.market=kr", static_cast<char*>(nullptr));
+    ::execv(driver.c_str(), argv.data());
     ::_exit(92);
   }
   int status = 0;
@@ -1057,6 +1067,59 @@ TEST_CASE("a run on a broker folder's account reads its own login, bound to the 
   CHECK(code() == "config.invalid");
 }
 
+TEST_CASE("a run on a broker folder's account checks the operator file's options against broker.toml first") {
+  const BrokerFolders project;
+  const auto acme = project.folder(
+    "acme",
+    BROKER_TOML + "[[options]]\nname = \"exchange\"\ntype = \"string\"\nrequired = true\nchoices = [\"KO\"]\n" +
+      "[[options]]\nname = \"lot\"\ntype = \"integer\"\nrequired = false\n"
+  );
+  PaperFixture fixture;
+  // [account.options] on line 5 of the operator's file and its keys from 6, `adapter` on line 3.
+  const auto with = [&](const std::string& lines) {
+    auto text = folder_config("acme", "", acme.string());
+    return text.replace(text.find("\n[limits]"), 0, "[account.options]\n" + lines);
+  };
+  const auto refusal = [&](const std::string& lines, std::string& text) {
+    fixture.write_config(with(lines));
+    const auto snapshot = cmdatl::load_operator_config();
+    REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
+    const auto found = cmdatl::auth::lookup_broker(snapshot.config_->broker_, snapshot.config_->adapter_);
+    REQUIRE(found.folder_);
+    const auto refused = cmdatl::runs::account_options(*snapshot.config_, found, text);
+    return refused ? refused->body_.at("error").as_object() : json::object{};
+  };
+  std::string text;
+  CHECK(refusal("exchange = \"KO\"\nlot = 10\n", text).empty());
+  CHECK(text == R"({"exchange":"KO","lot":10})");
+  const std::vector<std::tuple<std::string, std::int64_t, std::string>> cases{
+    {"exchange = \"US\"\n", 6, "`account.options.exchange` is one of \"KO\" (broker.toml), not \"US\""},
+    {"exchange = \"KO\"\nlot = 1.5\n", 7, "`account.options.lot` is an integer (broker.toml), not 1.5E0"},
+    {"exchange = \"KO\"\nappKey = \"k\"\n", 7, "`account.options.appKey` is not an option"},
+    {"lot = 1\n", 3, "the broker folder acme needs account.options.exchange (required in its broker.toml)"},
+  };
+  for (const auto& [lines, line, says] : cases) {
+    INFO(lines);
+    const auto error = refusal(lines, text);
+    REQUIRE(!error.empty());
+    CHECK(error.at("code") == "config.invalid");
+    CHECK(error.at("file").as_string() == fixture.config().string());
+    CHECK(error.at("line").to_number<std::int64_t>() == line);
+    CHECK(std::string(error.at("message").as_string()).find(says) != std::string::npos);
+  }
+  // A folder declaring none takes none.
+  const auto plain = project.folder("plain", BROKER_TOML);
+  auto config = folder_config("plain", "", plain.string());
+  fixture.write_config(config.replace(config.find("\n[limits]"), 0, "[account.options]\nexchange = \"KO\"\n"));
+  const auto snapshot = cmdatl::load_operator_config();
+  REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
+  const auto refused = cmdatl::runs::account_options(
+    *snapshot.config_, cmdatl::auth::lookup_broker("plain", snapshot.config_->adapter_), text
+  );
+  REQUIRE(refused);
+  CHECK(json::serialize(refused->body_).find("it declares none") != std::string::npos);
+}
+
 TEST_CASE("the account and order commands refuse a KIS account, and the reply names it kis-demo") {
   PaperFixture fixture;
   fixture.write_config(kis_config());
@@ -1158,6 +1221,12 @@ TEST_CASE("a broker folder's run checks the login the adapter connects with agai
   fixture.write_config(folder_config("mockbroker", "acct-2"));
   CHECK(identify_child(fixture, R"({"account":"acct-1"})", number).at("error").at("code") == "auth.account_mismatch");
   CHECK(identify_child(fixture, R"({"account":"acct-2"})", number).empty());
+
+  // The operator file's options reach connect: this adapter takes its account from an option.
+  auto text = folder_config("mockbroker");
+  fixture.write_config(text.replace(text.find("\n[limits]"), 0, "[account.options]\naccount = \"acct-9\"\n"));
+  CHECK(identify_child(fixture, R"({"account":"acct-1"})", number).empty());
+  CHECK(number == "acct-9");
 }
 
 TEST_CASE("a broker folder's run shows none of the adapter's error text") {
@@ -1247,6 +1316,37 @@ TEST_CASE("a broker folder's driver refuses a client that states none of what a 
   std::tie(exit, reply) = driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"SECRET-TOKEN-123"})");
   CHECK(reply.at("error").at("code") == "auth.account_mismatch");
   CHECK(json::serialize(reply).find("SECRET-TOKEN-123") == std::string::npos);
+}
+
+TEST_CASE("a broker folder's driver connects only with the options cmdatl run checked, read again from the file") {
+  PaperFixture fixture;
+  fixture.arm();
+  auto text = folder_config("mockbroker");
+  fixture.write_config(text.replace(text.find("\n[limits]"), 0, "[account.options]\naccount = \"acct-9\"\n"));
+  // The file changed after the check (other options, or options where none were checked): refused before connect,
+  // which would have answered auth.account_mismatch for this login.
+  for (
+    const auto& given :
+    std::vector<std::vector<std::string>>{{}, {"run.options={\"account\":\"acct-8\"}"}, {"run.options={}"}}
+  ) {
+    const auto [exit, reply] = driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"x"})", given);
+    CHECK(exit == 1);
+    CHECK(reply.at("error").at("code") == "config.invalid");
+    CHECK(std::string(reply.at("error").at("message").as_string()).find("[account.options]") != std::string::npos);
+  }
+  // The same options: the adapter is reached (with no market in this process, connect throws).
+  auto [exit, reply] =
+    driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"x"})", {"run.options={\"account\":\"acct-9\"}"});
+  CHECK(reply.at("error").at("code") == "auth.account_mismatch");
+  // Options checked where the file now has none.
+  fixture.write_config(folder_config("mockbroker"));
+  std::tie(exit, reply) =
+    driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"x"})", {"run.options={\"account\":\"acct-9\"}"});
+  CHECK(reply.at("error").at("code") == "config.invalid");
+  // Given twice: a usage error.
+  std::tie(exit, reply) =
+    driver_child(fixture, CMDATL_DRIVER_MOCKBROKER, R"({"fail":"x"})", {"run.options={}", "run.options={}"});
+  CHECK(reply.at("error").at("code") == "usage.bad_value");
 }
 
 TEST_CASE("a read before the start waits as each refusal asks and notes the wait first") {

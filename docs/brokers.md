@@ -24,7 +24,7 @@ name = "api_token" # the key in the stored login
 prompt = "API token: "
 secret = true # asked without echo, never shown
 [[options]]
-name = "exchange" # the option's name
+name = "exchange" # the key in [account.options]
 type = "string" # string, integer, number or boolean
 required = true # a run that leaves it out is refused
 choices = ["US", "KO"] # optional, for a string or an integer
@@ -40,7 +40,8 @@ struct Connection {
   std::string account_id_; // the account the login drives, stable and never a credential (empty for a vendor)
   bool demo_{false};
 };
-Connection connect(const std::string& login); // the stored login's JSON; throws on one it cannot use
+// The stored login's JSON, and the options' (a JSON object); throws on what it cannot use.
+Connection connect(const std::string& login, const std::string& options);
 }
 ```
 
@@ -76,10 +77,33 @@ cmdatl strategy backtest daily.toml
 
 ## Options
 
-What an adapter would otherwise decide itself (an exchange, a currency, a symbol table) is an option; the adapter declares each one in `broker.toml`.
+What an adapter would otherwise decide itself (an exchange, a currency, a symbol table) is an option, given in the TOML; the adapter declares each one in `broker.toml`.
 
 - `[[options]]` declares one option: `name` (a letter or `_`, then letters, digits or `_`), `type` (`string`, `integer`, `number` or `boolean`), `required` (`true` or `false`, always written), and optionally `choices` (for a string or an integer, the values it may take).
   An adapter declares at most 32 options, and none named as one of the login's `[[fields]]`: a credential is never an option.
+- A run on a folder's account gives them in the operator's file, `[account.options]`; they have no command-line form, as the rest of the operator's file has none.
+- There are no defaults: a value the adapter needs is written in the TOML, or the run is refused.
+- cmdatl checks the values against the declarations before anything is built, without running the adapter: an option not declared (also when none is), a value of another type, a value outside its choices, a required option left out, a table or an array in place of a value.
+  Each is refused at its file and line (`config.invalid`, exit 1).
+  An options table beside a built-in broker is refused too.
+- The adapter receives the values as a JSON object's text, keys sorted: a string, an integer kept whole (never rounded through a double), a number (an integer when written as one), `true` or `false`; `{}` when none is given.
+- Options are settings, not secrets: they may appear in the driver's arguments, as other settings do.
+- Options are the run's data, not its build: changing one compiles nothing.
+- A run's driver reads the operator's file again and connects only with the options `cmdatl run` checked; a file changed in between is refused before anything is read or sent.
+
+An adapter reads its options as it reads the login:
+
+```cpp
+inline Connection connect(const std::string& login, const std::string& options) {
+  const auto given = boost::json::parse(options).as_object();
+  Connection connection;
+  connection.client_ = std::make_shared<Client>();
+  connection.client_->token_ = std::string(boost::json::parse(login).as_object().at("api_token").as_string());
+  // Required in broker.toml, so always given, and one of its choices.
+  connection.client_->exchange_ = std::string(given.at("exchange").as_string());
+  return connection;
+}
+```
 
 ## The login and its folder
 

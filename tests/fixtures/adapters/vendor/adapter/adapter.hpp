@@ -141,11 +141,11 @@ struct Connection {
 };
 
 /**
- * @brief Connects with the stored login, `{"api_token": ...}`.
+ * @brief Connects with the stored login, `{"api_token": ...}`; it takes no option.
  * @param login The login.
  * @return The connection.
  */
-inline Connection connect(const std::string& login) {
+inline Connection connect(const std::string& login, const std::string&) {
   Connection connection;
   connection.client_ = std::make_shared<Client>();
   connection.client_->token_ = std::string(boost::json::parse(login).as_object().at("api_token").as_string());

@@ -11,6 +11,7 @@
 #include "../account/operator.hpp"
 #include "../auth/login.hpp"
 #include "../core/errors.hpp"
+#include "../core/options.hpp"
 #include "../core/reply.hpp"
 #include "../core/runs.hpp"
 #include "../core/table.hpp"
@@ -33,6 +34,7 @@
 #include <iostream>
 #include <optional>
 #include <regex>
+#include <set>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -211,6 +213,49 @@ inline std::optional<Reply> read_run_logins(
 }
 
 /**
+ * @brief Checks the operator file's `[account.options]` against the broker folder's declarations, before anything is
+ *   read or built: each option declared, of its type and among its choices, and every required one given.
+ * @param config The operator's file.
+ * @param found The broker, found once from the operator's file.
+ * @param text Set to the options as the driver connects with them, a JSON object's text (`{}` for none).
+ * @return The refusal (`config.invalid`, with the file, line and column), or nothing.
+ */
+inline std::optional<Reply> account_options(
+  const OperatorConfig& config, const auth::BrokerLookup& found, std::string& text
+) {
+  text = options::text_of(config.options_);
+  if (!found.folder_) {
+    return std::nullopt;
+  }
+  const auto refused = [&config](const std::string& message, const toml::source_position& at) {
+    ConfigSnapshot snapshot;
+    snapshot.state_ = ConfigSnapshot::State::INVALID;
+    snapshot.path_ = config.path_;
+    snapshot.error_ = {"config.invalid", "the operator's file " + config.path_ + ": " + message, at.line, at.column};
+    return config_reply(snapshot);
+  };
+  const auto& declared = found.folder_->options_;
+  std::set<std::string> names;
+  for (const auto& given : config.options_) {
+    names.insert(given.name_);
+    if (const auto problem = options::check(declared, "account.options." + given.name_, given.name_, given.value_)) {
+      return refused(*problem, given.at_);
+    }
+  }
+  const auto absent = options::missing(declared, names);
+  if (!absent.empty() || text.size() > options::MAX_TEXT) {
+    return refused(
+      absent.empty() ?
+        "account.options make more than " + std::to_string(options::MAX_TEXT) + " bytes of JSON" :
+        "the broker folder " + config.broker_ + " needs account.options." + absent.front() +
+          " (required in its broker.toml)",
+      config.adapter_at_
+    );
+  }
+  return std::nullopt;
+}
+
+/**
  * @brief `run TARGET [KEY=VALUE]...`; see the file comment. Returns only when the driver could not be started.
  * @param invocation The arguments.
  * @param snapshot The operator's file, read and `OK`.
@@ -329,8 +374,12 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     // The broker found once: a broker folder's login is checked against the files that are compiled.
     std::vector<std::string> logins;
     auth::BrokerLookup found;
+    std::string options_text;
     if (broker) {
       found = auth::lookup_broker(config.broker_, config.adapter_);
+      if (auto refused = account_options(config, found, options_text)) {
+        return std::move(*refused);
+      }
       const auto store = auth::open_store(auth::interaction_allowed(0));
       if (auto refused = read_run_logins(config, found, store.get(), logins)) {
         return std::move(*refused);
@@ -374,6 +423,10 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     }
     const auto driver = (dir / "driver").string();
     std::vector<std::string> argv_owned{driver, "run.id=" + *id};
+    if (broker) {
+      // The options checked here: the driver reads the operator's file again and connects only with these.
+      argv_owned.push_back("run.options=" + options_text);
+    }
     argv_owned.insert(argv_owned.end(), args.begin(), args.end());
     std::vector<std::string> envp_owned;
     for (auto& entry : build::own_environment()) {

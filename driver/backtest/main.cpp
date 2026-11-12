@@ -33,8 +33,8 @@ int main(int argc, char** argv) {
   const auto login = documents ? std::optional<std::string>(documents->front()) : std::nullopt;
   return cmdatl::replay::fetch_main<Program>(
     argc, argv, program_fills,
-    [](const std::string& document) {
-      return cmdatl_adapter::connect(document);
+    [](const std::string& document, const std::string& options) {
+      return cmdatl_adapter::connect(document, options);
     },
     login
   );

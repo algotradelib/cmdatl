@@ -142,11 +142,13 @@ struct RunArgs {
   std::string id_;
   /** @brief The replay's `key=value` arguments, in order. */
   std::vector<std::string> atlc_;
+  /** @brief A broker folder's options as `cmdatl run` checked them (`run.options`), a JSON object's text. */
+  std::string options_{"{}"};
 };
 
 /**
- * @brief Reads the command line: `run.id=ID` exactly once, then the replay's arguments; a `paper.*` key, another `run.*`
- *   key, a missing id, or an argument without `=` is refused.
+ * @brief Reads the command line: `run.id=ID` exactly once, `run.options=JSON` at most once, then the replay's
+ *   arguments; a `paper.*` key, another `run.*` key, a missing id, or an argument without `=` is refused.
  * @param argc The count.
  * @param argv The arguments.
  * @param args Set to what was read.
@@ -154,6 +156,7 @@ struct RunArgs {
  */
 inline std::optional<std::string> read_args(int argc, char** argv, RunArgs& args) {
   bool id_seen = false;
+  bool options_seen = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     const auto eq = arg.find('=');
@@ -171,8 +174,11 @@ inline std::optional<std::string> read_args(int argc, char** argv, RunArgs& args
       }
       id_seen = true;
       args.id_ = value;
+    } else if (key == "run.options" && !options_seen) {
+      options_seen = true;
+      args.options_ = value;
     } else if (key.rfind("run.", 0) == 0) {
-      return "the only run.* key is run.id (" + key + ")";
+      return "the run.* keys are run.id and run.options, each once (" + key + ")";
     } else {
       args.atlc_.push_back(arg);
     }

@@ -140,6 +140,17 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"an empty number", with("broker = \"mock\"\nnumber = \"\"\n", "", ""), "config.invalid", 3},
     {"no number", with("broker = \"mock\"\n", "", ""), "config.invalid", 0},
     {"an unknown key in [account]", with(ConfigParts{}.account_ + "nummber = \"x\"\n", "", ""), "config.invalid", 4},
+    {"options beside the mock broker", with(ConfigParts{}.account_ + "options = { x = 1 }\n", "", ""), "config.invalid",
+      4},
+    {"options beside KIS", with("broker = \"kis\"\noptions = { x = 1 }\n", "", ""), "config.invalid", 3},
+    {"a folder's options not a table", with("broker = \"acme\"\nadapter = \"a\"\noptions = 5\n", "", ""),
+      "config.invalid", 4},
+    {"a folder's option a table", with("broker = \"acme\"\nadapter = \"a\"\noptions = { x = { y = 1 } }\n", "", ""),
+      "config.invalid", 4},
+    {"a folder's option an array", with("broker = \"acme\"\nadapter = \"a\"\noptions = { x = [1] }\n", "", ""),
+      "config.invalid", 4},
+    {"a folder's option a date", with("broker = \"acme\"\nadapter = \"a\"\noptions = { x = 2024-01-02 }\n", "", ""),
+      "config.invalid", 4},
     {"no symbols", with("", limits_with("symbols", ""), ""), "config.invalid", 0},
     {"symbols not an array", with("", limits_with("symbols", "symbols = \"005930\""), ""), "config.invalid", 6},
     {"no symbol", with("", limits_with("symbols", "symbols = []"), ""), "config.invalid", 6},
@@ -301,6 +312,30 @@ TEST_CASE("a valid operator's file: defaults filled, paths beside it, the armed 
   CHECK(snapshot.config_->limits_.position_.at("005930") == 100000000);
   CHECK(snapshot.config_->paper_.bars_ == "/abs/bars.csv");
   CHECK(snapshot.config_->limits_.phases_.size() == 3);
+}
+
+TEST_CASE("a broker folder's options in the operator's file are kept as written, with their places") {
+  const PaperFixture fixture;
+  fixture.write_config(
+    "[account]\nbroker = \"acme\"\nadapter = \"adapters/acme\"\nenv = \"real\"\n[account.options]\n"
+    "exchange = \"KO\"\nhistory = 9007199254740993\nrate = 0.25\nlive = false\n\n[limits]\n" +
+    ConfigParts{}.limits_
+  );
+  const auto snapshot = cmdatl::load_operator_config();
+  REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
+  const auto& c = *snapshot.config_;
+  CHECK(c.adapter_at_.line == 3);
+  REQUIRE(c.options_.size() == 4);
+  CHECK(c.options_[1].name_ == "history");
+  CHECK(c.options_[1].at_.line == 7);
+  CHECK(
+    cmdatl::options::text_of(c.options_) == R"({"exchange":"KO","history":9007199254740993,"live":false,"rate":2.5E-1})"
+  );
+  // None given: an empty object.
+  fixture.write_config("[account]\nbroker = \"acme\"\nadapter = \"a\"\n\n[limits]\n" + ConfigParts{}.limits_);
+  const auto bare = cmdatl::load_operator_config();
+  REQUIRE(bare.state_ == cmdatl::ConfigSnapshot::State::OK);
+  CHECK(cmdatl::options::text_of(bare.config_->options_) == "{}");
 }
 
 TEST_CASE("CMDATL_CONFIG unset, empty, missing, a directory, a FIFO, a dangling link, too large") {

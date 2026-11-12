@@ -5,7 +5,9 @@
 //
 // The adapter's contract, in namespace `cmdatl_adapter`:
 // - `using Client = ...;`: a blocking client with `algotradelib::BrokerTraits<Client>`;
-// - `connect(const std::string& login)`: from the stored login (JSON text), an object with
+// - `connect(const std::string& login, const std::string& options)`: from the stored login (JSON text) and the options
+//   the operator's file gives (`[account.options]`, checked against `broker.toml`'s declarations; a JSON object's text),
+//   an object with
 //   `std::shared_ptr<Client> client_`, `BrokerTraits<Client>::Account account_`, `std::string account_id_` (the account
 //   the login drives: stable, never a credential) and `bool demo_`; it owns what the client borrows, for the whole run,
 //   and throws on a login it cannot use.
@@ -148,7 +150,9 @@ public:
   /** @brief Its capabilities. */
   using Caps = atl::BrokerCaps<Client>;
   /** @brief What `connect` returns. */
-  using Connection = std::decay_t<decltype(cmdatl_adapter::connect(std::declval<const std::string&>()))>;
+  using Connection = std::decay_t<decltype(cmdatl_adapter::connect(
+    std::declval<const std::string&>(), std::declval<const std::string&>()
+  ))>;
 
   static_assert(
     atl::BrokerTraits<Client>::blocking, "a broker folder's Client must be blocking (BrokerTraits<Client>::blocking)"
@@ -244,7 +248,7 @@ public:
       );
     }
     try {
-      connection_.emplace(cmdatl_adapter::connect(documents[0]));
+      connection_.emplace(cmdatl_adapter::connect(documents[0], options::text_of(config.options_)));
     } catch (...) {
       // The adapter's text is not cmdatl's: it could quote the login.
       return run_error(
