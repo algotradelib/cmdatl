@@ -37,6 +37,10 @@ The spec is TOML: `[bars]` (the file and its columns), `[instruments]` (the symb
 On the command line, a `KEY=VALUE` word with a dotted key is a setting for this call and wins over the spec's: `params.lookback=30`, `replay.cash=1e8`, `instruments.stock=005930` (a string, as typed).
 Give a program (`NAME.atls`), a spec, or both, with the settings in any order; a spec given with a program applies to it (one spec can serve several programs) and names no other with `strategy`.
 
+A program may declare functions and indicators with `extern` (`cmdatl strategy reference functions-and-indicators`): their bodies are C++ in a header the spec names with `header`, relative to the spec.
+That header is native code in the process that trades: never write a C++ header or name one in a spec yourself; the operator provides it.
+Without it the build fails (`build.failed`), and the message names what to define: report that to the operator.
+
 ## Backtests
 
 `cmdatl strategy backtest NAME.toml params.lookback=30` builds the program once (later backtests of an unchanged program build nothing) and replays it.
