@@ -11,6 +11,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -365,6 +366,67 @@ TEST_CASE("broker.toml is read strictly, each refusal at its line") {
   CHECK_FALSE(auth::read_broker_toml("x", BROKER_TOML, broker));
   CHECK(broker.entry_.fields_.size() == 3);
   CHECK(broker.entry_.fields_[2].default_ == std::optional<std::string>("kr"));
+}
+
+TEST_CASE("broker.toml declares its adapter's options strictly, each refusal at its line, never a login's field") {
+  // The display on line 1, the field on 2-4, [[options]] on 5 and its keys from 6.
+  const std::string head = "display = \"x\"\n[[fields]]\nname = \"api_token\"\nprompt = \"T: \"\n[[options]]\n";
+  const std::string good = "name = \"exchange\"\ntype = \"string\"\nrequired = true\n";
+  const std::vector<std::tuple<const char*, std::string, std::string, std::string>> cases{
+    {"options not tables", "display = \"x\"\noptions = [1]\n[[fields]]\nname = \"k\"\nprompt = \"K\"\n",
+      "2:", "[[options]] tables"},
+    {"an unknown key", head + good + "default = \"US\"\n", "9:", "has no key default"},
+    {"no name", head + "type = \"string\"\nrequired = true\n", "5:", "options.name"},
+    {"a name with a dot", head + "name = \"a.b\"\ntype = \"string\"\nrequired = true\n", "6:", "options.name"},
+    {"a login's field", head + "name = \"api_token\"\ntype = \"string\"\nrequired = true\n",
+      "6:", "a credential is never an option"},
+    {"a name twice", head + good + "[[options]]\n" + good, "10:", "given twice"},
+    {"an unknown type", head + "name = \"e\"\ntype = \"date\"\nrequired = true\n", "7:", "options.type"},
+    {"no required", head + "name = \"e\"\ntype = \"string\"\n", "5:", "options.required must be written"},
+    {"required not a boolean", head + "name = \"e\"\ntype = \"string\"\nrequired = \"yes\"\n",
+      "8:", "options.required"},
+    {"choices of a number", head + "name = \"e\"\ntype = \"number\"\nrequired = true\nchoices = [1]\n",
+      "9:", "for a string or an integer"},
+    {"choices of a boolean", head + "name = \"e\"\ntype = \"boolean\"\nrequired = true\nchoices = [true]\n",
+      "9:", "for a string or an integer"},
+    {"no choice", head + good + "choices = []\n", "9:", "options.choices"},
+    {"a choice of another type", head + good + "choices = [\"US\", 1]\n", "9:", "are a string"},
+  };
+  for (const auto& [what, toml, line, says] : cases) {
+    INFO(what);
+    auth::UserBroker broker;
+    const auto problem = auth::read_broker_toml("x", toml, broker);
+    REQUIRE(problem);
+    INFO(*problem);
+    CHECK(problem->rfind(line, 0) == 0);
+    CHECK(problem->find(says) != std::string::npos);
+  }
+  std::string many = "display = \"x\"\n[[fields]]\nname = \"k\"\nprompt = \"P\"\n";
+  for (std::size_t k = 0; k <= cmdatl::options::MAX_OPTIONS; ++k) {
+    many += "[[options]]\nname = \"o" + std::to_string(k) + "\"\ntype = \"string\"\nrequired = false\n";
+  }
+  auth::UserBroker broker;
+  CHECK(auth::read_broker_toml("x", many, broker));
+  // Each type, optional or required, choices for a string and an integer.
+  REQUIRE_FALSE(
+    auth::read_broker_toml(
+      "x",
+      head + good + "choices = [\"US\", \"KO\"]\n[[options]]\nname = \"lot\"\ntype = \"integer\"\nrequired = false\n" +
+        "choices = [1, 10]\n[[options]]\nname = \"rate\"\ntype = \"number\"\nrequired = false\n" +
+        "[[options]]\nname = \"live\"\ntype = \"boolean\"\nrequired = false\n",
+      broker
+    )
+  );
+  REQUIRE(broker.options_.size() == 4);
+  CHECK(broker.options_[0].required_);
+  CHECK(broker.options_[0].choices_ == std::vector<json::value>{"US", "KO"});
+  CHECK(broker.options_[1].type_ == cmdatl::options::Type::INTEGER);
+  CHECK(broker.options_[1].choices_ == std::vector<json::value>{1, 10});
+  CHECK(broker.options_[2].type_ == cmdatl::options::Type::NUMBER);
+  CHECK_FALSE(broker.options_[3].required_);
+  // A folder without [[options]] declares none.
+  REQUIRE_FALSE(auth::read_broker_toml("x", BROKER_TOML, broker));
+  CHECK(broker.options_.empty());
 }
 
 TEST_CASE("auth login binds a broker folder's login to the folder, stores it unchecked, and shows none of its fields") {

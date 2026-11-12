@@ -4,12 +4,13 @@
 // submodule of one), named by its path: `bars.adapter` in a run spec, `account.adapter` in the operator's file,
 // `--adapter` for `auth login`.
 //
-// The folder holds `broker.toml` (what `auth login` asks) and `adapter.hpp` (the C++ a run's or a backtest's driver
-// compiles). It is native code: the checks here keep other users from replacing it (every file and directory in it
+// The folder holds `broker.toml` (what `auth login` asks, and the options its adapter takes) and `adapter.hpp` (the C++
+// a run's or a backtest's driver compiles). It is native code: the checks here keep other users from replacing it (every file and directory in it
 // owned by the user and not writable by group or others, no link; every directory on the way to it owned by the user
 // or root, and not writable by others unless its sticky bit is set), they do not confine it. A built-in name cannot be
 // taken.
 
+#include "../core/options.hpp"
 #include "../core/reply.hpp"
 #include "../core/runs.hpp"
 #include "../core/toml.hpp"
@@ -85,6 +86,8 @@ struct UserBroker {
   bool data_only_{false};
   /** @brief Its files, read once with `broker.toml`: the bytes checked are the bytes compiled. */
   AdapterSnapshot snapshot_;
+  /** @brief The options its adapter takes (`[[options]]`). */
+  std::vector<options::Declared> options_;
 };
 
 /** @brief A broker found by name and, for a broker folder, its path. */
@@ -323,8 +326,8 @@ inline bool printable(const std::string& text) {
 }
 
 /**
- * @brief Reads a folder's `broker.toml` into an entry, strictly: an unknown key, a wrong type, an empty or
- *   unprintable string, or a rule broken is refused with its line and column.
+ * @brief Reads a folder's `broker.toml` into an entry and its options' declarations, strictly: an unknown key, a wrong
+ *   type, an empty or unprintable string, or a rule broken is refused with its line and column.
  * @param name The broker's name.
  * @param text The file's text.
  * @param out The broker read.
@@ -352,7 +355,7 @@ inline std::optional<std::string> read_broker_toml(const std::string& name, cons
     return std::to_string(error.source().begin.line) + ":" + std::to_string(error.source().begin.column) +
       ": not valid TOML: " + std::string(error.description());
   }
-  if (auto bad = config_detail::only_keys(root, "", {"display", "demo", "data_only", "fields"})) {
+  if (auto bad = config_detail::only_keys(root, "", {"display", "demo", "data_only", "fields", "options"})) {
     return at(*bad);
   }
   const auto text_of =
@@ -424,12 +427,7 @@ inline std::optional<std::string> read_broker_toml(const std::string& name, cons
       return at(*bad);
     }
     const auto& key = *value;
-    const bool identifier = key.size() <= 64 &&
-      ((key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= 'a' && key[0] <= 'z') || key[0] == '_') &&
-      std::all_of(key.begin(), key.end(), [](char c) {
-        return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
-      });
-    if (!identifier || key == "demo") {
+    if (!options::identifier(key) || key == "demo") {
       return at(refuse(
         field->get("name")->source(),
         "fields.name must be a letter or '_', then letters, digits or '_' (64 at most), "
@@ -457,6 +455,9 @@ inline std::optional<std::string> read_broker_toml(const std::string& name, cons
     }
     out.default_ = value;
     broker.entry_.fields_.push_back(std::move(out));
+  }
+  if (auto bad = options::read_declared(root, seen, broker.options_)) {
+    return at(*bad);
   }
   out = std::move(broker);
   return std::nullopt;

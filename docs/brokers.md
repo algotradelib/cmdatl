@@ -2,7 +2,7 @@
 
 A broker or data vendor cmdatl was not built for is a broker folder, kept where you like: in your project beside your strategies, or in a git submodule of it.
 You name the folder by its path: `bars.adapter` in a run spec, `account.adapter` in the operator's file, and `--adapter` for `auth login`.
-The folder holds `broker.toml`, what `auth login` asks, and `adapter.hpp`, an algotradelib broker adapter cmdatl compiles into a run's or a backtest's driver, with the headers it includes by a relative path inside the folder.
+The folder holds `broker.toml`, what `auth login` asks and which options the adapter takes, and `adapter.hpp`, an algotradelib broker adapter cmdatl compiles into a run's or a backtest's driver, with the headers it includes by a relative path inside the folder.
 
 ```text
 my-project/
@@ -23,6 +23,11 @@ demo = false # whether it has a demo environment
 name = "api_token" # the key in the stored login
 prompt = "API token: "
 secret = true # asked without echo, never shown
+[[options]]
+name = "exchange" # the option's name
+type = "string" # string, integer, number or boolean
+required = true # a run that leaves it out is refused
+choices = ["US", "KO"] # optional, for a string or an integer
 ```
 
 ```cpp
@@ -68,6 +73,13 @@ cmdatl strategy backtest daily.toml
   A client that does not state a trading calendar, a working-order listing and reference data (`BrokerTraits`) is refused before anything is read.
   As on a KIS account, a run trades KRX shares (`replay.market = "kr"`), and no account run polls price bands.
 - The built-in names (`mock`, `paper`, `kis`, `kiwoom`, `toss`, `csv`, `wide`, `store`) cannot be taken, and a built-in broker takes no `adapter`.
+
+## Options
+
+What an adapter would otherwise decide itself (an exchange, a currency, a symbol table) is an option; the adapter declares each one in `broker.toml`.
+
+- `[[options]]` declares one option: `name` (a letter or `_`, then letters, digits or `_`), `type` (`string`, `integer`, `number` or `boolean`), `required` (`true` or `false`, always written), and optionally `choices` (for a string or an integer, the values it may take).
+  An adapter declares at most 32 options, and none named as one of the login's `[[fields]]`: a credential is never an option.
 
 ## The login and its folder
 
