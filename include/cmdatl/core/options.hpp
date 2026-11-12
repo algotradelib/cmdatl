@@ -69,21 +69,13 @@ struct Given {
 /** @brief Each type's name in `broker.toml`. */
 inline constexpr const char* TYPE_NAMES[] = {"string", "integer", "number", "boolean"};
 
-/**
- * @brief An option's type for a message.
- * @param type The type.
- * @return `a string`, `an integer`, `a number` or `true or false`.
- */
+/** @brief An option's type for a message. @param type The type. @return `a string`, `an integer`, ... */
 inline std::string type_text(Type type) {
   static const char* const words[] = {"a string", "an integer", "a number", "true or false"};
   return words[static_cast<int>(type)];
 }
 
-/**
- * @brief Whether a name is an identifier: a letter or `_`, then letters, digits or `_`, 64 at most.
- * @param key The name.
- * @return Whether it is.
- */
+/** @brief Whether a name is a letter or `_`, then letters, digits or `_`, 64 at most. @param key It. @return Whether. */
 inline bool identifier(const std::string& key) {
   const auto letter = [](char c) {
     return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
@@ -94,10 +86,8 @@ inline bool identifier(const std::string& key) {
 }
 
 /**
- * @brief A value as the adapter receives it, from a TOML node: a string, an integer, a float or a boolean.
- * @param node The node.
- * @param out Set to the value.
- * @return Whether the node is one of those.
+ * @brief A value as the adapter receives it, from a TOML node: a string, an integer, a finite float or a boolean.
+ * @param node The node. @param out Set to the value. @return Whether the node is one of those.
  */
 inline bool from_node(const toml::node& node, json::value& out) {
   if (const auto* s = node.as_string()) {
@@ -116,8 +106,7 @@ inline bool from_node(const toml::node& node, json::value& out) {
 
 /**
  * @brief An integer's text as a whole number: an optional `-`, then digits with no leading zero, within 64 bits.
- * @param text The text.
- * @return The number, or nothing.
+ * @param text The text. @return The number, or nothing.
  */
 inline std::optional<std::int64_t> integer_of(const std::string& text) {
   const auto digits = text.size() > 0 && text[0] == '-' ? text.substr(1) : text;
@@ -135,48 +124,54 @@ inline std::optional<std::int64_t> integer_of(const std::string& text) {
 
 /**
  * @brief A command-line word typed by its option's declaration: a string as it is, an integer by integer syntax, a
- *   number by a decimal's, a boolean `true` or `false`.
- * @param declared The declaration.
- * @param word The word.
- * @param out Set to the value.
- * @return Whether the word is of that type.
+ *   number by integer or decimal syntax (an integer stays one), a boolean `true` or `false`.
+ * @param declared The declaration. @param word The word. @param out Set to the value. @return Whether it is of that type.
  */
 inline bool from_word(const Declared& declared, const std::string& word, json::value& out) {
-  const auto integer = integer_of(word);
-  // A decimal's characters only: strtod alone would read `inf`, `nan` and hexadecimal.
-  char* end = nullptr;
-  const bool decimal = !word.empty() && word.find_first_not_of("0123456789+-.eE") == std::string::npos &&
-    std::isfinite(std::strtod(word.c_str(), &end)) && end == word.c_str() + word.size();
   if (declared.type_ == Type::STRING) {
     out.emplace_string() = word;
-  } else if ((declared.type_ == Type::INTEGER || declared.type_ == Type::NUMBER) && integer) {
-    out = *integer;
-  } else if (declared.type_ == Type::NUMBER && decimal) {
-    out = std::strtod(word.c_str(), nullptr);
-  } else if (declared.type_ == Type::BOOLEAN && (word == "true" || word == "false")) {
+    return true;
+  }
+  if (declared.type_ == Type::BOOLEAN) {
     out = word == "true";
-  } else {
+    return word == "true" || word == "false";
+  }
+  if (const auto integer = integer_of(word)) {
+    out = *integer;
+    return true;
+  }
+  // A decimal's characters only: strtod alone would read `inf`, `nan` and hexadecimal.
+  char* end = nullptr;
+  const double value = std::strtod(word.c_str(), &end);
+  if (
+    declared.type_ != Type::NUMBER || word.empty() || word.find_first_not_of("0123456789+-.eE") != std::string::npos ||
+    end != word.c_str() + word.size() || !std::isfinite(value)
+  ) {
     return false;
   }
+  out = value;
   return true;
+}
+
+/** @brief An option's declaration. @param declared The declarations. @param name Its name. @return It, or null. */
+inline const Declared* find(const std::vector<Declared>& declared, const std::string& name) {
+  const auto found = std::find_if(declared.begin(), declared.end(), [&name](const Declared& d) {
+    return d.name_ == name;
+  });
+  return found == declared.end() ? nullptr : &*found;
 }
 
 /**
  * @brief Checks a value against the declarations: the option declared, its type (a number takes an integer too, an
  *   integer no float), its choices.
- * @param declared The declarations.
- * @param key The option's full name, for the message (`bars.options.NAME`).
- * @param name The option's name.
- * @param value The value.
- * @return What is wrong, or nothing.
+ * @param declared The declarations. @param key The option's full name, for the message (`bars.options.NAME`).
+ * @param name The option's name. @param value The value. @return What is wrong, or nothing.
  */
 inline std::optional<std::string> check(
   const std::vector<Declared>& declared, const std::string& key, const std::string& name, const json::value& value
 ) {
-  const auto found = std::find_if(declared.begin(), declared.end(), [&name](const Declared& d) {
-    return d.name_ == name;
-  });
-  if (found == declared.end()) {
+  const auto* found = find(declared, name);
+  if (found == nullptr) {
     std::string names;
     for (const auto& d : declared) {
       names += (names.empty() ? "" : ", ") + d.name_;
@@ -207,12 +202,7 @@ inline std::optional<std::string> check(
   return std::nullopt;
 }
 
-/**
- * @brief The required options a table leaves out.
- * @param declared The declarations.
- * @param given The names given.
- * @return Their names, in the declarations' order.
- */
+/** @brief The required options left out. @param declared The declarations. @param given The names given. @return Them. */
 inline std::vector<std::string> missing(const std::vector<Declared>& declared, const std::set<std::string>& given) {
   std::vector<std::string> out;
   for (const auto& d : declared) {
@@ -223,11 +213,8 @@ inline std::vector<std::string> missing(const std::vector<Declared>& declared, c
   return out;
 }
 
-/**
- * @brief The options as the adapter receives them: a JSON object's text, its keys sorted; `{}` for none.
- * @param values The names and values.
- * @return The text.
- */
+/** @brief The options as the adapter receives them: a JSON object's text, keys sorted, `{}` for none. @param values
+ * The names and values. @return The text. */
 inline std::string text_of(std::vector<std::pair<std::string, json::value>> values) {
   std::sort(values.begin(), values.end(), [](const auto& a, const auto& b) {
     return a.first < b.first;
@@ -239,11 +226,7 @@ inline std::string text_of(std::vector<std::pair<std::string, json::value>> valu
   return json::serialize(object);
 }
 
-/**
- * @brief The operator file's options as the adapter receives them.
- * @param given The values.
- * @return The text.
- */
+/** @brief The operator file's options as the adapter receives them. @param given The values. @return The text. */
 inline std::string text_of(const std::vector<Given>& given) {
   std::vector<std::pair<std::string, json::value>> values;
   for (const auto& g : given) {
@@ -256,9 +239,7 @@ inline std::string text_of(const std::vector<Given>& given) {
  * @brief Reads `broker.toml`'s `[[options]]`, strictly: each with `name` (an identifier, given once, and not one of the
  *   login's fields, so a credential is never an option), `type`, `required`, and optionally `choices` (for a string or
  *   an integer: values of that type).
- * @param root The parsed file.
- * @param fields The login's field names.
- * @param out Set to the declarations.
+ * @param root The parsed file. @param fields The login's `[[fields]]` names. @param out Set to the declarations.
  * @return The refusal, with its line and column, or nothing.
  */
 inline std::optional<config_detail::Refusal> read_declared(

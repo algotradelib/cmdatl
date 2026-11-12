@@ -1854,13 +1854,11 @@ inline std::vector<Error> fetch_options(
   for (const auto& e : resolved.fetch_options_) {
     const auto name = e.key_.substr(13);
     names.insert(name);
-    const auto found = std::find_if(declared.begin(), declared.end(), [&name](const options::Declared& d) {
-      return d.name_ == name;
-    });
+    const auto* found = options::find(declared, name);
     json::value value;
     const auto& v = e.value_;
     // A command-line word not of its declared type stays a string, which the check refuses.
-    if (!(e.origin_.command_line() && found != declared.end() && options::from_word(*found, v.text_, value))) {
+    if (!(e.origin_.command_line() && found != nullptr && options::from_word(*found, v.text_, value))) {
       if (v.type_ == Value::Type::STR) {
         value.emplace_string() = v.text_;
       } else if (v.type_ == Value::Type::BOOL) {
