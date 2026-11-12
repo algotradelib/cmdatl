@@ -32,7 +32,7 @@ namespace runner = algotradelib::runner;
 namespace {
 
 /** @brief The account's scope in the fixture. */
-const std::string SCOPE = "paper:paper:paper-0001";
+const std::string SCOPE = "mock:mock:paper-0001";
 
 /**
  * @brief A placement's journal line.
@@ -173,7 +173,7 @@ void initialize(const PaperFixture& fixture) {
 TEST_CASE("a fresh account is initialized under the lock: the state file's header and then the journal") {
   const PaperFixture fixture;
   const auto first = reply(fixture, {"status"});
-  CHECK(first.at("env").as_string() == "paper");
+  CHECK(first.at("env").as_string() == "mock");
   const auto log = slurp(fixture.log());
   CHECK(lines_of(log).size() == 1);
   CHECK(log.rfind("{\"mock_market\":1,\"semantics\":1,\"fingerprint\":\"", 0) == 0);
@@ -249,10 +249,10 @@ TEST_CASE(
   // The log removed or emptied beside a journal.
   spit(fixture.journal(), journal_text);
   std::filesystem::remove(fixture.log());
-  expect("unknown.paper_state", {"status"});
+  expect("unknown.mock_state", {"status"});
   CHECK(!std::filesystem::exists(fixture.log()));
   spit(fixture.log(), "");
-  expect("unknown.paper_state", {"status"});
+  expect("unknown.mock_state", {"status"});
   CHECK(slurp(fixture.log()).empty());
   // Restored, it opens again.
   spit(fixture.log(), log);
@@ -304,7 +304,7 @@ TEST_CASE("state files that are links or special files are refused before anythi
   spit(fixture.dir() / "elsewhere", log + "{\"op\":");
   std::filesystem::remove(fixture.log());
   std::filesystem::create_symlink(fixture.dir() / "elsewhere", fixture.log());
-  expect(4, "unknown.paper_state");
+  expect(4, "unknown.mock_state");
   CHECK(slurp(fixture.dir() / "elsewhere") == log + "{\"op\":");
   restore();
   // The journal a symbolic link.
@@ -325,7 +325,7 @@ TEST_CASE("state files that are links or special files are refused before anythi
     const Watchdog watchdog("FIFO state files", 30);
     std::filesystem::remove(fixture.log());
     REQUIRE(::mkfifo(fixture.log().c_str(), 0600) == 0);
-    expect(4, "unknown.paper_state");
+    expect(4, "unknown.mock_state");
     restore();
     std::filesystem::remove(fixture.journal());
     REQUIRE(::mkfifo(fixture.journal().c_str(), 0600) == 0);
@@ -335,7 +335,7 @@ TEST_CASE("state files that are links or special files are refused before anythi
     std::filesystem::remove(fixture.journal());
     std::filesystem::remove(fixture.log());
     REQUIRE(::mkfifo(fixture.log().c_str(), 0600) == 0);
-    expect(4, "unknown.paper_state");
+    expect(4, "unknown.mock_state");
     restore();
   }
   // The lock a second name of the owner record.
@@ -480,12 +480,12 @@ TEST_CASE("a journal that is not this account's, or damaged, makes every account
   const auto good = slurp(fixture.journal());
   const auto header = lines_of(good).front();
   auto foreign_entry = place_entry("f1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:00"));
-  foreign_entry.scope_ = "paper:paper:other";
+  foreign_entry.scope_ = "mock:mock:other";
   auto unscoped_entry = place_entry("u1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:00"));
   unscoped_entry.scope_.clear();
   const std::vector<std::pair<const char*, std::string>> damaged{
-    {"another account's", runner::journal_header_line("paper:paper:other") + "\n"},
-    {"a scope differing in case", runner::journal_header_line("PAPER:paper:paper-0001") + "\n"},
+    {"another account's", runner::journal_header_line("mock:mock:other") + "\n"},
+    {"a scope differing in case", runner::journal_header_line("MOCK:mock:paper-0001") + "\n"},
     {"no header", runner::journal_entry_to_line(unscoped_entry) + "\n"},
     {"a foreign entry beneath the right header", good + runner::journal_entry_to_line(foreign_entry) + "\n"},
     {"a damaged line under an understated count", good + "not a journal line\n"},
@@ -560,9 +560,9 @@ TEST_CASE("a journal not established writes no owner record and leaves the state
   REQUIRE(lines_of(placed).size() == 3);
   const auto good = slurp(fixture.journal());
   auto foreign_entry = place_entry("f1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:00"));
-  foreign_entry.scope_ = "paper:paper:other";
+  foreign_entry.scope_ = "mock:mock:other";
   const std::vector<std::pair<const char*, std::string>> journals{
-    {"a foreign header", runner::journal_header_line("paper:paper:other") + "\n"},
+    {"a foreign header", runner::journal_header_line("mock:mock:other") + "\n"},
     {"a foreign entry", good + runner::journal_entry_to_line(foreign_entry) + "\n"},
     {"a damaged line", good + "not a journal line\n"},
   };
@@ -801,7 +801,7 @@ TEST_CASE("the account commands' replies, in every format, with every declared f
   for (const auto& args : commands) {
     INFO(cmdatl::join(args));
     const auto body = reply(fixture, args);
-    CHECK(body.at("env").as_string() == "paper");
+    CHECK(body.at("env").as_string() == "mock");
     const auto& command = *table.resolve(args).command_;
     for (const auto& field : command.returns_) {
       INFO(field.first);
@@ -1015,7 +1015,7 @@ TEST_CASE("the lock: replaced after a holder took it, the holder's next write an
   const int status = other.wait(15);
   REQUIRE(WIFEXITED(status));
   CHECK(WEXITSTATUS(status) == 4);
-  CHECK(code_of(other.out()) == "unknown.paper_state");
+  CHECK(code_of(other.out()) == "unknown.mock_state");
   // The first holder's write refuses, appending nothing.
   const auto log = slurp(fixture.log());
   CHECK(!account.lock().still_at_path());
@@ -1364,7 +1364,7 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
   };
   CHECK(available == expected);
   CHECK(mutating == std::vector<std::string>{"clock advance", "order release"});
-  CHECK(cmdatl::SCHEMA_VERSION == 13);
+  CHECK(cmdatl::SCHEMA_VERSION == 14);
   CHECK(declares({"clock", "advance"}, 4, "unknown.internal"));
   CHECK(!declares({"clock"}, 4, "unknown.internal"));
   const auto entry = reply_of(run({"schema", "clock.advance"}).out_).at("commands").as_array()[0].as_object();

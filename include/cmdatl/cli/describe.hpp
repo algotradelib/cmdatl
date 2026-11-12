@@ -14,7 +14,7 @@
 namespace cmdatl {
 
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
-inline constexpr int SCHEMA_VERSION = 13;
+inline constexpr int SCHEMA_VERSION = 14;
 
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
@@ -54,8 +54,8 @@ inline const std::vector<std::string> ACCOUNT_ERRORS{
   "unknown.journal_missing",
   "unknown.journal_damaged",
   "journal.unopened",
-  "paper.data",
-  "unknown.paper_state",
+  "mock.data",
+  "unknown.mock_state",
   "file.unwritable",
 };
 

@@ -1,6 +1,6 @@
 ---
 name: cmdatl-agent
-description: How to trade through the cmdatl command line - on the paper account read positions, cash and the operator's limits, plan and place limit orders and confirm fills; handle refusals and exit codes; start and stop strategy runs, on the paper account or a KIS account. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
+description: How to trade through the cmdatl command line - on the mock account read positions, cash and the operator's limits, plan and place limit orders and confirm fills; handle refusals and exit codes; start and stop strategy runs, on the mock account or a KIS account. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
 ---
 
 # Trading with cmdatl
@@ -14,11 +14,11 @@ description: How to trade through the cmdatl command line - on the paper account
 
 ## The accounts
 
-The paper account and its runs' markets are simulated here: nothing they do reaches a broker, and `env` says `paper`.
+The mock account and its runs' markets are simulated here: nothing they do reaches a broker, and `env` says `mock`.
 On a KIS account (`kis-demo`, `kis-real`) a run's orders reach KIS; on any other `env`, stop and ask.
 
-- The paper account, read and traded by `status`, `account`, `quote`, `order ...` and `clock`; its clock moves by `cmdatl clock advance` and one simulated second per order command.
-- A paper run's market: each `cmdatl run` on paper builds a fresh one from the run spec's data, gone when the run ends; the paper account's commands never see it.
+- The mock account, read and traded by `status`, `account`, `quote`, `order ...` and `clock`; its clock moves by `cmdatl clock advance` and one simulated second per order command.
+- A mock run's market: each `cmdatl run` on mock builds a fresh one from the run spec's data, gone when the run ends; the mock account's commands never see it.
 - A KIS account (`cmdatl env` shows `account.broker`): only `cmdatl run` trades it, in real time during market hours; the account and order commands answer `unsupported.broker` there, so read the run's `heartbeat` events instead.
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
@@ -39,7 +39,7 @@ Broker logins are the operator's too: `cmdatl auth status` lists them, masked, a
 2. `cmdatl order place PLAN_ID`.
    A plan sends once and lapses after `limits.plan_ttl` simulated seconds or when anything moves (`refused.plan_used`, `refused.stale_plan`): plan again.
 3. The price: take `last_price` from the latest `cmdatl quote SYMBOL`, read after any `clock advance`.
-   On this paper market a buy limit at or a tick above it usually fills at the next advance, one below may wait (a sell the reverse); every order is a limit on the tick grid, inside the collar.
+   On this mock market a buy limit at or a tick above it usually fills at the next advance, one below may wait (a sell the reverse); every order is a limit on the tick grid, inside the collar.
    A fill is known only from a `filled` event or `cmdatl account`, never from the price.
    To reprice a resting order: `cmdatl order cancel SYMBOL`, then plan once `cmdatl order list` shows it gone; reprice at most once without asking, unless the task gives a price bound.
 4. `cmdatl clock advance --minutes N` lets the market move; fills arrive in `events`, with `commission` and `tax`.
@@ -64,7 +64,7 @@ Any other 3: follow `error.next` when it names a cmdatl read, a new plan or the 
 `error.retry: true` means the same call may succeed later unchanged, not that you should repeat it now.
 
 On 4, something may have happened that cmdatl cannot confirm; never repeat the command.
-`unknown.journal_missing`, `unknown.journal_damaged`, `unknown.paper_state` and `unknown.lock_lost`: stop and report to the operator, whatever the command.
+`unknown.journal_missing`, `unknown.journal_damaged`, `unknown.mock_state` and `unknown.lock_lost`: stop and report to the operator, whatever the command.
 Otherwise read first, then follow `error.next`, and stop and report when it names the operator:
 
 - after an order command: `cmdatl order reconcile SYMBOL` (it never places, so it is the one command to run after its own 4, once);
@@ -83,16 +83,16 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
   A run may sell every share of its symbols the account holds, including shares bought during the run.
 - To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies (exit 0, `stopped: signal`); never `kill -9` it.
 - The reply's `refused` counts refused orders; `outcome: refused_orders` means a limit or the market refused some: report it.
-- The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours on paper, and on a KIS account today's orders in the account's journal, from every run; several symbols get the smallest cap.
+- The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours on mock, and on a KIS account today's orders in the account's journal, from every run; several symbols get the smallest cap.
 - Exit 4: report the reply's `error`.
-  On paper its market ended with it; no account changed.
+  On mock its market ended with it; no account changed.
   On a KIS account an order may have gone out (`owed_at_end`: what the journal owes): the operator reads it in KIS's app; start nothing there.
 - Removing the armed file stops every run: the operator's lever, not yours.
 
 ## What the markets are
 
 Both simulated markets fill whole orders against stored daily bars.
-The paper account takes orders 08:30-15:30 KST on dates in its data; a run's market fills a limit when a later bar reaches it, as a backtest does.
+The mock account takes orders 08:30-15:30 KST on dates in its data; a run's market fills a limit when a later bar reaches it, as a backtest does.
 Neither is a broker's demo account or evidence of how one would answer.
 Money and quantities are decimal strings; `--fields a,b.c` keeps fields, `--value PATH` prints one (not for `run`).
 

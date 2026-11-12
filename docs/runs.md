@@ -7,7 +7,7 @@ cmdatl run dip.toml # builds the program once, then runs it in the foreground: e
 cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
 ```
 
-- A run's market is the library's mock broker, inside the run's own process: each run is a fresh market with its own journal, and nothing is shared with the [paper account](paper-account.md) or with another run.
+- A run's market is the library's mock broker, inside the run's own process: each run is a fresh market with its own journal, and nothing is shared with the [mock account](mock-account.md) or with another run.
   The agent commands do not see a run's orders, and a run's holdings at its end are a result, not an account anything can trade.
 - The run's settings describe the market, read exactly as `cmdatl strategy backtest` reads them: the bars, `[replay] cash`, the costs, the instruments.
   The operator's file describes what may be placed: `limits.symbols`, the position caps (a run with several symbols gets the smallest of their caps), `order_value`, `daily_orders` (per run, per 24 hours of market time), `order_type`, `collar` and `phases`; no setting loosens them.
@@ -32,7 +32,7 @@ cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
 
 ### Runs on a KIS account
 
-`cmdatl run` trades a KIS account when the operator's file names one; the account and order commands stay on the paper account.
+`cmdatl run` trades a KIS account when the operator's file names one; the account and order commands stay on the mock account.
 A demo account (모의투자) is the default, and the code is the same for a real one: only `env` differs.
 
 ```toml

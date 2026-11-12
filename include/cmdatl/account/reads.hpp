@@ -35,7 +35,7 @@ inline std::string owed_next(
   }
   if (status && *status == "pending") {
     return "still working: cmdatl order cancel " + symbol +
-      " withdraws it, or wait (cmdatl clock advance on paper); "
+      " withdraws it, or wait (cmdatl clock advance on the mock account); "
       "then cmdatl order reconcile " +
       symbol;
   }
@@ -173,7 +173,7 @@ template <typename Desk>
 json::array positions_json(Desk& desk, const std::optional<std::string>& only) {
   const auto holdings = desk.session().holdings();
   if (!holdings) {
-    throw std::runtime_error("the paper broker did not answer holdings: " + holdings.error().message_);
+    throw std::runtime_error("the mock broker did not answer holdings: " + holdings.error().message_);
   }
   json::array rows;
   for (const auto& p : holdings.value().positions_) {
@@ -202,7 +202,7 @@ template <typename Desk>
 std::string buying_power_text(Desk& desk) {
   const auto power = desk.session().buying_power(algotradelib::Currency::krw());
   if (!power) {
-    throw std::runtime_error("the paper broker did not answer buying power: " + power.error().message_);
+    throw std::runtime_error("the mock broker did not answer buying power: " + power.error().message_);
   }
   return power.value().cash_.amount_.str();
 }
@@ -247,7 +247,7 @@ template <typename Desk>
 json::array orders_json(Desk& desk) {
   const auto working = desk.session().working_orders();
   if (!working) {
-    throw std::runtime_error("the paper broker did not answer the order list: " + working.error().message_);
+    throw std::runtime_error("the mock broker did not answer the order list: " + working.error().message_);
   }
   json::array rows;
   for (const auto& w : working.value().orders_) {
@@ -375,11 +375,11 @@ Reply quote_reply(const Invocation& invocation, Account& account, Desk& desk, Ou
       auto reply = account.journal_damaged_reply();
       auto& error = reply.body_["error"].as_object();
       error["message"] =
-        std::string(error["message"].as_string()) + "; the paper market's bars have no rows for " + names;
+        std::string(error["message"].as_string()) + "; the mock market's bars have no rows for " + names;
       return reply;
     }
     return error_reply(
-      Exit::FAILED, "quote.no_data", "the paper market's bars have no rows for " + names,
+      Exit::FAILED, "quote.no_data", "the mock market's bars have no rows for " + names,
       "cmdatl env shows the bars file"
     );
   }
@@ -545,7 +545,7 @@ inline Reply advance_unknown(const std::string& what) {
 }
 
 /**
- * @brief `cmdatl clock advance`: moves the paper clock, matching resting orders on the way.
+ * @brief `cmdatl clock advance`: moves the mock clock, matching resting orders on the way.
  *
  * Refused before anything is recorded (nothing changed): a target not after now, past the data, a journal that is
  * not intact, a lost lock.
@@ -578,7 +578,7 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
     if (!next) {
       return error_reply(
         Exit::FAILED, "clock.past_data",
-        "no session after " + paper::kst_iso(from) + " in the paper market's data, which ends " + data_end_text(desk),
+        "no session after " + paper::kst_iso(from) + " in the mock market's data, which ends " + data_end_text(desk),
         "cmdatl clock shows where the data ends"
       );
     }
@@ -593,7 +593,7 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
   if (target > desk.clock_limit()) {
     return error_reply(
       Exit::FAILED, "clock.past_data",
-      "the paper market's data ends " + data_end_text(desk) + "; the clock goes at most a day past it",
+      "the mock market's data ends " + data_end_text(desk) + "; the clock goes at most a day past it",
       "cmdatl clock shows where the data ends"
     );
   }
@@ -611,7 +611,7 @@ Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, 
     case Moved::UNCONFIRMED:
       return advance_unknown("the advance was written to the account's state file but not flushed to disk");
     case Moved::HALTED:
-      return advance_unknown(desk.halted().value_or("the paper market halted"));
+      return advance_unknown(desk.halted().value_or("the mock market halted"));
   }
   // Committed: from here a failure leaves the outcome unknown, never a plain failure.
   try {

@@ -72,7 +72,7 @@ struct Limits {
   std::int64_t portfolio_age_{30};
 };
 
-/** @brief What the paper market is built from. */
+/** @brief What the mock market is built from. */
 struct PaperSettings {
   /** @brief The bars file, absolute. */
   std::string bars_;
@@ -96,15 +96,15 @@ struct OperatorConfig {
   std::string dir_;
   /** @brief The `atlc` key, absolute, or empty. */
   std::string atlc_;
-  /** @brief The broker: `paper` or `kis`. */
+  /** @brief The broker: `mock` or `kis`. */
   std::string broker_;
-  /** @brief The environment: `paper` for the paper broker, else `demo` or `real`. */
+  /** @brief The environment: `mock` for the mock broker, else `demo` or `real`. */
   std::string env_;
   /** @brief The account's number; empty for a KIS account whose login names it (the run fills it from the login). */
   std::string number_;
   /** @brief The limits. */
   Limits limits_;
-  /** @brief The paper market. */
+  /** @brief The mock market. */
   PaperSettings paper_;
 
   /**
@@ -267,7 +267,11 @@ inline bool kis_account_number(const std::string& text) {
  * @return The first refusal, or nothing.
  */
 inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& config) {
-  if (auto bad = only_keys(root, "", {"account", "atlc", "limits", "paper"})) {
+  if (const auto* node = root.get("paper")) {
+    // The account an earlier cmdatl called paper is the mock account.
+    return refuse(node->source(), "[paper] is now [mock]: the operator renames the table");
+  }
+  if (auto bad = only_keys(root, "", {"account", "atlc", "limits", "mock"})) {
     return bad;
   }
   std::optional<std::string> text;
@@ -290,37 +294,40 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   }
   const auto* broker = account->get("broker");
   if (broker == nullptr) {
-    return refuse(account->source(), "[account] needs broker = \"paper\"");
+    return refuse(account->source(), "[account] needs broker = \"mock\"");
   }
   if (broker->as_string() == nullptr) {
     return refuse(broker->source(), "account.broker must be a string, not " + type_name(*broker));
   }
   config.broker_ = broker->as_string()->get();
+  if (config.broker_ == "paper") {
+    return refuse(broker->source(), "broker = \"paper\" is now broker = \"mock\", with a [mock] table");
+  }
   if (config.broker_ == "kiwoom" || config.broker_ == "toss") {
     return refuse(
       broker->source(),
-      "the broker " + config.broker_ + " is not supported in this version; broker = \"kis\" or \"paper\" is",
+      "the broker " + config.broker_ + " is not supported in this version; broker = \"kis\" or \"mock\" is",
       "unsupported.broker"
     );
   }
-  if (config.broker_ != "paper" && config.broker_ != "kis" && !user_broker_name(config.broker_)) {
+  if (config.broker_ != "mock" && config.broker_ != "kis" && !user_broker_name(config.broker_)) {
     return refuse(
       broker->source(),
-      "account.broker must be \"kis\", \"paper\" or a broker folder's name, not \"" + config.broker_ + "\""
+      "account.broker must be \"kis\", \"mock\" or a broker folder's name, not \"" + config.broker_ + "\""
     );
   }
   text = std::nullopt;
   if (auto bad = string_of(*account, "env", "account.env", text)) {
     return bad;
   }
-  if (config.broker_ == "paper") {
-    if (text && *text != "paper") {
+  if (config.broker_ == "mock") {
+    if (text && *text != "mock") {
       return refuse(
         account->get("env")->source(),
-        "account.env must be \"paper\" with the paper broker (demo and real come with the brokers that have them)"
+        "account.env must be \"mock\" with the mock broker (demo and real come with the brokers that have them)"
       );
     }
-    config.env_ = "paper";
+    config.env_ = "mock";
   } else {
     // Demo unless real is written out: the library chooses the host from this alone.
     if (text && *text != "demo" && *text != "real") {
@@ -332,7 +339,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (auto bad = string_of(*account, "number", "account.number", text)) {
     return bad;
   }
-  if (!text && config.broker_ != "paper") {
+  if (!text && config.broker_ != "mock") {
     // The login names the account: one login per broker and environment, so the number is a pin, not a need.
     config.number_.clear();
   } else if (!text) {
@@ -497,49 +504,49 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
     return bad;
   }
 
-  if (config.broker_ != "paper") {
-    // A broker's account has its own market: a [paper] table would only mislead.
-    if (const auto* node = root.get("paper")) {
-      return refuse(node->source(), "[paper] describes the paper market; a " + config.broker_ + " account has none");
+  if (config.broker_ != "mock") {
+    // A broker's account has its own market: a [mock] table would only mislead.
+    if (const auto* node = root.get("mock")) {
+      return refuse(node->source(), "[mock] describes the mock market; a " + config.broker_ + " account has none");
     }
     return std::nullopt;
   }
-  const toml::table* paper = nullptr;
-  if (auto bad = table_of(root, "paper", paper)) {
+  const toml::table* mock = nullptr;
+  if (auto bad = table_of(root, "mock", mock)) {
     return bad;
   }
-  if (auto bad = only_keys(*paper, "paper", {"bars", "cash", "start"})) {
+  if (auto bad = only_keys(*mock, "mock", {"bars", "cash", "start"})) {
     return bad;
   }
   auto& p = config.paper_;
   text = std::nullopt;
-  if (auto bad = string_of(*paper, "bars", "paper.bars", text)) {
+  if (auto bad = string_of(*mock, "bars", "mock.bars", text)) {
     return bad;
   }
   if (!text || text->empty()) {
-    return refuse(paper->source(), "[paper] needs bars, the CSV of daily bars");
+    return refuse(mock->source(), "[mock] needs bars, the CSV of daily bars");
   }
   p.bars_ = resolved(*text, config.dir_);
-  if (paper->get("cash") == nullptr) {
-    return refuse(paper->source(), "[paper] needs cash, the opening cash in KRW");
+  if (mock->get("cash") == nullptr) {
+    return refuse(mock->source(), "[mock] needs cash, the opening cash in KRW");
   }
-  if (auto bad = integer_in(*paper, "cash", "paper.cash", 1, 10000000000000LL, p.cash_)) {
+  if (auto bad = integer_in(*mock, "cash", "mock.cash", 1, 10000000000000LL, p.cash_)) {
     return bad;
   }
-  const auto* start = paper->get("start");
+  const auto* start = mock->get("start");
   if (start == nullptr) {
-    return refuse(paper->source(), "[paper] needs start, the first instant (\"YYYY-MM-DDTHH:MM\", KST)");
+    return refuse(mock->source(), "[mock] needs start, the first instant (\"YYYY-MM-DDTHH:MM\", KST)");
   }
   if (start->is_date_time() || start->is_date() || start->is_time()) {
-    return refuse(start->source(), "paper.start is written as a string, such as start = \"2024-03-25T09:30\"");
+    return refuse(start->source(), "mock.start is written as a string, such as start = \"2024-03-25T09:30\"");
   }
   if (start->as_string() == nullptr) {
-    return refuse(start->source(), "paper.start must be a string, not " + type_name(*start));
+    return refuse(start->source(), "mock.start must be a string, not " + type_name(*start));
   }
   const auto at = paper::parse_kst(start->as_string()->get());
   if (!at) {
     return refuse(
-      start->source(), "paper.start must be a real KST instant written YYYY-MM-DDTHH:MM, from 1990-01-01 to 2100-12-31"
+      start->source(), "mock.start must be a real KST instant written YYYY-MM-DDTHH:MM, from 1990-01-01 to 2100-12-31"
     );
   }
   p.start_ = start->as_string()->get();
@@ -644,7 +651,7 @@ inline Reply config_reply(const ConfigSnapshot& snapshot) {
   if (error.code_ == "config.missing") {
     next = "the operator sets CMDATL_CONFIG to their file";
   } else if (error.code_ == "unsupported.broker") {
-    next = "this version trades the paper broker only";
+    next = "this version trades the mock broker only";
   }
   auto reply = error_reply(Exit::FAILED, error.code_, error.message_, next);
   auto& object = reply.body_["error"].as_object();

@@ -422,7 +422,7 @@ inline bool is_failure(const Reply& reply) {
  * @param out The stream for the reply.
  * @param reply The reply.
  * @param rendering How to write it.
- * @param env The reply's environment (`offline`, `paper`, `demo`, `live`).
+ * @param env The reply's environment (`offline`, `mock`, `demo`, `live`).
  * @return The exit code the process should end with.
  */
 inline Exit write_reply(std::ostream& out, const Reply& reply, const Rendering& rendering, const std::string& env) {

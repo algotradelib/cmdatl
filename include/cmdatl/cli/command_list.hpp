@@ -57,12 +57,12 @@ inline std::vector<Command> command_list() {
     .returns("not_accepted", "the gates that fail, in a fixed order; empty exactly when orders_accepted_now")
     .returns("orders_left_today", "placements the operator still allows today; null when the journal is damaged")
     .returns("positions", "holdings: symbol, quantity, sellable, average_price, last_price, market_value")
-    .returns("cash", "the paper market's cash after every fill's value, commission and tax")
+    .returns("cash", "the mock market's cash after every fill's value, commission and tax")
     .returns("buying_power", "the broker's buying power")
     .returns("owed", "orders the journal still waits on")
     .returns("orders", "working orders")
     .returns("quotes", "each allowed symbol, as quote's rows")
-    .returns("data_end", "the last session's close in the paper data")
+    .returns("data_end", "the last session's close in the mock data")
     .returns("capabilities", "what the account's broker offers")
     .returns("state_dir", "the account's state directory")
     .on_account([](const Invocation& invocation, Account& account, Output& output) {
@@ -75,7 +75,7 @@ inline std::vector<Command> command_list() {
     .option("symbol", "SYMBOL", "only this instrument's rows")
     .returns("now", "the account's time, KST with its offset")
     .returns("positions", "holdings: symbol, quantity, sellable, average_price, last_price, market_value")
-    .returns("cash", "the paper market's cash after every fill's value, commission and tax")
+    .returns("cash", "the mock market's cash after every fill's value, commission and tax")
     .returns("buying_power", "the broker's buying power")
     .returns(
       "owed",
@@ -119,7 +119,7 @@ inline std::vector<Command> command_list() {
     .returns("state_dir", "the account's state directory")
     .returns("owner", "who last held the account, or null")
     .returns("capabilities", "what the account's broker offers")
-    .returns("paper", "the paper market: bars, start, cash, costs (commission and sell tax as decimal strings)")
+    .returns("mock", "the mock market: bars, start, cash, costs (commission and sell tax as decimal strings)")
     .returns("schema_version", "the version of cmdatl schema's format")
     .returns("modes", "the trading modes this build offers")
     .runs([](const Invocation&, const Table&, Output&) {
@@ -446,20 +446,20 @@ inline std::vector<Command> command_list() {
     }
   }
 
-  add(make_command({"clock"}, "Paper account", "the paper account's time and phase")
+  add(make_command({"clock"}, "Mock account", "the mock account's time and phase")
     .example("cmdatl clock")
     .returns("now", "the account's time, KST with its offset")
     .returns("phase", "the market phase")
-    .returns("data_end", "the last session's close in the paper data")
+    .returns("data_end", "the last session's close in the mock data")
     .on_account([](const Invocation& invocation, Account& account, Output& output) {
       return clock_reply(invocation, account, account.desk(), output);
     }));
-  add(make_command({"clock", "advance"}, "Paper account", "move the paper clock")
+  add(make_command({"clock", "advance"}, "Mock account", "move the mock clock")
     .example("cmdatl clock advance --next-open")
     .example("cmdatl clock advance --minutes 30")
     .example("cmdatl clock advance --to 2024-03-26T09:30")
     .describe(
-      "Moves the paper clock forward by exactly one of the options, filling or expiring resting orders on the way.\n"
+      "Moves the mock clock forward by exactly one of the options, filling or expiring resting orders on the way.\n"
       "Exit 4 means the advance may have happened: read cmdatl clock before advancing again."
     )
     .option("minutes", "N", "by N minutes, 1 to 20160")

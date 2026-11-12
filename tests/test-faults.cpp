@@ -463,11 +463,11 @@ TEST_CASE("a failed status read refuses before anything destructive") {
   spit(fixture.log(), torn);
   const auto journal = slurp(fixture.journal());
   const std::vector<std::pair<std::string, std::string>> cases{
-    {"market.jsonl", "unknown.paper_state"},
+    {"market.jsonl", "unknown.mock_state"},
     {"journal.jsonl", "unknown.journal_damaged"},
     {"lock", "state.unavailable"},
     {"paper.toml", "config.invalid"},
-    {"bars.csv", "paper.data"},
+    {"bars.csv", "mock.data"},
   };
   for (const auto& entry : cases) {
     INFO(entry.first);

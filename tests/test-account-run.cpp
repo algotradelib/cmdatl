@@ -80,7 +80,7 @@ struct KisBrokerTest {
 
 namespace {
 
-/** @brief The operator's file for a KIS demo account: no [paper], the default limits, three orders a day unless given. */
+/** @brief The operator's file for a KIS demo account: no [mock], the default limits, three orders a day unless given. */
 std::string kis_config(int daily_orders = 3) {
   std::string text = "[account]\nbroker = \"kis\"\nnumber = \"12345678-01\"\n\n[limits]\n";
   text += "symbols = [\"005930\", \"000660\"]\n";
@@ -887,7 +887,7 @@ TEST_CASE("the wall clock waits in slices, returns early once on a signal, and w
   CHECK(t == std::chrono::steady_clock::time_point{} + std::chrono::seconds(16));
 }
 
-TEST_CASE("the operator file takes a KIS account: demo by default, real written out, no [paper], a number optional") {
+TEST_CASE("the operator file takes a KIS account: demo by default, real written out, no [mock], a number optional") {
   PaperFixture fixture;
   fixture.write_config(kis_config());
   auto snapshot = cmdatl::load_operator_config();
@@ -908,7 +908,7 @@ TEST_CASE("the operator file takes a KIS account: demo by default, real written 
   REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
   CHECK(snapshot.config_->number_.empty());
   CHECK(snapshot.config_->account_name() == "kis-demo");
-  fixture.write_config(kis_config() + "\n[paper]\nbars = \"bars.csv\"\ncash = 1\nstart = \"2024-03-25T09:00\"\n");
+  fixture.write_config(kis_config() + "\n[mock]\nbars = \"bars.csv\"\ncash = 1\nstart = \"2024-03-25T09:00\"\n");
   snapshot = cmdatl::load_operator_config();
   CHECK(snapshot.state_ != cmdatl::ConfigSnapshot::State::OK);
   CHECK(snapshot.error_.code_ == "config.invalid");

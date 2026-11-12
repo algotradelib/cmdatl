@@ -15,20 +15,20 @@
 algotradelib from the command line.
 With [algotradelib](https://github.com/algotradelib/algotradelib) alone you write your own C++ for a backtest or a trading loop; with cmdatl you write the strategy in [atls](https://github.com/algotradelib/atlc), describe the run in a TOML file, and backtest it or run it from the command line.
 The same commands let an AI agent read an account and place orders one at a time, inside limits the operator sets.
-In this version the account and order commands work on a paper account: a market simulated from stored daily bars, with no broker and no network.
+In this version the account and order commands work on a mock account: a market simulated from stored daily bars, with no broker and no network.
 `cmdatl run` also trades a KIS account the operator's file names, a demo account (모의투자) unless the file says otherwise; see [Runs](docs/runs.md).
-Broker logins are kept in the macOS keychain, so a run on a broker's account, or a backtest that fetches its bars through a broker folder, needs macOS; other backtests, the paper account and runs on a mock market work on Linux too.
+Broker logins are kept in the macOS keychain, so a run on a broker's account, or a backtest that fetches its bars through a broker folder, needs macOS; other backtests, the mock account and runs on a mock market work on Linux too.
 
 From a clone, with cmdatl and atlc installed (below):
 
 ```sh
 cmdatl strategy backtest examples/mean-reversion.toml params.lookback=30 # builds and replays it; the report as JSON
-export CMDATL_CONFIG=$PWD/examples/paper.toml # the example paper account: the operator's file
-touch examples/paper.armed # the operator arms the account; without this file nothing may be placed
+export CMDATL_CONFIG=$PWD/examples/mock.toml # the example mock account: the operator's file
+touch examples/mock.armed # the operator arms the account; without this file nothing may be placed
 cmdatl status # the account in one read
 cmdatl order plan AAA --target 10 --limit 102 # sends nothing; replies with a plan id
 cmdatl order place p8c16a0bcd2 # the plan id the reply named
-cmdatl clock advance --minutes 30 # the paper clock moves only when told; the order fills
+cmdatl clock advance --minutes 30 # the mock clock moves only when told; the order fills
 cmdatl order reconcile AAA # records the fill from holdings; sends nothing
 cmdatl run examples/run.toml # a strategy run on its own mock market: its events, then its reply
 ```
@@ -59,7 +59,7 @@ Backtests and runs also need CMake, a C++17 compiler and atlc at run time: see [
 - [What backtests and runs need](docs/install.md): atlc, CMake and the variables a strategy's build passes on.
 - [Strategies](docs/strategies.md): new programs, backtests and the examples.
 - [Run settings](docs/run-spec.md): every setting of a run spec, also `cmdatl strategy reference run-spec`.
-- [The paper account](docs/paper-account.md): the operator's file, the armed file and the account's state.
+- [The mock account](docs/mock-account.md): the operator's file, the armed file and the account's state.
 - [Orders](docs/orders.md): plans, placements, cancels, reconciling and releasing.
 - [Runs](docs/runs.md): a strategy on the live runner, on a mock market or a KIS account.
 - [Broker logins](docs/logins.md): `cmdatl auth`.

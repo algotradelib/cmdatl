@@ -1,6 +1,6 @@
 #pragma once
 
-// The rails shared by the order commands and the paper-run driver: the risk limits from the operator's file, the
+// The rails shared by the order commands and the mock-run driver: the risk limits from the operator's file, the
 // account's journal opened as its one writer, and the catalog's hints.
 
 #include "../account/account.hpp"

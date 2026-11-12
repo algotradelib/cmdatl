@@ -51,6 +51,13 @@ std::string with(const std::string& account, const std::string& limits, const st
   return parts.text();
 }
 
+/** @brief The default file with its `[mock]` table named `[paper]`, as an earlier version wrote it. */
+std::string paper_table() {
+  auto text = ConfigParts{}.text();
+  text.replace(text.find("[mock]"), std::string("[mock]").size(), "[paper]");
+  return text;
+}
+
 /** @brief The default `[limits]` body with one line appended. */
 std::string limits_plus(const std::string& line) {
   return ConfigParts{}.limits_ + line + "\n";
@@ -105,7 +112,7 @@ std::string paper_with(const std::string& key, const std::string& line) {
 
 TEST_CASE("the operator's file: every rule refused alone, with its line and column") {
   const PaperFixture fixture;
-  // The default file has [account] on line 1 and its keys on 2-3; [limits] on 5 and its keys on 6-9; [paper] on 11
+  // The default file has [account] on line 1 and its keys on 2-3; [limits] on 5 and its keys on 6-9; [mock] on 11
   // and its keys on 12-14.
   const std::string fifty = [] {
     std::string list;
@@ -115,7 +122,7 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     return list;
   }();
   const std::vector<Refused> cases{
-    {"no [account]", "[limits]\n" + ConfigParts{}.limits_ + "[paper]\n" + ConfigParts{}.paper_, "config.invalid", 0},
+    {"no [account]", "[limits]\n" + ConfigParts{}.limits_ + "[mock]\n" + ConfigParts{}.paper_, "config.invalid", 0},
     {"a broker that is a number", with("broker = 1\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
     {"kis with a number not 12345678-01", with("broker = \"kis\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},
     {"kis with an unknown env", with("broker = \"kis\"\nenv = \"paper\"\nnumber = \"12345678-01\"\n", "", ""),
@@ -124,13 +131,14 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"toss", with("broker = \"toss\"\nnumber = \"x\"\n", "", ""), "unsupported.broker", 2},
     {"a broker no folder can be named", with("broker = \"paper_x\"\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
     {"no broker", with("number = \"x\"\n", "", ""), "config.invalid", 0},
-    {"env demo on paper", with("broker = \"paper\"\nenv = \"demo\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},
-    {"env real on paper", with("broker = \"paper\"\nenv = \"real\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},
-    {"a number leaving its directory", with("broker = \"paper\"\nnumber = \"../x\"\n", "", ""), "config.invalid", 3},
-    {"a number too long", with("broker = \"paper\"\nnumber = \"" + std::string(65, 'a') + "\"\n", "", ""),
+    {"broker paper, now mock", with("broker = \"paper\"\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
+    {"env demo on mock", with("broker = \"mock\"\nenv = \"demo\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},
+    {"env real on mock", with("broker = \"mock\"\nenv = \"real\"\nnumber = \"x\"\n", "", ""), "config.invalid", 3},
+    {"a number leaving its directory", with("broker = \"mock\"\nnumber = \"../x\"\n", "", ""), "config.invalid", 3},
+    {"a number too long", with("broker = \"mock\"\nnumber = \"" + std::string(65, 'a') + "\"\n", "", ""),
       "config.invalid", 3},
-    {"an empty number", with("broker = \"paper\"\nnumber = \"\"\n", "", ""), "config.invalid", 3},
-    {"no number", with("broker = \"paper\"\n", "", ""), "config.invalid", 0},
+    {"an empty number", with("broker = \"mock\"\nnumber = \"\"\n", "", ""), "config.invalid", 3},
+    {"no number", with("broker = \"mock\"\n", "", ""), "config.invalid", 0},
     {"an unknown key in [account]", with(ConfigParts{}.account_ + "nummber = \"x\"\n", "", ""), "config.invalid", 4},
     {"no symbols", with("", limits_with("symbols", ""), ""), "config.invalid", 0},
     {"symbols not an array", with("", limits_with("symbols", "symbols = \"005930\""), ""), "config.invalid", 6},
@@ -187,7 +195,8 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"plan_ttl past 3600", with("", limits_plus("plan_ttl = 3601"), ""), "config.invalid", 10},
     {"portfolio_age past a day", with("", limits_plus("portfolio_age = 86401"), ""), "config.invalid", 10},
     {"a misspelt limit", with("", limits_plus("colar = 0.05"), ""), "config.invalid", 10},
-    {"no [paper]", "[account]\n" + ConfigParts{}.account_ + "[limits]\n" + ConfigParts{}.limits_, "config.invalid", 0},
+    {"no [mock]", "[account]\n" + ConfigParts{}.account_ + "[limits]\n" + ConfigParts{}.limits_, "config.invalid", 0},
+    {"a [paper] table, now [mock]", paper_table(), "config.invalid", 11},
     {"no bars", with("", "", paper_with("bars", "")), "config.invalid", 0},
     {"bars a number", with("", "", paper_with("bars", "bars = 1")), "config.invalid", 12},
     {"no cash", with("", "", paper_with("cash", "")), "config.invalid", 0},
@@ -211,9 +220,9 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"a repeated key", with("", limits_plus("daily_orders = 4"), ""), "config.invalid", 10},
     {"a table opened twice", ConfigParts{}.text() + "[limits]\ncollar = 0.1\n", "config.invalid", 15},
     {"an unclosed table", ConfigParts{}.text() + "[limits\n", "config.invalid", 15},
-    {"an unquoted string", with("broker = paper\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
+    {"an unquoted string", with("broker = mock\nnumber = \"x\"\n", "", ""), "config.invalid", 2},
     {"a line without =", with(ConfigParts{}.account_ + "flag\n", "", ""), "config.invalid", 4},
-    {"invalid UTF-8", with("broker = \"paper\"\nnumber = \"\xff\"\n", "", ""), "config.invalid", 3},
+    {"invalid UTF-8", with("broker = \"mock\"\nnumber = \"\xff\"\n", "", ""), "config.invalid", 3},
     // A table header toml++ 3.4.0 meets with an internal assertion: refused, never an abort.
     {"a header starting with ~", ConfigParts{}.text() + "[~imits]\n", "config.invalid", 0},
     {"a header starting with ~ in place of a table", "[account]\n" + ConfigParts{}.account_ + "[~imits]\n",
@@ -245,11 +254,27 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
   }
 }
 
+TEST_CASE("an earlier version's paper broker and paper table are refused with the mock words") {
+  const PaperFixture fixture;
+  const std::vector<std::pair<std::string, std::string>> cases{
+    {with("broker = \"paper\"\nnumber = \"x\"\n", "", ""), "broker = \"mock\""},
+    {paper_table(), "[mock]"},
+  };
+  for (const auto& c : cases) {
+    INFO(c.first);
+    fixture.write_config(c.first);
+    const auto snapshot = cmdatl::load_operator_config();
+    REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::INVALID);
+    CHECK(snapshot.error_.code_ == "config.invalid");
+    CHECK(snapshot.error_.message_.find(c.second) != std::string::npos);
+  }
+}
+
 TEST_CASE("a valid operator's file: defaults filled, paths beside it, the armed file fixed") {
   const PaperFixture fixture;
   fixture.write_config(
     "atlc = \"bin/atlc\"\n" +
-    with("broker = \"paper\"\nenv = \"paper\"\nnumber = \"acct_1-A\"\n", limits_plus("order_type = \"limit\""), "")
+    with("broker = \"mock\"\nenv = \"mock\"\nnumber = \"acct_1-A\"\n", limits_plus("order_type = \"limit\""), "")
   );
   auto snapshot = cmdatl::load_operator_config();
   REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
@@ -257,7 +282,7 @@ TEST_CASE("a valid operator's file: defaults filled, paths beside it, the armed 
   CHECK(c.atlc_ == (fixture.dir() / "bin" / "atlc").string());
   CHECK(c.paper_.bars_ == (fixture.dir() / "bars.csv").string());
   CHECK(c.armed_path() == (fixture.dir() / "paper.armed").string());
-  CHECK(c.scope() == "paper:paper:acct_1-A");
+  CHECK(c.scope() == "mock:mock:acct_1-A");
   CHECK(c.limits_.collar_ == 0.05);
   CHECK(c.limits_.phases_ == std::vector<std::string>{"open"});
   CHECK(c.limits_.plan_ttl_ == 60);
@@ -422,7 +447,7 @@ TEST_CASE("the state root: XDG_STATE_HOME when absolute, else HOME, else state.u
     REQUIRE(fixture.json({"status"}).exit_ == 0);
     CHECK(
       std::filesystem::exists(
-        fixture.dir() / "home" / ".local" / "state" / "cmdatl" / "accounts" / "paper-paper-paper-0001" / "market.jsonl"
+        fixture.dir() / "home" / ".local" / "state" / "cmdatl" / "accounts" / "mock-mock-paper-0001" / "market.jsonl"
       )
     );
   }
@@ -516,13 +541,13 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
     CHECK(body.at("atlc").as_object().at("source").as_string() == "config");
     CHECK(body.at("atlc").as_object().at("version").as_string() == "0.0.0-9000");
     CHECK(body.at("account").as_object().at("number").as_string() == "paper-0001");
-    CHECK(body.at("modes") == boost::json::array{"paper", "kis"});
+    CHECK(body.at("modes") == boost::json::array{"mock", "kis"});
     CHECK(body.at("schema_version").as_int64() == cmdatl::SCHEMA_VERSION);
-    CHECK(body.at("paper").as_object().at("cash").as_string() == "100000000");
+    CHECK(body.at("mock").as_object().at("cash").as_string() == "100000000");
     CHECK(body.at("capabilities").as_object().at("clock").as_bool());
     CHECK(!body.at("capabilities").as_object().at("trigger_price").as_bool());
     CHECK(body.at("limits").as_object().at("collar").as_string() == "0.05");
-    const auto& costs = body.at("paper").as_object().at("costs").as_object();
+    const auto& costs = body.at("mock").as_object().at("costs").as_object();
     // The mock's own fill model charges nothing.
     CHECK(costs.at("commission").as_string() == "0");
     CHECK(costs.at("sell_tax").as_string() == "0");

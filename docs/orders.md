@@ -25,6 +25,6 @@ cmdatl order release 005930 --reason "read the order list and holdings"
 - `cmdatl order reconcile` reports each symbol as `clean`, `working` (an order rests), `holding_moved` (holdings changed between two reads) or a refusal's reason; anything still owed afterwards is exit 3 `refused.awaiting`.
 - `owed` rows say what to do next; reading them never settles them, only an order command writes the journal.
 - An order the broker never named stays owed until the listing settles it or the operator releases it.
-  `cmdatl order release SYMBOL --reason TEXT` needs the armed file and the operator's approval `<stem>.release` beside the operator's file (`paper.toml` gives `paper.release`): one line per owed order, `SYMBOL JOURNAL_ID` with one space, naming exactly the journal ids `cmdatl account` shows as owed on that symbol.
+  `cmdatl order release SYMBOL --reason TEXT` needs the armed file and the operator's approval `<stem>.release` beside the operator's file (`mock.toml` gives `mock.release`): one line per owed order, `SYMBOL JOURNAL_ID` with one space, naming exactly the journal ids `cmdatl account` shows as owed on that symbol.
   The approval is renamed after one use.
-- A damaged journal has no cmdatl remedy: on paper, the operator keeps the account's directory for inspection and moves it aside, which abandons that paper market with it.
+- A damaged journal has no cmdatl remedy: on the mock account, the operator keeps the account's directory for inspection and moves it aside, which abandons that mock market with it.

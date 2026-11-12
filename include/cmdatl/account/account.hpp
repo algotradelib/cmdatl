@@ -252,15 +252,15 @@ inline int make_private_dirs(const std::filesystem::path& dir) {
 #endif
 
 /**
- * @brief The refusal of paper state that cannot be rebuilt.
+ * @brief The refusal of mock state that cannot be rebuilt.
  * @param what What is wrong.
  * @return The reply (exit 4).
  */
 inline Reply paper_state_reply(const std::string& what) {
   return error_reply(
-    Exit::UNKNOWN, "unknown.paper_state", what + "; the paper account's state cannot be rebuilt",
+    Exit::UNKNOWN, "unknown.mock_state", what + "; the mock account's state cannot be rebuilt",
     "stop and report to the operator, who restores the account's state file market.jsonl from where it was, or moves "
-    "the account's whole directory aside to abandon this paper account"
+    "the account's whole directory aside to abandon this mock account"
   );
 }
 
@@ -405,11 +405,11 @@ public:
   static Opened open(const ConfigSnapshot& snapshot, Output& output, const std::function<bool()>& interrupted) {
     Opened opened;
     const auto& config = *snapshot.config_;
-    if (config.broker_ != "paper") {
-      // The account and order commands trade the paper desk; a broker's account is traded by `cmdatl run` only.
+    if (config.broker_ != "mock") {
+      // The account and order commands trade the mock desk; a broker's account is traded by `cmdatl run` only.
       opened.refusal_ = error_reply(
         Exit::FAILED, "unsupported.broker",
-        "the account and order commands trade the paper broker in this version; a " + config.broker_ +
+        "the account and order commands trade the mock broker in this version; a " + config.broker_ +
           " account is traded by cmdatl run",
         "read the account in the broker's own app, or run a strategy with cmdatl run"
       );
@@ -420,7 +420,7 @@ public:
       opened.refusal_ = error_reply(
         Exit::FAILED, "state.unavailable",
         "no state directory: neither XDG_STATE_HOME nor HOME is set as an absolute path",
-        "the operator sets XDG_STATE_HOME or HOME (another state directory is another paper account)"
+        "the operator sets XDG_STATE_HOME or HOME (another state directory is another mock account)"
       );
       return opened;
     }
@@ -631,7 +631,7 @@ private:
   std::optional<Reply> read_bars(paper::MarketData& data) const {
     const auto& path = config_.paper_.bars_;
     const auto bad = [&path](const std::string& what) {
-      return error_reply(Exit::FAILED, "paper.data", "the paper bars " + path + " " + what, "fix the bars file");
+      return error_reply(Exit::FAILED, "mock.data", "the mock bars " + path + " " + what, "fix the bars file");
     };
     ScopedFd fd(open_lifted(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC));
     if (fd.get() < 0) {
@@ -660,12 +660,12 @@ private:
     if (start < paper::open_of(first) + paper::SESSION_LENGTH) {
       return bad(
         "begin " + paper::date_text(first) +
-        "; paper.start must be at or after that date's 15:30 KST, so a symbol has a "
+        "; mock.start must be at or after that date's 15:30 KST, so a symbol has a "
         "last price and a previous close"
       );
     }
     if (start >= paper::open_of(last) + paper::SESSION_LENGTH + std::chrono::hours(24)) {
-      return bad("end " + paper::date_text(last) + "; paper.start must be before that date's 15:30 KST plus a day");
+      return bad("end " + paper::date_text(last) + "; mock.start must be before that date's 15:30 KST plus a day");
     }
     return std::nullopt;
   }

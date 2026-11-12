@@ -217,7 +217,7 @@ TEST_CASE("the table's run command: arguments, codes and the schema version") {
     CHECK(std::find(run->errors_.begin(), run->errors_.end(), code) != run->errors_.end());
   }
   CHECK(cmdatl::check_table(table).empty());
-  CHECK(cmdatl::SCHEMA_VERSION == 13);
+  CHECK(cmdatl::SCHEMA_VERSION == 14);
 }
 
 // --- Processes, against the real atlc and algotradelib ---
@@ -632,7 +632,7 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     CHECK(unarmed.exit_ == 3);
     CHECK(run_code(unarmed) == "refused.not_armed");
     CHECK(!unarmed.reply_.at("error").as_object().at("retry").as_bool());
-    const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
+    const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "mock-mock-paper-0001";
     CHECK((!std::filesystem::exists(runs_dir) || std::filesystem::is_empty(runs_dir)));
   }
   {
@@ -671,7 +671,7 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     legs_refused(run_process({(fixture.dir() / "legs.toml").string()}));
     legs_refused(run_process({(fixture.dir() / "legs.toml").string(), "bars.open_point=true"}));
     legs_refused(run_process({(fixture.dir() / "legs.atls").string(), "replay.market=kr"}));
-    const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
+    const auto runs_dir = fixture.dir() / "state" / "cmdatl" / "runs" / "mock-mock-paper-0001";
     CHECK((!std::filesystem::exists(runs_dir) || std::filesystem::is_empty(runs_dir)));
     CHECK(!std::filesystem::exists(cache.path() / "cmdatl" / "drivers"));
     // A market-price rule prices a backtest's fills; a run's orders fill at the market.
@@ -936,12 +936,12 @@ TEST_CASE(
   }
   CHECK(ran.reply_.at("executions").as_int64() > 0);
   CHECK(!ran.events_.empty());
-  // The paper account's commands never see the run's market.
+  // The mock account's commands never see the run's market.
   CHECK(fixture.json({"account"}).out_ == account_before);
   CHECK(fixture.json({"order", "list"}).out_ == orders_before);
 }
 
-TEST_CASE("the README's quick start runs on the example paper account and its run spec", "[acceptance][runs]") {
+TEST_CASE("the README's quick start runs on the example mock account and its run spec", "[acceptance][runs]") {
   const auto equipment = run_equipment();
   if (!equipment) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
@@ -957,14 +957,14 @@ TEST_CASE("the README's quick start runs on the example paper account and its ru
   std::vector<std::filesystem::path> written;
   for (const auto& entry : std::filesystem::directory_iterator(dir.path() / "examples")) {
     const auto name = entry.path().filename().string();
-    if (name.rfind("paper.", 0) == 0 && name != "paper.toml") {
+    if (name.rfind("mock.", 0) == 0 && name != "mock.toml") {
       written.push_back(entry.path());
     }
   }
   for (const auto& path : written) {
     std::filesystem::remove_all(path);
   }
-  const ScopedVariable config("CMDATL_CONFIG", (dir.path() / "examples" / "paper.toml").string());
+  const ScopedVariable config("CMDATL_CONFIG", (dir.path() / "examples" / "mock.toml").string());
   const ScopedVariable state("XDG_STATE_HOME", (dir.path() / "state").string());
   const InDir here(dir.path());
   const auto ask = [](std::vector<std::string> args) {
@@ -977,7 +977,7 @@ TEST_CASE("the README's quick start runs on the example paper account and its ru
   REQUIRE(status.exit_ == 0);
   CHECK(reply_of(status.out_).at("phase").as_string() == "open");
   CHECK(reply_of(status.out_).at("armed").as_bool() == false);
-  spit(dir.path() / "examples" / "paper.armed", "");
+  spit(dir.path() / "examples" / "mock.armed", "");
   const auto plan = ask({"order", "plan", "AAA", "--target", "10", "--limit", "102"});
   INFO(plan.out_ << plan.err_);
   REQUIRE(plan.exit_ == 0);

@@ -74,7 +74,7 @@ inline Reply env_reply() {
   }
   reply.body_["config"] = std::move(config);
   if (snapshot.state_ != ConfigSnapshot::State::OK) {
-    for (const char* key : {"account", "limits", "armed", "state_dir", "owner", "capabilities", "paper"}) {
+    for (const char* key : {"account", "limits", "armed", "state_dir", "owner", "capabilities", "mock"}) {
       reply.body_[key] = nullptr;
     }
   } else {
@@ -114,16 +114,16 @@ inline Reply env_reply() {
     const auto owner = dir ? read_owner_record(*dir) : std::nullopt;
     reply.body_["owner"] = owner ? json::value(*owner) : json::value(nullptr);
 #endif
-    if (c.broker_ != "paper") {
+    if (c.broker_ != "mock") {
       // A broker's capabilities are the library client's; the run reports what it reads.
       reply.body_["capabilities"] = nullptr;
-      reply.body_["paper"] = nullptr;
+      reply.body_["mock"] = nullptr;
     } else {
       reply.body_["capabilities"] = account_capabilities<AccountDesk::Session::Caps>(AccountDesk::simulated);
       // The account's market fills by the mock's own model: what it charges is that model's.
       const auto fills = algotradelib::mock::MarketSettings{}.fills_;
       const auto tax = fills.sell_tax() ? fills.sell_tax()->rate_ : algotradelib::Decimal64(0, 0);
-      reply.body_["paper"] = json::object{
+      reply.body_["mock"] = json::object{
         {"bars", c.paper_.bars_},
         {"start", c.paper_.start_},
         {"cash", std::to_string(c.paper_.cash_)},
@@ -137,7 +137,7 @@ inline Reply env_reply() {
     }
   }
   reply.body_["schema_version"] = SCHEMA_VERSION;
-  reply.body_["modes"] = json::array{"paper", "kis"};
+  reply.body_["modes"] = json::array{"mock", "kis"};
   return reply;
 }
 

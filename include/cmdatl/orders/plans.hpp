@@ -57,7 +57,7 @@ inline bool valid_target(std::string_view text) {
 }
 
 /**
- * @brief Whether a text is a limit: the paper market's price grammar, from 1 to 10^7.
+ * @brief Whether a text is a limit: the mock market's price grammar, from 1 to 10^7.
  * @param text The text.
  * @return Whether it is.
  */
@@ -109,7 +109,7 @@ struct Plan {
   std::string limit_;
   /** @brief The snapshot it was made on. */
   std::string snapshot_;
-  /** @brief The paper clock when it was made, nanoseconds. */
+  /** @brief The mock clock when it was made, nanoseconds. */
   std::int64_t sim_{0};
   /** @brief Whether it was used. */
   bool used_{false};

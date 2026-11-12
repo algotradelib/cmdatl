@@ -125,9 +125,9 @@ inline atl::BarSeries mock_series(const std::string& symbol, const std::vector<p
 class MockDesk {
 public:
   /** @brief The environment this session is: every reply's `env`. */
-  static constexpr const char* env_name = "paper";
+  static constexpr const char* env_name = "mock";
   /** @brief The broker this session is. */
-  static constexpr const char* broker_name = "paper";
+  static constexpr const char* broker_name = "mock";
   /** @brief A simulated broker: it has its own cash, a clock moved by command and an end to its data. */
   static constexpr bool simulated = true;
 

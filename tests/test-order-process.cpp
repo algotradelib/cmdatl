@@ -47,7 +47,7 @@ Answer step(const PaperFixture& fixture, const std::vector<std::string>& args) {
     answer.reason_ = std::string(reason->as_string());
   }
   INFO(cmdatl::join(args) << ": " << cmdatl.out() << cmdatl.err());
-  CHECK(answer.body_.at("env").as_string() == (answer.exit_ == 2 ? "offline" : "paper"));
+  CHECK(answer.body_.at("env").as_string() == (answer.exit_ == 2 ? "offline" : "mock"));
   const auto after = std::filesystem::exists(fixture.log()) ? slurp(fixture.log()) : std::string();
   CHECK(no_send_ok(answer, before, after));
   CHECK(no_children());
@@ -395,7 +395,7 @@ TEST_CASE(
   long gap = 0;
   long refusal_runs = 0;
   {
-    algotradelib::runner::FileJournal holder(fixture.journal().string(), "paper:paper:paper-0001");
+    algotradelib::runner::FileJournal holder(fixture.journal().string(), "mock:mock:paper-0001");
     REQUIRE(holder.open());
     const auto refused = ask(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
     CHECK(refused.exit_ == 4);

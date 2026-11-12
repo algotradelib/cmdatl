@@ -4,7 +4,7 @@
 //
 // The run's market is the library's mock broker, built in this process from the run's data as cmdatl's replay module
 // reads it, and gone when the process ends: each run is its own market, with its own journal and its own lock, and shares
-// nothing with the agent commands' paper account or with another run. The operator's file decides what may be placed.
+// nothing with the agent commands' mock account or with another run. The operator's file decides what may be placed.
 //
 // The driver checks the start refusals in order, builds the market, trades the program through the live wiring
 // (`live.hpp`) behind the placement boundary (`account/session.hpp`) on the market's clock (`clock.hpp`), writes its
@@ -364,7 +364,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
 #else
   // SIGINT, SIGTERM and SIGHUP are noted, and the guard withdraws the run at its next step.
   handle_signals();
-  json::object base{{"env", std::string(atl::mock::environment)}};
+  json::object base{{"env", "mock"}};
   // Row 1: the arguments.
   RunArgs args;
   if (const auto problem = read_args(argc, argv, args)) {

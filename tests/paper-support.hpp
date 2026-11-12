@@ -1,6 +1,6 @@
 #pragma once
 
-// A paper account in a scratch directory for the tests: the operator's file, its bars and the state root, with
+// A mock account in a scratch directory for the tests: the operator's file, its bars and the state root, with
 // CMDATL_CONFIG and XDG_STATE_HOME pointed at them while the fixture lives (never at the real home).
 
 #include "./support.hpp"
@@ -34,7 +34,7 @@ inline const std::string BARS =
 /** @brief The parts of an operator's file a test changes. */
 struct ConfigParts {
   /** @brief The `[account]` table's body. */
-  std::string account_{"broker = \"paper\"\nnumber = \"paper-0001\"\n"};
+  std::string account_{"broker = \"mock\"\nnumber = \"paper-0001\"\n"};
   /** @brief The `[limits]` table's body. */
   std::string limits_{
     "symbols = [\"005930\", \"000660\"]\n"
@@ -52,7 +52,7 @@ struct ConfigParts {
    * @return The text.
    */
   std::string text() const {
-    return top_ + "[account]\n" + account_ + "\n[limits]\n" + limits_ + "\n[paper]\n" + paper_;
+    return top_ + "[account]\n" + account_ + "\n[limits]\n" + limits_ + "\n[mock]\n" + paper_;
   }
 };
 
@@ -92,7 +92,7 @@ private:
   std::optional<std::string> old_;
 };
 
-/** @brief A paper account in a scratch directory, named by CMDATL_CONFIG and XDG_STATE_HOME while it lives. */
+/** @brief A mock account in a scratch directory, named by CMDATL_CONFIG and XDG_STATE_HOME while it lives. */
 class PaperFixture {
 public:
   /**
@@ -132,7 +132,7 @@ public:
    * @return The path.
    */
   std::filesystem::path account() const {
-    return dir() / "state" / "cmdatl" / "accounts" / "paper-paper-paper-0001";
+    return dir() / "state" / "cmdatl" / "accounts" / "mock-mock-paper-0001";
   }
 
   /**
@@ -240,7 +240,7 @@ inline std::string code_of_reply(const cmdatl::Reply& reply) {
 }
 
 /**
- * @brief An order request for the paper market.
+ * @brief An order request for the mock market.
  * @param symbol The symbol.
  * @param buy Whether a buy.
  * @param quantity The quantity.

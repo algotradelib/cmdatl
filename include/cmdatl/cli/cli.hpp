@@ -331,7 +331,7 @@ inline int report_lost_outcome(std::ostream& err, bool may_send, const std::stri
  * @brief The environment an account's replies carry, from its broker's session, never from the file: the one place
  *   a broker's name is mapped.
  * @param config The operator's file.
- * @return The environment, such as `paper`.
+ * @return The environment, such as `mock`.
  */
 inline std::string account_env(const OperatorConfig& config) {
   if (config.broker_ == AccountDesk::broker_name) {

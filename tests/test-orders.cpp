@@ -31,7 +31,7 @@ namespace sending = cmdatl::sending;
 namespace {
 
 /** @brief The account's journal scope in the fixtures. */
-const std::string SCOPE = "paper:paper:paper-0001";
+const std::string SCOPE = "mock:mock:paper-0001";
 
 /**
  * @brief Arms a fixture and moves it to the first session's open.
@@ -156,7 +156,7 @@ TEST_CASE("plan and then place by id: one limit order and once and and the plan 
   INFO(boost::json::serialize(placed.body_));
   REQUIRE(placed.exit_ == 0);
   CHECK(placed.reason_ == "placed");
-  CHECK(placed.body_.at("env").as_string() == "paper");
+  CHECK(placed.body_.at("env").as_string() == "mock");
   const auto& order = placed.body_.at("order").as_object();
   CHECK(order.at("side").as_string() == "buy");
   CHECK(order.at("quantity").as_string() == "10");
@@ -310,13 +310,13 @@ TEST_CASE("the plan book: stale when the account moves or the plan ages and and 
   const auto book = slurp(fixture.account() / "plans.json");
   const auto now = std::string(ask(fixture, {"clock"}).body_.at("now").as_string());
   ConfigParts parts;
-  parts.account_ = "broker = \"paper\"\nnumber = \"paper-0002\"\n";
+  parts.account_ = "broker = \"mock\"\nnumber = \"paper-0002\"\n";
   const PaperFixture second(parts);
   second.arm();
   // A minute later than the plan, inside plan_ttl: the clock moves to the next whole minute.
   const auto next_minute = paper::kst_iso(*paper::parse_kst(now.substr(0, 16)) + std::chrono::minutes(1)).substr(0, 16);
   REQUIRE(ask(second, {"clock", "advance", "--to", next_minute}).exit_ == 0);
-  const auto dir = second.dir() / "state" / "cmdatl" / "accounts" / "paper-paper-paper-0002";
+  const auto dir = second.dir() / "state" / "cmdatl" / "accounts" / "mock-mock-paper-0002";
   spit(dir / "plans.json", book);
   CHECK(ask(second, {"order", "place", id}).code_ == "refused.stale_plan");
 }
@@ -482,7 +482,7 @@ TEST_CASE("map_report: every step reached and and its precedence") {
   CHECK(mapped(broker, 1, false, 0).detail_.find("binding text") == std::string::npos);
   CHECK(
     sending::map_report(broker, 1, false, 0, "", "").detail_ ==
-    "the request reached the paper market, which refused it; nothing rests"
+    "the request reached the mock market, which refused it; nothing rests"
   );
   CHECK(mapped(broker, 1, true, 0).exit_ == OnceExit::UNKNOWN);
   Report binding;
@@ -491,11 +491,10 @@ TEST_CASE("map_report: every step reached and and its precedence") {
   CHECK(mapped(binding, 0, false, 0).exit_ == OnceExit::REFUSED);
   CHECK(
     mapped(binding, 0, false, 0).detail_ ==
-    "the paper client refused the request before writing it: [NOT_ARMED] binding text"
+    "the mock client refused the request before writing it: [NOT_ARMED] binding text"
   );
   CHECK(
-    sending::map_report(binding, 0, false, 0, "", "").detail_ ==
-    "the paper client refused the request before writing it"
+    sending::map_report(binding, 0, false, 0, "", "").detail_ == "the mock client refused the request before writing it"
   );
   CHECK(mapped(binding, 0, true, 0).reason_ == "journal_unwritable");
   CHECK(mapped(binding, 0, true, 0).exit_ == OnceExit::REFUSED);

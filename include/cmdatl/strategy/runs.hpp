@@ -214,7 +214,7 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
   return error_reply(Exit::FAILED, "unavailable.platform", "runs run on macOS and Linux only in this version");
 #else
   const auto& config = *snapshot.config_;
-  const bool broker = config.broker_ != "paper";
+  const bool broker = config.broker_ != "mock";
   GivenSettings given;
   if (auto refused = sort_words(target_and_settings(invocation), given)) {
     return std::move(*refused);

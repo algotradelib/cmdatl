@@ -148,7 +148,7 @@ TEST_CASE("a broker folder is found by name, after the built-in brokers and neve
   const auto kis = auth::lookup_broker("kis");
   CHECK(kis.found_ == auth::BrokerFound::BUILT_IN);
   CHECK(kis.broker()->read_ != nullptr);
-  for (const auto* name : {"paper", "csv", "wide", "store", "Vendor", "a_b", "-x", "1x", ""}) {
+  for (const auto* name : {"mock", "paper", "csv", "wide", "store", "Vendor", "a_b", "-x", "1x", ""}) {
     INFO(name);
     CHECK_FALSE(cmdatl::user_broker_name(name));
   }

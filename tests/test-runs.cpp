@@ -108,7 +108,7 @@ RunResult run_child(
 ) {
   RunResult ran;
   ran.run_ = next_run();
-  ran.dir_ = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001" / ran.run_;
+  ran.dir_ = fixture.dir() / "state" / "cmdatl" / "runs" / "mock-mock-paper-0001" / ran.run_;
   std::filesystem::create_directories(ran.dir_);
   if (before) {
     before(ran.run_, ran.dir_);
@@ -180,7 +180,7 @@ RunResult run_child_piped(
 ) {
   RunResult ran;
   ran.run_ = next_run();
-  ran.dir_ = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001" / ran.run_;
+  ran.dir_ = fixture.dir() / "state" / "cmdatl" / "runs" / "mock-mock-paper-0001" / ran.run_;
   std::filesystem::create_directories(ran.dir_);
   const auto stderr_path = fixture.dir() / (ran.run_ + ".stderr");
   int fds[2];
@@ -411,7 +411,7 @@ TEST_CASE("a run trades its script on the mock, its start line first, and ends c
   const auto ran = run_child<runtest::Program>(fixture, spec_args());
   INFO(json::serialize(ran.reply_));
   CHECK(ran.exit_ == 0);
-  CHECK(ran.reply_.at("env").as_string() == "paper");
+  CHECK(ran.reply_.at("env").as_string() == "mock");
   CHECK(ran.reply_.at("run").as_string() == ran.run_);
   CHECK(ran.reply_.at("outcome").as_string() == "clean");
   CHECK(ran.reply_.at("stopped").as_string() == "end");
@@ -608,7 +608,7 @@ TEST_CASE("the step guard: a disarm, a replaced lock and a signal each stop plac
     fixture.arm();
     set_script({{2, {10, "1"}}, {5, {0, "1"}}});
     runtest::script().actions_[5] = [&fixture] {
-      const auto dir = fixture.dir() / "state" / "cmdatl" / "runs" / "paper-paper-paper-0001";
+      const auto dir = fixture.dir() / "state" / "cmdatl" / "runs" / "mock-mock-paper-0001";
       for (const auto& entry : std::filesystem::directory_iterator(dir)) {
         const auto lock = entry.path() / "lock";
         if (std::filesystem::exists(lock) && !std::filesystem::exists(entry.path() / "reply.done")) {

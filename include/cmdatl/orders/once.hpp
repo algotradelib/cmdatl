@@ -61,7 +61,7 @@ namespace atl = algotradelib;
 enum class OnceExit : int {
   /** @brief Done: placed, withdrawn as asked, planned, or nothing needed. */
   DONE = 0,
-  /** @brief Refused: no `place` or `cancel` input reached the paper log in this call. */
+  /** @brief Refused: no `place` or `cancel` input reached the mock market in this call. */
   REFUSED = 3,
   /** @brief Unknown: something may be at the broker, or the journal cannot say. */
   UNKNOWN = 4,
@@ -315,7 +315,7 @@ using Bound = atl::runner::Runner<
 
 /**
  * @brief Binds a runner to a session and a journal: journal ids prefixed by the wall clock's nanoseconds, unique
- *   across processes even when the paper clock has not moved.
+ *   across processes even when the mock clock has not moved.
  * @tparam Session The session.
  * @param session The session.
  * @param journal The journal, open; it must outlive the runner.
@@ -377,7 +377,7 @@ struct Mapped {
  *
  * @tparam Report The runner's report type.
  * @param report The report.
- * @param logged How many paper inputs this call logged.
+ * @param logged How many inputs this call sent towards the mock market.
  * @param failed Whether the runner's local failure became set during the settle.
  * @param withdrawals How many withdrawals the call asked for (0 when it was not a withdrawal).
  * @param binding_refusal Why the binding refused the call's last request, or empty.
@@ -395,7 +395,7 @@ Mapped map_report(
   if (failed && logged > 0) {
     return {
       OnceExit::UNKNOWN, "journal_write",
-      "the request reached the paper log but its journal answer could not be written whole"
+      "the request reached the mock market but its journal answer could not be written whole"
     };
   }
   if (failed) {
@@ -442,7 +442,7 @@ Mapped map_report(
     if (!report.rejected_.empty() && report.rejected_.front().reason_ == atl::strategy::RejectReason::BINDING_REFUSED) {
       return {
         OnceExit::REFUSED, "not_reached",
-        "the paper client refused the request before writing it" +
+        "the mock client refused the request before writing it" +
           (binding_refusal.empty() ? std::string() : ": " + binding_refusal)
       };
     }
@@ -455,7 +455,7 @@ Mapped map_report(
       if (rejected.reason_ == atl::strategy::RejectReason::BROKER_REFUSED) {
         return {
           OnceExit::UNKNOWN, "broker_refused",
-          "the request reached the paper market, which refused it" +
+          "the request reached the mock market, which refused it" +
             (broker_refusal.empty() ? std::string() : " (" + broker_refusal + ")") + "; nothing rests"
         };
       }

@@ -51,10 +51,10 @@ void expect_paper_state(const PaperFixture& fixture, const std::string& text) {
   const auto journal = slurp(fixture.journal());
   const auto result = status_of(fixture);
   CHECK(result.first == 4);
-  CHECK(result.second == "unknown.paper_state");
+  CHECK(result.second == "unknown.mock_state");
   CHECK(slurp(fixture.log()) == text);
   CHECK(slurp(fixture.journal()) == journal);
-  CHECK(declares({"status"}, 4, "unknown.paper_state"));
+  CHECK(declares({"status"}, 4, "unknown.mock_state"));
 }
 
 /**
@@ -253,7 +253,7 @@ TEST_CASE("every paper.data case refuses at open and writes nothing") {
     fixture.write_bars(text);
     const auto ran = fixture.json({"status"});
     CHECK(ran.exit_ == 1);
-    CHECK(code_of(ran.out_) == "paper.data");
+    CHECK(code_of(ran.out_) == "mock.data");
     CHECK(!std::filesystem::exists(fixture.log()));
     CHECK(!std::filesystem::exists(fixture.journal()));
     CHECK(!std::filesystem::exists(fixture.account() / "owner.json"));
@@ -266,7 +266,7 @@ TEST_CASE("every paper.data case refuses at open and writes nothing") {
     ::close(fd);
     const auto ran = fixture.json({"status"});
     CHECK(ran.exit_ == 1);
-    CHECK(code_of(ran.out_) == "paper.data");
+    CHECK(code_of(ran.out_) == "mock.data");
     CHECK(
       reply_of(ran.out_).at("error").as_object().at("message").as_string().find("larger than") != std::string::npos
     );
@@ -278,9 +278,9 @@ TEST_CASE("every paper.data case refuses at open and writes nothing") {
     REQUIRE(::mkfifo((fixture.dir() / "bars.csv").c_str(), 0600) == 0);
     const auto ran = fixture.json({"status"});
     CHECK(ran.exit_ == 1);
-    CHECK(code_of(ran.out_) == "paper.data");
+    CHECK(code_of(ran.out_) == "mock.data");
   }
-  CHECK(declares({"status"}, 1, "paper.data"));
+  CHECK(declares({"status"}, 1, "mock.data"));
 }
 
 TEST_CASE("a placement without the armed file is refused at the boundary and not reached and not recorded") {

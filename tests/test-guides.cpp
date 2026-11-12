@@ -1,5 +1,5 @@
 // The guides and skills: `cmdatl guide`, the skills' files and the plugin's manifests, the words they share with the
-// help and the docs, and the agent guide's session run as written on a paper account.
+// help and the docs, and the agent guide's session run as written on a mock account.
 
 #include "./order-support.hpp"
 
@@ -231,8 +231,8 @@ TEST_CASE("no skill names a command that is not built and every error code the d
       families.insert(entry.code_.substr(0, dot));
     }
   }
-  // Families whose names are also file stems in the docs (paper.toml, run.json): not read as codes.
-  families.erase("paper");
+  // Families whose names are also file stems in the docs (mock.toml, run.json): not read as codes.
+  families.erase("mock");
   families.erase("file");
   families.erase("run");
   const std::set<std::string> extensions{
@@ -354,7 +354,7 @@ TEST_CASE("every next cmdatl gives leaves the operator's decisions with the oper
   const std::vector<std::pair<std::string, std::string>> pinned{
     {"unknown.journal_missing", "stop and report to the operator"},
     {"unknown.journal_damaged", "stop and report to the operator"},
-    {"unknown.paper_state", "stop and report to the operator"},
+    {"unknown.mock_state", "stop and report to the operator"},
     {"unknown.lock_lost", "stop and report to the operator"},
     {"refused.phase", "names nothing but phase or market_closed"},
     {"refused.awaiting_confirmation", "place nothing"},

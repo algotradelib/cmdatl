@@ -375,7 +375,7 @@ inline Started start(Account& account) {
   if (target > desk.clock_limit()) {
     started.refusal_ = error_reply(
       Exit::FAILED, "clock.past_data",
-      "the paper market's data ends " + data_end_text(desk) + "; an order command takes one simulated second, past it",
+      "the mock market's data ends " + data_end_text(desk) + "; an order command takes one simulated second, past it",
       "cmdatl clock shows where the data ends"
     );
     return started;
@@ -397,13 +397,13 @@ inline Started start(Account& account) {
     case Moved::UNCONFIRMED:
       started.refusal_ = error_reply(
         Exit::FAILED, "file.unwritable",
-        "the command's simulated second was written but not flushed; the paper clock may have moved one second and "
+        "the command's simulated second was written but not flushed; the mock clock may have moved one second and "
         "nothing was sent",
         "check the account's directory"
       );
       return started;
     case Moved::HALTED:
-      started.refusal_ = paper_state_reply(desk.halted().value_or("the paper market halted") + "; nothing was sent");
+      started.refusal_ = paper_state_reply(desk.halted().value_or("the mock market halted") + "; nothing was sent");
       return started;
   }
   started.body_["now"] = paper::kst_iso(desk.now());
@@ -753,7 +753,7 @@ inline Reply cancel_reply(const Invocation& invocation, Account& account, Output
   if (!account.desk().has_symbol(symbol)) {
     return with_body(
       error_reply(
-        Exit::FAILED, "quote.no_data", "the paper market's bars have no rows for " + symbol,
+        Exit::FAILED, "quote.no_data", "the mock market's bars have no rows for " + symbol,
         "cmdatl env shows the bars file"
       ),
       std::move(body)
@@ -801,7 +801,7 @@ inline Reply reconcile_reply(const Invocation& invocation, Account& account, Out
     if (!account.desk().has_symbol(symbol)) {
       return with_body(
         error_reply(
-          Exit::FAILED, "quote.no_data", "the paper market's bars have no rows for " + symbol,
+          Exit::FAILED, "quote.no_data", "the mock market's bars have no rows for " + symbol,
           "cmdatl env shows the bars file"
         ),
         std::move(body)
