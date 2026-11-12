@@ -429,6 +429,8 @@ struct Request {
   std::string fill_header_{};
   /** @brief The market-price rule's function (`replay.fill_function`), a C++ name the header declares. */
   std::string fill_function_{};
+  /** @brief The program's own C++ header (`header`), absolute, or empty: included before the generated strategy. */
+  std::string header_{};
   /** @brief The broker a run's driver trades (`kis`), or empty for the mock market or a broker folder. */
   std::string broker_{};
   /** @brief A broker folder's files, read once, compiled into the driver as `adapter/`; none for no folder. */
@@ -452,16 +454,20 @@ inline std::string adapter_digest(const auth::AdapterSnapshot& snapshot) {
 }
 
 /**
- * @brief The driver's `program.hpp`: the generated strategy as `Program`, and `program_fills`, which gives the fill
- *   model the run's market-price rule when it has one.
- * @param request The program and the rule.
+ * @brief The driver's `program.hpp`: the generated strategy as `Program` (after the program's own header, when it has
+ *   one), and `program_fills`, which gives the fill model the run's market-price rule when it has one.
+ * @param request The program, its header and the rule.
  * @return The header's text.
  */
 inline std::string program_header(const Request& request) {
   const bool backtest = request.kind_ == DriverKind::BACKTEST;
   const bool rule = !request.fill_header_.empty();
-  std::string out = std::string("#pragma once\n\n// Written by cmdatl ") + (backtest ? "strategy backtest" : "run") +
-    ".\n\n#include \"strategy.hpp\"\n";
+  std::string out =
+    std::string("#pragma once\n\n// Written by cmdatl ") + (backtest ? "strategy backtest" : "run") + ".\n\n";
+  if (!request.header_.empty()) {
+    out += "#include \"" + request.header_ + "\"\n";
+  }
+  out += "#include \"strategy.hpp\"\n";
   if (rule) {
     out += "#include \"" + request.fill_header_ + "\"\n";
   }
@@ -620,6 +626,18 @@ inline std::optional<Reply> build_driver(
     char digest[17];
     std::snprintf(digest, sizeof(digest), "%016llx", static_cast<unsigned long long>(fnv1a(bytes)));
     extra.push_back("fill=" + request.fill_header_ + ";" + request.fill_function_ + ";" + digest);
+  }
+  // The program's header likewise: its path and its bytes, so an edited header is another shape.
+  if (!request.header_.empty()) {
+    std::string bytes;
+    if (!read_file(real_path(request.header_), bytes)) {
+      return error_reply(
+        Exit::USAGE, "spec.invalid", "the run spec's header " + request.header_ + " cannot be read", "fix the run spec"
+      );
+    }
+    char digest[17];
+    std::snprintf(digest, sizeof(digest), "%016llx", static_cast<unsigned long long>(fnv1a(bytes)));
+    extra.push_back("header=" + request.header_ + ";" + digest);
   }
   const auto name = shape_name(
     request.program_, request.struct_, request.indicators_,

@@ -54,7 +54,7 @@ A value on the command line is typed by its key, never read as TOML:
 - a list key takes one item (`bars.symbols=AAA`) or a one-line TOML array of strings (`bars.symbols=["AAA","BBB"]`, quoted for the shell);
 - `params.NAME` takes a number, or `true` or `false`; then the program's type decides (`params.flag=1` is refused for a `bool`).
 
-`strategy` is not a setting on the command line: the program is the `.atls` word, or else the run spec's `strategy`.
+`strategy` and `header` are not settings on the command line: the program is the `.atls` word, or else the run spec's `strategy`, and its header is the run spec's `header`.
 A key given twice on the command line is an error.
 
 ## Keys
@@ -64,6 +64,20 @@ A key given twice on the command line is an error.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `strategy` | path | required unless a program is given | the program |
+| `header` | path | none | the C++ header that defines the program's external functions and indicators |
+
+A program that declares `extern` functions or indicators has its bodies in C++ of your own ([atlc's reference](https://github.com/algotradelib/atlc/blob/main/docs/reference/functions-and-indicators.md#external-c), "External C++"), and `header` names the header that defines them:
+
+```toml
+strategy = "pairs.atls"
+header = "include/statistics.hpp"
+```
+
+- The path is read against the run spec's directory, as `strategy` is; it names one header, which may include others.
+- cmdatl includes it in the driver before the generated strategy, in a backtest and in a run alike, on the mock market or an account.
+- A path that is not a regular file, or that holds `"`, `\` or a line break, is refused at its line before anything is built.
+- Without it, such a program fails its build (`build.failed`), and the reply's message starts with the compiler's first error, which names the class or function to define.
+- The header is native code compiled into the process that runs the program, and trades in a run: name only code you trust.
 
 ### `[bars]`: what is loaded
 
@@ -289,6 +303,7 @@ cmdatl compiles each program once per shape: `atlc build` translates the program
 A store backtest also links DuckDB's prebuilt C library (`duckdb.h` and the shared library), from `build.duckdb` alone when it is set, else `DUCKDB_ROOT`, then the system's library paths; the executable finds the library by an rpath to its directory.
 Builds are cached under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`), and CMake decides what to rebuild.
 Parameters, data and replay settings are arguments of the executable, so changing them never rebuilds.
+The program's `header` is compiled with it: its path and its bytes are part of the build's key, so an edited header is built again, and CMake tracks the headers it includes.
 Two backtests of one program at once share one build and do not wait on each other's replays.
 Each backtest runs a copy of the build from `$XDG_CACHE_HOME/cmdatl/backtests/` and removes it; a killed backtest leaves its copy there, and the directory is safe to delete while no backtest runs.
 

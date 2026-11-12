@@ -427,6 +427,7 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     };
     request.fill_header_ = resolved.fill_header_;
     request.fill_function_ = resolved.fill_function_;
+    request.header_ = resolved.header_;
     if (broker && auth::find_broker(config.broker_) != nullptr) {
       request.broker_ = config.broker_;
     } else if (broker) {

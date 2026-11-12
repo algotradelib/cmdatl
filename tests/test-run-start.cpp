@@ -123,6 +123,103 @@ TEST_CASE("a broker folder's driver header names the folder it is built from, ev
     decoded.push_back(static_cast<char>(std::stoi(literal.substr(k + 1, 3), nullptr, 8)));
   }
   CHECK(decoded == folder);
+
+/**
+ * @brief The names in a directory.
+ * @param dir The directory; none when it does not exist.
+ * @return The names.
+ */
+static std::set<std::string> files_in(const std::filesystem::path& dir) {
+  std::set<std::string> out;
+  std::error_code ec;
+  for (
+    auto it = std::filesystem::directory_iterator(dir, ec); !ec && it != std::filesystem::directory_iterator();
+    it.increment(ec)
+  ) {
+    out.insert(it->path().filename().string());
+  }
+  return out;
+}
+
+TEST_CASE("a driver's program header includes the program's own header first, and is unchanged without one") {
+  build::Request request;
+  request.struct_ = "Dip";
+  request.kind_ = build::DriverKind::BACKTEST;
+  // The text a program without a header always had, so its cached builds stay valid.
+  CHECK(
+    build::program_header(request) ==
+    "#pragma once\n\n// Written by cmdatl strategy backtest.\n\n#include \"strategy.hpp\"\n\n"
+    "#include <algotradelib/backtest>\n\n#include <optional>\n#include <type_traits>\n\nusing Program = atls::Dip;\n\n"
+    "// The fill model, with the run's market-price rule when it has one.\n"
+    "inline algotradelib::backtest::NextBarFillModel program_fills(algotradelib::backtest::NextBarFillModel model) {\n"
+    "  return model;\n}\n"
+  );
+  for (const auto kind : {build::DriverKind::BACKTEST, build::DriverKind::RUN}) {
+    request.kind_ = kind;
+    request.header_.clear();
+    const auto plain = build::program_header(request);
+    request.header_ = "/project/include/user.hpp";
+    const auto with = build::program_header(request);
+    const std::string included = "#include \"/project/include/user.hpp\"\n#include \"strategy.hpp\"\n";
+    CHECK(with.find(included) != std::string::npos);
+    auto without = with;
+    without.erase(without.find(included), included.size() - std::string("#include \"strategy.hpp\"\n").size());
+    CHECK(without == plain);
+  }
+}
+
+TEST_CASE("the program's header is in the shape's key by its path and bytes, and nothing else changes without it") {
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+  std::filesystem::create_directories(dir.path() / "package");
+  spit(dir.path() / "package" / "algotradelibConfig.cmake", "");
+  spit(dir.path() / "user.hpp", "#pragma once\n");
+  build::Request request;
+  request.atlc_ = "/usr/bin/false";
+  request.program_ = (dir.path() / "dip.atls").string();
+  request.struct_ = "Dip";
+  request.indicators_ = "incremental";
+  request.package_ = (dir.path() / "package").string();
+  request.kind_ = build::DriverKind::BACKTEST;
+  const auto drivers = dir.path() / "cache" / "cmdatl" / "drivers";
+  // The shape a build takes: its directory is made before atlc runs (here atlc fails at once).
+  const auto shape_of = [&request, &dir, &drivers]() {
+    const auto before = files_in(drivers);
+    const auto failed = build::build_driver(request, dir.path(), [](const std::string&) {});
+    REQUIRE(failed);
+    auto after = files_in(drivers);
+    for (const auto& name : before) {
+      after.erase(name);
+    }
+    return after.empty() ? std::string() : *after.begin();
+  };
+  const auto lookup = [](const std::string& key) {
+    return cmdatl::variable(key.c_str());
+  };
+  // Without a header, the key a backtest's shape always had.
+  const auto plain = shape_of();
+  CHECK(
+    plain ==
+    build::shape_name(request.program_, request.struct_, request.indicators_, lookup, request.package_, {"backtest"})
+  );
+  request.header_ = (dir.path() / "user.hpp").string();
+  const auto with = shape_of();
+  CHECK(!with.empty());
+  CHECK(with != plain);
+  // The same bytes build in the same shape; one byte more is another shape.
+  CHECK(shape_of().empty());
+  spit(dir.path() / "user.hpp", "#pragma once\n\n");
+  const auto edited = shape_of();
+  CHECK(!edited.empty());
+  CHECK(edited != with);
+  // A header that cannot be read is refused before a shape is made.
+  ::chmod(request.header_.c_str(), 0);
+  const auto before = files_in(drivers);
+  const auto refused = build::build_driver(request, dir.path(), [](const std::string&) {});
+  REQUIRE(refused);
+  CHECK(refused->body_.at("error").as_object().at("code").as_string() == "spec.invalid");
+  CHECK(files_in(drivers) == before);
+  ::chmod(request.header_.c_str(), 0600);
 }
 
 TEST_CASE("a shape's key changes with each input it holds, and with nothing else") {

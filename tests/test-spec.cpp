@@ -1007,6 +1007,52 @@ TEST_CASE("a market-price rule comes from the spec file, not the command line") 
   CHECK(has(r.errors_.front(), "not on the command line"));
 }
 
+TEST_CASE("the program's header: read against the spec, a regular file the include can name, never a driver argument") {
+  const ScratchDir dir;
+  std::filesystem::create_directories(dir.path() / "include");
+  spit(dir.path() / "include" / "user.hpp", "#pragma once\n");
+  const auto file = (dir.path() / "s.toml").string();
+  const auto resolved = [&file](const std::string& header) {
+    const auto read = sp::read_text("strategy = \"m.atls\"\n" + header + "[bars]\nfile = \"closes.csv\"\n", file);
+    INFO(header);
+    REQUIRE(read.errors_.empty());
+    return resolve({read.entries_}, single());
+  };
+  const auto plain = resolved("");
+  REQUIRE(plain.errors_.empty());
+  CHECK(plain.resolved_.header_.empty());
+  // Relative to the spec's directory, absolute once read, and the driver's arguments are the same as without it.
+  const auto with = resolved("header = \"include/user.hpp\"\n");
+  REQUIRE(with.errors_.empty());
+  CHECK(with.resolved_.header_ == (dir.path() / "include" / "user.hpp").string());
+  CHECK(with.resolved_.args_ == plain.resolved_.args_);
+  CHECK_FALSE(with.arg("header"));
+  // Not a regular file: missing, or a directory; refused at its line.
+  for (const auto* named : {"include/none.hpp", "include"}) {
+    const auto r = resolved(std::string("header = \"") + named + "\"\n");
+    REQUIRE(r.errors_.size() == 1);
+    CHECK(has(r.errors_.front(), file + ":2"));
+    CHECK(has(r.errors_.front(), "is not a regular file"));
+  }
+  // A regular file whose path the include cannot quote; a line break is refused with any control character.
+  spit(dir.path() / "a\"b.hpp", "#pragma once\n");
+  spit(dir.path() / "a\\b.hpp", "#pragma once\n");
+  for (const auto* named : {"header = 'a\"b.hpp'\n", "header = 'a\\b.hpp'\n"}) {
+    const auto r = resolved(named);
+    REQUIRE(r.errors_.size() == 1);
+    CHECK(has(r.errors_.front(), file + ":2"));
+    CHECK(has(r.errors_.front(), "cannot be included"));
+  }
+  CHECK(has(one_error("header = \"a\\nb.hpp\""), "control character"));
+  // Not a setting on the command line, as `strategy` is not: the word is read as a run spec, before atlc runs.
+  CHECK_FALSE(sp::is_setting("header=include/user.hpp"));
+  const ScopedVariable none("CMDATL_ATLC", "/nonexistent/atlc");
+  const auto ran = run({"--json", "strategy", "backtest", "m.atls", "header=include/user.hpp"});
+  CHECK(ran.exit_ == 2);
+  CHECK(code_of(ran.out_) == "spec.invalid");
+  CHECK(reply_of(ran.out_).at("errors").as_array().at(0).at("code").as_string() == "unreadable");
+}
+
 TEST_CASE("a program with session handlers takes intraday bars as they are, with its market stated") {
   sp::Program session;
   session.mode_ = "universe";

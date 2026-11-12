@@ -301,6 +301,7 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     request.duckdb_ = checked.resolved_.duckdb_;
     request.fill_header_ = checked.resolved_.fill_header_;
     request.fill_function_ = checked.resolved_.fill_function_;
+    request.header_ = checked.resolved_.header_;
     request.adapter_ = adapter;
     const auto progress = [&output](const std::string& line) {
       output.progress(line);

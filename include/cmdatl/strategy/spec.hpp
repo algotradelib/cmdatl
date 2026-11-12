@@ -112,6 +112,7 @@ inline const std::vector<Key>& keys() {
   static const std::vector<std::string> store_or_folder{"store", "folder"};
   static const std::vector<Key> table{
     {"strategy", Kind::PATH, {}, {}},
+    {"header", Kind::PATH, {}, {}},
     {"bars.source", Kind::CHOICE, {}, {"wide", "csv", "store"}},
     {"bars.adapter", Kind::PATH, folder, {}},
     {"bars.file", Kind::PATH, {"wide", "csv"}, {}},
@@ -1241,6 +1242,8 @@ struct Resolved {
   std::string fill_header_;
   /** @brief `replay.fill_function`, a C++ name, or empty: the market-price rule the header declares. */
   std::string fill_function_;
+  /** @brief `header`, absolute, or empty: the C++ header of the program's external functions and indicators. */
+  std::string header_;
   /** @brief The driver's `key=value` arguments, one per key, parameters as `param.NAME` and instruments as
    * `instrument.NAME`. */
   std::vector<std::pair<std::string, std::string>> args_;
@@ -1503,6 +1506,15 @@ inline std::vector<Error> resolve(
       );
     }
   }
+  // The program's own C++ (its `extern` functions and indicators): one header, included before the generated strategy.
+  if (const auto* e = get("header")) {
+    std::error_code ec;
+    if (e->value_.text().find_first_of("\"\\\n\r") != std::string::npos) {
+      errors.push_back(Error::at(e->origin_, "`header`: a path holding `\"`, `\\` or a line break cannot be included"));
+    } else if (!std::filesystem::is_regular_file(e->value_.text(), ec)) {
+      errors.push_back(Error::at(e->origin_, "`header` = \"" + e->value_.text() + "\" is not a regular file"));
+    }
+  }
   // Whether every bar is daily: wide tables always, a CSV by its interval, a store by each coordinate's.
   bool daily = true;
   std::string intraday;
@@ -1754,6 +1766,10 @@ inline std::vector<Error> resolve(
   Resolved out;
   out.args_.emplace_back("bars.source", source);
   for (const auto& e : merged) {
+    // The program's header is the build's, not the driver's.
+    if (e.key_ == "header") {
+      continue;
+    }
     if (
       e.key_ == "strategy" || e.key_ == "bars.source" || e.key_.rfind("build.", 0) == 0 ||
       e.key_.rfind("params.", 0) == 0 || e.key_ == "replay.fill_header" || e.key_ == "replay.fill_function" ||
@@ -1785,6 +1801,7 @@ inline std::vector<Error> resolve(
   out.indicators_ = text("build.indicators").value_or("incremental");
   out.fill_header_ = text("replay.fill_header").value_or("");
   out.fill_function_ = text("replay.fill_function").value_or("");
+  out.header_ = text("header").value_or("");
   out.order_type_ = kind;
   out.offset_ = text("orders.offset").value_or("");
   // The driver's arguments are bounded, so a huge setting is refused here rather than failing at exec.
