@@ -220,13 +220,15 @@ TEST_CASE("the program's header is in the shape's key by its path and bytes, and
   CHECK(!moved.empty());
   CHECK(moved != edited);
   request.header_ = first;
-  // A header that cannot be read is refused before a shape is made.
+  // A header that cannot be read is refused before a shape is made (root reads it anyway: then nothing to check).
   ::chmod(request.header_.c_str(), 0);
-  const auto before = files_in(drivers);
-  const auto refused = build::build_driver(request, dir.path(), [](const std::string&) {});
-  REQUIRE(refused);
-  CHECK(refused->body_.at("error").as_object().at("code").as_string() == "spec.invalid");
-  CHECK(files_in(drivers) == before);
+  if (::access(request.header_.c_str(), R_OK) != 0) {
+    const auto before = files_in(drivers);
+    const auto refused = build::build_driver(request, dir.path(), [](const std::string&) {});
+    REQUIRE(refused);
+    CHECK(refused->body_.at("error").as_object().at("code").as_string() == "spec.invalid");
+    CHECK(files_in(drivers) == before);
+  }
   ::chmod(request.header_.c_str(), 0600);
 }
 
