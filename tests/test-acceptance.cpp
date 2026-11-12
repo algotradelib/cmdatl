@@ -1263,3 +1263,36 @@ TEST_CASE("a program's data {} reads its data file in time order with the bars",
   spit(at("buy.toml"), "strategy = 'buy.atls'\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n");
   CHECK(!report_of({at("buy.toml")}).as_object().contains("records"));
 }
+
+TEST_CASE("a program's extern function and indicator come from the run spec's header", "[acceptance]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const ScratchDir dir;
+  const auto at = [&dir](const std::string& file) {
+    return (dir.path() / file).string();
+  };
+  const auto fixtures = std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "fixtures" / "extern";
+  std::filesystem::copy(fixtures, dir.path(), std::filesystem::copy_options::recursive);
+  write_bars(dir.path() / "bars.csv");
+  const std::string bars =
+    "[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n";
+  spit(at("extern.toml"), "strategy = \"mean-gap.atls\"\nheader = \"include/user.hpp\"\n" + bars);
+  spit(at("atls.toml"), "strategy = \"mean-gap-atls.atls\"\n" + bars);
+  // The header, its own include and the C++ in it restate sma and an atls function: the same report, fill for fill.
+  const auto restated = report_of({at("extern.toml"), "--fills", at("extern.csv")});
+  const auto reference = report_of({at("atls.toml"), "--fills", at("atls.csv")});
+  CHECK(restated.as_object().at("executions").as_int64() >= 4);
+  CHECK(restated == reference);
+  CHECK(slurp(at("extern.csv")) == slurp(at("atls.csv")));
+  // Without the header, the build fails, and the reply leads with the compiler's message naming what to add.
+  spit(at("bare.toml"), "strategy = \"mean-gap.atls\"\n" + bars);
+  const auto bare = backtest({at("bare.toml")});
+  CHECK(bare.exit_ == 1);
+  CHECK(code_of(bare.out_) == "build.failed");
+  const std::string message(reply_of(bare.out_).at("error").as_object().at("message").as_string());
+  CHECK(message.find("atls::user::mean_of is not defined") != std::string::npos);
+  CHECK(message.find("the run spec's header key") != std::string::npos);
+}

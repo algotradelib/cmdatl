@@ -666,6 +666,41 @@ TEST_CASE(
   CHECK(read >= 1);
 }
 
+TEST_CASE("run builds a program with its run spec's header and trades as its backtest does", "[acceptance][runs]") {
+  const auto equipment = run_equipment();
+  if (!equipment) {
+    SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
+  }
+  const PaperFixture fixture(run_operator());
+  const RunEquipped equipped(equipment->first, equipment->second);
+  fixture.arm();
+  const auto dir = fixture.dir() / "extern";
+  std::filesystem::copy(
+    std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "fixtures" / "extern", dir,
+    std::filesystem::copy_options::recursive
+  );
+  spit(dir / "bars.csv", dip_bars(160));
+  const auto spec = (dir / "mean-gap.toml").string();
+  spit(
+    spec,
+    "strategy = \"mean-gap.atls\"\nheader = \"include/user.hpp\"\n\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\n"
+    "symbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n"
+    "[replay]\ncash = 100000000\ncommission = 0.0005\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n"
+  );
+  const auto fills = dir / "fills.csv";
+  const auto backtest = fixture.json({"strategy", "backtest", spec, "--fills", fills.string()});
+  REQUIRE(backtest.exit_ == 0);
+  const auto expected = backtest_fills(fills);
+  REQUIRE(expected.size() >= 2);
+  const auto ran = run_process({spec});
+  INFO(ran.out_);
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  CHECK(ran.reply_.at("result").as_string() == "ended");
+  CHECK(ran.reply_.at("outcome").as_string() == "clean");
+  CHECK(run_fills(ran) == expected);
+}
+
 TEST_CASE(
   "run takes a program with a run spec that names none, and keeps the operator's limits", "[acceptance][runs]"
 ) {

@@ -1,0 +1,25 @@
+// Buys when the close is well below its mean and sells when it is back above it; the mean and the cap are C++ of
+// one's own (include/user.hpp), restating sma and an atls function.
+params {
+  int<lower=2> lookback = 20;
+  real<lower=0> entry = 0.03;
+  int<lower=0> quantity = 100;
+}
+functions {
+  extern real clip(real z, real cap);
+}
+extern indicator mean_of(real x, int n) {
+  warmup n;
+  value real mean;
+}
+series {
+  real m = mean_of(close, lookback);
+  real gap = clip(close / m - 1, 0.05);
+}
+on_bar {
+  if (gap < -entry) {
+    target(quantity);
+  } else if (gap > 0) {
+    target(0);
+  }
+}

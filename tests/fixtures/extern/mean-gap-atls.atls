@@ -1,0 +1,22 @@
+// mean-gap.atls with the built-in sma and the cap written in atls: the same fills.
+params {
+  int<lower=2> lookback = 20;
+  real<lower=0> entry = 0.03;
+  int<lower=0> quantity = 100;
+}
+functions {
+  real clip(real z, real cap) {
+    return min(max(z, -cap), cap);
+  }
+}
+series {
+  real m = sma(close, lookback);
+  real gap = clip(close / m - 1, 0.05);
+}
+on_bar {
+  if (gap < -entry) {
+    target(quantity);
+  } else if (gap > 0) {
+    target(0);
+  }
+}
