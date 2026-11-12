@@ -7,8 +7,9 @@
 // nothing with the agent commands' paper account or with another run. The operator's file decides what may be placed.
 //
 // The driver checks the start refusals in order, builds the market, trades the program through the live wiring
-// (`live.hpp`) behind the placement boundary (`session.hpp`) on the market's clock (`clock.hpp`), writes its events to
-// stdout as JSON lines (the start line first), and writes its reply as the last line before it releases its lock.
+// (`live.hpp`) behind the placement boundary (`account/session.hpp`) on the market's clock (`clock.hpp`), writes its
+// events to stdout as JSON lines (the start line first), and writes its reply as the last line before it releases its
+// lock.
 // SIGINT, SIGTERM and SIGHUP withdraw: no new placements, the run's resting orders cancelled and confirmed.
 //
 // Nothing on its command line names a limit, a phase, a path or a clock: `run.id`, then the replay's `key=value`
@@ -17,6 +18,7 @@
 
 #include "../account/account.hpp"
 #include "../account/operator.hpp"
+#include "../account/session.hpp"
 #include "../core/errors.hpp"
 #include "../core/reply.hpp"
 #include "../core/runs.hpp"
@@ -27,7 +29,6 @@
 #include "./clock.hpp"
 #include "./events.hpp"
 #include "./live.hpp"
-#include "./session.hpp"
 
 #include <algotradelib/backtest>
 #include <algotradelib/broker>

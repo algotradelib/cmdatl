@@ -8,9 +8,9 @@
 // accepts orders at any instant. Cancellations are forwarded unchecked, so withdrawals stay available while disarmed or
 // outside a permitted phase.
 
-#include "../account/operator.hpp"
 #include "../system/lock.hpp"
 #include "../system/process.hpp"
+#include "./operator.hpp"
 
 #include <algotradelib/broker>
 #include <algotradelib/strategy>

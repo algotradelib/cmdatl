@@ -2,7 +2,7 @@
 
 // A run on a broker's account: the driver `cmdatl run` builds for a KIS account and then becomes, in the caller's
 // foreground. It trades the program through the same live wiring as a mock run (`live.hpp`), behind the same placement
-// boundary (`session.hpp`), on the wall clock (`WallClock`).
+// boundary (`account/session.hpp`), on the wall clock (`WallClock`).
 //
 // The account is shared with everything else that trades it, so the run holds the account's lock for its life and uses
 // the account's journal, kept across runs.
@@ -20,6 +20,7 @@
 
 #include "../account/account.hpp"
 #include "../account/operator.hpp"
+#include "../account/session.hpp"
 #include "../core/errors.hpp"
 #include "../core/reply.hpp"
 #include "../orders/rails.hpp"
@@ -31,7 +32,6 @@
 #include "./clock.hpp"
 #include "./events.hpp"
 #include "./live.hpp"
-#include "./session.hpp"
 
 #include <algotradelib/broker>
 #include <algotradelib/network>
