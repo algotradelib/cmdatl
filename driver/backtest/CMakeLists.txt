@@ -11,13 +11,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 if(NOT CMDATL_ALGOTRADELIB_DIR)
   message(FATAL_ERROR "CMDATL_ALGOTRADELIB_DIR must name the algotradelib package cmdatl was built against")
 endif()
-# Without a trailing slash, which would hide the installed layout below.
-get_filename_component(CMDATL_ALGOTRADELIB_DIR "${CMDATL_ALGOTRADELIB_DIR}" ABSOLUTE)
 set(algotradelib_DIR "${CMDATL_ALGOTRADELIB_DIR}" CACHE PATH "The algotradelib package cmdatl was built against" FORCE)
 # The package's dependencies are found first in the package's own prefix (<prefix>/lib*/cmake/algotradelib), as the run
 # driver finds them.
-get_filename_component(cmdatl_package_name "${CMDATL_ALGOTRADELIB_DIR}" NAME)
-get_filename_component(cmdatl_package_cmake "${CMDATL_ALGOTRADELIB_DIR}/.." ABSOLUTE)
+# Read without trailing slashes, which would hide the layout; the package path itself is used as given.
+string(REGEX REPLACE "/+$" "" cmdatl_package_dir "${CMDATL_ALGOTRADELIB_DIR}")
+get_filename_component(cmdatl_package_name "${cmdatl_package_dir}" NAME)
+get_filename_component(cmdatl_package_cmake "${cmdatl_package_dir}/.." ABSOLUTE)
 get_filename_component(cmdatl_package_cmake_name "${cmdatl_package_cmake}" NAME)
 get_filename_component(cmdatl_package_lib "${cmdatl_package_cmake}/.." ABSOLUTE)
 get_filename_component(cmdatl_package_lib_name "${cmdatl_package_lib}" NAME)
