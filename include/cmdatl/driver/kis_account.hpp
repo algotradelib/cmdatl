@@ -1,24 +1,13 @@
 #pragma once
 
-// The KIS part of an account run (`account_main.hpp`): the logins checked against the operator's file, the trading
-// session and the market-data session built, then `run_account`.
-//
-// On a demo account the market data comes from the real login with an empty account, which cannot trade: a KIS demo
-// host refuses reference data and the holiday calendar (`EGW02006`), as the library's `example-live-program` does.
-// Both clients are paced at one request a second, the rate a KIS demo key is refused above (`EGW00201`).
-// Both read only KRX's prices (the library reads KRX and NXT combined by default): a daily bar closes at 15:30.
+// The KIS part of an account run (`account_main.hpp`): the logins checked against the operator's file and the two
+// sessions built (`account/kis.hpp`, shared with the commands on a KIS account), then `run_account`.
 // Orders go where they always did.
 
+#include "../account/kis.hpp"
 #include "./account_main.hpp"
 
-#include <algotradelib/kis>
-
-#include <boost/asio/ssl/context.hpp>
-#include <boost/json.hpp>
-
-#include <exception>
 #include <functional>
-#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -29,6 +18,9 @@ namespace driver {
 
 namespace atl = algotradelib;
 namespace json = boost::json;
+
+using cmdatl::kis_account_mismatch;
+using cmdatl::run_token_store;
 
 struct KisBrokerTest;
 
@@ -74,42 +66,12 @@ public:
         base, Exit::FAILED, "run.failed", "the driver received no logins on descriptor 3; start the run with cmdatl run"
       );
     }
-    try {
-      trading_config_.from_json_text(documents[0], "the stored login");
-      account_.from_json_text(documents[0], "the stored login");
-    } catch (const std::exception&) {
-      // The loaders' messages may quote what they read: never repeated.
-      return run_error(base, Exit::FAILED, "auth.account_mismatch", "the stored login could not be read; log in again");
-    }
     if (
-      const auto mismatch = kis_account_mismatch(
-        config.number_, demo, account_.account_number_, account_.product_code_, trading_config_.is_demo_
-      )
+      const auto mismatch = read_kis_logins(config, documents, trading_config_, account_, market_config_, effective)
     ) {
       return run_error(base, Exit::FAILED, "auth.account_mismatch", *mismatch);
     }
-    // The account the run trades: the login's, which the operator file's number, when given, has just matched.
-    effective.number_ = account_.account_number_ + "-" + account_.product_code_;
-    // One tape for every read, set on each config the run builds: bars never come from another book than the quotes.
-    trading_config_.market_tape_ = atl::kis::MarketTape::KRX;
-    if (demo) {
-      atl::kis::KisConfig real;
-      try {
-        real.from_json_text(documents[1], "the stored real login");
-      } catch (const std::exception&) {
-        return run_error(
-          base, Exit::FAILED, "auth.account_mismatch", "the stored real login could not be read; log in again"
-        );
-      }
-      if (real.is_demo_) {
-        return run_error(base, Exit::FAILED, "auth.account_mismatch", "the login stored as kis/real is a demo login");
-      }
-      real.market_tape_ = atl::kis::MarketTape::KRX;
-      market_config_ = std::move(real);
-      market_data = "kis-real (read only), KRX";
-    } else {
-      market_data = "own, KRX";
-    }
+    market_data = market_config_ ? "kis-real (read only), KRX" : "own, KRX";
     return std::nullopt;
   }
 
@@ -124,30 +86,13 @@ public:
    */
   template <typename Program>
   int start(AccountRun& run, const OperatorConfig& effective, Program&& strategy) {
-    namespace ssl = boost::asio::ssl;
-    ssl::context tls(ssl::context::tls_client);
-    tls.set_default_verify_paths();
-    tls.set_verify_mode(ssl::verify_peer);
-    atl::network::HttpClientOptions paced;
-    paced.rate_limit_ = atl::network::RateLimitBudget{1, 1, 0};
-    // Every cmdatl process on a key shares its token; each client stores under its own key's identity.
-    const auto tokens = run_token_store();
-    using Session = atl::BlockingSession<atl::kis::KisBlockingClient>;
-    Session session(
-      std::make_shared<atl::kis::KisBlockingClient>(tls, std::move(trading_config_), paced, tokens), std::move(account_)
-    );
+    KisSessions sessions(std::move(trading_config_), std::move(account_), std::move(market_config_));
     const auto make_clock = [](std::function<void()> after_slice) {
       return WallClock(std::move(after_slice));
     };
-    if (market_config_) {
-      // No account: a session that cannot trade, so a swap by mistake places nothing.
-      Session market(
-        std::make_shared<atl::kis::KisBlockingClient>(tls, std::move(*market_config_), paced, tokens),
-        atl::kis::KisAccount{}
-      );
-      return run_account(run, effective, std::forward<Program>(strategy), session, market, make_clock);
-    }
-    return run_account(run, effective, std::forward<Program>(strategy), session, session, make_clock);
+    return run_account(
+      run, effective, std::forward<Program>(strategy), sessions.trading(), sessions.market(), make_clock
+    );
   }
 
 private:

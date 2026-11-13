@@ -73,18 +73,6 @@ inline constexpr const char* ACCOUNT_UNKNOWN_NEXT =
   "keeps what this run could not confirm";
 
 /**
- * @brief The store a run's broker clients share their access tokens through: the library's file store on
- *   `token_folder()`, its missing parents made `0700`. Without a cache folder it names none, and refuses at the first
- *   read, before anything is sent.
- * @return The store.
- */
-inline std::shared_ptr<atl::network::TokenStore> run_token_store() {
-  const auto folder = token_folder().value_or(std::string());
-  (void)make_private_dirs(folder);
-  return std::make_shared<atl::network::FileTokenStore>(folder);
-}
-
-/**
  * @brief The next step after a start read failed: the token store's when it refused, else `otherwise`.
  * @param error The read's error.
  * @param otherwise The next step for any other error.
@@ -95,30 +83,6 @@ inline std::string read_failure_next(const atl::BrokerError& error, std::string 
     return otherwise;
   }
   return "nothing was sent; " + token_store_next(error.message_, "starts the run again");
-}
-
-/**
- * @brief Whether a login is the operator file's account: the account number and product code as `12345678-01`, and the
- *   environment.
- * @param number The operator file's `[account] number`, or empty when it names none (the login decides).
- * @param demo Whether the operator file's environment is demo.
- * @param account_number The login's account number.
- * @param product_code The login's product code.
- * @param login_demo Whether the login is a demo login.
- * @return What differs, or nothing.
- */
-inline std::optional<std::string> kis_account_mismatch(
-  const std::string& number, bool demo, const std::string& account_number, const std::string& product_code,
-  bool login_demo
-) {
-  if (login_demo != demo) {
-    return std::string("the login is a ") + (login_demo ? "demo" : "real") +
-      " login, and the operator file's account is " + (demo ? "demo" : "real");
-  }
-  if (!number.empty() && account_number + "-" + product_code != number) {
-    return "the login's account is not the operator file's account.number " + number;
-  }
-  return std::nullopt;
 }
 
 /**
