@@ -692,7 +692,6 @@ OnceResult once(
   }
 
   // 8. With an order working on the instrument: met by it, or withdraw it and place on a later call.
-  std::vector<decltype(book.working_.front().ref_)> working_refs;
   std::vector<std::decay_t<decltype(book.working_.front())>> working_rows;
   double committed = 0;
   for (const auto& working : book.working_) {
@@ -702,7 +701,6 @@ OnceResult once(
     ) {
       continue;
     }
-    working_refs.push_back(working.ref_);
     working_rows.push_back(working);
     const double left =
       once_detail::number(working.order_.quantity_) - once_detail::number(working.order_.execution_.filled_quantity_);
@@ -712,7 +710,7 @@ OnceResult once(
     result.plan_kind_ = std::move(kind);
     return done("plan", std::move(detail));
   };
-  if (config.refuse_unjournaled_orders_ && !working_refs.empty()) {
+  if (config.refuse_unjournaled_orders_ && !working_rows.empty()) {
     if constexpr (Desk::simulated) {
       // The mock's numbers are its own market's: a line that ever named one owns it.
       std::vector<std::string> named;
@@ -721,11 +719,11 @@ OnceResult once(
           named.push_back(line.order_id_);
         }
       }
-      for (const auto& ref : working_refs) {
-        if (std::find(named.begin(), named.end(), ref.primary_) == named.end()) {
+      for (const auto& row : working_rows) {
+        if (std::find(named.begin(), named.end(), row.ref_.primary_) == named.end()) {
           return refuse(
             "unjournaled_order",
-            "order " + ref.primary_ + " on " + request.instrument_.symbol_ +
+            "order " + row.ref_.primary_ + " on " + request.instrument_.symbol_ +
               " is not named by this account's journal; it was placed elsewhere"
           );
         }
@@ -747,7 +745,7 @@ OnceResult once(
         if (owners[k].empty()) {
           return refuse(
             "unjournaled_order",
-            "order " + working_refs[k].primary_ + " on " + request.instrument_.symbol_ +
+            "order " + working_rows[k].ref_.primary_ + " on " + request.instrument_.symbol_ +
               " is not one this account's journal placed and the broker acknowledged today with the same instrument, "
               "side, quantity and price; cmdatl does not withdraw it"
           );
@@ -758,17 +756,17 @@ OnceResult once(
   const auto logged_before = desk.sends();
   const bool failed_before = bound.local_failure().has_value();
   if (config.withdraw_only_) {
-    if (working_refs.empty()) {
+    if (working_rows.empty()) {
       return done("nothing_working", "the listing shows no order on this instrument");
     }
     if (config.dry_run_) {
-      return planned("withdraw", "would withdraw " + std::to_string(working_refs.size()) + " working order(s)");
+      return planned("withdraw", "would withdraw " + std::to_string(working_rows.size()) + " working order(s)");
     }
-    for (const auto& ref : working_refs) {
-      result.withdrawn_.push_back(ref.primary_);
-      bound.context().cancel(ref, "cmdatl");
+    for (const auto& row : working_rows) {
+      result.withdrawn_.push_back(row.ref_.primary_);
+      bound.context().cancel(row.ref_, "cmdatl");
     }
-  } else if (!working_refs.empty()) {
+  } else if (!working_rows.empty()) {
     const auto held = book.net_quantity_of(request.instrument_);
     if (!held) {
       return refuse("holdings_unread", "the holding could not be netted");
@@ -785,16 +783,16 @@ OnceResult once(
     if (config.dry_run_) {
       return planned(
         "withdraw",
-        "would withdraw " + std::to_string(working_refs.size()) +
+        "would withdraw " + std::to_string(working_rows.size()) +
           " working order(s) first; the placement waits for a later call"
       );
     }
     if (!armed()) {
       return refuse("not_armed", "the armed file was removed during the call");
     }
-    for (const auto& ref : working_refs) {
-      result.withdrawn_.push_back(ref.primary_);
-      bound.context().cancel(ref, "cmdatl");
+    for (const auto& row : working_rows) {
+      result.withdrawn_.push_back(row.ref_.primary_);
+      bound.context().cancel(row.ref_, "cmdatl");
     }
   } else {
     if (config.dry_run_) {

@@ -645,19 +645,9 @@ int run_account(
     std::size_t session_refused = 0;
     std::size_t signal_refused = 0;
     std::size_t placed = 0;
-    PlacementPolicy policy;
-    policy.armed_ = config.armed_path();
-    policy.lock_ = &lock;
-    policy.limit_only_ = config.limits_.order_type_ == "limit";
-    policy.collar_ = config.limits_.collar_;
-    for (const auto& name : config.limits_.phases_) {
-      if (const auto phase = orders_detail::phase_named(name)) {
-        policy.phases_.push_back(*phase);
-      }
-    }
-    policy.window_ = atl::strategy::SessionWindow::krx();
     GuardedSession<Inner, Market> guarded(
-      inner, market, policy, now, [&guard, &session_refused, &signal_refused, &placed](const PlacementEvent& event) {
+      inner, market, placement_policy(config, lock), now,
+      [&guard, &session_refused, &signal_refused, &placed](const PlacementEvent& event) {
         json::object line{
           {"event", event.kind_},
           {"at", at_text(event.at_)},

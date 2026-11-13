@@ -71,33 +71,23 @@ class Table;
 struct ConfigSnapshot;
 
 /**
- * @brief Which account command a command is: its handler, run on the open account by the one switch for the mock
- *   account and a broker's (`run_account_kind`, cli.hpp).
+ * @brief Which account command a command is, named as the command (`ORDER_LIST` is `order list`, `ADVANCE` is
+ *   `clock advance`): its handler, run on the open account by the one switch for the mock account and a broker's
+ *   (`run_account_kind`, cli.hpp); `CLOCK` and `ADVANCE` are the mock's only.
  */
 enum class AccountKind {
   /** @brief Not an account command. */
   NONE,
-  /** @brief `status`. */
   STATUS,
-  /** @brief `account`. */
   ACCOUNT,
-  /** @brief `quote`. */
   QUOTE,
-  /** @brief `order list`. */
   ORDER_LIST,
-  /** @brief `order plan`. */
   PLAN,
-  /** @brief `order place`. */
   PLACE,
-  /** @brief `order cancel`. */
   CANCEL,
-  /** @brief `order reconcile`. */
   RECONCILE,
-  /** @brief `order release`. */
   RELEASE,
-  /** @brief `clock`, the mock's only. */
   CLOCK,
-  /** @brief `clock advance`, the mock's only. */
   ADVANCE,
 };
 
