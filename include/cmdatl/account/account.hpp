@@ -301,6 +301,8 @@ inline Reply lock_lost_reply() {
 // A desk: what the account and order commands are given of an account's broker, and all they use of it.
 // The reads (`reads.hpp`), the order commands, once() and the plan book are templates over it, or take it from
 // `Account::desk()`; `Account` is the one place a desk is built, and `MockDesk` (`mock_desk.hpp`) the one desk.
+// On a broker's account the reads alone are given `BrokerDesk` (`broker_desk.hpp`), built by the command path over
+// sessions it owns, with the members below but `env_name` and `sends()`: it sends nothing.
 //
 // Every desk has:
 //   - `broker_name`, `env_name`: static; the operator file's `broker` word, and every reply's `env`.
@@ -314,7 +316,8 @@ inline Reply lock_lost_reply() {
 //   - `sends()`: how many placements and cancellations this process has sent towards the broker, counted before the
 //     outcome is known; once() decides by its growth during a call whether anything may have reached the broker.
 //   - `has_symbol(symbol)`: whether the account's market has the symbol.
-//   - `order_status(id)`: what the broker shows for an order it named (`pending`, `filled`, `canceled`), or nothing.
+//   - `order_status(id, working)`: what the broker shows for an order it named (`pending`, `filled`, `canceled`), or
+//     nothing, given the working orders read once.
 //   - `accepts_orders_at(symbol, at)`: whether the broker takes an order on the symbol at an instant.
 //
 // A simulated broker also has, with `simulated` true (a desk without them has it false, and a command that reads one
@@ -423,53 +426,40 @@ public:
       );
       return opened;
     }
-    const auto dir = account_dir(config);
-    if (!dir) {
-      opened.refusal_ = error_reply(
-        Exit::FAILED, "state.unavailable",
-        "no state directory: neither XDG_STATE_HOME nor HOME is set as an absolute path",
-        "the operator sets XDG_STATE_HOME or HOME (another state directory is another mock account)"
-      );
+    opened.account_ = locked(config, output, interrupted, opened.refusal_);
+    if (opened.account_) {
+      opened.refusal_ = opened.account_->open_held();
+    }
+    if (opened.refusal_) {
+      opened.account_.reset();
+    }
+    return opened;
+  }
+
+  /**
+   * @brief Opens a broker's account on a desk the caller owns: the directory, the lock (as `open`), and the journal's
+   *   file, read; its view waits for `view_at`, which needs the desk's instant.
+   * @param config The operator's file, with the account the login names.
+   * @param output Where the waiting line goes.
+   * @param interrupted Whether a stop was asked for.
+   * @return The account, or the refusal.
+   */
+  static Opened open_broker(const OperatorConfig& config, Output& output, const std::function<bool()>& interrupted) {
+    Opened opened;
+    opened.account_ = locked(config, output, interrupted, opened.refusal_);
+    if (!opened.account_) {
       return opened;
     }
-    if (const int error = make_private_dirs(*dir)) {
-      opened.refusal_ = error_reply(
-        Exit::FAILED, "state.unavailable",
-        "the account's directory " + *dir + " cannot be made: " + std::strerror(error),
-        "check the state directory and its permissions"
-      );
+    // An absent journal is an empty one, as a run treats it.
+    struct stat info{};
+    std::string why;
+    opened.account_->journal_absent_ = ::lstat(opened.account_->journal_path().c_str(), &info) != 0 && errno == ENOENT;
+    if (!opened.account_->journal_absent_ && !opened.account_->state_file_ok("journal.jsonl", why)) {
+      opened.refusal_ = journal_refused_reply(why);
+      opened.account_.reset();
       return opened;
     }
-    auto account = std::make_unique<Account>(AccountKey{}, config, *dir);
-    const auto outcome = account->lock_.acquire(LOCK_WAIT, interrupted, [&output](const std::string& holder) {
-      output.progress("waiting for the account: " + holder + " holds it");
-    });
-    switch (outcome) {
-      case OwnerLock::Outcome::HELD:
-        break;
-      case OwnerLock::Outcome::BUSY:
-        opened.refusal_ = error_reply(
-          Exit::FAILED, "busy.locked", "the account is held by " + account->lock_.error() + "; nothing was done",
-          "run the command again when it is free", true
-        );
-        return opened;
-      case OwnerLock::Outcome::INTERRUPTED:
-        opened.refusal_ = error_reply(
-          Exit::INTERRUPTED, "interrupted", "interrupted by a signal while waiting for the account; nothing was done",
-          "run the command again", true
-        );
-        return opened;
-      case OwnerLock::Outcome::FAILED:
-        opened.refusal_ = error_reply(
-          Exit::FAILED, "state.unavailable", account->lock_.error(), "check the account's directory " + *dir
-        );
-        return opened;
-    }
-    if (auto refused = account->open_held()) {
-      opened.refusal_ = std::move(refused);
-      return opened;
-    }
-    opened.account_ = std::move(account);
+    opened.account_->replay_ = algotradelib::runner::read_journal_file(opened.account_->journal_path());
     return opened;
   }
 #endif
@@ -545,6 +535,23 @@ public:
     journal_ = journal_view(desk_->session(), replay_, config_.scope(), kst_day(desk_->now()));
     readiness_.reset();
   }
+
+  /**
+   * @brief The journal's view and the phase at a broker's desk's instant, after its `begin()`.
+   * @tparam Desk The desk type.
+   * @param desk The desk; the view's runner is bound to its trading session, and never sends.
+   */
+  template <typename Desk>
+  void view_at(Desk& desk) {
+    if (journal_absent_) {
+      journal_.owned_ = true;
+      journal_.intact_ = true;
+    } else {
+      journal_ = journal_view(desk.session(), replay_, config_.scope(), kst_day(desk.now()));
+    }
+    phase_ = desk.phase();
+    readiness_.reset();
+  }
 #endif
 
   /**
@@ -581,6 +588,75 @@ public:
 
 private:
 #if !defined(_WIN32)
+  /**
+   * @brief The account's directory made and its lock taken (waiting at most 10 s, printing who holds it once; at once
+   *   when its owner record names a run).
+   * @param config The operator's file.
+   * @param output Where the waiting line goes.
+   * @param interrupted Whether a stop was asked for.
+   * @param refusal Set when it is not taken.
+   * @return The account, its lock held, or null.
+   */
+  static std::unique_ptr<Account> locked(
+    const OperatorConfig& config, Output& output, const std::function<bool()>& interrupted,
+    std::optional<Reply>& refusal
+  ) {
+    const auto dir = account_dir(config);
+    if (!dir) {
+      refusal = error_reply(
+        Exit::FAILED, "state.unavailable",
+        "no state directory: neither XDG_STATE_HOME nor HOME is set as an absolute path",
+        "the operator sets XDG_STATE_HOME or HOME (another state directory is another mock account)"
+      );
+      return nullptr;
+    }
+    if (const int error = make_private_dirs(*dir)) {
+      refusal = error_reply(
+        Exit::FAILED, "state.unavailable",
+        "the account's directory " + *dir + " cannot be made: " + std::strerror(error),
+        "check the state directory and its permissions"
+      );
+      return nullptr;
+    }
+    auto account = std::make_unique<Account>(AccountKey{}, config, *dir);
+    const auto outcome = account->lock_.acquire(LOCK_WAIT, interrupted, [&output](const std::string& holder) {
+      output.progress("waiting for the account: " + holder + " holds it");
+    });
+    switch (outcome) {
+      case OwnerLock::Outcome::HELD:
+        return account;
+      case OwnerLock::Outcome::BUSY:
+        refusal = error_reply(
+          Exit::FAILED, "busy.locked", "the account is held by " + account->lock_.error() + "; nothing was done",
+          "run the command again when it is free", true
+        );
+        return nullptr;
+      case OwnerLock::Outcome::INTERRUPTED:
+        refusal = error_reply(
+          Exit::INTERRUPTED, "interrupted", "interrupted by a signal while waiting for the account; nothing was done",
+          "run the command again", true
+        );
+        return nullptr;
+      case OwnerLock::Outcome::FAILED:
+        break;
+    }
+    refusal =
+      error_reply(Exit::FAILED, "state.unavailable", account->lock_.error(), "check the account's directory " + *dir);
+    return nullptr;
+  }
+
+  /**
+   * @brief The refusal of a journal that is not a regular file with one name.
+   * @param why Why.
+   * @return The reply (exit 4).
+   */
+  static Reply journal_refused_reply(const std::string& why) {
+    return error_reply(
+      Exit::UNKNOWN, "unknown.journal_damaged", "the account's journal is refused: " + why,
+      "stop and report to the operator, who restores the journal as a regular file; nothing was written"
+    );
+  }
+
   /** @brief What the directory holds, by entry. */
   struct Found {
     /** @brief Whether `journal.jsonl` is there and not empty (by `lstat`). */
@@ -750,14 +826,8 @@ private:
     }
     const bool starting = !found.journal_;
     std::string why;
-    const auto journal_refused = [&why]() {
-      return error_reply(
-        Exit::UNKNOWN, "unknown.journal_damaged", "the account's journal is refused: " + why,
-        "stop and report to the operator, who restores the journal as a regular file; nothing was written"
-      );
-    };
     if (!starting && !state_file_ok("journal.jsonl", why)) {
-      return journal_refused();
+      return journal_refused_reply(why);
     }
     if (found.state_entry_ && !state_file_ok(MOCK_STATE_FILE, why)) {
       return paper_state_reply("the account's state file is refused: " + why);
@@ -791,7 +861,7 @@ private:
       }
     }
     if (starting && !state_file_ok("journal.jsonl", why)) {
-      return journal_refused();
+      return journal_refused_reply(why);
     }
     struct stat identity{};
     if (::lstat(journal_path().c_str(), &identity) == 0) {
@@ -812,7 +882,7 @@ private:
     std::error_code ec;
     readiness.armed_ = std::filesystem::exists(config_.armed_path(), ec);
     readiness.orders_left_ = orders_left(config_, journal_);
-    readiness.phase_ = phase_of(*desk_);
+    readiness.phase_ = phase_ ? *phase_ : phase_of(*desk_);
     const auto& phases = config_.limits_.phases_;
     readiness.phase_permitted_ = std::find(phases.begin(), phases.end(), readiness.phase_) != phases.end();
     return readiness;
@@ -824,6 +894,8 @@ private:
   JournalView journal_;
   std::unique_ptr<AccountDesk> desk_;
   std::optional<Readiness> readiness_;
+  std::optional<std::string> phase_;
+  bool journal_absent_{false};
 #if !defined(_WIN32)
   std::optional<std::pair<dev_t, ino_t>> journal_identity_;
 #endif

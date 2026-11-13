@@ -144,7 +144,7 @@ public:
    * @brief Takes the lock: the file opened without following a link (one name, a regular file), `flock` tried every
    *   20 ms, and the locked descriptor checked to be the file at the path; a file replaced while this process waits,
    *   or before its check, is opened again.
-   * @param timeout How long to wait for another holder.
+   * @param timeout How long to wait for another holder; none when the owner record names a run.
    * @param interrupted Whether SIGINT or SIGTERM arrived; checked on every pass.
    * @param on_wait Called once, after the first refused try, with who holds it.
    * @return How it ended; `error()` says why for `FAILED`.
@@ -186,7 +186,15 @@ public:
         }
         if (!told) {
           told = true;
-          on_wait(holder_text(dir_));
+          const auto holder = holder_text(dir_);
+          // A run holds its account for its life: busy at once when the record names one (it only describes; a
+          // missing or stale record waits as for a command).
+          if (holder.rfind("run ", 0) == 0) {
+            error_ = holder;
+            fd_.reset();
+            return Outcome::BUSY;
+          }
+          on_wait(holder);
         }
         if (std::chrono::steady_clock::now() >= until) {
           error_ = holder_text(dir_);
