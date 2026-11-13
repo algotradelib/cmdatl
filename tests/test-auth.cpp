@@ -595,16 +595,78 @@ TEST_CASE("auth logout and a replacing login remove the old login's saved token 
 }
 
 TEST_CASE("the auth commands are in the table, and their replies parse") {
-  // The system's store: a CI runner's keychain may be locked, and a Linux build may have none.
-  const auto status = run({"auth", "status", "--json"});
-  if (status.exit_ == 0) {
-    CHECK(reply_of(status.out_).contains("logins"));
-  } else {
-    CHECK((code_of(status.out_) == "auth.store_locked" || code_of(status.out_) == "auth.no_store"));
+  // The table's own auth commands, each run on a store in memory: no test opens the system's store.
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "none").string());
+  MemoryStore store;
+  const auto filter = [](const cmdatl::Invocation& invocation) {
+    return auth::LoginFilter{auth::option_of(invocation, "broker"), auth::option_of(invocation, "env")};
+  };
+  std::vector<cmdatl::Command> commands;
+  for (auto command : cmdatl::command_list()) {
+    const auto name = cmdatl::join(command.path_);
+    if (name == "auth login") {
+      command.run_ = [&store](const cmdatl::Invocation& invocation, const cmdatl::Table&, cmdatl::Output& output) {
+        auth::LoginRequest request;
+        request.broker_ = auth::option_of(invocation, "broker");
+        request.env_ = auth::option_of(invocation, "env");
+        request.with_secret_ = invocation.has("with-secret");
+        const Input in(R"({"client_id":")" + KEY + R"(","client_secret":")" + SECRET + R"("})");
+        return auth::login(request, in.fd(), output.err(), &store);
+      };
+    } else if (name == "auth status") {
+      command.run_ = [&store, filter](const cmdatl::Invocation& invocation, const cmdatl::Table&, cmdatl::Output&) {
+        return auth::status(filter(invocation), &store);
+      };
+    } else if (name == "auth logout") {
+      command.run_ =
+        [&store, filter](const cmdatl::Invocation& invocation, const cmdatl::Table&, cmdatl::Output& output) {
+          const Input in;
+          return auth::logout(filter(invocation), in.fd(), output.err(), &store);
+        };
+    } else {
+      continue;
+    }
+    commands.push_back(std::move(command));
   }
-  const auto login = run({"auth", "login", "--broker", "toss", "--env", "demo", "--json"});
-  CHECK(login.exit_ == 2);
-  CHECK(code_of(login.out_) == "usage.bad_value");
+  REQUIRE(commands.size() == 3);
+  const cmdatl::Table table(std::move(commands));
+  // A reply parses, shows no key or secret, and each field of a success is one its command declares (env is cmdatl's).
+  const auto reply = [&table](const std::vector<std::string>& args, int exit) {
+    const auto* command = table.resolve(args).command_;
+    REQUIRE(command != nullptr);
+    const auto ran = run_with(args, table);
+    INFO(ran.out_ << ran.err_);
+    CHECK(ran.exit_ == exit);
+    CHECK(declares(command->path_, ran.exit_, exit == 0 ? "" : code_of(ran.out_)));
+    CHECK(ran.out_.find(KEY) == std::string::npos);
+    CHECK(ran.out_.find(SECRET) == std::string::npos);
+    auto body = reply_of(ran.out_);
+    if (exit == 0) {
+      for (const auto& field : body) {
+        const auto is_field = [&field](const std::pair<std::string, std::string>& declared) {
+          return declared.first == field.key();
+        };
+        INFO(field.key());
+        CHECK((field.key() == "env" || std::any_of(command->returns_.begin(), command->returns_.end(), is_field)));
+      }
+    }
+    return body;
+  };
+  auto status = reply({"auth", "status", "--json"}, 0);
+  CHECK(status.at("store").as_string() == "memory");
+  CHECK(status.at("logins").as_array().empty());
+  CHECK(reply({"auth", "login", "--broker", "toss", "--with-secret", "--json"}, 0).at("broker").as_string() == "toss");
+  status = reply({"auth", "status", "--json"}, 0);
+  CHECK(status.at("logins").as_array().size() == 1);
+  CHECK(status.contains("environment_variables"));
+  const auto refused = reply({"auth", "login", "--broker", "toss", "--env", "demo", "--json"}, 2);
+  CHECK(refused.at("error").as_object().at("code").as_string() == "usage.bad_value");
+  CHECK(
+    reply({"auth", "logout", "--broker", "toss", "--env", "real", "--json"}, 0).at("removed").as_string() == "toss/real"
+  );
+  CHECK(store.items_.empty());
+  CHECK(!std::filesystem::exists(dir.path() / "none"));
 }
 
 #if !defined(_WIN32)
