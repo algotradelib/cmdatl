@@ -582,6 +582,26 @@ TEST_CASE("an account run places at its first decision, withdraws on a signal, a
   CHECK(std::filesystem::exists(kis_account_dir(fixture) / "journal.jsonl"));
 }
 
+TEST_CASE("an account run waits behind a command that holds the account and starts once it is free") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  one_decision();
+  const auto dir = kis_account_dir(fixture);
+  std::filesystem::create_directories(dir);
+  spit(dir / "owner.json", "{\"role\":\"agent\",\"pid\":1,\"what\":\"order plan 005930\"}\n");
+  // Another process holds the lock for 300 ms, as a command would.
+  const auto holder = ::popen((std::string(CMDATL_HOLD_LOCK) + " '" + dir.string() + "' 300").c_str(), "r");
+  REQUIRE(holder != nullptr);
+  char held[64] = {};
+  REQUIRE(std::fgets(held, sizeof(held), holder) != nullptr);
+  const auto ran = run_account_child(fixture);
+  ::pclose(holder);
+  CHECK(ran.exit_ == 0);
+  CHECK(events_of(ran, "start").size() == 1);
+  CHECK(slurp(fixture.dir() / "account.stderr").find("waiting for the account") != std::string::npos);
+}
+
 TEST_CASE("an account run carries today's order allowance across runs through the account's journal") {
   PaperFixture fixture;
   fixture.write_config(kis_config(1));
