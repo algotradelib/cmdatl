@@ -46,9 +46,9 @@ Placing a plan and following it to its fill are in [Orders](docs/orders.md) and 
 
 - The account and order commands (`status`, `order`, ...) work on a mock account: a market simulated from stored daily bars, with no broker and no network.
 - `cmdatl run` also trades a KIS account the operator's file names, a demo account (모의투자) unless the file says otherwise; see [Runs](docs/runs.md).
-  On a KIS account `status`, `account`, `quote` and `order list` read the account; the other order commands and `clock` answer `unsupported.broker`.
+  On a KIS account `status`, `account`, `quote` and `order list` read the account, and `order plan`, `order reconcile` and `order release` work and send nothing; `order place`, `order cancel` and `clock` answer `unsupported.broker`.
 - Nothing is placed until the operator creates the armed file.
-- Broker logins are kept in the macOS keychain, so a run on a broker's account, the reads on a KIS account, or a backtest that fetches its bars through a broker folder, needs macOS.
+- Broker logins are kept in the macOS keychain, so a run on a broker's account, a command on a KIS account, or a backtest that fetches its bars through a broker folder, needs macOS.
   Everything else works on Linux too.
 
 ## Architecture

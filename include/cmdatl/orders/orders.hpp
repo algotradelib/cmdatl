@@ -4,7 +4,7 @@
 // builders on an open account.
 //
 // Every one of them, in this order: its arguments by their grammar before the account opens; the account opened under
-// its lock; one simulated second, whose market events are the reply's `events`; its own checks; an interrupt noted
+// its lock; on the mock account one simulated second, whose market events are the reply's `events`; its own checks; an interrupt noted
 // before once() is called answers exit 130; the journal checked to be the file the account opened and opened as the
 // one writer; once() or release(); the view read again for the reply's `owed`, which only enriches a result already
 // known.

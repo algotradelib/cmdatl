@@ -32,7 +32,7 @@ cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
 
 ### Runs on a KIS account
 
-`cmdatl run` trades a KIS account when the operator's file names one; of the account and order commands, `status`, `account`, `quote` and `order list` read it (see [Reads on a KIS account](#reads-on-a-kis-account)), and the others answer `unsupported.broker`.
+`cmdatl run` trades a KIS account when the operator's file names one; of the account and order commands, `status`, `account`, `quote`, `order list`, `order plan`, `order reconcile` and `order release` work on it, sending nothing (see [Commands on a KIS account](#commands-on-a-kis-account)), and `order place`, `order cancel` and `clock` answer `unsupported.broker`.
 A demo account (모의투자) is the default, and the code is the same for a real one: only `env` differs.
 
 ```toml
@@ -107,19 +107,28 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
   When it still fails, each symbol is `null` and `holdings_at_end_error` names why: KIS's code (`EGW00201`, the per-second limit), else the error's kind (`transport`); it is `null` when the holdings were read.
 - An unconfirmed ending (exit 4: an order not confirmed, the journal or the lock damaged, the broker unreadable at the end) needs the account read in KIS's app before it is traded again; `owed_at_end` lists the orders the journal still waits on.
 
-### Reads on a KIS account
+### Commands on a KIS account
 
-On the KIS account the operator's file names, `status`, `account`, `quote` and `order list` read the account with the same logins a run reads, on the same code path for demo and real; they place, cancel and change nothing.
+On the KIS account the operator's file names, `status`, `account`, `quote`, `order list`, `order plan`, `order reconcile` and `order release` work with the same logins a run reads, on the same code path for demo and real (only `env` differs); none of them places or cancels.
 
-- The other order commands and `clock` answer `unsupported.broker` (exit 1, nothing read or sent) before any login is read.
+- `order place`, `order cancel` and `clock` answer `unsupported.broker` (exit 1, nothing read or sent) before any login is read: in this version only `cmdatl run` places or cancels on a KIS account.
 - `cash` and `data_end` are `null`: the broker reports holdings and buying power, not a cash figure, and its data has no end.
 - `now` is the instant the reply is as of, taken after the calendar is read and before the account's figures, which are later by the seconds the reads take; the phase, `orders_left_today` and every quote row's acceptance are at that instant.
 - The phase is the library's KRX window, 09:00 to 15:30 KST, on the calendar's trading days; the calendar gives days, not hours or halts, so a special session shows as an ordinary one, and `orders_accepted_now` stays the preliminary gates.
 - A symbol the broker does not have shows as `no_price` in its row, not `quote.no_data`.
-- An owed row whose order the broker does not list now may have filled, been canceled or never been accepted: its `next` sends the operator to the broker's app.
-- A holdings, buying-power or order-list read the broker does not answer fails the command with `account.unreadable` (exit 1, `retry: true`), naming the broker's code and never its text.
+- `order plan` makes the checks it makes on the mock account and gives a plan id; the plan is issued, and lapses after `limits.plan_ttl` seconds, on the computer's clock, and `events` is `null`: no simulated second passes.
+- `order reconcile` is the library's recovery: it records what the order list, the dated order history and holdings prove, and sends nothing.
+  KIS's list holds open orders only, so an order missing from it is never read as filled or canceled; on a demo account an order just placed can be missing from it for a while.
+- `order release` settles, on the armed file and the operator's approval, the rows of a symbol that the broker never named or that are held for the operator; it refuses a named row whatever its age (`refused.named`).
+  No command clears a named row that neither holdings nor history ever accounts for: after ten minutes it is `unknown.unconfirmed` and holds its symbol, for the operator to read in KIS's app.
+- The first command that may write the journal starts it, under the account's lock; a read never does.
+- A working order is this account's only when the journal shows it sent and KIS acknowledged it today, with the same number, symbol, side, quantity and price, as for a run; any other order on the symbol answers `refused.unjournaled_order` (exit 3), and withdrawing it is the operator's, in KIS's app.
+  So an order whose acknowledgement was lost can be read and reconciled, never withdrawn by cmdatl.
+- An owed row says what to do next: one KIS lists is the operator's to cancel in KIS's app, one it does not list may have filled, been canceled or not be listed yet, and `cmdatl order reconcile SYMBOL` records it once holdings or history show it.
+- A holdings, buying-power or order-list read the broker does not answer fails a read with `account.unreadable` (exit 1, `retry: true`), naming the broker's code and never its text; once an order command has its result, a failed read of the owed rows after it leaves `owed` `null` and the result as it is.
 - They take the account's lock as a run does: while a run holds it (its owner record names the run) they answer `busy.locked` at once; otherwise they wait up to 10 seconds.
-- A read holds the lock while it talks to KIS: a few seconds at one request a second, and up to about twenty more for the day's first read, which asks KIS for the calendar (up to 20 pages).
-  A run takes the lock without waiting, so `cmdatl run` started during a read ends at once with `busy.locked` (exit 1) and nothing sent: issue no reads around a run's start, and start the run again if it happens.
-- Ctrl-C stops them before the next broker request (exit 130, `interrupted`); a request in flight is not cut short: each of its HTTP stages may take 30 seconds, a read is tried again once, an order list may take several pages, and the shared token's lock may be waited for 30 seconds.
+- A command holds the lock while it talks to KIS: a few seconds at one request a second, and up to about twenty more for the day's first command, which asks KIS for the calendar (up to 20 pages).
+  A run waits up to 10 seconds for a command that holds the account, then ends with `busy.locked` (exit 1) and nothing sent: issue no commands around a run's start, and start the run again if it happens.
+- Ctrl-C stops a read before its next broker request, and an order command before its decision starts (exit 130, `interrupted`); once an order command has its result, a stop leaves it as it is, with `owed` `null`; a request in flight is not cut short: each of its HTTP stages may take 30 seconds, a read is tried again once, an order list may take several pages, and the shared token's lock may be waited for 30 seconds.
 - They share the run's access token, and the trading calendar read that day, through files in `$XDG_CACHE_HOME/cmdatl` (else `~/.cache/cmdatl`).
+- Naming a KIS account for them, the operator accepts, as cmdatl cannot enforce it: one writer per account (no other app, machine or cmdatl state directory trades it while the journal owes anything, since the journal, today's count and the plans live in one state directory), and that matching by attributes cannot prove an identical order placed by hand at the same time was not cmdatl's.

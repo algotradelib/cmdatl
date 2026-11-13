@@ -28,7 +28,9 @@ AI 에이전트도 같은 명령으로 계좌를 조회하고, 운영자가 정�
 - `cmdatl run`은 운영자 파일에 KIS 계좌를 지정하면 그 계좌에서 주문합니다.
 기본은 모의투자이고, 실전투자는 `env = "real"`로 직접 지정해야 합니다.
 KIS 계좌에서는 `status`, `account`, `quote`, `order list`로 계좌를 조회할 수 있습니다.
-이 버전에서는 KIS 계좌에 다른 주문 명령을 쓸 수 없습니다.
+`order plan`, `order reconcile`, `order release`도 쓸 수 있습니다.
+이 명령들은 주문을 넣거나 취소하지 않습니다.
+이 버전에서는 KIS 계좌에 `order place`와 `order cancel`을 쓸 수 없습니다.
 - 운영자가 armed 파일을 만들기 전에는 어떤 주문도 나가지 않습니다.
 - Linux와 macOS에서 빌드하고 시험했습니다. Windows는 아직 지원하지 않습니다.
 

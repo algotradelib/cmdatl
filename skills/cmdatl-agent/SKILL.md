@@ -1,6 +1,6 @@
 ---
 name: cmdatl-agent
-description: How to trade through the cmdatl command line - on the mock account read positions, cash and the operator's limits, plan and place limit orders and confirm fills; handle refusals and exit codes; start and stop strategy runs, on the mock account or a KIS account. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
+description: How to trade through the cmdatl command line - on the mock account read positions, cash and the operator's limits, plan and place limit orders and confirm fills; read, plan and reconcile on a KIS account; handle refusals and exit codes; start and stop strategy runs, on the mock account or a KIS account. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
 ---
 
 # Trading with cmdatl
@@ -15,11 +15,11 @@ description: How to trade through the cmdatl command line - on the mock account 
 ## The accounts
 
 The mock account and its runs' markets are simulated here: nothing they do reaches a broker, and `env` says `mock`.
-On a KIS account (`kis-demo`, `kis-real`) a run's orders reach KIS; on any other `env`, stop and ask.
+On a KIS account (`kis-demo`, `kis-real`) a run's orders reach KIS, with real money on `kis-real`: act there only on a task the operator gave; on any other `env`, stop and ask.
 
 - The mock account, read and traded by `status`, `account`, `quote`, `order ...` and `clock`; its clock moves by `cmdatl clock advance` and one simulated second per order command.
-- A mock run's market: each `cmdatl run` on mock builds a fresh one from the run spec's data, gone when the run ends; the mock account's commands never see it.
-- A KIS account (`cmdatl env` shows `account.broker`): `status`, `account`, `quote` and `order list` read it; only `cmdatl run` trades it, in real time during market hours; the other order commands answer `unsupported.broker`.
+- A mock run's market: each `cmdatl run` on mock builds a fresh one from the run spec's data, gone when it ends; the mock account's commands never see it.
+- A KIS account (`cmdatl env` shows `account.broker`): the reads, `order plan` and `order reconcile` work and send nothing; only `cmdatl run` places or cancels there, in market hours.
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
 The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed` or `<stem>.release`, or the account's state directory.
@@ -37,7 +37,7 @@ Broker logins are the operator's too: `cmdatl auth status` lists them, masked, a
    `--target` is the position to hold, counting working orders: holding 10 and buying 20 more is `--target 30`, `--target 0` sells out, and a target already met sends nothing (`met`).
    Turn the task's quantity into a target once, from the holding when the task was given; when resuming a task, or when `status` shows positions or owed orders you did not expect, ask which position is meant.
 2. `cmdatl order place PLAN_ID`.
-   A plan sends once and lapses after `limits.plan_ttl` simulated seconds or when anything moves (`refused.plan_used`, `refused.stale_plan`): plan again.
+   A plan sends once and lapses after `limits.plan_ttl` seconds or when anything moves (`refused.plan_used`, `refused.stale_plan`): plan again.
 3. The price: take `last_price` from the latest `cmdatl quote SYMBOL`, read after any `clock advance`.
    On the mock account an order fills at its limit at the close of its symbol's next daily bar if that bar's range reaches it, else expires; every order is a limit on the tick grid, inside the collar.
    A fill is known only from a `filled` event or `cmdatl account`, never from the price.
@@ -58,7 +58,7 @@ On 3, retry only when the reason itself has passed.
 Yours to correct: `refused.stale_plan`, `refused.plan_used` (plan again), `refused.collar`, `refused.off_tick` (a price nearer the last price, on the grid), `refused.phase` (as for a closed market, above).
 A cap the operator set is not yours to get past: `refused.symbol_not_allowed`, `refused.position_limit`, `refused.order_value`, `refused.daily_order_limit`, `refused.guard`, `refused.not_armed`; no smaller, split or other-symbol orders, no new run, and no clock advance to reach the same end.
 Stop, quote the refusal, and offer what the limits allow as a question.
-`refused.unjournaled_order`: an order cmdatl did not place rests there; stop and report.
+`refused.unjournaled_order`: an order the journal cannot claim rests there; stop and report.
 `refused.awaiting` or `refused.awaiting_confirmation`: something is still owed; place nothing until `order reconcile` shows the symbol clean, and after two advances and reconciles, ask.
 Any other 3: follow `error.next` when it names a cmdatl read, a new plan or the same command once; when it names a limit, the armed file or the operator, stop and ask.
 `error.retry: true` means the same call may succeed later unchanged, not that you should repeat it now.
@@ -83,7 +83,7 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
   A run may sell every share of its symbols the account holds, including shares bought during the run.
 - To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies (exit 0, `stopped: signal`); never `kill -9` it.
 - The reply's `refused` counts refused orders; `outcome: refused_orders` means a limit or the market refused some: report it.
-- The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours on mock, and on a KIS account today's orders in the account's journal, from every run; several symbols get the smallest cap.
+- The operator's limits hold at every placement of a run; `daily_orders` counts per run per 24 market hours on mock, and on a KIS account today's orders in the account's journal; several symbols get the smallest cap.
 - Exit 4: report the reply's `error`.
   On mock its market ended with it; no account changed.
   On a KIS account an order may have gone out (`owed_at_end`: what the journal owes): the operator reads it in KIS's app; start nothing there.
