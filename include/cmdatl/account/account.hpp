@@ -464,7 +464,7 @@ public:
       return opened;
     }
     opened.account_->desk_ = make_desk(opened.account_->config_, opened.account_->lock_);
-    // An absent journal is an empty one, as a run treats it.
+    // An absent journal is an empty one, as a run treats it, until a command that may write starts it.
     struct stat info{};
     std::string why;
     opened.account_->journal_absent_ = ::lstat(opened.account_->journal_path().c_str(), &info) != 0 && errno == ENOENT;
@@ -473,6 +473,7 @@ public:
       opened.account_.reset();
       return opened;
     }
+    opened.account_->note_journal();
     opened.account_->replay_ = algotradelib::runner::read_journal_file(opened.account_->journal_path());
     return opened;
   }
@@ -539,6 +540,38 @@ public:
     }
     return S_ISREG(info.st_mode) && info.st_nlink == 1 && info.st_size > 0 && journal_identity_ &&
       info.st_dev == journal_identity_->first && info.st_ino == journal_identity_->second;
+  }
+
+  /** @brief Whether a broker's account had no journal at open, and no command has started one since. */
+  bool journal_absent() const noexcept {
+    return journal_absent_;
+  }
+
+  /**
+   * @brief Starts the journal under the held lock: its header written by the library's journal, the file checked to be
+   *   a regular file with one name, and its identity recorded for `journal_unchanged`.
+   * @return The refusal, or nothing.
+   */
+  std::optional<Reply> start_journal() {
+    if (!lock_.still_at_path()) {
+      return lock_lost_reply();
+    }
+    {
+      algotradelib::runner::FileJournal journal(journal_path(), config_.scope());
+      if (!journal.open()) {
+        return error_reply(
+          Exit::FAILED, "journal.unopened", "the account's journal could not be created: " + journal.rejection(),
+          "check the account's directory"
+        );
+      }
+    }
+    std::string why;
+    if (!state_file_ok("journal.jsonl", why)) {
+      return journal_refused_reply(why);
+    }
+    journal_absent_ = false;
+    note_journal();
+    return std::nullopt;
   }
 
   /**
@@ -667,6 +700,14 @@ private:
       Exit::UNKNOWN, "unknown.journal_damaged", "the account's journal is refused: " + why,
       "stop and report to the operator, who restores the journal as a regular file; nothing was written"
     );
+  }
+
+  /** @brief Records the journal's identity at its path, for `journal_unchanged`. */
+  void note_journal() {
+    struct stat identity{};
+    if (::lstat(journal_path().c_str(), &identity) == 0) {
+      journal_identity_ = std::make_pair(identity.st_dev, identity.st_ino);
+    }
   }
 
   /** @brief What the directory holds, by entry. */
@@ -861,23 +902,11 @@ private:
       return paper_state_reply(desk_->rejection());
     }
     if (starting) {
-      if (!lock_.still_at_path()) {
-        return lock_lost_reply();
+      if (auto refused = start_journal()) {
+        return refused;
       }
-      algotradelib::runner::FileJournal journal(journal_path(), config_.scope());
-      if (!journal.open()) {
-        return error_reply(
-          Exit::FAILED, "journal.unopened", "the account's journal could not be created: " + journal.rejection(),
-          "check the account's directory"
-        );
-      }
-    }
-    if (starting && !state_file_ok("journal.jsonl", why)) {
-      return journal_refused_reply(why);
-    }
-    struct stat identity{};
-    if (::lstat(journal_path().c_str(), &identity) == 0) {
-      journal_identity_ = std::make_pair(identity.st_dev, identity.st_ino);
+    } else {
+      note_journal();
     }
     replay_ = algotradelib::runner::read_journal_file(journal_path());
     journal_ = journal_view(desk_->session(), replay_, config_.scope(), kst_day(desk_->now()));

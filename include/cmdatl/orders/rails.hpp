@@ -108,9 +108,9 @@ struct OpenedJournal {
 };
 
 /**
- * @brief Opens the journal as the command's one writer: the lock still the account's, the journal still the file the
- *   account opened (else nothing is constructed, since constructing it on a vanished path would start a fresh one),
- *   then the library's journal.
+ * @brief Opens the journal as the command's one writer: the lock still the account's, a broker's journal started when
+ *   the account had none, the journal still the file the account opened or started (else nothing is constructed, since
+ *   constructing it on a vanished path would start a fresh one), then the library's journal.
  * @tparam Desk The desk.
  * @param account The account.
  * @return The journal, or the refusal (exit 4).
@@ -123,6 +123,12 @@ OpenedJournal open_journal(BasicAccount<Desk>& account) {
     return opened;
   }
 #if !defined(_WIN32)
+  if (account.journal_absent()) {
+    if (auto refused = account.start_journal()) {
+      opened.refusal_ = std::move(refused);
+      return opened;
+    }
+  }
   if (!account.journal_unchanged()) {
     opened.refusal_ = journal_missing_reply("missing, empty or replaced");
     return opened;
