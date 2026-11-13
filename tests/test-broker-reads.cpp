@@ -60,19 +60,15 @@ public:
   std::map<std::string, std::string> items_;
   /** @brief Every name asked for. */
   std::vector<std::string> asked_;
+  /** @brief How every read answers, when set: a locked or unusable store. */
+  std::optional<cmdatl::auth::StoreStatus> failing_;
 
-  /**
-   * @brief The store's kind.
-   * @return `memory`.
-   */
+  /** @brief The store's kind. */
   std::string kind() const override {
     return "memory";
   }
 
-  /**
-   * @brief Lists nothing: never called here.
-   * @return Nothing.
-   */
+  /** @brief Lists nothing: never called here. */
   cmdatl::auth::StoreList list() override {
     return {};
   }
@@ -85,6 +81,10 @@ public:
   cmdatl::auth::StoreAnswer get(const std::string& name) override {
     asked_.push_back(name);
     cmdatl::auth::StoreAnswer answer;
+    if (failing_) {
+      answer.status_ = *failing_;
+      return answer;
+    }
     const auto found = items_.find(name);
     answer.status_ = found == items_.end() ? cmdatl::auth::StoreStatus::NOT_FOUND : cmdatl::auth::StoreStatus::OK;
     if (found != items_.end()) {
@@ -93,18 +93,12 @@ public:
     return answer;
   }
 
-  /**
-   * @brief Never called here.
-   * @return Nothing.
-   */
+  /** @brief Never called here. */
   cmdatl::auth::StoreAnswer put(const std::string&, const std::string&) override {
     return {};
   }
 
-  /**
-   * @brief Never called here.
-   * @return Nothing.
-   */
+  /** @brief Never called here. */
   cmdatl::auth::StoreAnswer remove(const std::string&) override {
     return {};
   }
@@ -143,6 +137,10 @@ struct StandIn {
   int stop_after_{-1};
   /** @brief How many times `identify` ran. */
   int identified_{0};
+  /** @brief Whether the clock checks that the calendar was read before it, by a scripted calendar fault. */
+  bool probe_calendar_{false};
+  /** @brief Whether the calendar's fault was taken before the clock was read. */
+  bool calendar_before_clock_{false};
 
   /** @brief The market of the fixture's bars, with both logins stored. */
   StandIn() {
@@ -185,36 +183,33 @@ struct StandIn {
     return std::nullopt;
   }
 
-  /**
-   * @brief The trading session.
-   * @return It.
-   */
+  /** @brief The trading session. */
   atl::BlockingSession<atl::mock::MockClient>& trading() {
     return *session_;
   }
 
-  /**
-   * @brief The market-data session: the same.
-   * @return It.
-   */
+  /** @brief The market-data session: the same. */
   atl::BlockingSession<atl::mock::MockClient>& market() {
     return *session_;
   }
 
-  /**
-   * @brief The scripted clock.
-   * @return The next answer.
-   */
+  /** @brief The scripted clock. */
   cmdatl::Clock::time_point now() {
+    if (probe_calendar_) {
+      // The fault is still there only when the calendar was not read yet.
+      calendar_before_clock_ = !unconsumed(
+        [this] {
+          return session_->calendar(atl::Country::KR);
+        },
+        "calendar-first"
+      );
+    }
     const auto at = times_[std::min<std::size_t>(static_cast<std::size_t>(clock_calls_), times_.size() - 1)];
     ++clock_calls_;
     return at;
   }
 
-  /**
-   * @brief The scripted stop.
-   * @return Whether to stop.
-   */
+  /** @brief The scripted stop. */
   bool stopped() {
     ++checks_;
     return stop_after_ >= 0 && checks_ > stop_after_;
@@ -504,6 +499,16 @@ TEST_CASE("a read's phase, allowance and quotes all belong to the one instant ta
     }
     CHECK(setup.clock_calls_ == 1);
   }
+  // The calendar is read before the clock: its fault is taken by then.
+  const KisFixture fixture;
+  StandIn setup;
+  setup.probe_calendar_ = true;
+  setup.client_->fail_next(atl::mock::Call::CALENDAR, marker("calendar-first"));
+  const auto ran = run_on(setup, {"status"});
+  INFO(ran.out_);
+  CHECK(ran.exit_ == 0);
+  CHECK(reply_of(ran.out_).at("phase").as_string() == "unknown");
+  CHECK(setup.calendar_before_clock_);
 }
 
 TEST_CASE("a read on a broker's account takes the login's account, and answers busy at once beside a run") {
@@ -692,6 +697,42 @@ TEST_CASE("KIS's setup builds its sessions without sending, and answers busy bes
   CHECK(logins.asked_ == std::vector<std::string>{"kis/demo", "kis/real"});
   CHECK(std::filesystem::is_empty(tokens));
   CHECK(std::filesystem::is_empty(fixture.paper_.dir() / "cache" / "cmdatl" / "calendars"));
+}
+
+TEST_CASE("every login refusal of KIS's setup is declared by the four reads") {
+  const KisFixture fixture;
+  const cmdatl::Table table(cmdatl::command_list());
+  const std::vector<std::vector<std::string>> reads{{"status"}, {"account"}, {"quote", "005930"}, {"order", "list"}};
+  struct Refusal {
+    std::map<std::string, std::string> items_;
+    std::optional<cmdatl::auth::StoreStatus> failing_;
+    std::string code_;
+  };
+  const std::string other =
+    R"({"app_key":"k","app_secret":"MADE-UP-DEMO-SECRET","account_number":"11112222","demo":true})";
+  for (
+    const auto& refusal : std::vector<Refusal>{
+      {{}, cmdatl::auth::StoreStatus::UNAVAILABLE, "auth.no_store"},
+      {{}, cmdatl::auth::StoreStatus::LOCKED, "auth.store_locked"},
+      {{}, std::nullopt, "auth.not_found"},
+      {{{"kis/demo", DEMO_LOGIN}}, std::nullopt, "auth.not_found"},
+      {{{"kis/demo", other}, {"kis/real", REAL_LOGIN}}, std::nullopt, "auth.account_mismatch"},
+    }
+  ) {
+    for (const auto& args : reads) {
+      INFO(refusal.code_ << ": " << cmdatl::join(args));
+      Logins logins;
+      logins.items_ = refusal.items_;
+      logins.failing_ = refusal.failing_;
+      cmdatl::KisSetup setup(&logins);
+      const auto ran = run_on(setup, args);
+      CHECK(ran.exit_ == 1);
+      CHECK(code_of(ran.out_) == refusal.code_);
+      const auto errors = cmdatl::errors_of(*table.resolve(args).command_);
+      CHECK(std::find(errors.begin(), errors.end(), refusal.code_) != errors.end());
+    }
+  }
+  CHECK(!std::filesystem::exists(fixture.account()));
 }
 
 #endif
