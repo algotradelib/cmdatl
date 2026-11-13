@@ -88,8 +88,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"unsupported.capability", Exit::FAILED, false,
       "the broker folder's client does not state what a run needs; nothing was sent: trade it another way"},
     {"unsupported.broker", Exit::FAILED, false,
-      "the order and clock commands trade the mock broker only; on a KIS account status, account, quote and order list "
-      "read it, and cmdatl run trades it"},
+      "order place, order cancel and the clock commands work on the mock account only; on a KIS account the reads, "
+      "order plan and order reconcile work (the operator can run order release), and cmdatl run trades it"},
     {"account.unreadable", Exit::FAILED, true,
       "the broker did not answer a holdings, buying-power or order-list read; nothing was sent: run the command again"},
     {"state.unavailable", Exit::FAILED, false,
@@ -141,7 +141,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"refused.awaiting_confirmation", Exit::REFUSED, true,
       "holdings have not shown an order yet: place nothing until cmdatl order reconcile SYMBOL shows the symbol clean"},
     {"refused.unjournaled_order", Exit::REFUSED, false,
-      "an order no cmdatl journal line names rests on the symbol: the operator withdraws it where it was placed"},
+      "an order this account's journal does not show as its own rests on the symbol: the operator withdraws it where it "
+      "was placed (on a broker's account, in the broker's app)"},
     {"refused.guard", Exit::REFUSED, false, "a risk limit refused it: cmdatl env shows the limits"},
     {"refused.not_reached", Exit::REFUSED, true,
       "refused before the request reached the mock market (the armed file, the lock, the collar, the phases, its state file): read the message"},
@@ -153,7 +154,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
       "the operator writes the approval file beside the operator's file, one SYMBOL JOURNAL_ID line per owed order"},
     {"refused.nothing_owed", Exit::REFUSED, false, "cmdatl account shows what is owed"},
     {"refused.named", Exit::REFUSED, true,
-      "the broker named the order: cmdatl order reconcile SYMBOL records it from holdings"},
+      "the broker named the order: cmdatl order reconcile SYMBOL records it from holdings or the order history"},
     {"refused.awaiting", Exit::REFUSED, true,
       "an order is owed or resting: cmdatl clock advance on the mock account, then cmdatl order reconcile again"},
     {"refused.holding_moved", Exit::REFUSED, true, "holdings changed between two reads: cmdatl order reconcile again"},

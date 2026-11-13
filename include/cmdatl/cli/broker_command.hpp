@@ -1,8 +1,9 @@
 #pragma once
 
 // An account command on a broker's account, written once over a setup that reads the logins and owns the sessions
-// (`kis.hpp` for KIS; the tests' stand-in): only the four reads answer, through the account's desk over those sessions;
-// every other account command is refused before any login is opened. Nothing here places, cancels or changes an order.
+// (`kis.hpp` for KIS; the tests' stand-in): only the commands the table marks `on_broker()` answer (the reads,
+// `order plan`, `order reconcile` and `order release`, none of which sends), through the account's desk over those
+// sessions; every other account command is refused before any login is opened.
 //
 // A setup has:
 // - `std::optional<Reply> identify(const OperatorConfig& config, OperatorConfig& effective)`: reads the logins, checks
@@ -43,8 +44,9 @@ Reply broker_command_reply(
   if (!command.broker_) {
     return error_reply(
       Exit::FAILED, "unsupported.broker",
-      "this command trades the mock broker only in this version; on a " + config.broker_ +
-        " account status, account, quote and order list read it, and cmdatl run trades it",
+      "this command works on the mock account only in this version; on a " + config.broker_ +
+        " account status, account, quote, order list, order plan, order reconcile and order release work, and "
+        "cmdatl run trades it",
       "read the account with cmdatl status, or run a strategy with cmdatl run"
     );
   }

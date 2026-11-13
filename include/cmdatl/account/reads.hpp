@@ -25,23 +25,24 @@ namespace cmdatl {
  * @brief What an owed row says to do, by what the market shows and the library's state.
  * @param symbol The symbol.
  * @param state The library's state: `named`, `unnamed` or `operator`.
- * @param status What the market shows for its order (`pending`, `filled`, `canceled`), or nothing.
- * @param simulated Whether the account is the mock's; on a broker's account the order commands do not reach it yet.
+ * @param status What the market shows for its order (`pending`, `filled`, `canceled`), or nothing; a broker's account
+ *   shows `pending` or nothing, its list holding open orders only.
+ * @param simulated Whether the account is the mock's; on a broker's account `order cancel` does not reach it yet.
  * @return The hint.
  */
 inline std::string owed_next(
   const std::string& symbol, const std::string& state, const std::optional<std::string>& status, bool simulated = true
 ) {
-  if (!simulated) {
-    const std::string listed = status ?
-      "still working at the broker" :
-      "not in the broker's order list now: it may have filled, been canceled or never been accepted";
-    return listed +
-      "; the order commands do not reach this account in this version: report to the operator, who reads it in the "
-      "broker's app";
-  }
   if (state == "operator") {
     return "report to the operator, who settles it with cmdatl order release " + symbol + " and the approval file";
+  }
+  if (!simulated && status) {
+    return "still working at the broker: report to the operator, who cancels it in the broker's app (order cancel " +
+      std::string("does not reach this account in this version); then cmdatl order reconcile ") + symbol;
+  }
+  if (!simulated && state == "named") {
+    return "not in the broker's order list now: it may have filled, been canceled or not be listed yet; cmdatl " +
+      std::string("order reconcile ") + symbol + " records it from holdings or the order history; sends nothing";
   }
   if (status && *status == "pending") {
     return "still working: cmdatl order cancel " + symbol +

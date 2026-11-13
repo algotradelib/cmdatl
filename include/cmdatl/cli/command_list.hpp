@@ -210,12 +210,13 @@ inline std::vector<Command> command_list() {
     .describe(
       "What `order place` would send to move SYMBOL to N shares with a limit at P, checked against the\n"
       "operator's limits, the market phase and the account. Sends nothing. The plan id expires when the\n"
-      "account changes or after the operator's plan lifetime. Each order command takes one simulated second."
+      "account changes or after the operator's plan lifetime. On the mock account each order command takes one\n"
+      "simulated second."
     )
     .arg("SYMBOL", "an instrument the operator allows")
     .option("target", "N", "the position to hold, whole shares (0 to sell out)", true)
     .option("limit", "P", "limit price, on the tick grid, inside the operator's collar", true)
-    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("now", "the account's time, KST with its offset; on the mock account after the command's simulated second")
     .returns("symbol", "the instrument")
     .returns("target", "the position asked for")
     .returns("limit", "the limit price")
@@ -229,8 +230,9 @@ inline std::vector<Command> command_list() {
     .returns("expires_at", "when the plan id lapses, KST with its offset")
     .returns("next", "the command to run next")
     .returns("owed", "orders the journal still waits on, for this symbol")
-    .returns("events", "what the market did in the command's simulated second")
+    .returns("events", "what the mock market did in the command's simulated second; null on a broker's account")
     .returns("result", "done, refused or unknown")
+    .on_broker()
     .on_account(AccountKind::PLAN, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "place"}, "Trade", "send that plan, if nothing moved since")
@@ -273,13 +275,17 @@ inline std::vector<Command> command_list() {
     .example("cmdatl order reconcile")
     .example("cmdatl order reconcile 005930")
     .arg("SYMBOL", "an instrument", false)
-    .returns("now", "the account's time, one simulated second on unless at the data's end, KST with its offset")
+    .returns(
+      "now",
+      "the account's time, KST with its offset; on the mock account one simulated second on unless at the data's end"
+    )
     .returns("checked", "each symbol read: symbol, state (clean, working, holding_moved or a reason), detail")
     .returns("owed", "what is still owed, after the call")
     .returns("reason", "clean, awaiting, or the first row's reason")
-    .returns("events", "what the market did in the command's simulated second")
+    .returns("events", "what the mock market did in the command's simulated second; null on a broker's account")
     .returns("result", "done, refused or unknown")
     .error("quote.no_data")
+    .on_broker()
     .on_account(AccountKind::RECONCILE, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "list"}, "Trade", "working orders")
@@ -292,16 +298,20 @@ inline std::vector<Command> command_list() {
     .example("cmdatl order release 005930 --reason \"checked the broker's order list\"")
     .arg("SYMBOL", "an instrument")
     .option("reason", "TEXT", "why the operator settles it", true)
-    .returns("now", "the account's time, one simulated second on unless at the data's end, KST with its offset")
+    .returns(
+      "now",
+      "the account's time, KST with its offset; on the mock account one simulated second on unless at the data's end"
+    )
     .returns("symbol", "the instrument")
     .returns("reason", "released; on a refusal or unknown, the reason")
     .returns("detail", "what was released")
     .returns("released", "the journal ids settled")
     .returns("approval_kept", "whether the approval file could not be renamed after its use (harmless)")
     .returns("owed", "orders the journal still waits on, for this symbol")
-    .returns("events", "what the market did in the command's simulated second")
+    .returns("events", "what the mock market did in the command's simulated second; null on a broker's account")
     .returns("result", "done, refused or unknown")
     .mutates("cmdatl account shows what is still owed; read it before releasing again")
+    .on_broker()
     .on_account(AccountKind::RELEASE, check_order_args)
     .exits(ORDER_EXITS));
 

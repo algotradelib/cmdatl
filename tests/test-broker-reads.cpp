@@ -340,16 +340,13 @@ std::vector<std::string> words(const boost::json::value& value) {
 
 } // namespace
 
-TEST_CASE("on a KIS account the order and clock commands are refused before any login is read") {
+TEST_CASE("on a KIS account order place, order cancel and the clock commands are refused before any login is read") {
   const KisFixture fixture;
   StandIn setup;
   for (
     const auto& args : std::vector<std::vector<std::string>>{
-      {"order", "plan", "005930", "--target", "0", "--limit", "70000"},
       {"order", "place", "p9cc4b94da4"},
       {"order", "cancel", "005930"},
-      {"order", "reconcile"},
-      {"order", "release", "005930", "--reason", "checked"},
       {"clock"},
       {"clock", "advance", "--minutes", "1"},
     }
@@ -408,10 +405,11 @@ TEST_CASE("a read on a broker's account answers from its sessions, as of one ins
   CHECK(body.at("orders").as_array().size() == 1);
   const auto& owed = body.at("owed").as_array();
   REQUIRE(owed.size() == 2);
+  // Two owed on one symbol are held for the operator, whose order release now reaches this account.
   CHECK(owed[0].as_object().at("broker_status").as_string() == "pending");
-  CHECK(owed[0].as_object().at("next").as_string().find("still working at the broker") != std::string::npos);
+  CHECK(owed[0].as_object().at("next").as_string().find("cmdatl order release 005930") != std::string::npos);
   CHECK(owed[1].as_object().at("broker_status").is_null());
-  CHECK(owed[1].as_object().at("next").as_string().find("not in the broker's order list now") != std::string::npos);
+  CHECK(owed[1].as_object().at("next").as_string().find("cmdatl order release 005930") != std::string::npos);
   CHECK(body.at("quotes").as_array().size() == 2);
   CHECK(
     StandIn::unconsumed(

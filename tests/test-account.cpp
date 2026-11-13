@@ -1395,7 +1395,7 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
   };
   CHECK(available == expected);
   CHECK(mutating == std::vector<std::string>{"clock advance", "order release"});
-  CHECK(cmdatl::SCHEMA_VERSION == 16);
+  CHECK(cmdatl::SCHEMA_VERSION == 17);
   CHECK(declares({"clock", "advance"}, 4, "unknown.internal"));
   CHECK(!declares({"clock"}, 4, "unknown.internal"));
   const auto entry = reply_of(run({"schema", "clock.advance"}).out_).at("commands").as_array()[0].as_object();
