@@ -86,6 +86,19 @@ template <typename Desk>
 }
 
 /**
+ * @brief Before a broker read: on a broker's desk, throws `Stopped` once a stop was asked for, so no further read is
+ *   made (a read in flight is not cut short).
+ * @tparam Desk The desk type.
+ * @param desk The desk.
+ */
+template <typename Desk>
+void before_read(Desk& desk) {
+  if constexpr (!Desk::simulated) {
+    desk.stop_check();
+  }
+}
+
+/**
  * @brief A whole amount as the reply's text.
  * @param value The amount.
  * @return The text.
@@ -172,10 +185,12 @@ json::object quote_row(BasicAccount<Desk>& account, Desk& desk, const std::strin
   const auto& readiness = account.readiness();
   json::object row;
   row["symbol"] = symbol;
+  before_read(desk);
   const auto quote = desk.market_session().quote(kr(symbol));
   row["last_price"] = quote ? json::value(quote.value().last_price_.str()) : json::value(nullptr);
   std::optional<algotradelib::PriceLimits> band;
   if constexpr (Desk::MarketSession::Caps::has_price_limits) {
+    before_read(desk);
     auto read = desk.market_session().price_limits(kr(symbol));
     if (read) {
       band = std::move(read.value());
@@ -210,6 +225,7 @@ json::object quote_row(BasicAccount<Desk>& account, Desk& desk, const std::strin
  */
 template <typename Desk>
 json::array positions_json(Desk& desk, const std::optional<std::string>& only) {
+  before_read(desk);
   const auto holdings = desk.session().holdings();
   if (!holdings) {
     unreadable<Desk>("holdings", holdings.error());
@@ -239,6 +255,7 @@ json::array positions_json(Desk& desk, const std::optional<std::string>& only) {
  */
 template <typename Desk>
 std::string buying_power_text(Desk& desk) {
+  before_read(desk);
   const auto power = desk.session().buying_power(algotradelib::Currency::krw());
   if (!power) {
     unreadable<Desk>("buying power", power.error());
@@ -254,6 +271,7 @@ std::string buying_power_text(Desk& desk) {
  */
 template <typename Desk>
 auto working_orders(Desk& desk) {
+  before_read(desk);
   auto working = desk.session().working_orders();
   if (!working) {
     unreadable<Desk>("the order list", working.error());

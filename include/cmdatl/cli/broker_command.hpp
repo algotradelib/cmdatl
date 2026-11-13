@@ -1,8 +1,8 @@
 #pragma once
 
 // An account command on a broker's account, written once over a setup that reads the logins and owns the sessions
-// (`kis.hpp` for KIS; the tests' stand-in): only the four reads answer, through a desk over those sessions; every other
-// account command is refused before any login is opened. Nothing here places, cancels or changes an order.
+// (`kis.hpp` for KIS; the tests' stand-in): only the four reads answer, through the account's desk over those sessions;
+// every other account command is refused before any login is opened. Nothing here places, cancels or changes an order.
 //
 // A setup has:
 // - `std::optional<Reply> identify(const OperatorConfig& config, OperatorConfig& effective)`: reads the logins, checks
@@ -10,7 +10,8 @@
 //   constructs the sessions, which sends nothing;
 // - `trading()`, `market()`: the sessions;
 // - `Clock::time_point now()`: the clock the reply is as of;
-// - `bool stopped()`: whether a stop was asked for, checked while waiting for the lock and before every broker call.
+// - `bool stopped()`: whether a stop was asked for, checked while waiting for the lock, before every broker read, and
+//   by the placement boundary.
 //
 // A call in flight is not interrupted: the next one is not made.
 
@@ -56,9 +57,9 @@ Reply broker_command_reply(
   };
   using Desk = BrokerDesk<std::decay_t<decltype(setup.trading())>, std::decay_t<decltype(setup.market())>>;
   auto opened = BasicAccount<Desk>::open_broker(
-    effective, output, stopped, [&setup, &stopped](const OperatorConfig&, const OwnerLock&) {
+    effective, output, stopped, [&setup, &stopped](const OperatorConfig& file, const OwnerLock& lock) {
       return std::make_unique<Desk>(
-        setup.trading(), setup.market(),
+        setup.trading(), setup.market(), file, lock,
         [&setup] {
           return setup.now();
         },

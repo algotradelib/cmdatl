@@ -182,21 +182,9 @@ public:
     );
     client_ = std::make_shared<atl::mock::MockClient>(file_->market());
     market_session_ = std::make_unique<MarketSession>(client_, atl::mock::MockAccount{});
-    PlacementPolicy policy;
-    policy.armed_ = config.armed_path();
-    policy.lock_ = &lock;
-    policy.limit_only_ = config.limits_.order_type_ == "limit";
-    policy.collar_ = config.limits_.collar_;
-    for (const auto& name : config.limits_.phases_) {
-      for (const auto phase : atl::strategy::all_market_phases) {
-        if (atl::strategy::market_phase_name(phase) == name) {
-          policy.phases_.push_back(phase);
-        }
-      }
-    }
     auto* market = &file_->market();
     session_ = std::make_unique<Session>(
-      *market_session_, std::move(policy),
+      *market_session_, placement_policy(config, lock),
       [market]() {
         return market->now();
       },

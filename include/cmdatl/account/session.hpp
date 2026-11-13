@@ -49,6 +49,29 @@ struct PlacementPolicy {
   atl::Country country_{atl::Country::KR};
 };
 
+/**
+ * @brief An account's placement policy, as the operator's file sets it: its armed file, the held lock, limit orders
+ *   only unless `limits.order_type` says otherwise, the collar and the permitted phases, on the KRX window.
+ * @param config The operator's file.
+ * @param lock The account's lock, held; it must outlive the policy.
+ * @return The policy.
+ */
+inline PlacementPolicy placement_policy(const OperatorConfig& config, const OwnerLock& lock) {
+  PlacementPolicy policy;
+  policy.armed_ = config.armed_path();
+  policy.lock_ = &lock;
+  policy.limit_only_ = config.limits_.order_type_ == "limit";
+  policy.collar_ = config.limits_.collar_;
+  for (const auto& name : config.limits_.phases_) {
+    for (const auto phase : atl::strategy::all_market_phases) {
+      if (atl::strategy::market_phase_name(phase) == name) {
+        policy.phases_.push_back(phase);
+      }
+    }
+  }
+  return policy;
+}
+
 /** @brief One placement the boundary saw: forwarded and accepted, refused by the broker, or refused here. */
 struct PlacementEvent {
   /** @brief `placed`, or `refused`. */

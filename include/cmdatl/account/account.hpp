@@ -299,19 +299,20 @@ inline Reply lock_lost_reply() {
 }
 
 // A desk: what the account and order commands are given of an account's broker, and all they use of it.
-// The reads (`reads.hpp`), the order commands, once() and the plan book are templates over it, or take it from
-// `Account::desk()`; `Account` is the one place a desk is built, and `MockDesk` (`mock_desk.hpp`) the one desk.
-// On a broker's account the reads alone are given `BrokerDesk` (`broker_desk.hpp`), built by the command path over
-// sessions it owns, with the members below but `env_name` and `sends()`: it sends nothing.
+// The reads (`reads.hpp`), the order commands, once() and the plan book are templates over it, and take it from the
+// account's `desk()`; an account owns its desk and builds it once its lock is held: `MockDesk` (`mock_desk.hpp`) on
+// the mock account, `BrokerDesk` (`broker_desk.hpp`) over sessions a broker's command path owns.
 //
 // Every desk has:
-//   - `broker_name`, `env_name`: static; the operator file's `broker` word, and every reply's `env`.
-//   - `Session`, `session()`: the trading session, a session with the calls of the library's `BlockingSession`:
-//     holdings, buying power, the working-order listing, reference data, placements and cancellations. Every placement and cancellation through
-//     it passes the final checks of the operator's file (the armed file for a placement, the lock for both) before it
-//     can reach the broker.
+//   - `broker_name`: static; the broker, as its messages name it (the mock's also has `env_name`, every reply's `env`).
+//   - `Session`, `session()`: the trading session, the placement boundary (`GuardedSession`) over a session with the
+//     calls of the library's `BlockingSession`: holdings, buying power, the working-order listing, reference data,
+//     placements and cancellations. Every placement and cancellation through it passes the final checks of the
+//     operator's file (the armed file for a placement, the lock for both) before it can reach the broker; on a
+//     broker's desk it is the only session with `place` or `cancel` the desk lends.
 //   - `MarketSession`, `market_session()`: the session quotes, price bands and the calendar (so the phase) are read
-//     from, each as its own capabilities allow; the trading session itself where the broker needs no other.
+//     from, each as its own capabilities allow; on a broker's desk a read-only view (`MarketView`), since on a real
+//     account the market session is the trading session.
 //   - `now()`: the account's clock, which dates the phase, the journal's lines and plans.
 //   - `sends()`: how many placements and cancellations this process has sent towards the broker, counted before the
 //     outcome is known; once() decides by its growth during a call whether anything may have reached the broker.
