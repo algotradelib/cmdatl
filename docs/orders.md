@@ -29,5 +29,6 @@ cmdatl order release 005930 --reason "read the order list and holdings"
 - An order the broker never named stays owed until the listing settles it or the operator releases it.
   `cmdatl order release SYMBOL --reason TEXT` needs the armed file and the operator's approval `<stem>.release` beside the operator's file (`mock.toml` gives `mock.release`): one line per owed order, `SYMBOL JOURNAL_ID` with one space, naming exactly the journal ids `cmdatl account` shows as owed on that symbol.
   The approval is renamed after one use.
+- A failed `order plan` or `order reconcile` (exit 1) sent nothing, but may still have appended the library's recovery lines to the journal; it is safe to run again.
 - On a KIS account `order plan`, `order reconcile` and `order release` work, `events` is `null`, and `order place` and `order cancel` answer `unsupported.broker`: see [Commands on a KIS account](runs.md#commands-on-a-kis-account).
 - A damaged journal has no cmdatl remedy: on the mock account, the operator keeps the account's directory for inspection and moves it aside, which abandons that mock market with it.

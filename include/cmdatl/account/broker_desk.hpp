@@ -100,7 +100,8 @@ public:
    * @param config The operator's file.
    * @param lock The account's lock, held; it must outlive the desk.
    * @param clock The live clock: the instant `begin()` takes, and the boundary's.
-   * @param stopped Whether a stop was asked for: checked before every read, and by the boundary before a placement.
+   * @param stopped Whether a stop was asked for: checked by `begin()` and before each of the reads' own broker reads
+   *   (not the library's reads inside once()), and by the boundary before a placement.
    */
   BrokerDesk(
     Trading& trading, Market& market, const OperatorConfig& config, const OwnerLock& lock,
@@ -137,7 +138,7 @@ public:
   }
 
   /**
-   * @brief Throws once a stop was asked for; the reads call it before each broker read.
+   * @brief Throws once a stop was asked for; the reads call it before each of their broker reads.
    * @throws Stopped Once a stop was asked for.
    */
   void stop_check() {

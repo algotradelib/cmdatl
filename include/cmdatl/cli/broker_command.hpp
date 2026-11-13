@@ -10,11 +10,11 @@
 //   them against the operator's file, sets `effective.number_` to the account they name (as a run does), and
 //   constructs the sessions, which sends nothing;
 // - `trading()`, `market()`: the sessions;
-// - `Clock::time_point now()`: the clock the reply is as of;
-// - `bool stopped()`: whether a stop was asked for, checked while waiting for the lock, before every broker read, and
-//   by the placement boundary.
+// - `Clock::time_point now()`: the live clock; the reply is as of its reading after the calendar;
+// - `bool stopped()`: whether a stop was asked for, checked while waiting for the lock, before the calendar and each of
+//   the reads' own broker reads (not the library's reads inside once()), and by the placement boundary.
 //
-// A call in flight is not interrupted: the next one is not made.
+// A call in flight is not interrupted.
 
 #include "../account/broker_desk.hpp"
 #include "./cli.hpp"
