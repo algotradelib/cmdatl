@@ -591,12 +591,21 @@ TEST_CASE("an account run waits behind a command that holds the account and star
   std::filesystem::create_directories(dir);
   spit(dir / "owner.json", "{\"role\":\"agent\",\"pid\":1,\"what\":\"order plan 005930\"}\n");
   // Another process holds the lock for 300 ms, as a command would.
-  const auto holder = ::popen((std::string(CMDATL_HOLD_LOCK) + " '" + dir.string() + "' 300").c_str(), "r");
-  REQUIRE(holder != nullptr);
+  int out[2];
+  REQUIRE(::pipe(out) == 0);
+  const pid_t holder = ::fork();
+  REQUIRE(holder >= 0);
+  if (holder == 0) {
+    ::dup2(out[1], STDOUT_FILENO);
+    ::execl(CMDATL_HOLD_LOCK, CMDATL_HOLD_LOCK, dir.c_str(), "300", static_cast<char*>(nullptr));
+    ::_exit(127);
+  }
+  ::close(out[1]);
   char held[64] = {};
-  REQUIRE(std::fgets(held, sizeof(held), holder) != nullptr);
+  REQUIRE(::read(out[0], held, sizeof(held)) > 0);
+  ::close(out[0]);
   const auto ran = run_account_child(fixture);
-  ::pclose(holder);
+  ::waitpid(holder, nullptr, 0);
   CHECK(ran.exit_ == 0);
   CHECK(events_of(ran, "start").size() == 1);
   CHECK(slurp(fixture.dir() / "account.stderr").find("waiting for the account") != std::string::npos);

@@ -776,7 +776,7 @@ std::unique_ptr<OpenBroker> open_broker(StandIn& setup) {
   const auto snapshot = cmdatl::load_operator_config();
   REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
   auto result = cmdatl::BasicAccount<StandInDesk>::open_broker(
-    *snapshot.config_, opened->output_,
+    snapshot.config_.value(), opened->output_,
     [] {
       return false;
     },
