@@ -305,13 +305,20 @@ struct Command {
   }
 
   /**
-   * @brief Makes an account command one of the reads on a broker's account, which can answer `account.unreadable`.
+   * @brief Makes an account command one of the reads on a broker's account, which can also answer the login's refusals
+   *   and `account.unreadable`.
    * @param read Which read.
    * @return The command.
    */
   Command& on_broker(BrokerRead read) {
     broker_read_ = read;
-    return error("account.unreadable");
+    for (
+      const char* code :
+      {"auth.no_store", "auth.store_locked", "auth.not_found", "auth.account_mismatch", "account.unreadable"}
+    ) {
+      error(code);
+    }
+    return *this;
   }
 
   /**
