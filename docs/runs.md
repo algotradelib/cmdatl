@@ -58,6 +58,7 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
   Orders go where they always did; the `start` event's `market_data` names the tape (`KRX`).
 - KIS has once restated the previous day's bar between midnight and 06:00 KST, and a run takes each day's bar at its first read after midnight and keeps it: start a run after 06:00 KST, and expect a run kept overnight to decide on the bar as first read.
 - It reads the trading calendar before it starts and refuses when it cannot (nothing is sent).
+  The calendar KIS gave that day in Seoul is kept in `$XDG_CACHE_HOME/cmdatl/calendars` (else `~/.cache/cmdatl/calendars`), so a later run or read that day makes no holiday inquiry of its own; two that start together can each make one.
 - A read before the start that KIS refuses for its request rate is read again twice at most, a few seconds apart.
   A broker that asks for more than 61 seconds before the next read is not waited for: the run fails at once, and `next` names the wait.
   When KIS refuses the run's access token because it issues one a minute, the run waits 61 seconds once for each login and reads again.

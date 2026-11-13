@@ -691,6 +691,7 @@ TEST_CASE("KIS's setup builds its sessions without sending, and answers busy bes
   CHECK(code_of(ran.out_) == "busy.locked");
   CHECK(logins.asked_ == std::vector<std::string>{"kis/demo", "kis/real"});
   CHECK(std::filesystem::is_empty(tokens));
+  CHECK(std::filesystem::is_empty(fixture.paper_.dir() / "cache" / "cmdatl" / "calendars"));
 }
 
 #endif

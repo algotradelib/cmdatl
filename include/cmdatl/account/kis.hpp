@@ -40,6 +40,18 @@ inline std::shared_ptr<algotradelib::network::TokenStore> run_token_store() {
 }
 
 /**
+ * @brief The cache a KIS account's clients share the trading calendar through, so a later process on the same KST day
+ *   makes no holiday inquiry: the library's file cache on `cache_folder("calendars")`, made as the token folder is.
+ *   Without a cache folder it names none: the calendar is then asked of KIS each time.
+ * @return The cache.
+ */
+inline std::shared_ptr<algotradelib::network::CalendarCache> run_calendar_cache() {
+  const auto folder = cache_folder("calendars").value_or(std::string());
+  (void)make_private_dirs(folder);
+  return std::make_shared<algotradelib::network::FileCalendarCache>(folder);
+}
+
+/**
  * @brief Whether a login is the operator file's account: the account number and product code as `12345678-01`, and the
  *   environment.
  * @param number The operator file's `[account] number`, or empty when it names none (the login decides).
@@ -114,7 +126,8 @@ inline std::optional<std::string> read_kis_logins(
 
 /**
  * @brief A KIS account's two sessions: the account's, and on demo the real login's with no account, for market data;
- *   both clients paced at one request a second, their tokens shared through `run_token_store()`.
+ *   both clients paced at one request a second, their tokens and calendar shared through `run_token_store()` and
+ *   `run_calendar_cache()`.
  *
  * Constructing them sends nothing.
  */
@@ -133,7 +146,7 @@ public:
     algotradelib::kis::KisConfig trading, algotradelib::kis::KisAccount account,
     std::optional<algotradelib::kis::KisConfig> market
   )
-  : tls_(boost::asio::ssl::context::tls_client), tokens_(run_token_store()) {
+  : tls_(boost::asio::ssl::context::tls_client), tokens_(run_token_store()), calendars_(run_calendar_cache()) {
     tls_.set_default_verify_paths();
     tls_.set_verify_mode(boost::asio::ssl::verify_peer);
     trading_.emplace(client(std::move(trading)), std::move(account));
@@ -171,11 +184,12 @@ private:
   std::shared_ptr<algotradelib::kis::KisBlockingClient> client(algotradelib::kis::KisConfig config) {
     algotradelib::network::HttpClientOptions paced;
     paced.rate_limit_ = algotradelib::network::RateLimitBudget{1, 1, 0};
-    return std::make_shared<algotradelib::kis::KisBlockingClient>(tls_, std::move(config), paced, tokens_);
+    return std::make_shared<algotradelib::kis::KisBlockingClient>(tls_, std::move(config), paced, tokens_, calendars_);
   }
 
   boost::asio::ssl::context tls_;
   std::shared_ptr<algotradelib::network::TokenStore> tokens_;
+  std::shared_ptr<algotradelib::network::CalendarCache> calendars_;
   std::optional<Session> trading_;
   std::optional<Session> market_;
 };
