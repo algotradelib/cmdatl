@@ -6,10 +6,12 @@
 // Every one of them, in this order: its arguments by their grammar before the account opens; the account opened under
 // its lock; one simulated second, whose market events are the reply's `events`; its own checks; an interrupt noted
 // before once() is called answers exit 130; the journal checked to be the file the account opened and opened as the
-// one writer; once() or release(); the view read again for the reply's `owed`.
+// one writer; once() or release(); the view read again for the reply's `owed`, which only enriches a result already
+// known.
 // Nothing places or cancels except through once().
 
 #include "../account/account.hpp"
+#include "../account/broker_desk.hpp"
 #include "../account/reads.hpp"
 #include "../core/errors.hpp"
 #include "../core/table.hpp"
@@ -440,6 +442,9 @@ inline Reply interrupted_before_send(json::object body) {
 
 /**
  * @brief The reply's last fields: the view read again (`owed`), and the lock checked.
+ *
+ * The result is known by then: a stop or a failed read while reading `owed` leaves it null and the result as it is; a
+ * replaced lock still overrides.
  * @tparam Desk The desk.
  * @param account The account.
  * @param reply The reply.
@@ -448,10 +453,16 @@ inline Reply interrupted_before_send(json::object body) {
  */
 template <typename Desk>
 Reply finish(BasicAccount<Desk>& account, Reply reply, const std::optional<std::string>& symbol) {
+  try {
 #if !defined(_WIN32)
-  account.refresh_view();
+    account.refresh_view();
 #endif
-  reply.body_["owed"] = owed_json(account, account.desk(), symbol, working_orders(account.desk()));
+    reply.body_["owed"] = owed_rows(account, account.desk(), symbol);
+  } catch (const Unreadable&) {
+    reply.body_["owed"] = nullptr;
+  } catch (const Stopped&) {
+    reply.body_["owed"] = nullptr;
+  }
   if (!account.lock().still_at_path()) {
     return lock_lost_reply();
   }

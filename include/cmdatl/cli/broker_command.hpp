@@ -73,6 +73,10 @@ Reply broker_command_reply(
   auto& account = *opened.account_;
   auto& desk = account.desk();
   Reply reply;
+  // A stop or a failed read is 130 or 1 until a command that sends or changes the journal starts; inside it, unknown
+  // (4) with its hint, as on the mock account (`run_on_account`).
+  const bool changes = command.may_send_ || command.mutates_;
+  bool entered = false;
   try {
     desk.begin();
     account.view_at();
@@ -80,6 +84,7 @@ Reply broker_command_reply(
     if (account.journal_intact() && !write_owner_record(account.lock(), owner_what(command, invocation))) {
       return lock_lost_reply();
     }
+    entered = true;
     switch (command.broker_read_) {
       case BrokerRead::STATUS:
         reply = status_reply(invocation, account, desk, output);
@@ -98,11 +103,17 @@ Reply broker_command_reply(
         break;
     }
   } catch (const Stopped&) {
+    if (entered && changes) {
+      throw;
+    }
     return error_reply(
       Exit::INTERRUPTED, "interrupted", "interrupted by a signal; no further read was made", "run the command again",
       true
     );
   } catch (const Unreadable& error) {
+    if (entered && changes) {
+      throw;
+    }
     return error_reply(Exit::FAILED, "account.unreadable", error.what(), "run the command again", true);
   }
   if (!account.lock().still_at_path()) {

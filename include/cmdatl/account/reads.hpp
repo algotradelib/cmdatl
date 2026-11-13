@@ -314,6 +314,23 @@ json::array owed_json(
 }
 
 /**
+ * @brief The owed rows, optionally of one symbol, reading the order list only when a row names an order.
+ * @tparam Desk The desk type.
+ * @param account The account.
+ * @param desk The desk.
+ * @param only The symbol, or nothing for all.
+ * @return The rows.
+ */
+template <typename Desk>
+json::array owed_rows(const BasicAccount<Desk>& account, Desk& desk, const std::optional<std::string>& only) {
+  const auto& owed = account.journal().owed_;
+  const bool named = std::any_of(owed.begin(), owed.end(), [&only](const Owed& row) {
+    return !row.order_id_.empty() && (!only || row.symbol_ == *only);
+  });
+  return owed_json(account, desk, only, named ? working_orders(desk) : decltype(working_orders(desk)){});
+}
+
+/**
  * @brief The working-order rows.
  * @tparam Working The working-order listing.
  * @param working The working orders, read once.
@@ -431,12 +448,7 @@ Reply account_reply(const Invocation& invocation, BasicAccount<Desk>& account, D
   body["positions"] = positions_json(desk, only);
   body["cash"] = cash_json(desk);
   body["buying_power"] = buying_power_text(desk);
-  // The order list is read only when an owed row names an order.
-  const auto& owed = account.journal().owed_;
-  const bool named = std::any_of(owed.begin(), owed.end(), [&only](const Owed& row) {
-    return !row.order_id_.empty() && (!only || row.symbol_ == *only);
-  });
-  body["owed"] = owed_json(account, desk, only, named ? working_orders(desk) : decltype(working_orders(desk)){});
+  body["owed"] = owed_rows(account, desk, only);
   body["orders_left_today"] = orders_left_json(account.readiness());
   return read_reply(account, std::move(body));
 }
