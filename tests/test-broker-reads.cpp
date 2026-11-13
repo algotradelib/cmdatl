@@ -1077,6 +1077,8 @@ TEST_CASE("on a broker's account once() withdraws only what the run's ownership 
       const KisFixture fixture;
       fixture.paper_.arm();
       StandIn setup;
+      // The reply's instant a day before the live clock: today, for the rule, is the live clock's.
+      setup.times_ = {yesterday, kst("2024-03-26T10:00")};
       setup.market_->advance_to(at);
       REQUIRE(setup.trading().place(order("005930", true, "1", "78000")));
       const auto number = setup.market_->working_orders().orders_.front().order_.order_id_;
