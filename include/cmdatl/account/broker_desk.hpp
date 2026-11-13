@@ -151,6 +151,11 @@ public:
     return now_;
   }
 
+  /** @brief The live clock, which dates decisions, the journal's lines and plans. */
+  Clock::time_point live_now() const {
+    return clock_();
+  }
+
   /** @brief How many placements and cancellations the boundary sent towards the broker. */
   std::uint64_t sends() const noexcept {
     return session_.sends();

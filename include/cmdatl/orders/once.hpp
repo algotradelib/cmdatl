@@ -471,9 +471,9 @@ Mapped map_report(
  * @brief Plans or places one target on an account, under the rules at the top of this file.
  *
  * Only a caller that holds the account's lock and has opened its journal can call it; the journal must outlive the
- * call, and the desk's clock dates the decision and the journal's lines.
+ * call, and the desk's live clock dates the decision and the journal's lines.
  *
- * @tparam Desk The desk (`account/account.hpp`): `session()`, `market_session()`, `now()` and `sends()`.
+ * @tparam Desk The desk (`account/account.hpp`): `session()`, `market_session()`, `live_now()` and `sends()`.
  * @param desk The desk.
  * @param journal The account's journal, opened by the caller.
  * @param lock The account's lock, held.
@@ -495,7 +495,7 @@ OnceResult once(
   }
   auto& session = desk.session();
   const std::function<std::chrono::system_clock::time_point()> now = [&desk] {
-    return desk.now();
+    return desk.live_now();
   };
   OnceResult result;
   const auto refuse = [&result](std::string reason, std::string detail = {}) {
@@ -1005,7 +1005,7 @@ OnceResult release(
     return answer(OnceExit::UNKNOWN, "journal_damaged", "the journal is not open: " + journal.rejection());
   }
   const std::function<std::chrono::system_clock::time_point()> now = [&desk] {
-    return desk.now();
+    return desk.live_now();
   };
   auto bound = once_detail::bind(desk.session(), journal, atl::strategy::RiskLimits{}, now);
   const auto recovery = atl::runner::recover_runner(bound, journal);

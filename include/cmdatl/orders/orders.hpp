@@ -599,7 +599,8 @@ Reply plan_reply(const Invocation& invocation, BasicAccount<Desk>& account, Outp
     plan.limit_ = limit;
     plan.snapshot_ =
       snapshot_of(account.desk().session(), account.config().scope(), symbol, target, limit, journal_size(account));
-    plan.sim_ = nanos(account.desk().now());
+    const auto issued = account.desk().live_now();
+    plan.sim_ = nanos(issued);
     const auto id = book.issue(plan);
     const auto saved = book.save(account.lock());
     if (saved.lock_lost_) {
@@ -625,7 +626,7 @@ Reply plan_reply(const Invocation& invocation, BasicAccount<Desk>& account, Outp
     if (result.plan_kind_ != "withdraw" && held) {
       body["quantity"] = std::to_string(std::llabs(std::stoll(target) - std::stoll(held->str())));
     }
-    body["expires_at"] = kst_iso(account.desk().now() + std::chrono::seconds(account.config().limits_.plan_ttl_));
+    body["expires_at"] = kst_iso(issued + std::chrono::seconds(account.config().limits_.plan_ttl_));
     body["next"] = "cmdatl order place " + id;
   }
   return finish(account, from_once(result, std::move(body)), symbol);
@@ -652,8 +653,7 @@ Reply place_reply(const Invocation& invocation, BasicAccount<Desk>& account, Out
   body["plan_id"] = id;
   auto book = PlanBook::load(account.dir());
   auto plan = book.find(id);
-  const auto now_nanos = nanos(account.desk().now());
-  if (!plan || plan->sim_ > now_nanos) {
+  if (!plan || plan->sim_ > nanos(account.desk().live_now())) {
     return finish(
       account,
       coded(
@@ -684,7 +684,9 @@ Reply place_reply(const Invocation& invocation, BasicAccount<Desk>& account, Out
     account.desk().session(), account.config().scope(), plan->symbol_, plan->target_, plan->limit_,
     journal_size(account)
   );
-  const auto age = now_nanos - plan->sim_;
+  // Its age on the live clock, after the snapshot's reads and just before it is used: it bounds admission, not the
+  // broker's receipt.
+  const auto age = nanos(account.desk().live_now()) - plan->sim_;
   const auto ttl =
     std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::seconds(account.config().limits_.plan_ttl_))
       .count();

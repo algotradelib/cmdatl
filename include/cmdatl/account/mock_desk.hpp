@@ -245,6 +245,11 @@ public:
     return file_->market().now();
   }
 
+  /** @brief The market's clock: the mock's figures and decisions share one clock. */
+  Clock::time_point live_now() const {
+    return now();
+  }
+
   /**
    * @brief How many placements and cancellations this process sent towards the market, as the boundary counts them.
    * @return The count.

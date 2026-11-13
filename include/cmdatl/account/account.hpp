@@ -313,7 +313,9 @@ inline Reply lock_lost_reply() {
 //   - `MarketSession`, `market_session()`: the session quotes, price bands and the calendar (so the phase) are read
 //     from, each as its own capabilities allow; on a broker's desk a read-only view (`MarketView`), since on a real
 //     account the market session is the trading session.
-//   - `now()`: the account's clock, which dates the phase, the journal's lines and plans.
+//   - `now()`: the instant a reply's figures are as of, and the phase a read shows.
+//   - `live_now()`: the clock that dates the runner's decisions, the journal's lines, and a plan's issue and expiry;
+//     the mock's market clock answers both.
 //   - `sends()`: how many placements and cancellations this process has sent towards the broker, counted before the
 //     outcome is known; once() decides by its growth during a call whether anything may have reached the broker.
 //   - `has_symbol(symbol)`: whether the account's market has the symbol.
