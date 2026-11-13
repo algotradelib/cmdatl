@@ -611,6 +611,52 @@ TEST_CASE("an account run waits behind a command that holds the account and star
   CHECK(slurp(fixture.dir() / "account.stderr").find("waiting for the account") != std::string::npos);
 }
 
+TEST_CASE("an account run signalled while it waits for the account ends 130 with no start and no read") {
+  PaperFixture fixture;
+  fixture.write_config(kis_config());
+  fixture.arm();
+  one_decision();
+  const auto dir = kis_account_dir(fixture);
+  std::filesystem::create_directories(dir);
+  spit(dir / "owner.json", "{\"role\":\"agent\",\"pid\":1,\"what\":\"order plan 005930\"}\n");
+  // Another process holds the lock far longer than the test runs.
+  int out[2];
+  REQUIRE(::pipe(out) == 0);
+  const pid_t holder = ::fork();
+  REQUIRE(holder >= 0);
+  if (holder == 0) {
+    ::dup2(out[1], STDOUT_FILENO);
+    ::execl(CMDATL_HOLD_LOCK, CMDATL_HOLD_LOCK, dir.c_str(), "20000", static_cast<char*>(nullptr));
+    ::_exit(127);
+  }
+  ::close(out[1]);
+  char held[64] = {};
+  REQUIRE(::read(out[0], held, sizeof(held)) > 0);
+  ::close(out[0]);
+  const auto ran = run_account_child(fixture, [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+    // Any read would answer this fault, and end the run otherwise than interrupted.
+    for (const auto call : {atl::mock::Call::WORKING_ORDERS, atl::mock::Call::HOLDINGS}) {
+      atl::BrokerError error;
+      error.category_ = atl::ErrorCategory::TRANSPORT;
+      error.broker_code_ = "read-made";
+      client.fail_next(call, error, 5);
+    }
+    std::thread([] {
+      std::this_thread::sleep_for(std::chrono::milliseconds(300));
+      ::raise(SIGINT);
+    }).detach();
+  });
+  ::kill(holder, SIGKILL);
+  ::waitpid(holder, nullptr, 0);
+  CHECK(ran.exit_ == 130);
+  CHECK(code_of(ran) == "interrupted");
+  CHECK(events_of(ran, "start").empty());
+  const auto err = slurp(fixture.dir() / "account.stderr");
+  CHECK(err.find("waiting for the account") != std::string::npos);
+  CHECK(err.find("read-made") == std::string::npos);
+  CHECK(!std::filesystem::exists(dir / "journal.jsonl"));
+}
+
 TEST_CASE("an account run carries today's order allowance across runs through the account's journal") {
   PaperFixture fixture;
   fixture.write_config(kis_config(1));
