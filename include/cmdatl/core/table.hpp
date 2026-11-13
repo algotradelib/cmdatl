@@ -68,15 +68,14 @@ struct Invocation {
 };
 
 class Table;
-class MockDesk;
-template <typename Desk>
-class BasicAccount;
-using Account = BasicAccount<MockDesk>;
 struct ConfigSnapshot;
 
-/** @brief Which read an account command is on a broker's account; every other account command is refused there. */
-enum class BrokerRead {
-  /** @brief Not a read on a broker's account. */
+/**
+ * @brief Which account command a command is: its handler, run on the open account by the one switch for the mock
+ *   account and a broker's (`run_account_kind`, cli.hpp).
+ */
+enum class AccountKind {
+  /** @brief Not an account command. */
   NONE,
   /** @brief `status`. */
   STATUS,
@@ -86,6 +85,20 @@ enum class BrokerRead {
   QUOTE,
   /** @brief `order list`. */
   ORDER_LIST,
+  /** @brief `order plan`. */
+  PLAN,
+  /** @brief `order place`. */
+  PLACE,
+  /** @brief `order cancel`. */
+  CANCEL,
+  /** @brief `order reconcile`. */
+  RECONCILE,
+  /** @brief `order release`. */
+  RELEASE,
+  /** @brief `clock`, the mock's only. */
+  CLOCK,
+  /** @brief `clock advance`, the mock's only. */
+  ADVANCE,
 };
 
 /** @brief The exit codes of an account command: 4 when the account's state is unknown, 130 from the lock's wait. */
@@ -134,20 +147,20 @@ struct Command {
    */
   std::function<Reply(const Invocation&, const Table&, Output&)> run_;
   /**
-   * @brief What it does on an open account, for an account command: `run_on_account` (cli.hpp) opens the account,
-   *   holding its lock, and calls it.
+   * @brief Which account command it is, for an account command: `run_on_account` (cli.hpp) opens the account, holding
+   *   its lock, and runs its handler.
    *
    * Set instead of `run_`, never with it.
    */
-  std::function<Reply(const Invocation&, Account&, Output&)> run_account_;
+  AccountKind account_{AccountKind::NONE};
   /** @brief An account command's checks of its arguments, before the account is opened; empty for none. */
   std::function<std::optional<Reply>(const Invocation&)> check_account_;
-  /** @brief Which read it is on a broker's account, where it runs over the broker's desk instead of `run_account_`. */
-  BrokerRead broker_read_{BrokerRead::NONE};
+  /** @brief Whether it answers on a broker's account; every other account command is refused there. */
+  bool broker_{false};
   /**
    * @brief What it does with the operator's file read, for a command that names the account but opens no account:
    *   `run_on_config` (cli.hpp) reads the file once and takes the reply's environment from the broker. Set instead of
-   *   `run_` and `run_account_`, never with them.
+   *   `run_` and `account_`, never with them.
    */
   std::function<Reply(const Invocation&, const ConfigSnapshot&, Output&)> run_config_;
 
@@ -289,17 +302,14 @@ struct Command {
   }
 
   /**
-   * @brief Gives an account command its code, which makes it available: it runs on the open account, its replies
-   *   carry the account's environment, and its exit codes are `ACCOUNT_EXITS`.
-   * @param run What it does on the account.
+   * @brief Makes it an account command, which makes it available: it runs on the open account, its replies carry the
+   *   account's environment, and its exit codes are `ACCOUNT_EXITS`.
+   * @param kind Which account command it is.
    * @param check Its checks of its arguments before the account is opened, or empty.
    * @return The command.
    */
-  Command& on_account(
-    std::function<Reply(const Invocation&, Account&, Output&)> run,
-    std::function<std::optional<Reply>(const Invocation&)> check = {}
-  ) {
-    run_account_ = std::move(run);
+  Command& on_account(AccountKind kind, std::function<std::optional<Reply>(const Invocation&)> check = {}) {
+    account_ = kind;
     check_account_ = std::move(check);
     env_ = "account";
     available_ = true;
@@ -308,13 +318,12 @@ struct Command {
   }
 
   /**
-   * @brief Makes an account command one of the reads on a broker's account, which can also answer the login's refusals
-   *   and `account.unreadable`.
-   * @param read Which read.
+   * @brief Makes an account command answer on a broker's account, where it can also answer the login's refusals and
+   *   `account.unreadable`.
    * @return The command.
    */
-  Command& on_broker(BrokerRead read) {
-    broker_read_ = read;
+  Command& on_broker() {
+    broker_ = true;
     for (
       const char* code :
       {"auth.no_store", "auth.store_locked", "auth.not_found", "auth.account_mismatch", "account.unreadable"}

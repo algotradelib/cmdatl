@@ -380,49 +380,57 @@ Started start(BasicAccount<Desk>& account, bool second_needed = true) {
     return started;
   }
   auto& desk = account.desk();
-  const auto target = desk.now() + std::chrono::seconds(1);
-  if (!second_needed && (target > desk.clock_limit() || desk.halted())) {
+  if constexpr (!Desk::simulated) {
+    // A broker's clock is not moved by command: no second, and no market events of its own.
+    (void)second_needed;
+    started.body_["now"] = kst_iso(desk.now());
+    started.body_["events"] = nullptr;
+    return started;
+  } else {
+    const auto target = desk.now() + std::chrono::seconds(1);
+    if (!second_needed && (target > desk.clock_limit() || desk.halted())) {
+      started.body_["now"] = kst_iso(desk.now());
+      started.body_["events"] = events_json(desk);
+      return started;
+    }
+    if (target > desk.clock_limit()) {
+      started.refusal_ = error_reply(
+        Exit::FAILED, "clock.past_data",
+        "the mock market's data ends " + data_end_text(desk) + "; an order command takes one simulated second, past it",
+        "cmdatl clock shows where the data ends"
+      );
+      return started;
+    }
+    switch (desk.advance_to(target)) {
+      case Moved::OK:
+        break;
+      case Moved::LOCK_LOST:
+        started.refusal_ = lock_lost_reply();
+        return started;
+      case Moved::NOT_WRITTEN:
+        started.refusal_ = error_reply(
+          Exit::FAILED, "file.unwritable",
+          "the command's simulated second could not be written to the account's state file; the clock has not moved "
+          "and nothing was sent",
+          "check the account's directory"
+        );
+        return started;
+      case Moved::UNCONFIRMED:
+        started.refusal_ = error_reply(
+          Exit::FAILED, "file.unwritable",
+          "the command's simulated second was written but not flushed; the mock clock may have moved one second and "
+          "nothing was sent",
+          "check the account's directory"
+        );
+        return started;
+      case Moved::HALTED:
+        started.refusal_ = paper_state_reply(desk.halted().value_or("the mock market halted") + "; nothing was sent");
+        return started;
+    }
     started.body_["now"] = kst_iso(desk.now());
     started.body_["events"] = events_json(desk);
     return started;
   }
-  if (target > desk.clock_limit()) {
-    started.refusal_ = error_reply(
-      Exit::FAILED, "clock.past_data",
-      "the mock market's data ends " + data_end_text(desk) + "; an order command takes one simulated second, past it",
-      "cmdatl clock shows where the data ends"
-    );
-    return started;
-  }
-  switch (desk.advance_to(target)) {
-    case Moved::OK:
-      break;
-    case Moved::LOCK_LOST:
-      started.refusal_ = lock_lost_reply();
-      return started;
-    case Moved::NOT_WRITTEN:
-      started.refusal_ = error_reply(
-        Exit::FAILED, "file.unwritable",
-        "the command's simulated second could not be written to the account's state file; the clock has not moved "
-        "and nothing was sent",
-        "check the account's directory"
-      );
-      return started;
-    case Moved::UNCONFIRMED:
-      started.refusal_ = error_reply(
-        Exit::FAILED, "file.unwritable",
-        "the command's simulated second was written but not flushed; the mock clock may have moved one second and "
-        "nothing was sent",
-        "check the account's directory"
-      );
-      return started;
-    case Moved::HALTED:
-      started.refusal_ = paper_state_reply(desk.halted().value_or("the mock market halted") + "; nothing was sent");
-      return started;
-  }
-  started.body_["now"] = kst_iso(desk.now());
-  started.body_["events"] = events_json(desk);
-  return started;
 }
 
 /**

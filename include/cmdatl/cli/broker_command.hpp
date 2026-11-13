@@ -40,7 +40,7 @@ template <typename Setup>
 Reply broker_command_reply(
   const Command& command, const Invocation& invocation, const OperatorConfig& config, Output& output, Setup& setup
 ) {
-  if (command.broker_read_ == BrokerRead::NONE) {
+  if (!command.broker_) {
     return error_reply(
       Exit::FAILED, "unsupported.broker",
       "this command trades the mock broker only in this version; on a " + config.broker_ +
@@ -85,23 +85,7 @@ Reply broker_command_reply(
       return lock_lost_reply();
     }
     entered = true;
-    switch (command.broker_read_) {
-      case BrokerRead::STATUS:
-        reply = status_reply(invocation, account, desk, output);
-        break;
-      case BrokerRead::ACCOUNT:
-        reply = account_reply(invocation, account, desk, output);
-        break;
-      case BrokerRead::QUOTE:
-        reply = quote_reply(invocation, account, desk, output);
-        break;
-      case BrokerRead::ORDER_LIST:
-        reply = order_list_reply(invocation, account, desk, output);
-        break;
-      case BrokerRead::NONE:
-        // Refused above.
-        break;
-    }
+    reply = run_account_kind(command.account_, invocation, account, output);
   } catch (const Stopped&) {
     if (entered && changes) {
       throw;

@@ -368,6 +368,52 @@ inline std::string owner_what(const Command& command, const Invocation& invocati
 }
 
 /**
+ * @brief An account command's handler on its open account, by kind: the one switch for the mock account and a
+ *   broker's; `clock` and `clock advance` are the mock's only.
+ * @tparam Desk The desk.
+ * @param kind The command's kind.
+ * @param invocation Its arguments.
+ * @param account The account, open.
+ * @param output The output.
+ * @return The reply.
+ */
+template <typename Desk>
+Reply run_account_kind(AccountKind kind, const Invocation& invocation, BasicAccount<Desk>& account, Output& output) {
+  auto& desk = account.desk();
+  switch (kind) {
+    case AccountKind::STATUS:
+      return status_reply(invocation, account, desk, output);
+    case AccountKind::ACCOUNT:
+      return account_reply(invocation, account, desk, output);
+    case AccountKind::QUOTE:
+      return quote_reply(invocation, account, desk, output);
+    case AccountKind::ORDER_LIST:
+      return order_list_reply(invocation, account, desk, output);
+    case AccountKind::PLAN:
+      return plan_reply(invocation, account, output);
+    case AccountKind::PLACE:
+      return place_reply(invocation, account, output);
+    case AccountKind::CANCEL:
+      return cancel_reply(invocation, account, output);
+    case AccountKind::RECONCILE:
+      return reconcile_reply(invocation, account, output);
+    case AccountKind::RELEASE:
+      return release_reply(invocation, account, output);
+    case AccountKind::CLOCK:
+    case AccountKind::ADVANCE:
+      if constexpr (Desk::simulated) {
+        return kind == AccountKind::CLOCK ?
+          clock_reply(invocation, account, desk, output) :
+          advance_reply(invocation, account, desk, output);
+      }
+      break;
+    case AccountKind::NONE:
+      break;
+  }
+  return error_reply(Exit::FAILED, "internal.error", "no handler for this account command on this account");
+}
+
+/**
  * @brief An account command on its open account: the account opened (its lock held for the whole command), the
  *   owner record written once it is open beneath an intact journal (the lock checked first), the handler, and the
  *   lock checked once more before the reply.
@@ -406,7 +452,7 @@ inline Reply account_command_reply(
   if (account.journal_intact() && !write_owner_record(account.lock(), owner_what(command, invocation))) {
     return lock_lost_reply();
   }
-  Reply reply = command.run_account_(invocation, account, output);
+  Reply reply = run_account_kind(command.account_, invocation, account, output);
   if (!account.lock().still_at_path()) {
     reply = lock_lost_reply();
   }
@@ -594,7 +640,7 @@ inline int run(
     );
     return write(not_yet, "offline");
   }
-  if (command.run_account_) {
+  if (command.account_ != AccountKind::NONE) {
     return run_on_account(command, prepared, out, err, kis);
   }
   if (command.run_config_) {

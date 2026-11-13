@@ -67,10 +67,8 @@ inline std::vector<Command> command_list() {
     .returns("data_end", "the last session's close in the mock data; null on a broker's account")
     .returns("capabilities", "what the account's broker offers")
     .returns("state_dir", "the account's state directory")
-    .on_broker(BrokerRead::STATUS)
-    .on_account([](const Invocation& invocation, Account& account, Output& output) {
-      return status_reply(invocation, account, account.desk(), output);
-    }));
+    .on_broker()
+    .on_account(AccountKind::STATUS));
   add(make_command({"account"}, "Read", "positions, cash, buying power, owed orders, orders left today")
     .example("cmdatl account")
     .example("cmdatl account --value cash")
@@ -88,13 +86,8 @@ inline std::vector<Command> command_list() {
     )
     .returns("orders_left_today", "placements the operator still allows today; null when the journal is damaged")
     .error("usage.bad_value")
-    .on_broker(BrokerRead::ACCOUNT)
-    .on_account(
-      [](const Invocation& invocation, Account& account, Output& output) {
-        return account_reply(invocation, account, account.desk(), output);
-      },
-      check_symbols
-    ));
+    .on_broker()
+    .on_account(AccountKind::ACCOUNT, check_symbols));
   add(make_command({"quote"}, "Read", "last price, the price band if any, and whether orders are accepted now")
     .example("cmdatl quote 005930 000660")
     .arg("SYMBOL", "an instrument", true, true)
@@ -106,13 +99,8 @@ inline std::vector<Command> command_list() {
     )
     .error("quote.no_data")
     .error("usage.bad_value")
-    .on_broker(BrokerRead::QUOTE)
-    .on_account(
-      [](const Invocation& invocation, Account& account, Output& output) {
-        return quote_reply(invocation, account, account.desk(), output);
-      },
-      check_symbols
-    ));
+    .on_broker()
+    .on_account(AccountKind::QUOTE, check_symbols));
   add(make_command({"env"}, "Read", "configuration: cmdatl, algotradelib, atlc, the operator's file (no secrets)")
     .example("cmdatl env")
     .example("cmdatl env --value atlc.ok")
@@ -243,7 +231,7 @@ inline std::vector<Command> command_list() {
     .returns("owed", "orders the journal still waits on, for this symbol")
     .returns("events", "what the market did in the command's simulated second")
     .returns("result", "done, refused or unknown")
-    .on_account(plan_reply<AccountDesk>, check_order_args)
+    .on_account(AccountKind::PLAN, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "place"}, "Trade", "send that plan, if nothing moved since")
     .example("cmdatl order place p9cc4b94da4")
@@ -263,7 +251,7 @@ inline std::vector<Command> command_list() {
     .returns("events", "what the market did in the command's simulated second")
     .returns("result", "done, refused or unknown")
     .sends()
-    .on_account(place_reply<AccountDesk>, check_order_args)
+    .on_account(AccountKind::PLACE, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "cancel"}, "Trade", "withdraw working orders on SYMBOL (never places)")
     .example("cmdatl order cancel 005930")
@@ -279,7 +267,7 @@ inline std::vector<Command> command_list() {
     .returns("result", "done, refused or unknown")
     .error("quote.no_data")
     .sends()
-    .on_account(cancel_reply<AccountDesk>, check_order_args)
+    .on_account(AccountKind::CANCEL, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "reconcile"}, "Trade", "record fills from holdings (never places)")
     .example("cmdatl order reconcile")
@@ -292,16 +280,14 @@ inline std::vector<Command> command_list() {
     .returns("events", "what the market did in the command's simulated second")
     .returns("result", "done, refused or unknown")
     .error("quote.no_data")
-    .on_account(reconcile_reply<AccountDesk>, check_order_args)
+    .on_account(AccountKind::RECONCILE, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "list"}, "Trade", "working orders")
     .example("cmdatl order list")
     .returns("now", "the account's time, KST with its offset")
     .returns("orders", "working orders: order_id, symbol, side, quantity, filled, price, status")
-    .on_broker(BrokerRead::ORDER_LIST)
-    .on_account([](const Invocation& invocation, Account& account, Output& output) {
-      return order_list_reply(invocation, account, account.desk(), output);
-    }));
+    .on_broker()
+    .on_account(AccountKind::ORDER_LIST));
   add(make_command({"order", "release"}, "Trade", "operator only: settle an unknown order")
     .example("cmdatl order release 005930 --reason \"checked the broker's order list\"")
     .arg("SYMBOL", "an instrument")
@@ -316,7 +302,7 @@ inline std::vector<Command> command_list() {
     .returns("events", "what the market did in the command's simulated second")
     .returns("result", "done, refused or unknown")
     .mutates("cmdatl account shows what is still owed; read it before releasing again")
-    .on_account(release_reply<AccountDesk>, check_order_args)
+    .on_account(AccountKind::RELEASE, check_order_args)
     .exits(ORDER_EXITS));
 
   add(make_command({"strategy", "new"}, "Strategy", "a program and a run spec to start from")
@@ -462,9 +448,7 @@ inline std::vector<Command> command_list() {
     .returns("now", "the account's time, KST with its offset")
     .returns("phase", "the market phase")
     .returns("data_end", "the last session's close in the mock data")
-    .on_account([](const Invocation& invocation, Account& account, Output& output) {
-      return clock_reply(invocation, account, account.desk(), output);
-    }));
+    .on_account(AccountKind::CLOCK));
   add(make_command({"clock", "advance"}, "Mock account", "move the mock clock")
     .example("cmdatl clock advance --next-open")
     .example("cmdatl clock advance --minutes 30")
@@ -486,12 +470,7 @@ inline std::vector<Command> command_list() {
     .error("clock.past_data")
     .error("unknown.clock_advance")
     .mutates("cmdatl clock shows where the clock stands: read it before any other command")
-    .on_account(
-      [](const Invocation& invocation, Account& account, Output& output) {
-        return advance_reply(invocation, account, account.desk(), output);
-      },
-      check_advance
-    ));
+    .on_account(AccountKind::ADVANCE, check_advance));
 
   add(make_command({"help"}, "Help", "help for cmdatl, a group or a command (as --help)")
     .example("cmdatl help")

@@ -99,7 +99,7 @@ inline std::vector<std::string> errors_of(const Command& command) {
   if (command.may_send_ || command.mutates_) {
     errors.push_back("unknown.internal");
   }
-  if (command.run_account_) {
+  if (command.account_ != AccountKind::NONE) {
     errors.insert(errors.end(), ACCOUNT_ERRORS.begin(), ACCOUNT_ERRORS.end());
   }
   for (const auto& error : command.errors_) {
@@ -453,7 +453,7 @@ inline std::vector<std::string> check_table(const Table& table) {
       }
     }
     const bool runs = static_cast<bool>(command.run_);
-    const bool runs_on_account = static_cast<bool>(command.run_account_);
+    const bool runs_on_account = command.account_ != AccountKind::NONE;
     const bool runs_on_config = static_cast<bool>(command.run_config_);
     const int kinds = (runs ? 1 : 0) + (runs_on_account ? 1 : 0) + (runs_on_config ? 1 : 0);
     if (command.available_ != (kinds > 0) || kinds > 1) {
@@ -462,8 +462,18 @@ inline std::vector<std::string> check_table(const Table& table) {
     if ((runs_on_account || runs_on_config) && command.env_ != "account") {
       problems.push_back(name + ": runs on the account but its replies do not carry the account's environment");
     }
-    if (command.broker_read_ != BrokerRead::NONE && (!runs_on_account || command.may_send_ || command.mutates_)) {
-      problems.push_back(name + ": a read on a broker's account that is not an account command, or that changes it");
+    // The result handling by kind leans on these marks: what is thrown inside a command that sends or changes the
+    // journal is unknown (4).
+    const auto kind = command.account_;
+    if (runs_on_account && (kind == AccountKind::PLACE || kind == AccountKind::CANCEL) != command.may_send_) {
+      problems.push_back(name + ": an account command that sends is not marked sends(), or one that does not is");
+    }
+    if (runs_on_account && (kind == AccountKind::RELEASE || kind == AccountKind::ADVANCE) != command.mutates_) {
+      problems.push_back(name + ": an account command that changes the journal or the clock is not marked mutates()");
+    }
+    // Nothing sends on a broker's account in this version.
+    if (command.broker_ && (!runs_on_account || command.may_send_)) {
+      problems.push_back(name + ": answers on a broker's account but is not an account command, or may send");
     }
     if (
       command.mutates_ && std::find(command.exits_.begin(), command.exits_.end(), Exit::UNKNOWN) == command.exits_.end()
