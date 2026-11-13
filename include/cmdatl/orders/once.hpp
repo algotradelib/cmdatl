@@ -20,9 +20,11 @@
 //  10. Only in a permitted phase, except a withdrawal.
 //
 // The options a caller turns on: `dry_run_` (a plan, and how reconcile runs), `withdraw_only_` (a cancel),
-// `refuse_unjournaled_orders_` (an order no journal line names refuses the call).
+// `refuse_unjournaled_orders_` (a working order the journal does not own refuses the call: on the mock, one no journal
+// line names; on a broker's account, one without the run's positive evidence, `inherited_orders`).
 
 #include "../account/operator.hpp"
+#include "../account/owned_orders.hpp"
 #include "../core/reply.hpp"
 #include "../system/files.hpp"
 #include "../system/lock.hpp"
@@ -43,6 +45,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -143,7 +146,7 @@ struct OnceConfig {
   bool dry_run_{false};
   /** @brief A cancel: never submit; withdraw every listed order on the instrument, in any phase and unarmed. */
   bool withdraw_only_{false};
-  /** @brief Refuse when the listing holds an order on the instrument that no journal line names. */
+  /** @brief Refuse when the listing holds an order on the instrument the journal does not own (see the file's top). */
   bool refuse_unjournaled_orders_{false};
 };
 
@@ -690,6 +693,7 @@ OnceResult once(
 
   // 8. With an order working on the instrument: met by it, or withdraw it and place on a later call.
   std::vector<decltype(book.working_.front().ref_)> working_refs;
+  std::vector<std::decay_t<decltype(book.working_.front())>> working_rows;
   double committed = 0;
   for (const auto& working : book.working_) {
     if (
@@ -699,6 +703,7 @@ OnceResult once(
       continue;
     }
     working_refs.push_back(working.ref_);
+    working_rows.push_back(working);
     const double left =
       once_detail::number(working.order_.quantity_) - once_detail::number(working.order_.execution_.filled_quantity_);
     committed += working.order_.side_ == atl::OrderSide::BUY ? left : -left;
@@ -708,19 +713,45 @@ OnceResult once(
     return done("plan", std::move(detail));
   };
   if (config.refuse_unjournaled_orders_ && !working_refs.empty()) {
-    std::vector<std::string> named;
-    for (const auto& line : journal.replay().entries_) {
-      if (!line.order_id_.empty()) {
-        named.push_back(line.order_id_);
+    if constexpr (Desk::simulated) {
+      // The mock's numbers are its own market's: a line that ever named one owns it.
+      std::vector<std::string> named;
+      for (const auto& line : journal.replay().entries_) {
+        if (!line.order_id_.empty()) {
+          named.push_back(line.order_id_);
+        }
       }
-    }
-    for (const auto& ref : working_refs) {
-      if (std::find(named.begin(), named.end(), ref.primary_) == named.end()) {
-        return refuse(
-          "unjournaled_order",
-          "order " + ref.primary_ + " on " + request.instrument_.symbol_ +
-            " is not named by this account's journal; it was placed elsewhere"
-        );
+      for (const auto& ref : working_refs) {
+        if (std::find(named.begin(), named.end(), ref.primary_) == named.end()) {
+          return refuse(
+            "unjournaled_order",
+            "order " + ref.primary_ + " on " + request.instrument_.symbol_ +
+              " is not named by this account's journal; it was placed elsewhere"
+          );
+        }
+      }
+    } else {
+      // A broker's numbers are not timeless: an order is this account's only by the run's positive evidence.
+      std::vector<Owed> claims;
+      for (const auto& o : owed) {
+        Owed row;
+        row.journal_id_ = o.journal_id_;
+        row.order_id_ = o.order_id_;
+        row.state_ = std::string(atl::runner::obligation_state_name(o.state_));
+        claims.push_back(std::move(row));
+      }
+      const auto owners = inherited_orders<typename Session::BrokerTag>(
+        journal.replay(), claims, {request.instrument_}, kst_day(at), working_rows
+      );
+      for (std::size_t k = 0; k < owners.size(); ++k) {
+        if (owners[k].empty()) {
+          return refuse(
+            "unjournaled_order",
+            "order " + working_refs[k].primary_ + " on " + request.instrument_.symbol_ +
+              " is not one this account's journal placed and the broker acknowledged today with the same instrument, "
+              "side, quantity and price; cmdatl does not withdraw it"
+          );
+        }
       }
     }
   }
