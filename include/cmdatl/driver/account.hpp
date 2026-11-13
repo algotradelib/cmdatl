@@ -446,7 +446,8 @@ int run_account(
   const auto now = [&clock] {
     return clock.now();
   };
-  // The account's lock, held for the run's life: the agent commands and another run answer busy.
+  // The account's lock, held for the run's life: the agent commands and another run answer busy. A command's hold is
+  // waited out for at most 10 s, as a command waits; another run's is busy at once.
   std::error_code ec;
   if (make_private_dirs(run.account_dir_) != 0 || !std::filesystem::is_directory(run.account_dir_, ec)) {
     return run_error(
@@ -455,16 +456,21 @@ int run_account(
   }
   OwnerLock lock(run.account_dir_);
   const auto taken = lock.acquire(
-    std::chrono::milliseconds(0),
+    LOCK_WAIT,
     [] {
       return interrupted();
     },
-    [](const std::string&) {}
+    [](const std::string& holder) {
+      (void)write_line("waiting for the account: " + holder + " holds it\n", STDERR_FILENO);
+    }
   );
   if (taken == OwnerLock::Outcome::BUSY) {
     return run_error(
       base, Exit::FAILED, "busy.locked", "another command or run holds the account", "run it again when it is free"
     );
+  }
+  if (taken == OwnerLock::Outcome::INTERRUPTED) {
+    return run_error(base, Exit::INTERRUPTED, "interrupted", "a signal arrived while waiting for the account");
   }
   if (taken != OwnerLock::Outcome::HELD) {
     return run_error(base, Exit::FAILED, "file.unwritable", "the account's lock could not be taken: " + lock.error());
