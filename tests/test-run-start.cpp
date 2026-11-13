@@ -123,6 +123,7 @@ TEST_CASE("a broker folder's driver header names the folder it is built from, ev
     decoded.push_back(static_cast<char>(std::stoi(literal.substr(k + 1, 3), nullptr, 8)));
   }
   CHECK(decoded == folder);
+}
 
 /**
  * @brief The names in a directory.
