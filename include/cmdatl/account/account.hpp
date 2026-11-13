@@ -578,6 +578,10 @@ public:
    * @brief Reads the journal again and recomputes the view and the readiness, with the ownership checks of `open`.
    */
   void refresh_view() {
+    if (journal_absent_) {
+      // A broker's journal no command has started yet: still empty.
+      return;
+    }
     replay_ = algotradelib::runner::read_journal_file(journal_path());
     journal_ = journal_view(desk_->session(), replay_, config_.scope(), kst_day(desk_->now()));
     readiness_.reset();

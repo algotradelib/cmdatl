@@ -969,6 +969,23 @@ TEST_CASE("a broker account's journal is started only when absent: an empty or f
   CHECK(slurp(fixture.account() / "journal.jsonl") == before);
 }
 
+TEST_CASE("a broker account's journal no command started reads empty after an order command") {
+  const KisFixture fixture;
+  StandIn setup;
+  // Nothing owed and no symbol: reconcile opens no journal, and reading the view again finds none, as at open.
+  const auto clean = run_on(setup, {"order", "reconcile"});
+  INFO(clean.out_);
+  CHECK(clean.exit_ == 0);
+  CHECK(reply_of(clean.out_).at("reason").as_string() == "clean");
+  // A plan refused before the journal is opened.
+  const auto refused = run_on(setup, {"order", "plan", "035720", "--target", "1", "--limit", "50000"});
+  INFO(refused.out_);
+  CHECK(refused.exit_ == 3);
+  CHECK(code_of(refused.out_) == "refused.symbol_not_allowed");
+  CHECK(reply_of(refused.out_).at("owed").as_array().empty());
+  CHECK(!std::filesystem::exists(fixture.account() / "journal.jsonl"));
+}
+
 TEST_CASE("order reconcile and order release work on a broker's account and send nothing") {
   const KisFixture fixture;
   fixture.paper_.arm();
