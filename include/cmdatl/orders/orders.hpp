@@ -449,10 +449,12 @@ inline Reply interrupted_before_send(json::object body) {
 }
 
 /**
- * @brief The reply's last fields: the view read again (`owed`), and the lock checked.
+ * @brief The reply's last fields: the journal checked and its view read again (`owed`), and the lock checked.
  *
- * The result is known by then: a stop or a failed read while reading `owed` leaves it null and the result as it is; a
- * replaced lock still overrides.
+ * The result is known by then: a stop or a failed read while reading `owed` leaves it null and the result as it is.
+ * A journal no longer the file the account opened or started, or no longer whole and this account's, leaves `owed` null
+ * and turns a success into `unknown.journal_missing` or `unknown.journal_damaged` (exit 4) with the result's fields; a
+ * replaced lock overrides.
  * @tparam Desk The desk.
  * @param account The account.
  * @param reply The reply.
@@ -461,10 +463,30 @@ inline Reply interrupted_before_send(json::object body) {
  */
 template <typename Desk>
 Reply finish(BasicAccount<Desk>& account, Reply reply, const std::optional<std::string>& symbol) {
-  try {
 #if !defined(_WIN32)
-    account.refresh_view();
+  if (!account.journal_absent()) {
+    std::optional<Reply> broken;
+    if (!account.journal_unchanged()) {
+      broken = journal_missing_reply("missing, empty or replaced");
+    } else {
+      account.refresh_view();
+      if (!account.journal_intact()) {
+        broken = account.journal_damaged_reply();
+      }
+    }
+    if (broken) {
+      // A success no longer stands on the journal; a refusal or an unknown keeps its own code.
+      if (reply.exit_ == Exit::OK) {
+        reply.body_.erase("reason");
+        reply.body_.erase("next");
+        reply = with_body(std::move(*broken), std::move(reply.body_));
+      }
+      reply.body_["owed"] = nullptr;
+      return account.lock().still_at_path() ? reply : lock_lost_reply();
+    }
+  }
 #endif
+  try {
     reply.body_["owed"] = owed_rows(account, account.desk(), symbol);
   } catch (const Unreadable&) {
     reply.body_["owed"] = nullptr;

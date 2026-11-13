@@ -149,6 +149,10 @@ struct StandIn {
   int throw_after_{-1};
   /** @brief Whether that throw is a stop (`cmdatl::Stopped`) rather than another exception. */
   bool throw_stop_{false};
+  /** @brief The clock read (0 is the first) at which `hook_` runs, or none. */
+  int hook_at_{-1};
+  /** @brief What runs at that read, before it answers. */
+  std::function<void()> hook_;
 
   /** @brief The market of the fixture's bars, with both logins stored. */
   StandIn() {
@@ -203,6 +207,9 @@ struct StandIn {
 
   /** @brief The scripted clock. */
   cmdatl::Clock::time_point now() {
+    if (clock_calls_ == hook_at_ && hook_) {
+      hook_();
+    }
     if (throw_after_ >= 0 && clock_calls_ >= throw_after_) {
       if (throw_stop_) {
         throw cmdatl::Stopped();
@@ -984,6 +991,73 @@ TEST_CASE("a broker account's journal no command started reads empty after an or
   CHECK(code_of(refused.out_) == "refused.symbol_not_allowed");
   CHECK(reply_of(refused.out_).at("owed").as_array().empty());
   CHECK(!std::filesystem::exists(fixture.account() / "journal.jsonl"));
+}
+
+namespace {
+
+/**
+ * @brief Breaks a journal as the integrity cases do: `torn` cuts its last line, `removed` moves it aside, `foreign`
+ *   writes another account's header over it in place, `replaced` renames a new file holding only its own header over it.
+ * @param journal The journal.
+ * @param how How.
+ */
+void break_journal(const std::filesystem::path& journal, const std::string& how) {
+  const auto text = slurp(journal);
+  const auto aside = journal.string() + ".aside";
+  if (how == "torn") {
+    spit(journal, text.substr(0, text.size() - 5));
+  } else if (how == "removed") {
+    std::filesystem::rename(journal, aside);
+  } else if (how == "foreign") {
+    {
+      runner::FileJournal other(aside, "kis:demo:99999999-01");
+      REQUIRE(other.open());
+    }
+    spit(journal, slurp(aside));
+  } else {
+    spit(aside, text.substr(0, text.find('\n') + 1));
+    std::filesystem::rename(aside, journal);
+  }
+}
+
+} // namespace
+
+TEST_CASE("on a broker's account a journal broken after the result turns a plan into unknown read or not") {
+  const std::vector<std::string> plan{"order", "plan", "005930", "--target", "1", "--limit", "78000"};
+  // The clock reads a plan makes: its last is the plan's issue, after once() returned and before the reply's end.
+  const auto reads = [&plan] {
+    const KisFixture fixture;
+    StandIn setup;
+    REQUIRE(run_on(setup, plan).exit_ == 0);
+    return setup.clock_calls_;
+  }();
+  for (const std::string how : {"torn", "removed", "foreign", "replaced"}) {
+    for (const bool listing_fails : {false, true}) {
+      INFO(how << (listing_fails ? ", the owed listing stopped and failing" : ""));
+      const KisFixture fixture;
+      StandIn setup;
+      const auto journal = fixture.account() / "journal.jsonl";
+      setup.hook_at_ = reads - 1;
+      setup.hook_ = [&journal, &how] {
+        break_journal(journal, how);
+      };
+      if (listing_fails) {
+        setup.stop_after_ = 1;
+        setup.client_->repeat_last(atl::mock::Call::WORKING_ORDERS);
+        setup.client_->fail_next(atl::mock::Call::WORKING_ORDERS, marker("owed-list"));
+      }
+      const auto ran = run_on(setup, plan);
+      INFO(ran.out_);
+      CHECK(ran.exit_ == 4);
+      CHECK(
+        code_of(ran.out_) == (how == "torn" || how == "foreign" ? "unknown.journal_damaged" : "unknown.journal_missing")
+      );
+      const auto body = reply_of(ran.out_);
+      CHECK(body.at("owed").is_null());
+      CHECK(body.contains("plan_id"));
+      CHECK(!body.contains("next"));
+    }
+  }
 }
 
 TEST_CASE("order reconcile and order release work on a broker's account and send nothing") {

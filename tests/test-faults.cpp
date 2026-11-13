@@ -712,6 +712,46 @@ TEST_CASE("a place killed after once() returned: owed and named and pending") {
   CHECK(owed[0].as_object().at("broker_status").as_string() == "pending");
 }
 
+TEST_CASE("the journal torn or removed or made foreign or replaced after once() returned: unknown and the order kept") {
+  for (const std::string how : {"torn", "removed", "foreign", "replaced"}) {
+    INFO(how);
+    const PaperFixture fixture;
+    const auto id = ready_plan(fixture);
+    const auto journal = fixture.journal();
+    const auto aside = fixture.dir() / "journal.aside";
+    const auto forked = run_forked(fixture, {"order", "place", id}, [journal, aside, how](const std::string& name) {
+      if (name != "order.after_once") {
+        return;
+      }
+      const auto text = slurp(journal);
+      if (how == "torn") {
+        spit(journal, text.substr(0, text.size() - 5));
+      } else if (how == "removed") {
+        std::filesystem::rename(journal, aside);
+      } else if (how == "foreign") {
+        // Another account's whole header, written over this file in place.
+        {
+          algotradelib::runner::FileJournal other(aside.string(), "mock:mock:other-0001");
+          REQUIRE(other.open());
+        }
+        spit(journal, slurp(aside));
+      } else {
+        // A new file holding only this account's own header: valid, and forgetting the placement.
+        spit(aside, text.substr(0, text.find('\n') + 1));
+        std::filesystem::rename(aside, journal);
+      }
+    });
+    INFO(forked.out_);
+    CHECK(forked.exit() == 4);
+    CHECK(forked.code() == (how == "torn" || how == "foreign" ? "unknown.journal_damaged" : "unknown.journal_missing"));
+    const auto body = reply_of(forked.out_);
+    CHECK(body.at("order").as_object().at("side").as_string() == "buy");
+    CHECK(body.at("owed").is_null());
+    CHECK(!body.contains("reason"));
+    CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
+  }
+}
+
 TEST_CASE("an exception after a send and inside once() or after it and is unknown.internal") {
   for (const auto* point : {"send.after_result", "order.after_once"}) {
     INFO(point);
