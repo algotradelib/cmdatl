@@ -790,6 +790,10 @@ int run_main(int argc, char** argv, Load load, Make make) {
       code = "unknown.lock_lost";
       message = "the run's lock file was replaced";
     }
+    // Another ending first (a withdrawal whose cancellations the boundary refused): the replaced lock is still named.
+    if (exit != Exit::OK && code != "unknown.lock_lost" && (guard.lock_lost_ || !lock.still_at_path())) {
+      message += std::string(message.empty() ? "" : "; ") + "the run's lock file was replaced during the run";
+    }
     // The last scan, whole: the closing pass's cancellations happen after the last step.
     scan_orders(
       market, ledger,

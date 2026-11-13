@@ -1076,6 +1076,33 @@ TEST_CASE("SIGINT, SIGTERM and SIGHUP each withdraw: the resting order cancelled
   }
 }
 
+TEST_CASE("a run whose lock was replaced before a signal leaves its order resting and its reply names the lock") {
+  const PaperFixture fixture(run_parts());
+  fixture.arm();
+  const HeldOnOrder held(fixture);
+  set_script({{4, {10, "0.97"}}});
+  // The order rests, the run's lock is replaced and the run signalled: the withdrawal's cancellation is refused.
+  const auto ran =
+    run_child<runtest::Program>(fixture, spec_args(), {}, [&](pid_t pid, const std::filesystem::path& out) {
+      wait_for_text(out, "\"event\":\"placed\"");
+      const auto dir = fixture.dir() / "state" / "cmdatl" / "runs" / "mock-mock-paper-0001";
+      for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (std::filesystem::exists(entry.path() / "lock")) {
+          std::filesystem::rename(entry.path() / "lock", entry.path() / "lock.old");
+          spit(entry.path() / "lock", "");
+        }
+      }
+      ::kill(pid, SIGTERM);
+      held.release();
+    });
+  INFO(json::serialize(ran.reply_));
+  CHECK(ran.exit_ == 4);
+  CHECK(code_of(ran) == "unknown.closing_incomplete");
+  CHECK(ran.reply_.at("error").at("message").as_string() == "the run's lock file was replaced during the run");
+  CHECK(count_of(ran, "placed") == 1);
+  CHECK(count_of(ran, "canceled") == 0);
+}
+
 TEST_CASE("a placement after a signal is refused before sending, counted apart, and the run stays clean") {
   const PaperFixture fixture(run_parts());
   fixture.arm();
