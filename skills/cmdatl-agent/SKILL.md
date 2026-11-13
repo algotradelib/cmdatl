@@ -19,7 +19,7 @@ On a KIS account (`kis-demo`, `kis-real`) a run's orders reach KIS; on any other
 
 - The mock account, read and traded by `status`, `account`, `quote`, `order ...` and `clock`; its clock moves by `cmdatl clock advance` and one simulated second per order command.
 - A mock run's market: each `cmdatl run` on mock builds a fresh one from the run spec's data, gone when the run ends; the mock account's commands never see it.
-- A KIS account (`cmdatl env` shows `account.broker`): only `cmdatl run` trades it, in real time during market hours; the account and order commands answer `unsupported.broker` there, so read the run's `heartbeat` events instead.
+- A KIS account (`cmdatl env` shows `account.broker`): `status`, `account`, `quote` and `order list` read it; only `cmdatl run` trades it, in real time during market hours; the other order commands answer `unsupported.broker`.
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
 The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed` or `<stem>.release`, or the account's state directory.

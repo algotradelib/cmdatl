@@ -8,7 +8,7 @@ The operator describes it in a TOML file named by `CMDATL_CONFIG`, never by an a
 atlc = "/opt/atlc/bin/atlc" # optional: atlc, between CMDATL_ATLC and PATH
 
 [account]
-broker = "mock" # or "kis", for cmdatl run on a KIS account (runs.md)
+broker = "mock" # or "kis": cmdatl run and the reads on a KIS account (runs.md)
 number = "mock-0001" # names the account's state directory
 
 [limits]
