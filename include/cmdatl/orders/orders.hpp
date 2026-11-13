@@ -445,7 +445,7 @@ inline Reply finish(Account& account, Reply reply, const std::optional<std::stri
 #if !defined(_WIN32)
   account.refresh_view();
 #endif
-  reply.body_["owed"] = owed_json(account, account.desk(), symbol);
+  reply.body_["owed"] = owed_json(account, account.desk(), symbol, working_orders(account.desk()));
   if (!account.lock().still_at_path()) {
     return lock_lost_reply();
   }

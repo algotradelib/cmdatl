@@ -316,6 +316,19 @@ public:
   }
 
   /**
+   * @brief As `order_status(id)`: the mock reads its own listing and history, which costs nothing.
+   * @tparam Working The working-order listing.
+   * @param id The order's id.
+   * @param working The working orders read by the command (unused).
+   * @return As `order_status(id)`.
+   */
+  template <typename Working>
+  std::optional<std::string> order_status(const std::string& id, const Working& working) {
+    (void)working;
+    return order_status(id);
+  }
+
+  /**
    * @brief Whether the market takes an order on a symbol at an instant: the calendar names the phase then, and the
    *   symbol has a last price.
    * @param symbol The symbol.

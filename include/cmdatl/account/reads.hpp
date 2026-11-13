@@ -3,6 +3,7 @@
 // The account commands: `status`, `account`, `quote`, `order list`, `clock` and `clock advance`, as reply builders on
 // an open account.
 // Every read goes through the account's desk (`account.hpp`): its sessions, and what the desk itself answers.
+// A holdings, buying-power or order-list read the broker does not answer throws `Unreadable`.
 // Money and quantities are strings; every instant is KST with its offset.
 
 #include "../core/table.hpp"
@@ -25,11 +26,20 @@ namespace cmdatl {
  * @param symbol The symbol.
  * @param state The library's state: `named`, `unnamed` or `operator`.
  * @param status What the market shows for its order (`pending`, `filled`, `canceled`), or nothing.
+ * @param simulated Whether the account is the mock's; on a broker's account the order commands do not reach it yet.
  * @return The hint.
  */
 inline std::string owed_next(
-  const std::string& symbol, const std::string& state, const std::optional<std::string>& status
+  const std::string& symbol, const std::string& state, const std::optional<std::string>& status, bool simulated = true
 ) {
+  if (!simulated) {
+    const std::string listed = status ?
+      "still working at the broker" :
+      "not in the broker's order list now: it may have filled, been canceled or never been accepted";
+    return listed +
+      "; the order commands do not reach this account in this version: report to the operator, who reads it in the "
+      "broker's app";
+  }
   if (state == "operator") {
     return "report to the operator, who settles it with cmdatl order release " + symbol + " and the approval file";
   }
@@ -46,6 +56,33 @@ inline std::string owed_next(
     "; if it stays owed, report to the operator, who reads the order list and holdings and runs cmdatl order "
     "release " +
     symbol;
+}
+
+/** @brief A holdings, buying-power or order-list read the broker did not answer: `account.unreadable`. */
+struct Unreadable : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
+
+/**
+ * @brief Throws `Unreadable` for a read: a simulated broker's message is the library's own; of a broker's error only
+ *   a short printable code is shown, since its message may quote what the broker answered.
+ * @tparam Desk The desk type.
+ * @param what What was read.
+ * @param error The error.
+ */
+template <typename Desk>
+[[noreturn]] void unreadable(const std::string& what, const algotradelib::BrokerError& error) {
+  auto message = "the " + std::string(Desk::broker_name) + " broker did not answer " + what;
+  const auto& code = error.broker_code_;
+  if (Desk::simulated) {
+    message += ": " + error.message_;
+  } else if (
+    !code.empty() && code.size() <= 32 &&
+    code.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-.") == std::string::npos
+  ) {
+    message += " (code " + code + ")";
+  }
+  throw Unreadable(message);
 }
 
 /**
@@ -173,7 +210,7 @@ template <typename Desk>
 json::array positions_json(Desk& desk, const std::optional<std::string>& only) {
   const auto holdings = desk.session().holdings();
   if (!holdings) {
-    throw std::runtime_error("the mock broker did not answer holdings: " + holdings.error().message_);
+    unreadable<Desk>("holdings", holdings.error());
   }
   json::array rows;
   for (const auto& p : holdings.value().positions_) {
@@ -202,21 +239,40 @@ template <typename Desk>
 std::string buying_power_text(Desk& desk) {
   const auto power = desk.session().buying_power(algotradelib::Currency::krw());
   if (!power) {
-    throw std::runtime_error("the mock broker did not answer buying power: " + power.error().message_);
+    unreadable<Desk>("buying power", power.error());
   }
   return power.value().cash_.amount_.str();
 }
 
 /**
+ * @brief The working orders, read once.
+ * @tparam Desk The desk type.
+ * @param desk The desk.
+ * @return The listing.
+ */
+template <typename Desk>
+auto working_orders(Desk& desk) {
+  auto working = desk.session().working_orders();
+  if (!working) {
+    unreadable<Desk>("the order list", working.error());
+  }
+  return std::move(working.value());
+}
+
+/**
  * @brief The owed rows, optionally of one symbol: the library's state, and what the market shows.
  * @tparam Desk The desk type.
+ * @tparam Working The working-order listing.
  * @param account The account.
  * @param desk The desk.
  * @param only The symbol, or nothing for all.
+ * @param working The working orders, read once (empty when no row names an order).
  * @return The rows.
  */
-template <typename Desk>
-json::array owed_json(const Account& account, Desk& desk, const std::optional<std::string>& only) {
+template <typename Desk, typename Working>
+json::array owed_json(
+  const Account& account, Desk& desk, const std::optional<std::string>& only, const Working& working
+) {
   json::array rows;
   for (const auto& owed : account.journal().owed_) {
     if (only && owed.symbol_ != *only) {
@@ -229,9 +285,9 @@ json::array owed_json(const Account& account, Desk& desk, const std::optional<st
     row["journal_id"] = owed.journal_id_;
     row["state"] = owed.state_;
     row["order_id"] = owed.order_id_.empty() ? json::value(nullptr) : json::value(owed.order_id_);
-    const auto status = owed.order_id_.empty() ? std::nullopt : desk.order_status(owed.order_id_);
+    const auto status = owed.order_id_.empty() ? std::nullopt : desk.order_status(owed.order_id_, working);
     row["broker_status"] = status ? json::value(*status) : json::value(nullptr);
-    row["next"] = owed_next(owed.symbol_, owed.state_, status);
+    row["next"] = owed_next(owed.symbol_, owed.state_, status, Desk::simulated);
     rows.push_back(std::move(row));
   }
   return rows;
@@ -239,18 +295,14 @@ json::array owed_json(const Account& account, Desk& desk, const std::optional<st
 
 /**
  * @brief The working-order rows.
- * @tparam Desk The desk type.
- * @param desk The desk.
+ * @tparam Working The working-order listing.
+ * @param working The working orders, read once.
  * @return The rows.
  */
-template <typename Desk>
-json::array orders_json(Desk& desk) {
-  const auto working = desk.session().working_orders();
-  if (!working) {
-    throw std::runtime_error("the mock broker did not answer the order list: " + working.error().message_);
-  }
+template <typename Working>
+json::array orders_json(const Working& working) {
   json::array rows;
-  for (const auto& w : working.value().orders_) {
+  for (const auto& w : working.orders_) {
     const auto& o = w.order_;
     json::object row;
     row["order_id"] = o.order_id_;
@@ -263,6 +315,21 @@ json::array orders_json(Desk& desk) {
     rows.push_back(std::move(row));
   }
   return rows;
+}
+
+/**
+ * @brief The cash a simulated broker keeps; null on a broker's account, whose holdings carry no cash figure.
+ * @tparam Desk The desk type.
+ * @param desk The desk.
+ * @return The amount, or null.
+ */
+template <typename Desk>
+json::value cash_json(Desk& desk) {
+  if constexpr (Desk::simulated) {
+    return json::value(desk.paper_cash());
+  } else {
+    return json::value(nullptr);
+  }
 }
 
 /**
@@ -306,16 +373,21 @@ Reply status_reply(const Invocation& invocation, Account& account, Desk& desk, O
   body["not_accepted"] = words_json(failing);
   body["orders_left_today"] = orders_left_json(readiness);
   body["positions"] = positions_json(desk, std::nullopt);
-  body["cash"] = desk.paper_cash();
+  body["cash"] = cash_json(desk);
   body["buying_power"] = buying_power_text(desk);
-  body["owed"] = owed_json(account, desk, std::nullopt);
-  body["orders"] = orders_json(desk);
+  const auto working = working_orders(desk);
+  body["owed"] = owed_json(account, desk, std::nullopt, working);
+  body["orders"] = orders_json(working);
   json::array quotes;
   for (const auto& symbol : symbols) {
     quotes.push_back(quote_row(account, desk, symbol));
   }
   body["quotes"] = std::move(quotes);
-  body["data_end"] = data_end_text(desk);
+  if constexpr (Desk::simulated) {
+    body["data_end"] = data_end_text(desk);
+  } else {
+    body["data_end"] = nullptr;
+  }
   body["capabilities"] = account_capabilities<typename Desk::Session::Caps>(Desk::simulated);
   body["state_dir"] = account.dir();
   return read_reply(account, std::move(body));
@@ -337,9 +409,14 @@ Reply account_reply(const Invocation& invocation, Account& account, Desk& desk, 
   json::object body;
   body["now"] = kst_iso(desk.now());
   body["positions"] = positions_json(desk, only);
-  body["cash"] = desk.paper_cash();
+  body["cash"] = cash_json(desk);
   body["buying_power"] = buying_power_text(desk);
-  body["owed"] = owed_json(account, desk, only);
+  // The order list is read only when an owed row names an order.
+  const auto& owed = account.journal().owed_;
+  const bool named = std::any_of(owed.begin(), owed.end(), [&only](const Owed& row) {
+    return !row.order_id_.empty() && (!only || row.symbol_ == *only);
+  });
+  body["owed"] = owed_json(account, desk, only, named ? working_orders(desk) : decltype(working_orders(desk)){});
   body["orders_left_today"] = orders_left_json(account.readiness());
   return read_reply(account, std::move(body));
 }
@@ -409,7 +486,7 @@ Reply order_list_reply(const Invocation& invocation, Account& account, Desk& des
   (void)output;
   json::object body;
   body["now"] = kst_iso(desk.now());
-  body["orders"] = orders_json(desk);
+  body["orders"] = orders_json(working_orders(desk));
   return read_reply(account, std::move(body));
 }
 
