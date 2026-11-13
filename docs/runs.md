@@ -119,5 +119,7 @@ On the KIS account the operator's file names, `status`, `account`, `quote` and `
 - An owed row whose order the broker does not list now may have filled, been canceled or never been accepted: its `next` sends the operator to the broker's app.
 - A holdings, buying-power or order-list read the broker does not answer fails the command with `account.unreadable` (exit 1, `retry: true`), naming the broker's code and never its text.
 - They take the account's lock as a run does: while a run holds it (its owner record names the run) they answer `busy.locked` at once; otherwise they wait up to 10 seconds.
+- A read holds the lock while it talks to KIS: a few seconds at one request a second, and up to about twenty more for the day's first read, which asks KIS for the calendar (up to 20 pages).
+  A run takes the lock without waiting, so `cmdatl run` started during a read ends at once with `busy.locked` (exit 1) and nothing sent: issue no reads around a run's start, and start the run again if it happens.
 - Ctrl-C stops them before the next broker request (exit 130, `interrupted`); a request in flight is not cut short: each of its HTTP stages may take 30 seconds, a read is tried again once, an order list may take several pages, and the shared token's lock may be waited for 30 seconds.
 - They share the run's access token, and the trading calendar read that day, through files in `$XDG_CACHE_HOME/cmdatl` (else `~/.cache/cmdatl`).
