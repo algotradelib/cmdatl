@@ -958,6 +958,10 @@ int run_account(
       code = "unknown.owed_at_end";
       message = "the account's journal still waits on an order after the run";
     }
+    // Another ending first (a withdrawal whose cancellations the boundary refused): the replaced lock is still named.
+    if (exit != Exit::OK && code != "unknown.lock_lost" && (guard.lock_lost_ || !lock.still_at_path())) {
+      message += std::string(message.empty() ? "" : "; ") + "the account's lock file was replaced during the run";
+    }
     body["stopped"] = guard.stopped_.empty() ? json::value(nullptr) : json::value(guard.stopped_);
     body["ended_at"] = at_text(now());
     // The broker's own figures for the run's symbols, read once more.

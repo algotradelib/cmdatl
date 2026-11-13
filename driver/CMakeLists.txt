@@ -13,8 +13,10 @@ set(algotradelib_DIR "${CMDATL_ALGOTRADELIB_DIR}" CACHE PATH "The algotradelib p
 # where an installed package carries them; cmdatl's build strips CMAKE_PREFIX_PATH from this build's environment, so
 # without this a prefix holding them all would not be searched at all.
 # Only an installed layout, <prefix>/lib*/cmake/algotradelib: a build tree's directory has no prefix above it to search.
-get_filename_component(cmdatl_package_name "${CMDATL_ALGOTRADELIB_DIR}" NAME)
-get_filename_component(cmdatl_package_cmake "${CMDATL_ALGOTRADELIB_DIR}/.." ABSOLUTE)
+# Read without trailing slashes, which would hide the layout; the package path itself is used as given.
+string(REGEX REPLACE "/+$" "" cmdatl_package_dir "${CMDATL_ALGOTRADELIB_DIR}")
+get_filename_component(cmdatl_package_name "${cmdatl_package_dir}" NAME)
+get_filename_component(cmdatl_package_cmake "${cmdatl_package_dir}/.." ABSOLUTE)
 get_filename_component(cmdatl_package_cmake_name "${cmdatl_package_cmake}" NAME)
 get_filename_component(cmdatl_package_lib "${cmdatl_package_cmake}/.." ABSOLUTE)
 get_filename_component(cmdatl_package_lib_name "${cmdatl_package_lib}" NAME)
