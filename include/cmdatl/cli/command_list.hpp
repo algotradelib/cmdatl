@@ -57,14 +57,17 @@ inline std::vector<Command> command_list() {
     .returns("not_accepted", "the gates that fail, in a fixed order; empty exactly when orders_accepted_now")
     .returns("orders_left_today", "placements the operator still allows today; null when the journal is damaged")
     .returns("positions", "holdings: symbol, quantity, sellable, average_price, last_price, market_value")
-    .returns("cash", "the mock market's cash after every fill, before what resting buys reserve")
+    .returns(
+      "cash", "the mock market's cash after every fill, before what resting buys reserve; null on a broker's account"
+    )
     .returns("buying_power", "the broker's buying power")
     .returns("owed", "orders the journal still waits on")
     .returns("orders", "working orders")
     .returns("quotes", "each allowed symbol, as quote's rows")
-    .returns("data_end", "the last session's close in the mock data")
+    .returns("data_end", "the last session's close in the mock data; null on a broker's account")
     .returns("capabilities", "what the account's broker offers")
     .returns("state_dir", "the account's state directory")
+    .on_broker(BrokerRead::STATUS)
     .on_account([](const Invocation& invocation, Account& account, Output& output) {
       return status_reply(invocation, account, account.desk(), output);
     }));
@@ -75,7 +78,9 @@ inline std::vector<Command> command_list() {
     .option("symbol", "SYMBOL", "only this instrument's rows")
     .returns("now", "the account's time, KST with its offset")
     .returns("positions", "holdings: symbol, quantity, sellable, average_price, last_price, market_value")
-    .returns("cash", "the mock market's cash after every fill, before what resting buys reserve")
+    .returns(
+      "cash", "the mock market's cash after every fill, before what resting buys reserve; null on a broker's account"
+    )
     .returns("buying_power", "the broker's buying power")
     .returns(
       "owed",
@@ -83,6 +88,7 @@ inline std::vector<Command> command_list() {
     )
     .returns("orders_left_today", "placements the operator still allows today; null when the journal is damaged")
     .error("usage.bad_value")
+    .on_broker(BrokerRead::ACCOUNT)
     .on_account(
       [](const Invocation& invocation, Account& account, Output& output) {
         return account_reply(invocation, account, account.desk(), output);
@@ -100,6 +106,7 @@ inline std::vector<Command> command_list() {
     )
     .error("quote.no_data")
     .error("usage.bad_value")
+    .on_broker(BrokerRead::QUOTE)
     .on_account(
       [](const Invocation& invocation, Account& account, Output& output) {
         return quote_reply(invocation, account, account.desk(), output);
@@ -291,6 +298,7 @@ inline std::vector<Command> command_list() {
     .example("cmdatl order list")
     .returns("now", "the account's time, KST with its offset")
     .returns("orders", "working orders: order_id, symbol, side, quantity, filled, price, status")
+    .on_broker(BrokerRead::ORDER_LIST)
     .on_account([](const Invocation& invocation, Account& account, Output& output) {
       return order_list_reply(invocation, account, account.desk(), output);
     }));

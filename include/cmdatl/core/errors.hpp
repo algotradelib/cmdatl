@@ -88,7 +88,10 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"unsupported.capability", Exit::FAILED, false,
       "the broker folder's client does not state what a run needs; nothing was sent: trade it another way"},
     {"unsupported.broker", Exit::FAILED, false,
-      "the account and order commands trade the mock broker only; cmdatl run trades a KIS account"},
+      "the order and clock commands trade the mock broker only; on a KIS account status, account, quote and order list "
+      "read it, and cmdatl run trades it"},
+    {"account.unreadable", Exit::FAILED, true,
+      "the broker did not answer a holdings, buying-power or order-list read; nothing was sent: run the command again"},
     {"state.unavailable", Exit::FAILED, false,
       "the operator sets XDG_STATE_HOME or HOME (another state directory is another mock account)"},
     {"busy.locked", Exit::FAILED, true, "another command holds the account: run it again when it is free"},

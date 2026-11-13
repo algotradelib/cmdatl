@@ -71,6 +71,20 @@ class Table;
 class Account;
 struct ConfigSnapshot;
 
+/** @brief Which read an account command is on a broker's account; every other account command is refused there. */
+enum class BrokerRead {
+  /** @brief Not a read on a broker's account. */
+  NONE,
+  /** @brief `status`. */
+  STATUS,
+  /** @brief `account`. */
+  ACCOUNT,
+  /** @brief `quote`. */
+  QUOTE,
+  /** @brief `order list`. */
+  ORDER_LIST,
+};
+
 /** @brief The exit codes of an account command: 4 when the account's state is unknown, 130 from the lock's wait. */
 inline const std::vector<Exit> ACCOUNT_EXITS{Exit::OK, Exit::FAILED, Exit::USAGE, Exit::UNKNOWN, Exit::INTERRUPTED};
 
@@ -125,6 +139,8 @@ struct Command {
   std::function<Reply(const Invocation&, Account&, Output&)> run_account_;
   /** @brief An account command's checks of its arguments, before the account is opened; empty for none. */
   std::function<std::optional<Reply>(const Invocation&)> check_account_;
+  /** @brief Which read it is on a broker's account, where it runs over the broker's desk instead of `run_account_`. */
+  BrokerRead broker_read_{BrokerRead::NONE};
   /**
    * @brief What it does with the operator's file read, for a command that names the account but opens no account:
    *   `run_on_config` (cli.hpp) reads the file once and takes the reply's environment from the broker. Set instead of
@@ -286,6 +302,16 @@ struct Command {
     available_ = true;
     exits_ = ACCOUNT_EXITS;
     return *this;
+  }
+
+  /**
+   * @brief Makes an account command one of the reads on a broker's account, which can answer `account.unreadable`.
+   * @param read Which read.
+   * @return The command.
+   */
+  Command& on_broker(BrokerRead read) {
+    broker_read_ = read;
+    return error("account.unreadable");
   }
 
   /**

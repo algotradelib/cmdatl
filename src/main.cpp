@@ -1,3 +1,4 @@
+#include <cmdatl/cli/kis.hpp>
 #include <cmdatl/cmdatl>
 
 #include <cstdio>
@@ -37,7 +38,8 @@ int main(int argc, char** argv) {
   // exception reaching here was thrown before any command started, so nothing was sent.
   try {
     const std::vector<std::string> args(argv + 1, argv + argc);
-    return cmdatl::run(args, std::cout, std::cerr, stdout_is_terminal());
+    // The reads on a KIS account are compiled here alone (`cli/kis.hpp`).
+    return cmdatl::run(args, std::cout, std::cerr, stdout_is_terminal(), cmdatl::kis_command);
   } catch (const std::exception& e) {
     std::cerr << "cmdatl: internal error: " << e.what() << "\n";
   } catch (...) {

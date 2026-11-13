@@ -231,7 +231,8 @@ TEST_CASE("no skill names a command that is not built and every error code the d
       families.insert(entry.code_.substr(0, dot));
     }
   }
-  // Families whose names are also file stems in the docs (mock.toml, run.json): not read as codes.
+  // Families whose names are also file stems or keys in the docs (mock.toml, run.json, account.env): not codes.
+  families.erase("account");
   families.erase("mock");
   families.erase("file");
   families.erase("run");
@@ -328,6 +329,8 @@ TEST_CASE("every next cmdatl gives leaves the operator's decisions with the oper
   };
   texts.emplace_back("owed row: operator", cmdatl::owed_next("005930", "operator", std::nullopt));
   texts.emplace_back("owed row: unnamed", cmdatl::owed_next("005930", "unnamed", std::nullopt));
+  texts.emplace_back("owed row on a broker: listed", cmdatl::owed_next("005930", "named", "pending", false));
+  texts.emplace_back("owed row on a broker: unlisted", cmdatl::owed_next("005930", "named", std::nullopt, false));
   for (const auto* code : {"config.missing", "config.invalid", "unsupported.broker"}) {
     cmdatl::ConfigSnapshot snapshot;
     snapshot.error_.code_ = code;

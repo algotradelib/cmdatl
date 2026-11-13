@@ -14,7 +14,7 @@
 namespace cmdatl {
 
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
-inline constexpr int SCHEMA_VERSION = 15;
+inline constexpr int SCHEMA_VERSION = 16;
 
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
@@ -461,6 +461,9 @@ inline std::vector<std::string> check_table(const Table& table) {
     }
     if ((runs_on_account || runs_on_config) && command.env_ != "account") {
       problems.push_back(name + ": runs on the account but its replies do not carry the account's environment");
+    }
+    if (command.broker_read_ != BrokerRead::NONE && (!runs_on_account || command.may_send_ || command.mutates_)) {
+      problems.push_back(name + ": a read on a broker's account that is not an account command, or that changes it");
     }
     if (
       command.mutates_ && std::find(command.exits_.begin(), command.exits_.end(), Exit::UNKNOWN) == command.exits_.end()
