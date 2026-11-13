@@ -243,7 +243,7 @@ inline std::vector<Command> command_list() {
     .returns("owed", "orders the journal still waits on, for this symbol")
     .returns("events", "what the market did in the command's simulated second")
     .returns("result", "done, refused or unknown")
-    .on_account(plan_reply, check_order_args)
+    .on_account(plan_reply<AccountDesk>, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "place"}, "Trade", "send that plan, if nothing moved since")
     .example("cmdatl order place p9cc4b94da4")
@@ -263,7 +263,7 @@ inline std::vector<Command> command_list() {
     .returns("events", "what the market did in the command's simulated second")
     .returns("result", "done, refused or unknown")
     .sends()
-    .on_account(place_reply, check_order_args)
+    .on_account(place_reply<AccountDesk>, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "cancel"}, "Trade", "withdraw working orders on SYMBOL (never places)")
     .example("cmdatl order cancel 005930")
@@ -279,7 +279,7 @@ inline std::vector<Command> command_list() {
     .returns("result", "done, refused or unknown")
     .error("quote.no_data")
     .sends()
-    .on_account(cancel_reply, check_order_args)
+    .on_account(cancel_reply<AccountDesk>, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "reconcile"}, "Trade", "record fills from holdings (never places)")
     .example("cmdatl order reconcile")
@@ -292,7 +292,7 @@ inline std::vector<Command> command_list() {
     .returns("events", "what the market did in the command's simulated second")
     .returns("result", "done, refused or unknown")
     .error("quote.no_data")
-    .on_account(reconcile_reply, check_order_args)
+    .on_account(reconcile_reply<AccountDesk>, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "list"}, "Trade", "working orders")
     .example("cmdatl order list")
@@ -316,7 +316,7 @@ inline std::vector<Command> command_list() {
     .returns("events", "what the market did in the command's simulated second")
     .returns("result", "done, refused or unknown")
     .mutates("cmdatl account shows what is still owed; read it before releasing again")
-    .on_account(release_reply, check_order_args)
+    .on_account(release_reply<AccountDesk>, check_order_args)
     .exits(ORDER_EXITS));
 
   add(make_command({"strategy", "new"}, "Strategy", "a program and a run spec to start from")

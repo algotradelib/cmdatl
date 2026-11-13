@@ -334,10 +334,12 @@ std::optional<algotradelib::Decimal64> held_of(Desk& desk, const std::string& sy
 
 /**
  * @brief The journal's size in bytes, by `lstat`.
+ * @tparam Desk The desk.
  * @param account The account.
  * @return The size, or nothing.
  */
-inline std::optional<std::int64_t> journal_size(const Account& account) {
+template <typename Desk>
+std::optional<std::int64_t> journal_size(const BasicAccount<Desk>& account) {
 #if !defined(_WIN32)
   struct stat info{};
   if (::lstat(account.journal_path().c_str(), &info) != 0) {
@@ -361,13 +363,15 @@ struct Started {
 /**
  * @brief Refuses a journal that is not intact, then takes the per-call second: the clock moved one second, and what
  *   the market did in it as `events`.
+ * @tparam Desk The desk.
  * @param account The account.
  * @param second_needed Whether the command needs the second; a cancel, a reconcile or a release does without it when
  *   the clock cannot move, at the data's end or with the market halted, so an order left pending there can still be
  *   withdrawn and recorded.
  * @return The start.
  */
-inline Started start(Account& account, bool second_needed = true) {
+template <typename Desk>
+Started start(BasicAccount<Desk>& account, bool second_needed = true) {
   Started started;
   if (!account.journal_intact()) {
     started.refusal_ = account.journal_damaged_reply();
@@ -436,12 +440,14 @@ inline Reply interrupted_before_send(json::object body) {
 
 /**
  * @brief The reply's last fields: the view read again (`owed`), and the lock checked.
+ * @tparam Desk The desk.
  * @param account The account.
  * @param reply The reply.
  * @param symbol The symbol whose owed rows the reply carries, or nothing for all.
  * @return The reply.
  */
-inline Reply finish(Account& account, Reply reply, const std::optional<std::string>& symbol) {
+template <typename Desk>
+Reply finish(BasicAccount<Desk>& account, Reply reply, const std::optional<std::string>& symbol) {
 #if !defined(_WIN32)
   account.refresh_view();
 #endif
@@ -462,6 +468,7 @@ struct Precheck {
 
 /**
  * @brief The checks of a request against the operator's file and the book, in their order.
+ * @tparam Desk The desk.
  * @param account The account.
  * @param symbol The symbol.
  * @param target The target, as typed.
@@ -470,9 +477,10 @@ struct Precheck {
  * @param held Set to the holding.
  * @return The first refusal, or none.
  */
-inline Precheck precheck(
-  Account& account, const std::string& symbol, const std::string& target, const std::string& limit, bool need_armed,
-  std::optional<algotradelib::Decimal64>& held
+template <typename Desk>
+Precheck precheck(
+  BasicAccount<Desk>& account, const std::string& symbol, const std::string& target, const std::string& limit,
+  bool need_armed, std::optional<algotradelib::Decimal64>& held
 ) {
   namespace atl = algotradelib;
   const auto& config = account.config();
@@ -526,12 +534,14 @@ inline Precheck precheck(
 
 /**
  * @brief `cmdatl order plan SYMBOL --target N --limit P`: what `order place` would send, checked, with a plan id.
+ * @tparam Desk The desk.
  * @param invocation The arguments, checked by `check_order_args`.
  * @param account The account.
  * @param output The output.
  * @return The reply.
  */
-inline Reply plan_reply(const Invocation& invocation, Account& account, Output& output) {
+template <typename Desk>
+Reply plan_reply(const Invocation& invocation, BasicAccount<Desk>& account, Output& output) {
   (void)output;
   using namespace orders_detail;
   auto started = start(account);
@@ -612,12 +622,14 @@ inline Reply plan_reply(const Invocation& invocation, Account& account, Output& 
 
 /**
  * @brief `cmdatl order place PLAN_ID`: sends the plan, if nothing moved since and the operator's file still allows it.
+ * @tparam Desk The desk.
  * @param invocation The arguments, checked by `check_order_args`.
  * @param account The account.
  * @param output The output.
  * @return The reply.
  */
-inline Reply place_reply(const Invocation& invocation, Account& account, Output& output) {
+template <typename Desk>
+Reply place_reply(const Invocation& invocation, BasicAccount<Desk>& account, Output& output) {
   (void)output;
   using namespace orders_detail;
   auto started = start(account);
@@ -742,12 +754,14 @@ inline Reply place_reply(const Invocation& invocation, Account& account, Output&
 /**
  * @brief `cmdatl order cancel SYMBOL`: withdraws every working order on the symbol; never places, needs no armed file,
  *   runs in any phase.
+ * @tparam Desk The desk.
  * @param invocation The arguments.
  * @param account The account.
  * @param output The output.
  * @return The reply.
  */
-inline Reply cancel_reply(const Invocation& invocation, Account& account, Output& output) {
+template <typename Desk>
+Reply cancel_reply(const Invocation& invocation, BasicAccount<Desk>& account, Output& output) {
   (void)output;
   using namespace orders_detail;
   auto started = start(account, false);
@@ -789,12 +803,14 @@ inline Reply cancel_reply(const Invocation& invocation, Account& account, Output
 
 /**
  * @brief `cmdatl order reconcile [SYMBOL]`: records from holdings what the journal owes, sending nothing.
+ * @tparam Desk The desk.
  * @param invocation The arguments.
  * @param account The account.
  * @param output The output.
  * @return The reply.
  */
-inline Reply reconcile_reply(const Invocation& invocation, Account& account, Output& output) {
+template <typename Desk>
+Reply reconcile_reply(const Invocation& invocation, BasicAccount<Desk>& account, Output& output) {
   (void)output;
   using namespace orders_detail;
   auto started = start(account, false);
@@ -889,12 +905,14 @@ inline Reply reconcile_reply(const Invocation& invocation, Account& account, Out
 /**
  * @brief `cmdatl order release SYMBOL --reason TEXT`: the operator's settlement of what the journal owes on a symbol,
  *   on the approval file `<stem>.release`; sends nothing.
+ * @tparam Desk The desk.
  * @param invocation The arguments.
  * @param account The account.
  * @param output The output.
  * @return The reply.
  */
-inline Reply release_reply(const Invocation& invocation, Account& account, Output& output) {
+template <typename Desk>
+Reply release_reply(const Invocation& invocation, BasicAccount<Desk>& account, Output& output) {
   (void)output;
   using namespace orders_detail;
   auto started = start(account, false);

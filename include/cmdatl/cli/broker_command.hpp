@@ -17,8 +17,10 @@
 #include "../account/broker_desk.hpp"
 #include "./cli.hpp"
 
+#include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace cmdatl {
@@ -52,22 +54,27 @@ Reply broker_command_reply(
   const auto stopped = [&setup] {
     return setup.stopped();
   };
-  BrokerDesk desk(
-    setup.trading(), setup.market(),
-    [&setup] {
-      return setup.now();
-    },
-    stopped
+  using Desk = BrokerDesk<std::decay_t<decltype(setup.trading())>, std::decay_t<decltype(setup.market())>>;
+  auto opened = BasicAccount<Desk>::open_broker(
+    effective, output, stopped, [&setup, &stopped](const OperatorConfig&, const OwnerLock&) {
+      return std::make_unique<Desk>(
+        setup.trading(), setup.market(),
+        [&setup] {
+          return setup.now();
+        },
+        stopped
+      );
+    }
   );
-  auto opened = Account::open_broker(effective, output, stopped);
   if (opened.refusal_) {
     return std::move(*opened.refusal_);
   }
   auto& account = *opened.account_;
+  auto& desk = account.desk();
   Reply reply;
   try {
     desk.begin();
-    account.view_at(desk);
+    account.view_at();
     // Only beneath this account's intact journal: a journal not established leaves every file as it was.
     if (account.journal_intact() && !write_owner_record(account.lock(), owner_what(command, invocation))) {
       return lock_lost_reply();

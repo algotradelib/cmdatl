@@ -97,11 +97,13 @@ inline std::string money(std::int64_t value) {
 /**
  * @brief A reply carrying a read's body that cannot be affirmed: exit 4 `unknown.journal_damaged` when the journal is
  *   not intact, the body kept beside the error; the body alone otherwise.
+ * @tparam Desk The desk type.
  * @param account The account.
  * @param body The read's body.
  * @return The reply.
  */
-inline Reply read_reply(const Account& account, json::object body) {
+template <typename Desk>
+Reply read_reply(const BasicAccount<Desk>& account, json::object body) {
   if (account.journal_intact()) {
     Reply reply;
     reply.body_ = std::move(body);
@@ -166,7 +168,7 @@ inline json::value orders_left_json(const Readiness& readiness) {
  * @return The row.
  */
 template <typename Desk>
-json::object quote_row(Account& account, Desk& desk, const std::string& symbol) {
+json::object quote_row(BasicAccount<Desk>& account, Desk& desk, const std::string& symbol) {
   const auto& readiness = account.readiness();
   json::object row;
   row["symbol"] = symbol;
@@ -271,7 +273,7 @@ auto working_orders(Desk& desk) {
  */
 template <typename Desk, typename Working>
 json::array owed_json(
-  const Account& account, Desk& desk, const std::optional<std::string>& only, const Working& working
+  const BasicAccount<Desk>& account, Desk& desk, const std::optional<std::string>& only, const Working& working
 ) {
   json::array rows;
   for (const auto& owed : account.journal().owed_) {
@@ -353,7 +355,7 @@ std::string data_end_text(Desk& desk) {
  * @return The reply.
  */
 template <typename Desk>
-Reply status_reply(const Invocation& invocation, Account& account, Desk& desk, Output& output) {
+Reply status_reply(const Invocation& invocation, BasicAccount<Desk>& account, Desk& desk, Output& output) {
   (void)invocation;
   (void)output;
   const auto& readiness = account.readiness();
@@ -403,7 +405,7 @@ Reply status_reply(const Invocation& invocation, Account& account, Desk& desk, O
  * @return The reply.
  */
 template <typename Desk>
-Reply account_reply(const Invocation& invocation, Account& account, Desk& desk, Output& output) {
+Reply account_reply(const Invocation& invocation, BasicAccount<Desk>& account, Desk& desk, Output& output) {
   (void)output;
   const auto only = invocation.has("symbol") ? std::optional<std::string>(invocation.get("symbol")) : std::nullopt;
   json::object body;
@@ -432,7 +434,7 @@ Reply account_reply(const Invocation& invocation, Account& account, Desk& desk, 
  * @return The reply.
  */
 template <typename Desk>
-Reply quote_reply(const Invocation& invocation, Account& account, Desk& desk, Output& output) {
+Reply quote_reply(const Invocation& invocation, BasicAccount<Desk>& account, Desk& desk, Output& output) {
   (void)output;
   const auto found = invocation.values_.find("SYMBOL");
   const auto symbols = found == invocation.values_.end() ? std::vector<std::string>{} : found->second;
@@ -481,7 +483,7 @@ Reply quote_reply(const Invocation& invocation, Account& account, Desk& desk, Ou
  * @return The reply.
  */
 template <typename Desk>
-Reply order_list_reply(const Invocation& invocation, Account& account, Desk& desk, Output& output) {
+Reply order_list_reply(const Invocation& invocation, BasicAccount<Desk>& account, Desk& desk, Output& output) {
   (void)invocation;
   (void)output;
   json::object body;
@@ -500,7 +502,7 @@ Reply order_list_reply(const Invocation& invocation, Account& account, Desk& des
  * @return The reply.
  */
 template <typename Desk>
-Reply clock_reply(const Invocation& invocation, Account& account, Desk& desk, Output& output) {
+Reply clock_reply(const Invocation& invocation, BasicAccount<Desk>& account, Desk& desk, Output& output) {
   (void)invocation;
   (void)output;
   json::object body;
@@ -637,7 +639,7 @@ inline Reply advance_unknown(const std::string& what) {
  * @return The reply.
  */
 template <typename Desk>
-Reply advance_reply(const Invocation& invocation, Account& account, Desk& desk, Output& output) {
+Reply advance_reply(const Invocation& invocation, BasicAccount<Desk>& account, Desk& desk, Output& output) {
   (void)output;
   if (!account.journal_intact()) {
     return account.journal_damaged_reply();

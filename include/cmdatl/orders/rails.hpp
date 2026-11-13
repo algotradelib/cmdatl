@@ -111,10 +111,12 @@ struct OpenedJournal {
  * @brief Opens the journal as the command's one writer: the lock still the account's, the journal still the file the
  *   account opened (else nothing is constructed, since constructing it on a vanished path would start a fresh one),
  *   then the library's journal.
+ * @tparam Desk The desk.
  * @param account The account.
  * @return The journal, or the refusal (exit 4).
  */
-inline OpenedJournal open_journal(Account& account) {
+template <typename Desk>
+OpenedJournal open_journal(BasicAccount<Desk>& account) {
   OpenedJournal opened;
   if (!account.lock().still_at_path()) {
     opened.refusal_ = lock_lost_reply();

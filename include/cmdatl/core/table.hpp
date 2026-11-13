@@ -68,7 +68,10 @@ struct Invocation {
 };
 
 class Table;
-class Account;
+class MockDesk;
+template <typename Desk>
+class BasicAccount;
+using Account = BasicAccount<MockDesk>;
 struct ConfigSnapshot;
 
 /** @brief Which read an account command is on a broker's account; every other account command is refused there. */

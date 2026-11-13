@@ -27,12 +27,14 @@
 
 namespace cmdatl {
 
-class Account;
+template <typename Desk>
+class BasicAccount;
 struct MockDeskTest;
 
-/** @brief The key only `Account` can make: a desk is built only by an account holding its lock. */
+/** @brief The key only an account can make: a desk is built only by an account holding its lock. */
 class MockDeskKey {
-  friend class Account;
+  template <typename Desk>
+  friend class BasicAccount;
   friend struct MockDeskTest;
   MockDeskKey() = default;
 };

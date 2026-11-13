@@ -353,9 +353,10 @@ std::string phase_of(Desk& desk) {
   return std::string(algotradelib::strategy::market_phase_name(window.phase(now, trading)));
 }
 
-/** @brief The key only `Account::open` can make. */
+/** @brief The key only an account's `open` can make. */
 class AccountKey {
-  friend class Account;
+  template <typename Desk>
+  friend class BasicAccount;
   AccountKey() = default;
 };
 
@@ -372,16 +373,19 @@ struct Readiness {
 };
 
 /**
- * @brief One open account: its config, its held lock, its journal's view and its desk.
+ * @brief One open account: its config, its held lock, its journal's view and the desk it owns.
  *
- * Built only by `open`.
+ * Built only by `open` (the mock's desk, from the bars and the state file) or `open_broker` (a broker's desk, from a
+ * factory over sessions the caller owns).
+ * @tparam Desk The desk.
  */
-class Account {
+template <typename Desk>
+class BasicAccount {
 public:
   /** @brief What `open` gives: the account, or the refusal. */
   struct Opened {
     /** @brief The account. */
-    std::unique_ptr<Account> account_;
+    std::unique_ptr<BasicAccount> account_;
     /** @brief The refusal. */
     std::optional<Reply> refusal_;
   };
@@ -392,14 +396,15 @@ public:
    * @param config The operator's file.
    * @param dir The account's directory.
    */
-  Account(AccountKey key, OperatorConfig config, std::string dir) : config_(std::move(config)), lock_(std::move(dir)) {
+  BasicAccount(AccountKey key, OperatorConfig config, std::string dir)
+  : config_(std::move(config)), lock_(std::move(dir)) {
     (void)key;
   }
 
-  Account(const Account&) = delete;
-  Account& operator=(const Account&) = delete;
-  Account(Account&&) = delete;
-  Account& operator=(Account&&) = delete;
+  BasicAccount(const BasicAccount&) = delete;
+  BasicAccount& operator=(const BasicAccount&) = delete;
+  BasicAccount(BasicAccount&&) = delete;
+  BasicAccount& operator=(BasicAccount&&) = delete;
 
 #if !defined(_WIN32)
   /**
@@ -437,19 +442,25 @@ public:
   }
 
   /**
-   * @brief Opens a broker's account on a desk the caller owns: the directory, the lock (as `open`), and the journal's
+   * @brief Opens a broker's account: the directory, the lock (as `open`), the desk the factory builds, and the journal's
    *   file, read; its view waits for `view_at`, which needs the desk's instant.
+   * @tparam Make The factory: `std::unique_ptr<Desk>(const OperatorConfig&, const OwnerLock&)`, sending nothing.
    * @param config The operator's file, with the account the login names.
    * @param output Where the waiting line goes.
    * @param interrupted Whether a stop was asked for.
+   * @param make_desk Builds the desk once the lock is held.
    * @return The account, or the refusal.
    */
-  static Opened open_broker(const OperatorConfig& config, Output& output, const std::function<bool()>& interrupted) {
+  template <typename Make>
+  static Opened open_broker(
+    const OperatorConfig& config, Output& output, const std::function<bool()>& interrupted, Make make_desk
+  ) {
     Opened opened;
     opened.account_ = locked(config, output, interrupted, opened.refusal_);
     if (!opened.account_) {
       return opened;
     }
+    opened.account_->desk_ = make_desk(opened.account_->config_, opened.account_->lock_);
     // An absent journal is an empty one, as a run treats it.
     struct stat info{};
     std::string why;
@@ -492,7 +503,7 @@ public:
    * @brief The account's desk.
    * @return The desk.
    */
-  AccountDesk& desk() {
+  Desk& desk() {
     return *desk_;
   }
 
@@ -537,19 +548,17 @@ public:
   }
 
   /**
-   * @brief The journal's view and the phase at a broker's desk's instant, after its `begin()`.
-   * @tparam Desk The desk type.
-   * @param desk The desk; the view's runner is bound to its trading session, and never sends.
+   * @brief The journal's view and the phase at a broker's desk's instant, after its `begin()`; the view's runner is
+   *   bound to its trading session, and never sends.
    */
-  template <typename Desk>
-  void view_at(Desk& desk) {
+  void view_at() {
     if (journal_absent_) {
       journal_.owned_ = true;
       journal_.intact_ = true;
     } else {
-      journal_ = journal_view(desk.session(), replay_, config_.scope(), kst_day(desk.now()));
+      journal_ = journal_view(desk_->session(), replay_, config_.scope(), kst_day(desk_->now()));
     }
-    phase_ = desk.phase();
+    phase_ = desk_->phase();
     readiness_.reset();
   }
 #endif
@@ -597,7 +606,7 @@ private:
    * @param refusal Set when it is not taken.
    * @return The account, its lock held, or null.
    */
-  static std::unique_ptr<Account> locked(
+  static std::unique_ptr<BasicAccount> locked(
     const OperatorConfig& config, Output& output, const std::function<bool()>& interrupted,
     std::optional<Reply>& refusal
   ) {
@@ -618,7 +627,7 @@ private:
       );
       return nullptr;
     }
-    auto account = std::make_unique<Account>(AccountKey{}, config, *dir);
+    auto account = std::make_unique<BasicAccount>(AccountKey{}, config, *dir);
     const auto outcome = account->lock_.acquire(LOCK_WAIT, interrupted, [&output](const std::string& holder) {
       output.progress("waiting for the account: " + holder + " holds it");
     });
@@ -844,7 +853,7 @@ private:
     if (!starting && !state_header_whole()) {
       return paper_state_reply("the account's state file has no whole first line while the journal exists");
     }
-    desk_ = std::make_unique<AccountDesk>(MockDeskKey{}, config_, lock_, data);
+    desk_ = std::make_unique<Desk>(MockDeskKey{}, config_, lock_, data);
     if (!desk_->opened()) {
       return paper_state_reply(desk_->rejection());
     }
@@ -892,7 +901,7 @@ private:
   OwnerLock lock_;
   algotradelib::runner::JournalReplay replay_;
   JournalView journal_;
-  std::unique_ptr<AccountDesk> desk_;
+  std::unique_ptr<Desk> desk_;
   std::optional<Readiness> readiness_;
   std::optional<std::string> phase_;
   bool journal_absent_{false};
@@ -900,5 +909,8 @@ private:
   std::optional<std::pair<dev_t, ino_t>> journal_identity_;
 #endif
 };
+
+/** @brief The mock account, the one the account and order commands open without a broker's setup. */
+using Account = BasicAccount<AccountDesk>;
 
 } // namespace cmdatl
