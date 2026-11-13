@@ -1150,7 +1150,7 @@ TEST_CASE("a placement sent yesterday and acknowledged in today's journal owns n
 
 TEST_CASE("a working order is the journal's only by today's acknowledged number with the same order") {
   using Tag = Session::BrokerTag;
-  using cmdatl::driver::inherited_orders;
+  using cmdatl::inherited_orders;
   const auto ids = std::vector<atl::InstrumentId>{kr("005930")};
   // 2024-03-27 00:30 UTC, 09:30 KST.
   const auto at = std::chrono::system_clock::time_point{} + std::chrono::hours(24 * 19809) + std::chrono::minutes(30);
