@@ -880,25 +880,6 @@ TEST_CASE(
   CHECK(other("adapter = 'nofolder'\n") == "adapter.not_found");
   CHECK(other("") == "spec.invalid");
   CHECK(code_of(backtest({at("vendor.toml"), "bars.adapter=" + copy.string()}).out_) == "spec.invalid");
-  spit(at("rule.hpp"), "#pragma once\n");
-  spit(
-    at("rule.toml"),
-    "strategy = 'dip.atls'\n[bars]\nsource = 'fixture'\nadapter = '" + relative +
-      "'\ncount = 5\nstore_root = 'store'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
-      "fill_header = 'rule.hpp'\nfill_function = 'rule'\n"
-  );
-  CHECK(code_of(backtest({at("rule.toml")}).out_) == "spec.invalid");
-  // A DuckDB library of the spec's own beside the login: refused before anything is built.
-  spit(
-    at("duck.toml"),
-    "strategy = 'dip.atls'\n[bars]\nsource = 'fixture'\nadapter = '" + relative +
-      "'\ncount = 5\nstore_root = 'store'\n[instruments]\nstock = 'AAA'\n[replay]\nmarket = 'us'\n"
-      "[build]\nduckdb = 'duck'\n"
-  );
-  ran = backtest({at("duck.toml")});
-  CHECK(code_of(ran.out_) == "spec.invalid");
-  CHECK(ran.out_.find("build.duckdb") != std::string::npos);
-  CHECK(ran.err_.find("building") == std::string::npos);
   CHECK(code_of(backtest({at("vendor.toml"), "bars.count=0"}).out_) == "spec.invalid");
   std::filesystem::remove(at("login.json"));
   CHECK(code_of(backtest({at("vendor.toml")}).out_) == "auth.not_found");

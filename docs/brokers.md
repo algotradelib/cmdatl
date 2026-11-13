@@ -125,12 +125,10 @@ cmdatl strategy backtest daily.toml bars.options.exchange=KO # the Korean listin
 - `auth login --adapter PATH` binds the login to the folder's canonical path, links resolved.
   A backtest or a run hands the login to the adapter only when it names that same folder; another folder, even one holding the same files, is refused (`auth.adapter_mismatch`) before anything is built.
 - So a copy of the folder elsewhere, even under the same name, is not handed your login.
-  A run spec that names this folder itself, by any path, does fetch with your login, through your adapter only: no other native code of that spec runs beside it (below).
+  A run spec that names this folder itself, by any path, does fetch with your login, through your adapter.
 - The rule is about the folder's place, not its contents: an edit inside the folder you logged in for, or a submodule update there, is trusted without a new login.
 - Nor is it a sandbox: the adapter is native code that runs with your login and your permissions; read a folder before you log in for it.
-- A backtest that fetches with a login takes no market-price rule of your own (`fill_header` under `[replay]`), whose C++ would run in the driver that holds the login: fetch into the store first, then replay `bars.source = "store"` with the rule.
-  Nor does it take a DuckDB directory of its own (`duckdb` under `[build]`), whose library would be loaded into that driver: `DUCKDB_ROOT`, else the system's paths, finds DuckDB for the fetch.
-- A run takes no market-price rule on any account, so a run on a folder's account compiles no C++ of the run spec's own beside the login.
+- The same holds for any other C++ a run spec names, such as a market-price rule of your own: cmdatl compiles it into the same driver and runs it as you, so run only specs you trust.
 - After moving the folder, log in again with its new path.
   A login stored by an earlier cmdatl is bound to no folder, and is refused until you log in again.
 - `auth status` lists a folder's login without reading it, so its `adapter` is null; `auth logout --broker NAME` removes it, with or without its folder.

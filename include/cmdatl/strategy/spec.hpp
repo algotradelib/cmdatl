@@ -1489,30 +1489,6 @@ inline std::vector<Error> resolve(
       )
     );
   }
-  // A fetch hands its driver a stored login: no setting may bring native code of its own into that driver, beside the
-  // adapter's and cmdatl's. Each key that can is listed here, with what it brings and what to do instead.
-  struct NativeKey {
-    const char* key_;
-    const char* brings_;
-    const char* instead_;
-  };
-  static const NativeKey native[]{
-    {"replay.fill_header", "the rule's C++",
-      "fetch into the store without the rule, then replay bars.source = \"store\" with it"},
-    {"build.duckdb", "the DuckDB library in that directory",
-      "leave it out: DUCKDB_ROOT, else the system's paths, finds DuckDB for the fetch"},
-  };
-  for (const auto& k : native) {
-    if (const auto* e = get(k.key_); folder && e != nullptr) {
-      errors.push_back(
-        Error::at(
-          e->origin_,
-          "`" + std::string(k.key_) + "`: a backtest that fetches through a broker folder hands its driver a stored " +
-            "login, and " + k.brings_ + " would run beside it: " + k.instead_
-        )
-      );
-    }
-  }
   // A rule, and a broker folder, are C++ compiled into the driver cmdatl runs, so they come from the spec file, never
   // the command line.
   for (const auto* k : {"replay.fill_header", "replay.fill_function", "bars.adapter"}) {

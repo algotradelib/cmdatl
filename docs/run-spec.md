@@ -131,7 +131,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
   An adapter's option cannot change that: an answer marked adjusted is refused.
 - An option the folder does not declare, of another type, outside its choices, or a required one missing, is refused before anything is built (`spec.invalid`); the adapter receives the options as a JSON object's text.
 - An adapter's error is reported by its category, HTTP status and code (`fetch.failed`), never by its text, which could carry a credential.
-- A login bound to another folder, or to none, is refused before anything is built (`auth.adapter_mismatch`), and so are `replay.fill_header` and `build.duckdb` beside the fetch, from the spec or the command line: the rule's C++, or the library in that directory, would run in the driver that holds the login (`DUCKDB_ROOT`, else the system's paths, finds DuckDB for a fetch).
+- A login bound to another folder, or to none, is refused before anything is built (`auth.adapter_mismatch`).
 
 A backtest of a store or of a broker folder needs DuckDB (`[build]` below); a CSV or wide run does not.
 A run (`cmdatl run`) reads files, not a store or a broker folder.
@@ -277,7 +277,7 @@ Changing `[orders]` does not rebuild: the pricing is an argument, like the param
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `build.duckdb` | path | `DUCKDB_ROOT`, then the system's paths | the directory of DuckDB's `duckdb.h` and shared library, for a store backtest; refused beside a broker folder's fetch |
+| `build.duckdb` | path | `DUCKDB_ROOT`, then the system's paths | the directory of DuckDB's `duckdb.h` and shared library, for a store backtest |
 | `build.indicators` | `"incremental"`, `"naive"` or `"exact"` | `"incremental"` | how windows are summed (the language reference's types chapter, "Arithmetic") |
 
 `build.duckdb` holding `"`, `;` or `$` cannot be passed to CMake and is refused at its setting for a store backtest, before anything is built.
