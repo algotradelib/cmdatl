@@ -53,34 +53,22 @@ public:
     return std::nullopt;
   }
 
-  /**
-   * @brief The account's session.
-   * @return It.
-   */
+  /** @brief The account's session. */
   KisSessions::Session& trading() {
     return sessions_->trading();
   }
 
-  /**
-   * @brief The market-data session.
-   * @return It.
-   */
+  /** @brief The market-data session. */
   KisSessions::Session& market() {
     return sessions_->market();
   }
 
-  /**
-   * @brief The system clock.
-   * @return Now.
-   */
+  /** @brief The system clock. */
   Clock::time_point now() const {
     return Clock::now();
   }
 
-  /**
-   * @brief Whether SIGINT, SIGTERM or SIGHUP arrived.
-   * @return Whether one did.
-   */
+  /** @brief Whether SIGINT, SIGTERM or SIGHUP arrived. */
   bool stopped() const {
     return interrupted();
   }

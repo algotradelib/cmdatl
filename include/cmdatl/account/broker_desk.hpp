@@ -84,10 +84,7 @@ public:
     return market_;
   }
 
-  /**
-   * @brief The instant the reply is as of.
-   * @return It.
-   */
+  /** @brief The instant the reply is as of. */
   Clock::time_point now() const {
     return now_;
   }
@@ -103,10 +100,7 @@ public:
     return true;
   }
 
-  /**
-   * @brief The market phase at the instant.
-   * @return Its name, such as `open`; `unknown` when the calendar does not cover the date.
-   */
+  /** @brief The market phase's name at the instant: `unknown` when the calendar does not cover the date. */
   std::string phase() const {
     return std::string(algotradelib::strategy::market_phase_name(phase_at(now_)));
   }

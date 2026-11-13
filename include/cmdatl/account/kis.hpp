@@ -159,18 +159,12 @@ public:
   KisSessions(const KisSessions&) = delete;
   KisSessions& operator=(const KisSessions&) = delete;
 
-  /**
-   * @brief The account's session.
-   * @return It.
-   */
+  /** @brief The account's session. */
   Session& trading() {
     return *trading_;
   }
 
-  /**
-   * @brief The session market data is read from: the real login's on demo, else the account's.
-   * @return It.
-   */
+  /** @brief The session market data is read from: the real login's on demo, else the account's. */
   Session& market() {
     return market_ ? *market_ : *trading_;
   }
