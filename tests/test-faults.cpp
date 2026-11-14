@@ -303,29 +303,6 @@ using namespace support;
 namespace {
 
 /**
- * @brief Runs a command line in a forked child that a kill point may end, and waits for it.
- * @param args The command line.
- * @param point The kill point.
- * @return The child's wait status.
- */
-int run_killed(const std::vector<std::string>& args, const std::string& point) {
-  std::fflush(nullptr);
-  const pid_t pid = ::fork();
-  REQUIRE(pid >= 0);
-  if (pid == 0) {
-    fault::clear();
-    fault::kill_at = point;
-    std::ostringstream out;
-    std::ostringstream err;
-    const int exit = cmdatl::run(args, out, err, false);
-    ::_exit(exit);
-  }
-  int status = 0;
-  REQUIRE(::waitpid(pid, &status, 0) == pid);
-  return status;
-}
-
-/**
  * @brief Runs a command and returns its exit code and error code.
  * @param fixture The account.
  * @param args The command line.

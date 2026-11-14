@@ -101,7 +101,7 @@ std::string date_of(long days) {
   const long d = doy - (153 * mp + 2) / 5 + 1;
   const long m = mp < 10 ? mp + 3 : mp - 9;
   const long y = yoe + era * 400 + (m <= 2 ? 1 : 0);
-  char text[16];
+  char text[64];
   std::snprintf(text, sizeof(text), "%04ld-%02ld-%02ld", y, m, d);
   return text;
 }
