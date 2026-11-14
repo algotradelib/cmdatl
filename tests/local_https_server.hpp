@@ -467,17 +467,16 @@ private:
   }
 
   /**
-   * @brief Waits for the next request's bytes: at once when some are decrypted and waiting, else until the socket is
-   *   readable, the idle timeout passes after a served request, or the server stops.
+   * @brief Whether to read the next request: with an idle timeout, a connection that served a request waits for the
+   *   next one's bytes no longer than the timeout. Never before the first request: the TLS layer may already hold its
+   *   bytes, read with the handshake, where polling the socket cannot see them. A blocked read ends when the server
+   *   stops, which shuts the socket down.
    * @param stream The connection.
    * @param buffer What was read and not yet parsed.
    * @param served Whether a request was served on it.
    * @return Whether to read a request.
    */
   bool wait_for_request(beast::ssl_stream<tcp::socket>& stream, const beast::flat_buffer& buffer, bool served) {
-    if (buffer.size() > 0 || SSL_pending(stream.native_handle()) > 0) {
-      return true;
-    }
     std::chrono::milliseconds idle{0};
     {
       std::lock_guard<std::mutex> lock(mutex_);
@@ -486,9 +485,11 @@ private:
       }
       idle = idle_timeout_;
     }
+    if (!served || idle.count() == 0 || buffer.size() > 0 || SSL_pending(stream.native_handle()) > 0) {
+      return true;
+    }
     pollfd waiting{stream.next_layer().native_handle(), POLLIN, 0};
-    const int timeout = served && idle.count() > 0 ? static_cast<int>(idle.count()) : -1;
-    return ::poll(&waiting, 1, timeout) > 0;
+    return ::poll(&waiting, 1, static_cast<int>(idle.count())) > 0;
   }
 
   /**

@@ -334,6 +334,17 @@ if(CMDATL_BUILD_TESTS)
     # one test program that compiles the KIS client's transport replacement.
     add_executable(kis-command tests/kis-command.cpp)
     target_link_libraries(kis-command PRIVATE cmdatl_core)
+    # Runs every command as a kis-command child against two loopback servers (demo) or one (real).
+    add_executable(test-kis tests/test-kis-commands.cpp)
+    target_link_libraries(test-kis PRIVATE cmdatl_core Catch2::Catch2WithMain)
+    add_dependencies(test-kis kis-command)
+    # support.hpp names cmdatl and the fake atlc for helpers this program does not call.
+    target_compile_definitions(test-kis PRIVATE
+      CMDATL_KIS_COMMAND="$<TARGET_FILE:kis-command>"
+      CMDATL_BINARY="$<TARGET_FILE:cmdatl>"
+      CMDATL_FAKE_ATLC="$<TARGET_FILE:fake-atlc>"
+    )
+    add_test(NAME test-kis COMMAND test-kis)
   endif()
   # Against a real atlc and algotradelib, named by CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX; skipped, and reported
   # as skipped, without them.
