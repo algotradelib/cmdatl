@@ -1018,8 +1018,25 @@ const std::string TOKEN_REFUSED =
   R"json({"error_description":"접근토큰 발급 잠시 후 다시 시도하세요(1분당 1회)","error_code":"EGW00133"})json";
 
 /**
- * @brief Runs a command, holds the server's reply to a named occurrence of a path, kills the command with SIGKILL
- *   while it waits for that reply, reaps it, then lets the reply go (into a closed connection).
+ * @brief Kills a command with SIGKILL while it waits for a held reply, reaps it, lets the reply go (into a closed
+ *   connection), and waits until the server has answered every request it read, so that the next command never runs
+ *   beside a script still answering.
+ * @param child The command.
+ * @param server The server holding the reply.
+ * @param before_release Runs after the kill and before the release, when set.
+ */
+void kill_held(Child& child, support::LocalHttpsServer& server, const std::function<void()>& before_release = {}) {
+  child.kill();
+  if (before_release) {
+    before_release();
+  }
+  server.release();
+  CHECK(server.wait_answered(std::chrono::seconds(10)));
+}
+
+/**
+ * @brief Runs a command, holds the server's reply to a named occurrence of a path, and kills the command while it
+ *   waits for that reply (`kill_held`).
  * @param world The account.
  * @param server The server.
  * @param path The path.
@@ -1036,11 +1053,7 @@ void kill_at(
   server.hold(path, occurrence, fragment);
   auto child = world.start(args);
   const bool held = server.wait_held(std::chrono::seconds(20));
-  child->kill();
-  if (before_release) {
-    before_release();
-  }
-  server.release();
+  kill_held(*child, server, before_release);
   INFO(child->out_text_ << child->err_text_);
   REQUIRE(held);
   CHECK(child->out_text_.empty());
@@ -1827,8 +1840,7 @@ TEST_CASE("D4 a pending cancellation names its order and leaves the placement ow
     world.trading().hold(TOKEN, 1);
     world.market().release();
     const bool held = world.trading().wait_held(std::chrono::seconds(20));
-    child->kill();
-    world.trading().release();
+    kill_held(*child, world.trading());
     REQUIRE(held);
     CHECK(world.outcomes().back() == "cancel pending");
     CHECK(world.count(AMEND) == 0);

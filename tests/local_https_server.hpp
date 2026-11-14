@@ -1,8 +1,9 @@
 #pragma once
 
 // A loopback HTTPS server for the KIS command tests: a trimmed copy of algotradelib's tests/local_https_server.hpp at
-// c917f84 (its test certificate, scripted replies, recorded requests and idle close), with one connection served per
-// thread and one addition, a hold on a named occurrence of a path, released by the test or by stopping the server.
+// c917f84 (its test certificate, scripted replies and recorded requests), with one connection served per thread and two
+// additions: a hold on a named occurrence of a path, released by the test or by stopping the server, and a wait until
+// every request read has been answered.
 
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -114,8 +115,6 @@ struct Recorded {
   std::map<std::string, std::string> headers_;
   /** @brief The body. */
   std::string body_;
-  /** @brief The connection it came on, counted from 1 in the order they were accepted. */
-  std::size_t connection_{0};
   /** @brief Where it stood on its connection: 1 for the connection's first request. */
   std::size_t position_{0};
   /** @brief When it was read whole. */
@@ -237,16 +236,6 @@ public:
   }
 
   /**
-   * @brief Closes a kept-alive connection that waits longer than `timeout` for its next request, as the KIS hosts do
-   *   after five seconds (`Keep-Alive: timeout=5`). Zero, the default, waits until the client closes it.
-   * @param timeout The wait.
-   */
-  void set_idle_timeout(std::chrono::milliseconds timeout) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    idle_timeout_ = timeout;
-  }
-
-  /**
    * @brief Answers every later request for a path with one reply.
    * @param path The path, without a query.
    * @param status The status.
@@ -313,6 +302,19 @@ public:
   }
 
   /**
+   * @brief Waits until every request read so far has had its reply made and written (or its connection closed), so
+   *   that a script the reply ran has finished.
+   * @param timeout The longest wait.
+   * @return Whether that happened.
+   */
+  bool wait_answered(std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(mutex_);
+    return changed_.wait_for(lock, timeout, [this] {
+      return answering_ == 0;
+    });
+  }
+
+  /**
    * @brief Every request read so far, in arrival order.
    * @return The requests.
    */
@@ -340,15 +342,6 @@ public:
   void clear_requests() {
     std::lock_guard<std::mutex> lock(mutex_);
     requests_.clear();
-  }
-
-  /**
-   * @brief How many connections were accepted.
-   * @return The count.
-   */
-  std::size_t connection_count() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return connections_;
   }
 
   /**
@@ -410,10 +403,9 @@ private:
         if (stopped_) {
           return;
         }
-        const auto connection = ++connections_;
         open_sockets_.insert(socket.native_handle());
-        serving_.emplace_back([this, connection, raw = std::make_shared<tcp::socket>(std::move(socket))]() mutable {
-          serve(std::move(*raw), connection);
+        serving_.emplace_back([this, raw = std::make_shared<tcp::socket>(std::move(socket))]() mutable {
+          serve(std::move(*raw));
         });
       }
     } catch (...) {
@@ -421,11 +413,11 @@ private:
   }
 
   /**
-   * @brief Serves one connection until the client closes it, it idles past the timeout, or the server stops.
+   * @brief Serves one connection until the client closes it or the server stops; a blocked read ends when the server
+   *   stops, which shuts the socket down.
    * @param socket The connection.
-   * @param connection Its number.
    */
-  void serve(tcp::socket socket, std::size_t connection) noexcept {
+  void serve(tcp::socket socket) noexcept {
     const int fd = socket.native_handle();
     try {
       beast::ssl_stream<tcp::socket> stream(std::move(socket), context_);
@@ -433,13 +425,14 @@ private:
       stream.handshake(ssl::stream_base::server, ec);
       beast::flat_buffer buffer;
       std::size_t position = 0;
-      while (!ec && wait_for_request(stream, buffer, position > 0)) {
+      while (!ec && !stopping()) {
         http::request<http::string_body> request;
         http::read(stream, buffer, request, ec);
         if (ec) {
           break;
         }
-        const auto reply = answer(request, connection, ++position);
+        const Answering answering(*this);
+        const auto reply = answer(request, ++position);
         if (!reply) {
           break;
         }
@@ -466,42 +459,50 @@ private:
     }
   }
 
-  /**
-   * @brief Whether to read the next request: with an idle timeout, a connection that served a request waits for the
-   *   next one's bytes no longer than the timeout. Never before the first request: the TLS layer may already hold its
-   *   bytes, read with the handshake, where polling the socket cannot see them. A blocked read ends when the server
-   *   stops, which shuts the socket down.
-   * @param stream The connection.
-   * @param buffer What was read and not yet parsed.
-   * @param served Whether a request was served on it.
-   * @return Whether to read a request.
-   */
-  bool wait_for_request(beast::ssl_stream<tcp::socket>& stream, const beast::flat_buffer& buffer, bool served) {
-    std::chrono::milliseconds idle{0};
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (stopped_) {
-        return false;
+  /** @brief Counts a request from when it was read until its reply was written or abandoned. */
+  class Answering {
+  public:
+    /**
+     * @brief Counts it.
+     * @param server The server.
+     */
+    explicit Answering(LocalHttpsServer& server) : server_(server) {
+      std::lock_guard<std::mutex> lock(server_.mutex_);
+      ++server_.answering_;
+    }
+
+    Answering(const Answering&) = delete;
+    Answering& operator=(const Answering&) = delete;
+
+    /** @brief Stops counting it. */
+    ~Answering() {
+      {
+        std::lock_guard<std::mutex> lock(server_.mutex_);
+        --server_.answering_;
       }
-      idle = idle_timeout_;
+      server_.changed_.notify_all();
     }
-    if (!served || idle.count() == 0 || buffer.size() > 0 || SSL_pending(stream.native_handle()) > 0) {
-      return true;
-    }
-    pollfd waiting{stream.next_layer().native_handle(), POLLIN, 0};
-    return ::poll(&waiting, 1, static_cast<int>(idle.count())) > 0;
+
+  private:
+    LocalHttpsServer& server_;
+  };
+
+  /**
+   * @brief Whether the server is stopping.
+   * @return Whether it is.
+   */
+  bool stopping() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return stopped_;
   }
 
   /**
    * @brief Records a request, waits out a hold on it, and makes its reply with the path's script as it then stands.
    * @param request The request.
-   * @param connection Its connection.
    * @param position Where it stood on the connection.
    * @return The reply, or nothing when the server stopped while it was held.
    */
-  std::optional<Scripted> answer(
-    const http::request<http::string_body>& request, std::size_t connection, std::size_t position
-  ) {
+  std::optional<Scripted> answer(const http::request<http::string_body>& request, std::size_t position) {
     Recorded recorded;
     recorded.method_ = std::string(request.method_string());
     const std::string target(request.target());
@@ -512,7 +513,6 @@ private:
       recorded.headers_[std::string(field.name_string())] = std::string(field.value());
     }
     recorded.body_ = request.body();
-    recorded.connection_ = connection;
     recorded.position_ = position;
     recorded.at_ = std::chrono::steady_clock::now();
     Responder responder;
@@ -566,8 +566,7 @@ private:
   mutable std::mutex mutex_;
   std::condition_variable changed_;
   bool stopped_{false};
-  std::chrono::milliseconds idle_timeout_{0};
-  std::size_t connections_{0};
+  std::size_t answering_{0};
   std::set<int> open_sockets_;
   std::map<std::string, Script> scripts_;
   std::optional<Hold> hold_;
