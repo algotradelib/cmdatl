@@ -8,6 +8,11 @@
 // TRADING_PORT serves the account's client, MARKET_PORT the real login's client on a demo account (unused on a real
 // account, whose one client serves both). LOGINS_DIR holds `kis-demo` and `kis-real`, each a login document; a missing
 // file is a login not stored.
+// Once a file `spoil-token` appears in LOGINS_DIR, the next call of the setup's `now()` or `stopped()` empties the account
+// client's token in memory, once: the client's next request takes the token step (the store, then KIS) as it would for
+// a token that expired then. The command reads the clock when it stamps a journal line and at the boundary, and asks
+// for a stop before each read and at the boundary, so a test that creates the file while a held request proves where the
+// command is knows which request comes next.
 //
 // It is the only test code that compiles the KIS client with its transport replaced.
 
@@ -54,6 +59,14 @@ struct KisClientTestAccess {
       inner.strand_, context, "localhost", port,
       KisClient::transport_options(network::HttpClientOptions{}, inner.config_)
     );
+  }
+
+  /**
+   * @brief Empties the token a blocking client holds, as the library's own tests spoil one.
+   * @param client The client.
+   */
+  static void spoil_token(KisBlockingClient& client) {
+    client.client_->token_ = KisRest{};
   }
 };
 
@@ -126,6 +139,8 @@ struct Wiring {
   std::string trading_port_;
   /** @brief The market server's port. */
   std::string market_port_;
+  /** @brief The file whose appearance spoils the account client's token. */
+  std::filesystem::path spoil_;
 };
 
 /** @brief The shipped KIS setup, its clients pointed at the loopback servers after `identify`, on the test's clock. */
@@ -161,6 +176,7 @@ public:
     if (&market != &trading) {
       algotradelib::kis::KisClientTestAccess::connect(market, context_, wiring_.market_port_);
     }
+    wired_ = true;
     return std::nullopt;
   }
 
@@ -175,22 +191,35 @@ public:
   }
 
   /** @brief The test's instant, moved on by the steady clock since this process started. */
-  cmdatl::Clock::time_point now() const {
+  cmdatl::Clock::time_point now() {
+    spoil_once();
     return wiring_.instant_ +
       std::chrono::duration_cast<cmdatl::Clock::duration>(std::chrono::steady_clock::now() - started_);
   }
 
   /** @brief The shipped stop. */
-  bool stopped() const {
+  bool stopped() {
+    spoil_once();
     return inner_.stopped();
   }
 
 private:
+  /** @brief Empties the account client's token the first time the test's file exists, once the clients are wired. */
+  void spoil_once() {
+    std::error_code ec;
+    if (!spoiled_ && wired_ && std::filesystem::exists(wiring_.spoil_, ec)) {
+      spoiled_ = true;
+      algotradelib::kis::KisClientTestAccess::spoil_token(inner_.trading().client());
+    }
+  }
+
   // Declared first, so it is destroyed after the clients that borrow it.
   boost::asio::ssl::context context_;
   Wiring wiring_;
   std::chrono::steady_clock::time_point started_;
   cmdatl::KisSetup inner_;
+  bool wired_{false};
+  bool spoiled_{false};
 };
 
 /**
@@ -221,6 +250,7 @@ int main(int argc, char** argv) {
     wiring.instant_ = cmdatl::Clock::time_point(std::chrono::milliseconds(std::stoll(all[0])));
     wiring.trading_port_ = all[1];
     wiring.market_port_ = all[2];
+    wiring.spoil_ = std::filesystem::path(all[3]) / "spoil-token";
     FileLogins logins(all[3]);
     const std::vector<std::string> args(all.begin() + 5, all.end());
     const cmdatl::BrokerPath kis =

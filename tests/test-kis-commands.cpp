@@ -767,6 +767,19 @@ public:
     return out;
   }
 
+  /**
+   * @brief Removes the stored tokens, then has the running command empty its account client's token (see
+   *   `tests/kis-command.cpp`): the next request on that client asks KIS for a token.
+   */
+  void spoil_token() const {
+    for (const auto& entry : std::filesystem::directory_iterator(dir_.path() / "cache" / "cmdatl" / "tokens")) {
+      if (entry.path().extension() == ".token") {
+        std::filesystem::remove(entry.path());
+      }
+    }
+    support::spit(dir_.path() / "logins" / "spoil-token", "");
+  }
+
   /** @brief Forgets the requests both servers recorded. */
   void clear() {
     trading_->clear_requests();
@@ -1009,9 +1022,6 @@ std::vector<std::string> owed_of(const Answer& answer) {
   }
   return out;
 }
-
-/** @brief A token valid long enough. */
-const std::string TOKEN_REPLY = R"({"access_token":"made-up-token","token_type":"Bearer","expires_in":86400})";
 
 /** @brief KIS's refusal of a token request it was asked for too soon. */
 const std::string TOKEN_REFUSED =
@@ -1516,31 +1526,23 @@ TEST_CASE("B6 a token that cannot be renewed after the pending line refuses the 
     KisWorld world(demo);
     world.arm();
     const auto id = world.plan_id("1");
-    // The place command finds no stored token: it is issued for three seconds past KIS's five-minute margin, and
-    // the request for the next one is refused.
-    std::filesystem::remove_all(world.dir() / "cache" / "cmdatl" / "tokens");
-    world.trading().script_sequence(
-      TOKEN,
-      {Scripted{200, R"({"access_token":"short-token","token_type":"Bearer","expires_in":303})", {}},
-        Scripted{403, TOKEN_REFUSED, {}}}
-    );
+    // The next token request is refused.
+    world.trading().script(TOKEN, 403, TOKEN_REFUSED);
     world.clear();
-    // Held at the boundary's quote, after every read on the trading session, until the token is no longer valid.
+    // Held at the boundary's quote, after the pending line and every read on the trading session, which used the
+    // stored token; the token is spoiled there, so the order's request is the first to ask for a new one.
     world.market().hold(PRICE, 3);
     auto child = world.start({"order", "place", id});
     REQUIRE(world.market().wait_held(std::chrono::seconds(20)));
-    const auto issued = world.trading().requests(TOKEN);
-    REQUIRE(issued.size() == 1);
-    const auto until = issued.front().at_ + std::chrono::milliseconds(3500);
-    while (std::chrono::steady_clock::now() < until) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    CHECK(world.outcomes() == std::vector<std::string>{"place pending"});
+    CHECK(world.trading().requests(TOKEN).empty());
+    world.spoil_token();
     world.market().release();
     const auto place = KisWorld::answer_of(*child, child->wait());
     INFO(place.out_ << place.err_);
     CHECK(place.exit_ == 3);
     CHECK(place.code() == "refused.not_reached");
-    CHECK(world.trading().requests(TOKEN).size() == 2);
+    CHECK(world.trading().requests(TOKEN).size() == 1);
     CHECK(world.count(ORDER) == 0);
     CHECK(world.outcomes() == std::vector<std::string>{"place pending", "place rejected"});
     CHECK(owed_of(place).empty());
@@ -1819,27 +1821,20 @@ TEST_CASE("D4 a pending cancellation names its order and leaves the placement ow
     KisWorld world(true);
     world.arm();
     const auto order_id = world.placed("10");
-    std::filesystem::remove_all(world.dir() / "cache" / "cmdatl" / "tokens");
-    world.trading().script_sequence(
-      TOKEN,
-      {Scripted{200, R"({"access_token":"short-token","token_type":"Bearer","expires_in":303})", {}},
-        Scripted{200, TOKEN_REPLY, {}}}
-    );
     world.clear();
-    // Held at the market session's quote, after the trading session's reads, until the token is no longer valid;
-    // then held again at the token request the cancellation makes after its pending line.
+    // Held at the market session's last quote, after every read on the trading session, which used the stored token;
+    // the token is spoiled there, so the next request on the trading session, the token request the cancellation makes
+    // after its pending line, is held in turn.
     world.market().hold(PRICE, 2);
     auto child = world.start({"order", "cancel", "005930"});
     REQUIRE(world.market().wait_held(std::chrono::seconds(20)));
-    const auto issued = world.trading().requests(TOKEN);
-    REQUIRE(issued.size() == 1);
-    const auto until = issued.front().at_ + std::chrono::milliseconds(3500);
-    while (std::chrono::steady_clock::now() < until) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
+    CHECK(world.outcomes().back() == "place accepted");
+    CHECK(world.trading().requests(TOKEN).empty());
     world.trading().hold(TOKEN, 1);
+    world.spoil_token();
     world.market().release();
     const bool held = world.trading().wait_held(std::chrono::seconds(20));
+    CHECK(world.outcomes().back() == "cancel pending");
     kill_held(*child, world.trading());
     REQUIRE(held);
     CHECK(world.outcomes().back() == "cancel pending");
