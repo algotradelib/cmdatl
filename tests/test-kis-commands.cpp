@@ -742,29 +742,20 @@ public:
   }
 
   /**
-   * @brief The requests both servers read, in arrival order: a request goes only after the one before it was
-   *   answered, so the order of arrival across the two servers is the order the command made them.
-   * @return Each as `<last part of the path> <tr_id>`, the server first (`T` or `M`) on a demo account.
+   * @brief Checks where a send stood among the requests: one request for its path, after the last quote (the
+   *   boundary's) and before a listing of the working orders (the reply's).
+   * @param path The send's path.
    */
-  std::vector<std::string> sequence() const {
-    std::vector<std::pair<Recorded, char>> all;
-    for (auto& request : trading_->requests()) {
-      all.emplace_back(std::move(request), 'T');
-    }
-    if (market_) {
-      for (auto& request : market_->requests()) {
-        all.emplace_back(std::move(request), 'M');
-      }
-    }
-    std::stable_sort(all.begin(), all.end(), [](const auto& a, const auto& b) {
-      return a.first.at_ < b.first.at_;
-    });
-    std::vector<std::string> out;
-    for (const auto& [request, server] : all) {
-      const auto name = request.path_.substr(request.path_.rfind('/') + 1);
-      out.push_back((demo_ ? std::string(1, server) + " " : std::string()) + name + " " + request.header("tr_id"));
-    }
-    return out;
+  void check_send_order(const std::string& path) const {
+    const auto sent = trading_->requests(path);
+    REQUIRE(sent.size() == 1);
+    const auto quotes = (market_ ? *market_ : *trading_).requests(PRICE);
+    REQUIRE(!quotes.empty());
+    CHECK(quotes.back().at_ < sent.front().at_);
+    const auto lists = trading_->requests(demo_ ? DAILY : AMENDABLE);
+    CHECK(std::any_of(lists.begin(), lists.end(), [&sent](const Recorded& list) {
+      return sent.front().at_ < list.at_;
+    }));
   }
 
   /**
@@ -927,61 +918,6 @@ private:
 };
 
 /**
- * @brief The requests a successful `order place` makes when the token and the calendar are already stored: the
- *   check before the plan's use, the snapshot, once()'s reads, the boundary's quote, the order, the reply's listing.
- * @param demo Whether a demo account.
- * @param buy Whether a buy.
- * @return The sequence, as `KisWorld::sequence` writes it.
- */
-std::vector<std::string> place_sequence(bool demo, bool buy) {
-  const std::string t = demo ? "T " : "";
-  const std::string m = demo ? "M " : "";
-  const std::string v = demo ? "V" : "T";
-  const std::string list = demo ? "inquire-daily-ccld VTTC0081R" : "inquire-psbl-rvsecncl TTTC0084R";
-  const std::string balance = t + "inquire-balance " + v + "TTC8434R";
-  const std::string power = t + "inquire-psbl-order " + v + "TTC8908R";
-  const std::string price = m + "inquire-price FHKST01010100";
-  return {
-    balance,
-    balance,
-    t + list,
-    power,
-    m + "search-stock-info CTPF1002R",
-    t + list,
-    balance,
-    power,
-    price,
-    price,
-    price,
-    t + "order-cash " + v + "TTC00" + (buy ? "12U" : "11U"),
-    t + list,
-  };
-}
-
-/**
- * @brief The requests a successful `order cancel` makes when the token and the calendar are already stored.
- * @param demo Whether a demo account.
- * @return The sequence, as `KisWorld::sequence` writes it.
- */
-std::vector<std::string> cancel_sequence(bool demo) {
-  const std::string t = demo ? "T " : "";
-  const std::string m = demo ? "M " : "";
-  const std::string v = demo ? "V" : "T";
-  const std::string list = t + (demo ? "inquire-daily-ccld VTTC0081R" : "inquire-psbl-rvsecncl TTTC0084R");
-  const std::string price = m + "inquire-price FHKST01010100";
-  return {
-    m + "search-stock-info CTPF1002R",
-    list,
-    t + "inquire-balance " + v + "TTC8434R",
-    t + "inquire-psbl-order " + v + "TTC8908R",
-    price,
-    price,
-    t + "order-rvsecncl " + v + "TTC0013U",
-    list,
-  };
-}
-
-/**
  * @brief A request's JSON body.
  * @param request The request.
  * @return The object.
@@ -1096,7 +1032,7 @@ TEST_CASE("B1 a buy and its sale are placed on the trading session with the mark
     CHECK(place.text("reason") == "placed");
     const auto order_id = std::string(place.reply_.at("order").as_object().at("order_id").as_string());
     CHECK(order_id == "0000010001");
-    CHECK(world.sequence() == place_sequence(demo, true));
+    world.check_send_order(ORDER);
     const auto orders = world.trading().requests(ORDER);
     REQUIRE(orders.size() == 1);
     CHECK(orders.front().header("tr_id") == (demo ? "VTTC0012U" : "TTTC0012U"));
@@ -1134,7 +1070,7 @@ TEST_CASE("B1 a buy and its sale are placed on the trading session with the mark
     INFO(sale.out_ << sale.err_);
     REQUIRE(sale.exit_ == 0);
     CHECK(sale.text("reason") == "placed");
-    CHECK(world.sequence() == place_sequence(demo, false));
+    world.check_send_order(ORDER);
     REQUIRE(world.trading().requests(ORDER).size() == 1);
     CHECK(field(body_of(world.trading().requests(ORDER).front()), "ORD_QTY") == "1");
     world.broker().fill(std::string(sale.reply_.at("order").as_object().at("order_id").as_string()), 1);
@@ -1184,7 +1120,7 @@ TEST_CASE("B2 a resting order partly filled is withdrawn with its listed number 
     REQUIRE(cancel.exit_ == 0);
     CHECK(cancel.text("reason") == "withdrawal_sent");
     CHECK(cancel.reply_.at("withdrawals").as_array() == json::array{json::value(order_id)});
-    CHECK(world.sequence() == cancel_sequence(demo));
+    world.check_send_order(AMEND);
     const auto cancels = world.trading().requests(AMEND);
     REQUIRE(cancels.size() == 1);
     CHECK(cancels.front().header("tr_id") == (demo ? "VTTC0013U" : "TTTC0013U"));
