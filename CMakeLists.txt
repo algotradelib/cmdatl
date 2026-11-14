@@ -329,6 +329,12 @@ if(CMDATL_BUILD_TESTS)
     CMDATL_HOLD_LOCK="$<TARGET_FILE:hold-lock>"
   )
   add_test(NAME test-runs COMMAND test-runs)
+  if(NOT WIN32)
+    # The whole command line on KIS's shipped setup, its clients pointed at loopback servers: never installed, and the
+    # one test program that compiles the KIS client's transport replacement.
+    add_executable(kis-command tests/kis-command.cpp)
+    target_link_libraries(kis-command PRIVATE cmdatl_core)
+  endif()
   # Against a real atlc and algotradelib, named by CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX; skipped, and reported
   # as skipped, without them.
   add_test(NAME test-acceptance COMMAND test-cli "[acceptance]")
