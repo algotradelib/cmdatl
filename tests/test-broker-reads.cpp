@@ -2,11 +2,7 @@
 // session and an in-memory login store, so no case can reach a broker), and KIS's own setup on made-up logins, which
 // stops at the logins or at a held lock. Every login here is made up.
 
-#include "./paper-support.hpp"
-
-#include <cmdatl/cli/kis.hpp>
-
-#include <algotradelib/mock>
+#include "./broker-support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -29,370 +25,9 @@
 #include <unistd.h>
 
 using namespace support;
+using namespace broker_support;
 namespace atl = algotradelib;
 namespace runner = algotradelib::runner;
-
-namespace {
-
-/** @brief The account's login: a demo login of account 12345678-01. */
-const std::string DEMO_LOGIN =
-  R"({"app_key":"made-up-demo-key","app_secret":"MADE-UP-DEMO-SECRET","account_number":"12345678","demo":true})";
-/** @brief The real login a demo account reads market data with. */
-const std::string REAL_LOGIN =
-  R"({"app_key":"made-up-real-key","app_secret":"MADE-UP-REAL-SECRET","account_number":"87654321","demo":false})";
-
-/** @brief The account directory a KIS demo command takes: the login's account. */
-const std::string ACCOUNT = "kis-demo-12345678-01";
-/** @brief Its journal's scope. */
-const std::string SCOPE = "kis:demo:12345678-01";
-
-/**
- * @brief The operator's file for a KIS demo account.
- * @param number The `[account] number` line's value, or empty for none.
- * @return The text.
- */
-std::string kis_config(const std::string& number = "12345678-01") {
-  return "[account]\nbroker = \"kis\"\n" + (number.empty() ? std::string() : "number = \"" + number + "\"\n") +
-    "\n[limits]\nsymbols = [\"005930\", \"000660\"]\nposition = { \"005930\" = 100, \"000660\" = 20 }\n"
-    "order_value = 5000000\ndaily_orders = 3\n";
-}
-
-/** @brief A credential store in memory, recording what was asked. */
-class Logins : public cmdatl::auth::CredentialStore {
-public:
-  /** @brief The logins by name. */
-  std::map<std::string, std::string> items_;
-  /** @brief Every name asked for. */
-  std::vector<std::string> asked_;
-  /** @brief How every read answers, when set: a locked or unusable store. */
-  std::optional<cmdatl::auth::StoreStatus> failing_;
-
-  /** @brief The store's kind. */
-  std::string kind() const override {
-    return "memory";
-  }
-
-  /** @brief Lists nothing: never called here. */
-  cmdatl::auth::StoreList list() override {
-    return {};
-  }
-
-  /**
-   * @brief A login.
-   * @param name Its name.
-   * @return It, or not found.
-   */
-  cmdatl::auth::StoreAnswer get(const std::string& name) override {
-    asked_.push_back(name);
-    cmdatl::auth::StoreAnswer answer;
-    if (failing_) {
-      answer.status_ = *failing_;
-      return answer;
-    }
-    const auto found = items_.find(name);
-    answer.status_ = found == items_.end() ? cmdatl::auth::StoreStatus::NOT_FOUND : cmdatl::auth::StoreStatus::OK;
-    if (found != items_.end()) {
-      answer.value_ = found->second;
-    }
-    return answer;
-  }
-
-  /** @brief Never called here. */
-  cmdatl::auth::StoreAnswer put(const std::string&, const std::string&) override {
-    return {};
-  }
-
-  /** @brief Never called here. */
-  cmdatl::auth::StoreAnswer remove(const std::string&) override {
-    return {};
-  }
-};
-
-/**
- * @brief A broker error a test scripts, to see whether a call consumed it.
- * @param code Its code.
- * @return The error, whose message stands for a broker's body.
- */
-atl::BrokerError marker(const std::string& code) {
-  atl::BrokerError error;
-  error.category_ = atl::ErrorCategory::TRANSPORT;
-  error.broker_code_ = code;
-  error.message_ = "MADE-UP-BODY-TEXT";
-  return error;
-}
-
-/** @brief The library's mock session, with calls a test runs before its buying-power and order-list reads. */
-struct HookedSession : atl::BlockingSession<atl::mock::MockClient> {
-  using atl::BlockingSession<atl::mock::MockClient>::BlockingSession;
-
-  /** @brief Runs before each buying-power read, when set. */
-  std::function<void()> before_power_;
-  /** @brief Runs before each order-list read, when set. */
-  std::function<void()> before_list_;
-
-  /**
-   * @brief The buying power, after `before_power_`.
-   * @param currency The currency.
-   * @return The answer.
-   */
-  auto buying_power(atl::Currency currency) {
-    if (before_power_) {
-      before_power_();
-    }
-    return BlockingSession::buying_power(std::move(currency));
-  }
-
-  /**
-   * @brief The working orders, after `before_list_`.
-   * @return The answer.
-   */
-  auto working_orders() {
-    if (before_list_) {
-      before_list_();
-    }
-    return BlockingSession::working_orders();
-  }
-};
-
-/** @brief A stand-in setup: the real login checks on an in-memory store, and the library's mock session. */
-struct StandIn {
-  /** @brief The logins. */
-  Logins logins_;
-  /** @brief The market, from the fixture's bars. */
-  std::unique_ptr<atl::mock::Market> market_;
-  /** @brief Its client, for scripting faults. */
-  std::shared_ptr<atl::mock::MockClient> client_;
-  /** @brief The one session, trading and market data. */
-  std::unique_ptr<HookedSession> session_;
-  /** @brief The clock's answers, in order; the last repeats. */
-  std::vector<cmdatl::Clock::time_point> times_{kst("2024-03-26T10:00")};
-  /** @brief How many times the clock was read. */
-  int clock_calls_{0};
-  /** @brief How many times the stop was checked. */
-  int checks_{0};
-  /** @brief Stop from the check after this many, or never. */
-  int stop_after_{-1};
-  /** @brief How many times `identify` ran. */
-  int identified_{0};
-  /** @brief Whether the clock checks that the calendar was read before it, by a scripted calendar fault. */
-  bool probe_calendar_{false};
-  /** @brief Whether the calendar's fault was taken before the clock was read. */
-  bool calendar_before_clock_{false};
-  /** @brief Throw from the clock once it was read this many times, or never. */
-  int throw_after_{-1};
-  /** @brief Whether that throw is a stop (`cmdatl::Stopped`) rather than another exception. */
-  bool throw_stop_{false};
-  /** @brief The clock read (0 is the first) at which `hook_` runs, or none. */
-  int hook_at_{-1};
-  /** @brief What runs at that read, before it answers. */
-  std::function<void()> hook_;
-
-  /** @brief The market of the fixture's bars, with both logins stored. */
-  StandIn() {
-    cmdatl::MarketData data;
-    REQUIRE(!cmdatl::parse_bars(BARS, data));
-    std::vector<atl::BarSeries> series;
-    for (const auto& entry : data.bars_) {
-      series.push_back(cmdatl::mock_series(entry.first, entry.second));
-    }
-    atl::mock::MarketSettings settings;
-    settings.cash_ = atl::Money{atl::Decimal64(100000000, 0), atl::Currency::krw()};
-    settings.start_ = kst("2024-03-25T16:00");
-    market_ = std::make_unique<atl::mock::Market>(std::move(series), std::move(settings));
-    client_ = std::make_shared<atl::mock::MockClient>(*market_);
-    session_ = std::make_unique<HookedSession>(client_, atl::mock::MockAccount{});
-    logins_.items_["kis/demo"] = DEMO_LOGIN;
-    logins_.items_["kis/real"] = REAL_LOGIN;
-  }
-
-  /**
-   * @brief Reads and checks the logins as KIS's setup does; the sessions are the mock's.
-   * @param config The operator's file.
-   * @param effective Its number set to the login's account.
-   * @return The refusal, or nothing.
-   */
-  std::optional<cmdatl::Reply> identify(const cmdatl::OperatorConfig& config, cmdatl::OperatorConfig& effective) {
-    ++identified_;
-    std::vector<std::string> documents;
-    if (
-      auto refused = cmdatl::runs::read_run_logins(config, cmdatl::auth::lookup_broker("kis", ""), &logins_, documents)
-    ) {
-      return refused;
-    }
-    atl::kis::KisConfig trading;
-    atl::kis::KisAccount account;
-    std::optional<atl::kis::KisConfig> market;
-    if (const auto mismatch = cmdatl::read_kis_logins(config, documents, trading, account, market, effective)) {
-      return cmdatl::error_reply(cmdatl::Exit::FAILED, "auth.account_mismatch", *mismatch);
-    }
-    return std::nullopt;
-  }
-
-  /** @brief The trading session. */
-  HookedSession& trading() {
-    return *session_;
-  }
-
-  /** @brief The market-data session: the same. */
-  HookedSession& market() {
-    return *session_;
-  }
-
-  /** @brief The scripted clock. */
-  cmdatl::Clock::time_point now() {
-    if (clock_calls_ == hook_at_ && hook_) {
-      hook_();
-    }
-    if (throw_after_ >= 0 && clock_calls_ >= throw_after_) {
-      if (throw_stop_) {
-        throw cmdatl::Stopped();
-      }
-      throw std::runtime_error("the stand-in's clock failed");
-    }
-    if (probe_calendar_) {
-      // The fault is still there only when the calendar was not read yet.
-      calendar_before_clock_ = !unconsumed(
-        [this] {
-          return session_->calendar(atl::Country::KR);
-        },
-        "calendar-first"
-      );
-    }
-    const auto at = times_[std::min<std::size_t>(static_cast<std::size_t>(clock_calls_), times_.size() - 1)];
-    ++clock_calls_;
-    return at;
-  }
-
-  /** @brief The scripted stop. */
-  bool stopped() {
-    ++checks_;
-    return stop_after_ >= 0 && checks_ > stop_after_;
-  }
-
-  /**
-   * @brief Whether a scripted fault is still waiting for its call, which therefore was not made.
-   * @param read Makes the call.
-   * @param code The fault's code.
-   * @return Whether the call answers the fault.
-   */
-  template <typename Read>
-  static bool unconsumed(Read read, const std::string& code) {
-    const auto answer = read();
-    return !answer && answer.error().broker_code_ == code;
-  }
-};
-
-/** @brief A KIS demo account in a scratch directory, its token folder there too. */
-struct KisFixture {
-  /** @brief The operator's file and state root. */
-  PaperFixture paper_;
-  /** @brief The cache root. */
-  ScopedVariable cache_{"XDG_CACHE_HOME", (paper_.dir() / "cache").string()};
-
-  /**
-   * @brief Writes the operator's file.
-   * @param number Its account number, or empty for none.
-   */
-  explicit KisFixture(const std::string& number = "12345678-01") {
-    paper_.write_config(kis_config(number));
-  }
-
-  /**
-   * @brief An account's directory.
-   * @param name Its name.
-   * @return The path.
-   */
-  std::filesystem::path account(const std::string& name = ACCOUNT) const {
-    return paper_.dir() / "state" / "cmdatl" / "accounts" / name;
-  }
-
-  /**
-   * @brief Writes the account's journal through the library's writer.
-   * @param entries The entries.
-   * @param scope Its scope.
-   */
-  void journal(const std::vector<runner::JournalEntry>& entries, const std::string& scope = SCOPE) const {
-    std::filesystem::create_directories(account());
-    runner::FileJournal file((account() / "journal.jsonl").string(), scope);
-    REQUIRE(file.open());
-    for (const auto& entry : entries) {
-      REQUIRE(file.append(entry));
-    }
-  }
-};
-
-/**
- * @brief A placement's journal line.
- * @param id The journal id.
- * @param outcome What the line says.
- * @param at When it was written.
- * @param order_id The broker's id, or empty.
- * @return The entry.
- */
-runner::JournalEntry place_entry(
-  const std::string& id, runner::JournalOutcome outcome, cmdatl::Clock::time_point at, const std::string& order_id = ""
-) {
-  runner::JournalEntry entry;
-  entry.id_ = id;
-  entry.action_ = runner::JournalAction::PLACE;
-  entry.outcome_ = outcome;
-  entry.recorded_at_ = at;
-  entry.instrument_ = cmdatl::kr("005930");
-  entry.side_ = atl::OrderSide::BUY;
-  entry.type_ = atl::OrderType::LIMIT;
-  entry.time_in_force_ = atl::TimeInForce::DAY;
-  entry.session_ = atl::OrderSession::REGULAR;
-  entry.venue_ = atl::Venue::UNSPECIFIED;
-  entry.quantity_ = atl::Decimal64(1, 0);
-  entry.price_ = atl::Decimal64(70000, 0);
-  entry.baseline_ = atl::Decimal64(0, 0);
-  entry.order_id_ = order_id;
-  return entry;
-}
-
-/**
- * @brief Runs a command line through `cmdatl::run`, with the command path on a KIS account going to a setup.
- * @tparam Setup The setup.
- * @param setup The setup.
- * @param args The command line, without `--json`.
- * @return What it wrote and returned.
- */
-template <typename Setup>
-Ran run_on(Setup& setup, std::vector<std::string> args) {
-  args.insert(args.begin(), "--json");
-  std::ostringstream out;
-  std::ostringstream err;
-  const auto exit = cmdatl::run(
-    args, out, err, false,
-    [&setup](
-      const cmdatl::Command& command, const cmdatl::Invocation& invocation, const cmdatl::ConfigSnapshot& snapshot,
-      cmdatl::Output& output
-    ) {
-      return cmdatl::broker_command_reply(command, invocation, *snapshot.config_, output, setup);
-    }
-  );
-  const Ran ran{exit, out.str(), err.str()};
-  for (const auto* secret : {"MADE-UP-DEMO-SECRET", "MADE-UP-REAL-SECRET", "MADE-UP-BODY-TEXT"}) {
-    CHECK(ran.out_.find(secret) == std::string::npos);
-    CHECK(ran.err_.find(secret) == std::string::npos);
-  }
-  return ran;
-}
-
-/**
- * @brief A reply's words.
- * @param value An array of strings.
- * @return The words.
- */
-std::vector<std::string> words(const boost::json::value& value) {
-  std::vector<std::string> out;
-  for (const auto& word : value.as_array()) {
-    out.emplace_back(word.as_string());
-  }
-  return out;
-}
-
-} // namespace
 
 TEST_CASE("on a KIS account the clock commands are refused before any login is read") {
   const KisFixture fixture;
@@ -403,6 +38,9 @@ TEST_CASE("on a KIS account the clock commands are refused before any login is r
     CHECK(ran.exit_ == 1);
     CHECK(code_of(ran.out_) == "unsupported.broker");
     CHECK(reply_of(ran.out_).at("env").as_string() == "kis-demo");
+    const auto error = reply_of(ran.out_).at("error").as_object();
+    CHECK(error.at("message").as_string().find("are the mock account's") != std::string::npos);
+    CHECK(error.at("next").as_string() == "cmdatl status");
   }
   CHECK(setup.identified_ == 0);
   CHECK(setup.logins_.asked_.empty());
@@ -895,6 +533,8 @@ TEST_CASE("the owed rows' next on a broker's account") {
   const auto listed = cmdatl::owed_next("005930", "named", std::string("pending"), false);
   CHECK(listed.find("still working at the broker") != std::string::npos);
   CHECK(listed.find("the operator, who cancels it in the broker's app") != std::string::npos);
+  CHECK(listed.find("cmdatl order cancel 005930 withdraws it only when this account placed it") != std::string::npos);
+  CHECK(listed.find("refused.unjournaled_order") != std::string::npos);
   const auto unlisted = cmdatl::owed_next("005930", "named", std::nullopt, false);
   CHECK(unlisted.find("not in the broker's order list now") != std::string::npos);
   CHECK(unlisted.find("cmdatl order reconcile 005930") != std::string::npos);
@@ -1353,27 +993,20 @@ TEST_CASE("on a broker's account a plan lapses on the live clock whatever instan
   INFO(planned.out_);
   REQUIRE(planned.exit_ == 0);
   const auto id = std::string(reply_of(planned.out_).at("plan_id").as_string());
-  setup.client_->fail_next(atl::mock::Call::PLACE, marker("place"));
   // As of 10:00:30, within its 60 s; on the live clock, after the snapshot's reads, 61 s old.
   setup.times_ = {
     kst("2024-03-26T10:00") + std::chrono::seconds(30), kst("2024-03-26T10:01") + std::chrono::seconds(1)
   };
   setup.clock_calls_ = 0;
-  const auto opened = open_broker(setup);
-  cmdatl::Invocation invocation;
-  invocation.values_["PLAN_ID"] = {id};
-  const auto reply = cmdatl::place_reply(invocation, *opened->account_, opened->output_);
-  CHECK(code_of_reply(reply) == "refused.stale_plan");
-  CHECK(reply.body_.at("now").as_string() == "2024-03-26T10:00:30+09:00");
-  CHECK(opened->account_->desk().sends() == 0);
-  CHECK(
-    StandIn::unconsumed(
-      [&] {
-        return setup.trading().place(order("005930", true, "1", "78000"));
-      },
-      "place"
-    )
-  );
+  const auto ran = run_on(setup, {"order", "place", id});
+  INFO(ran.out_);
+  CHECK(ran.exit_ == 3);
+  CHECK(code_of(ran.out_) == "refused.stale_plan");
+  CHECK(reply_of(ran.out_).at("now").as_string() == "2024-03-26T10:00:30+09:00");
+  CHECK(setup.trading().places_ == 0);
+  CHECK(fixture.entries().empty());
+  // The lapsed plan was never used: a new plan is the way on.
+  CHECK(run_on(setup, {"order", "plan", "005930", "--target", "1", "--limit", "78000"}).exit_ == 0);
 }
 
 TEST_CASE("repeated order commands on a broker's account leave no descriptor open") {
@@ -1405,27 +1038,18 @@ TEST_CASE("on a broker's account a plan's age is taken after the snapshot's read
   INFO(planned.out_);
   REQUIRE(planned.exit_ == 0);
   const auto id = std::string(reply_of(planned.out_).at("plan_id").as_string());
-  setup.client_->fail_next(atl::mock::Call::PLACE, marker("place"));
   // Every live reading before the snapshot's buying-power read is 30 s into the plan's 60; that read takes 31 more.
   setup.times_ = {issued + std::chrono::seconds(30)};
   setup.clock_calls_ = 0;
   setup.trading().before_power_ = [&setup, issued] {
     setup.times_ = {issued + std::chrono::seconds(61)};
   };
-  const auto opened = open_broker(setup);
-  cmdatl::Invocation invocation;
-  invocation.values_["PLAN_ID"] = {id};
-  const auto reply = cmdatl::place_reply(invocation, *opened->account_, opened->output_);
-  CHECK(code_of_reply(reply) == "refused.stale_plan");
-  CHECK(opened->account_->desk().sends() == 0);
-  CHECK(
-    StandIn::unconsumed(
-      [&] {
-        return setup.trading().place(order("005930", true, "1", "78000"));
-      },
-      "place"
-    )
-  );
+  const auto ran = run_on(setup, {"order", "place", id});
+  INFO(ran.out_);
+  CHECK(ran.exit_ == 3);
+  CHECK(code_of(ran.out_) == "refused.stale_plan");
+  CHECK(setup.trading().places_ == 0);
+  CHECK(fixture.entries().empty());
 }
 
 TEST_CASE("a broker account's first write against a journal that appeared or was replaced after the open") {
@@ -1494,69 +1118,176 @@ TEST_CASE("a broker account's first write against a journal that appeared or was
 namespace {
 
 /**
- * @brief `order place` or `order cancel` as a test builds it, marked to answer on a broker's account; the table's own
- *   never is (`check_table`).
- * @param kind `PLACE` or `CANCEL`.
- * @param word `place` or `cancel`.
- * @return The command.
- */
-cmdatl::Command sending(cmdatl::AccountKind kind, const std::string& word) {
-  auto command = cmdatl::make_command({"order", word}, "Trade", "a test's own");
-  command.sends().on_broker().on_account(kind, cmdatl::check_order_args);
-  return command;
-}
-
-/**
- * @brief Runs a command on the stand-in through the broker's command path, as the CLI would hand it.
- * @param setup The stand-in.
- * @param command The command.
- * @param name The argument's name, `PLAN_ID` or `SYMBOL`.
- * @param value Its value.
- * @return The reply.
- */
-cmdatl::Reply through_broker(
-  StandIn& setup, const cmdatl::Command& command, const std::string& name, const std::string& value
-) {
-  std::ostringstream out;
-  std::ostringstream err;
-  cmdatl::Output output(out, err, cmdatl::Rendering{}, "kis-demo");
-  const auto snapshot = cmdatl::load_operator_config();
-  REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
-  cmdatl::Invocation invocation;
-  invocation.values_[name] = {value};
-  return cmdatl::broker_command_reply(command, invocation, snapshot.config_.value(), output, setup);
-}
-
-/**
- * @brief A plan of 1 share of 005930 on the stand-in, armed, its market at the live instant.
+ * @brief A plan of 1 share of 005930 on the stand-in, armed, its market and the live clock at one instant.
  * @param fixture The account.
  * @param setup The stand-in.
+ * @param at The instant.
  * @return The plan id.
  */
-std::string ready_plan(const KisFixture& fixture, StandIn& setup) {
+std::string ready_plan(
+  const KisFixture& fixture, StandIn& setup, cmdatl::Clock::time_point at = kst("2024-03-26T10:00")
+) {
   fixture.paper_.arm();
   // The market's own clock at the stand-in's live instant, so its holdings are fresh for the runner.
-  setup.market_->advance_to(kst("2024-03-26T10:00"));
+  setup.market_->advance_to(at);
+  setup.times_ = {at};
   const auto planned = run_on(setup, {"order", "plan", "005930", "--target", "1", "--limit", "78000"});
   INFO(planned.out_);
   REQUIRE(planned.exit_ == 0);
   return std::string(reply_of(planned.out_).at("plan_id").as_string());
 }
 
+/**
+ * @brief An order this account placed and the broker acknowledged today: resting on 005930, its two journal lines
+ *   written; the market is at 09:30 and the session's counts start again from 0.
+ * @param fixture The account.
+ * @param setup The stand-in.
+ * @param prices Each order's limit, one order each, journal ids `j1`, `j2` and on.
+ * @return The broker's numbers, in order.
+ */
+std::vector<std::string> owned_orders(
+  const KisFixture& fixture, StandIn& setup, const std::vector<std::int64_t>& prices = {78000}
+) {
+  const auto at = kst("2024-03-26T09:30");
+  setup.market_->advance_to(at);
+  std::vector<std::string> numbers;
+  std::vector<runner::JournalEntry> lines;
+  for (std::size_t k = 0; k < prices.size(); ++k) {
+    const auto placed = setup.trading().place(order("005930", true, "1", std::to_string(prices[k])));
+    REQUIRE(placed);
+    numbers.push_back(placed.value().ref_.primary_);
+    const auto id = "j" + std::to_string(k + 1);
+    auto pending = place_entry(id, runner::JournalOutcome::PENDING, at);
+    auto accepted = place_entry(id, runner::JournalOutcome::ACCEPTED, at, numbers.back());
+    pending.price_ = accepted.price_ = atl::Decimal64(prices[k], 0);
+    lines.push_back(pending);
+    lines.push_back(accepted);
+  }
+  fixture.journal(lines);
+  setup.trading().places_ = 0;
+  return numbers;
+}
+
+/**
+ * @brief The journal's lines of one action, by outcome, in order.
+ * @param entries The journal's entries.
+ * @param action The action.
+ * @return Each line's outcome.
+ */
+std::vector<runner::JournalOutcome> outcomes(
+  const std::vector<runner::JournalEntry>& entries, runner::JournalAction action
+) {
+  std::vector<runner::JournalOutcome> out;
+  for (const auto& entry : entries) {
+    if (entry.action_ == action) {
+      out.push_back(entry.outcome_);
+    }
+  }
+  return out;
+}
+
+/**
+ * @brief A reply's error `next`.
+ * @param ran The command's output.
+ * @return The text.
+ */
+std::string next_of(const Ran& ran) {
+  return std::string(reply_of(ran.out_).at("error").as_object().at("next").as_string());
+}
+
 } // namespace
 
-TEST_CASE("on a broker's desk an accepted placement keeps its result through a signal and a failed owed read") {
-  const auto place = sending(cmdatl::AccountKind::PLACE, "place");
+TEST_CASE("order place and order cancel are listed for a broker's account in the schema and the help") {
+  for (const auto& name : {std::string("order.place"), std::string("order.cancel")}) {
+    INFO(name);
+    const auto entry = reply_of(run({"--json", "schema", name}).out_).at("commands").as_array().at(0).as_object();
+    const auto errors = words(entry.at("errors"));
+    for (const auto* code : {"auth.not_found", "auth.account_mismatch", "account.unreadable"}) {
+      CHECK(std::find(errors.begin(), errors.end(), code) != errors.end());
+    }
+    CHECK(entry.at("may_send").as_bool());
+    auto help = cmdatl::split(name, '.');
+    help.push_back("--help");
+    CHECK(run(help).out_.find("on a KIS account") != std::string::npos);
+  }
+  const auto clock = reply_of(run({"--json", "schema", "clock"}).out_).at("commands").as_array().at(0).as_object();
+  const auto errors = words(clock.at("errors"));
+  CHECK(std::find(errors.begin(), errors.end(), "auth.not_found") == errors.end());
+}
+
+TEST_CASE("on a broker's account reference data and every market read go to the market session") {
+  const KisFixture fixture;
+  StandIn setup;
+  // As on a demo account: the trading session answers no market data, and is asked none.
+  setup.split_ = true;
+  setup.client_->fail_next(atl::mock::Call::INSTRUMENT, marker("trading-reference"));
+  const auto id = ready_plan(fixture, setup);
+  const auto placed = run_on(setup, {"order", "place", id});
+  INFO(placed.out_);
+  CHECK(placed.exit_ == 0);
+  CHECK(reply_of(placed.out_).at("reason").as_string() == "placed");
+  const auto cancelled = run_on(setup, {"order", "cancel", "005930"});
+  INFO(cancelled.out_);
+  CHECK(cancelled.exit_ == 0);
+  CHECK(reply_of(cancelled.out_).at("reason").as_string() == "withdrawal_sent");
+  CHECK(run_on(setup, {"status"}).exit_ == 0);
+  CHECK(setup.trading().places_ == 1);
+  CHECK(setup.trading().cancels_ == 1);
+  CHECK(setup.trading().market_reads_ == 0);
+  CHECK(setup.market_session_->market_reads_ > 0);
+  CHECK(setup.market_session_->places_ + setup.market_session_->cancels_ == 0);
+  CHECK(
+    StandIn::unconsumed(
+      [&] {
+        return setup.trading().instrument(cmdatl::kr("005930"));
+      },
+      "trading-reference"
+    )
+  );
+  // Reference data the market session cannot read refuses the plan; nothing is planned.
+  auto unreadable = marker("market-reference");
+  unreadable.message_ = "made-up reference failure";
+  setup.market_client_->fail_next(atl::mock::Call::INSTRUMENT, unreadable);
+  const auto unread = run_on(setup, {"order", "plan", "005930", "--target", "1", "--limit", "78000"});
+  INFO(unread.out_);
+  CHECK(unread.exit_ == 3);
+  CHECK(code_of(unread.out_) == "refused.reference_unread");
+  CHECK(!reply_of(unread.out_).contains("plan_id"));
+}
+
+TEST_CASE("on a broker's account a phase refusal and a reconcile still owed give the broker's hints") {
+  const KisFixture fixture;
+  fixture.paper_.arm();
+  StandIn setup;
+  setup.times_ = {kst("2024-03-26T16:00")};
+  const auto closed = run_on(setup, {"order", "plan", "005930", "--target", "1", "--limit", "78000"});
+  INFO(closed.out_);
+  CHECK(closed.exit_ == 3);
+  CHECK(code_of(closed.out_) == "refused.phase");
+  CHECK(next_of(closed) == cmdatl::broker_next("refused.phase"));
+  CHECK(cmdatl::catalog_next("refused.phase").find("cmdatl clock advance") != std::string::npos);
+  setup.times_ = {kst("2024-03-26T10:00")};
+  owned_orders(fixture, setup);
+  const auto owed = run_on(setup, {"order", "reconcile", "005930"});
+  INFO(owed.out_);
+  CHECK(owed.exit_ == 3);
+  CHECK(code_of(owed.out_) == "refused.awaiting");
+  CHECK(next_of(owed) == cmdatl::broker_next("refused.awaiting"));
+  const auto row = reply_of(owed.out_).at("owed").as_array().at(0).as_object();
+  CHECK(row.at("next").as_string().find("cmdatl order cancel 005930 withdraws it only when") != std::string::npos);
+}
+
+TEST_CASE("on a broker's account an accepted placement keeps its result through a signal and a failed owed read") {
   // The clock readings a placement makes: its last follows the broker's answer.
-  const auto reads = [&place] {
+  const auto reads = [] {
     const KisFixture fixture;
     StandIn setup;
     const auto id = ready_plan(fixture, setup);
     const auto before = setup.clock_calls_;
-    const auto first = through_broker(setup, place, "PLAN_ID", id);
-    INFO(boost::json::serialize(first.body_));
-    REQUIRE(first.exit_ == cmdatl::Exit::OK);
-    return std::make_pair(before, setup.clock_calls_);
+    const auto first = run_on(setup, {"order", "place", id});
+    INFO(first.out_);
+    REQUIRE(first.exit_ == 0);
+    return setup.clock_calls_ - before;
   }();
   const std::vector<std::string> cases{
     "a stop after the boundary's last check, while the request is in flight",
@@ -1572,7 +1303,7 @@ TEST_CASE("on a broker's desk an accepted placement keeps its result through a s
       // The account's calendar check, then the boundary's: a stop from the next one on.
       setup.stop_after_ = setup.checks_ + 2;
     } else if (which == 1) {
-      setup.hook_at_ = setup.clock_calls_ + (reads.second - reads.first) - 1;
+      setup.hook_at_ = setup.clock_calls_ + reads - 1;
       setup.hook_ = [&setup] {
         setup.stop_after_ = setup.checks_;
       };
@@ -1581,18 +1312,122 @@ TEST_CASE("on a broker's desk an accepted placement keeps its result through a s
       setup.client_->repeat_last(atl::mock::Call::WORKING_ORDERS, 2);
       setup.client_->fail_next(atl::mock::Call::WORKING_ORDERS, marker("owed-list"));
     }
-    const auto history = setup.market_->order_history(atl::OrderHistoryQuery{}).orders_.size();
-    cmdatl::Reply reply;
-    REQUIRE_NOTHROW(reply = through_broker(setup, place, "PLAN_ID", id));
-    INFO(boost::json::serialize(reply.body_));
-    CHECK(reply.exit_ == cmdatl::Exit::OK);
-    CHECK(reply.body_.at("reason").as_string() == "placed");
-    CHECK(reply.body_.at("order").as_object().at("side").as_string() == "buy");
-    CHECK(reply.body_.at("owed").is_null());
-    CHECK(setup.market_->order_history(atl::OrderHistoryQuery{}).orders_.size() == history + 1);
+    const auto ran = run_on(setup, {"order", "place", id});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 0);
+    const auto body = reply_of(ran.out_);
+    CHECK(body.at("reason").as_string() == "placed");
+    CHECK(body.at("order").as_object().at("side").as_string() == "buy");
+    CHECK(body.at("owed").is_null());
+    CHECK(setup.trading().places_ == 1);
+    const auto lines = fixture.entries();
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[1].outcome_ == runner::JournalOutcome::ACCEPTED);
+    CHECK(lines[1].order_id_ == std::string(body.at("order").as_object().at("order_id").as_string()));
+    // The order rests: reconcile holds it owed and sends nothing.
+    setup.stop_after_ = -1;
+    setup.hook_ = nullptr;
+    const auto next = run_on(setup, {"order", "reconcile", "005930"});
+    INFO(next.out_);
+    CHECK(next.exit_ == 3);
+    CHECK(code_of(next.out_) == "refused.awaiting");
+    CHECK(setup.trading().places_ + setup.trading().cancels_ == 1);
   }
   {
-    // An owed read that throws is not a result: it leaves the command, which the CLI answers 4.
+    // An unknown result stays the unknown one, through a stop after it.
+    const KisFixture fixture;
+    StandIn setup;
+    const auto id = ready_plan(fixture, setup);
+    setup.client_->lose_next_reply(atl::mock::Call::PLACE);
+    setup.stop_after_ = setup.checks_ + 2;
+    const auto ran = run_on(setup, {"order", "place", id});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 4);
+    CHECK(code_of(ran.out_) == "unknown.indeterminate");
+    CHECK(setup.trading().places_ == 1);
+    CHECK(outcomes(fixture.entries(), runner::JournalAction::PLACE).front() == runner::JournalOutcome::PENDING);
+  }
+}
+
+TEST_CASE("on a broker's account an accepted cancellation keeps its result through a signal") {
+  // The clock readings a cancellation makes: its last follows the broker's answer.
+  const auto reads = [] {
+    const KisFixture fixture;
+    StandIn setup;
+    owned_orders(fixture, setup);
+    const auto before = setup.clock_calls_;
+    REQUIRE(run_on(setup, {"order", "cancel", "005930"}).exit_ == 0);
+    return setup.clock_calls_ - before;
+  }();
+  for (const bool after_answer : {false, true}) {
+    INFO((after_answer ? "a stop just after the broker's answer" : "a stop while the request is in flight"));
+    const KisFixture fixture;
+    StandIn setup;
+    const auto number = owned_orders(fixture, setup).front();
+    if (after_answer) {
+      setup.hook_at_ = setup.clock_calls_ + reads - 1;
+      setup.hook_ = [&setup] {
+        setup.stop_after_ = setup.checks_;
+      };
+    } else {
+      // The account's calendar check passes; a cancellation is not checked for a stop; the next check sees it.
+      setup.stop_after_ = setup.checks_ + 1;
+    }
+    const auto ran = run_on(setup, {"order", "cancel", "005930"});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 0);
+    const auto body = reply_of(ran.out_);
+    CHECK(body.at("reason").as_string() == "withdrawal_sent");
+    CHECK(words(body.at("withdrawals")) == std::vector<std::string>{number});
+    CHECK(body.at("owed").is_null());
+    CHECK(setup.trading().cancels_ == 1);
+    CHECK(!still_working(setup, number));
+    CHECK(
+      outcomes(fixture.entries(), runner::JournalAction::CANCEL) ==
+      std::vector<runner::JournalOutcome>{runner::JournalOutcome::PENDING, runner::JournalOutcome::ACCEPTED}
+    );
+  }
+}
+
+TEST_CASE("on a broker's account what is thrown inside order place or order cancel is unknown with reconcile next") {
+  for (const bool stop : {true, false}) {
+    INFO((stop ? "a stop" : "an exception"));
+    {
+      // The handler's first live reading throws, before anything is sent.
+      const KisFixture fixture;
+      StandIn setup;
+      const auto id = ready_plan(fixture, setup);
+      setup.throw_after_ = setup.clock_calls_ + 1;
+      setup.throw_stop_ = stop;
+      const auto ran = run_on(setup, {"order", "place", id});
+      INFO(ran.out_);
+      CHECK(ran.exit_ == 4);
+      CHECK(code_of(ran.out_) == "unknown.internal");
+      CHECK(next_of(ran) == "cmdatl order reconcile");
+      CHECK(setup.trading().places_ == 0);
+      CHECK(fixture.entries().empty());
+      setup.throw_after_ = -1;
+      const auto next = run_on(setup, {"order", "reconcile", "005930"});
+      INFO(next.out_);
+      CHECK(next.exit_ == 0);
+      CHECK(reply_of(next.out_).at("reason").as_string() == "clean");
+    }
+    const KisFixture fixture;
+    StandIn setup;
+    const auto number = owned_orders(fixture, setup).front();
+    setup.throw_after_ = setup.clock_calls_ + 1;
+    setup.throw_stop_ = stop;
+    const auto ran = run_on(setup, {"order", "cancel", "005930"});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 4);
+    CHECK(code_of(ran.out_) == "unknown.internal");
+    CHECK(next_of(ran) == "cmdatl order reconcile");
+    CHECK(setup.trading().cancels_ == 0);
+    CHECK(still_working(setup, number));
+    CHECK(outcomes(fixture.entries(), runner::JournalAction::CANCEL).empty());
+  }
+  {
+    // An owed read that throws after the broker accepted: not a result, so the CLI answers 4.
     const KisFixture fixture;
     StandIn setup;
     const auto id = ready_plan(fixture, setup);
@@ -1602,78 +1437,322 @@ TEST_CASE("on a broker's desk an accepted placement keeps its result through a s
         throw std::runtime_error("the owed rows' read threw");
       }
     };
-    CHECK_THROWS_AS(through_broker(setup, place, "PLAN_ID", id), std::runtime_error);
-    CHECK(setup.market_->order_history(atl::OrderHistoryQuery{}).orders_.size() == 1);
+    const auto ran = run_on(setup, {"order", "place", id});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 4);
+    CHECK(code_of(ran.out_) == "unknown.internal");
+    CHECK(next_of(ran) == "cmdatl order reconcile");
+    CHECK(setup.trading().places_ == 1);
+    CHECK(outcomes(fixture.entries(), runner::JournalAction::PLACE).back() == runner::JournalOutcome::ACCEPTED);
   }
   {
-    // An unknown result stays the unknown one, through a stop after it.
+    // A throw as the request leaves, after its pending line: once() answers unknown (4), and the plan is spent.
     const KisFixture fixture;
     StandIn setup;
     const auto id = ready_plan(fixture, setup);
-    setup.client_->lose_next_reply(atl::mock::Call::PLACE);
-    setup.stop_after_ = setup.checks_ + 2;
-    cmdatl::Reply reply;
-    REQUIRE_NOTHROW(reply = through_broker(setup, place, "PLAN_ID", id));
-    INFO(boost::json::serialize(reply.body_));
-    CHECK(reply.exit_ == cmdatl::Exit::UNKNOWN);
-    CHECK(code_of_reply(reply) == "unknown.indeterminate");
-  }
-  {
-    // A stop thrown inside the handler before anything is sent leaves the command for the CLI to answer 4, never 130.
-    const KisFixture fixture;
-    StandIn setup;
-    const auto id = ready_plan(fixture, setup);
-    setup.throw_after_ = setup.clock_calls_ + 1;
-    setup.throw_stop_ = true;
-    CHECK_THROWS_AS(through_broker(setup, place, "PLAN_ID", id), cmdatl::Stopped);
+    setup.trading().before_place_ = [] {
+      throw std::runtime_error("the request's send threw");
+    };
+    const auto ran = run_on(setup, {"order", "place", id});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 4);
+    CHECK(code_of(ran.out_) == "unknown.internal");
+    CHECK(next_of(ran).find("reconcile") != std::string::npos);
+    CHECK(setup.trading().places_ == 0);
+    CHECK(
+      outcomes(fixture.entries(), runner::JournalAction::PLACE) ==
+      std::vector<runner::JournalOutcome>{runner::JournalOutcome::PENDING}
+    );
+    setup.trading().before_place_ = nullptr;
+    const auto again = run_on(setup, {"order", "place", id});
+    INFO(again.out_);
+    CHECK(again.exit_ == 3);
+    CHECK(code_of(again.out_) == "refused.plan_used");
+    const auto next = run_on(setup, {"order", "reconcile", "005930"});
+    INFO(next.out_);
+    CHECK(next.exit_ == 4);
+    CHECK(setup.trading().places_ == 0);
   }
 }
 
-TEST_CASE("on a broker's desk an accepted cancellation keeps its result through a signal") {
-  const auto cancel = sending(cmdatl::AccountKind::CANCEL, "cancel");
-  const auto at = kst("2024-03-26T09:30");
-  // An owned order resting on 005930.
-  const auto resting = [&at](const KisFixture& fixture, StandIn& setup) {
-    setup.market_->advance_to(at);
-    REQUIRE(setup.trading().place(order("005930", true, "1", "78000")));
-    const auto number = setup.market_->working_orders().orders_.front().order_.order_id_;
-    auto pending = place_entry("j1", runner::JournalOutcome::PENDING, at);
-    auto accepted = place_entry("j1", runner::JournalOutcome::ACCEPTED, at, number);
-    pending.price_ = accepted.price_ = atl::Decimal64(78000, 0);
-    fixture.journal({pending, accepted});
-    return number;
+TEST_CASE("a lost reply on a broker's account is exit 1 before the account dispatch and 4 inside it or after a send") {
+  const KisFixture fixture;
+  StandIn setup;
+  // Refused before the operator's file is read: nothing could have been sent.
+  const auto usage = run_on(setup, {"order", "place", "pNOTAPLAN"}, true);
+  CHECK(usage.exit_ == 1);
+  CHECK(usage.err_.find("its reply could not be written") != std::string::npos);
+  CHECK(usage.err_.find("unknown") == std::string::npos);
+  CHECK(setup.identified_ == 0);
+  // A login refusal inside the account dispatch, its reply lost: 4 for a command that may send though nothing was,
+  // 1 for a read.
+  setup.logins_.failing_ = cmdatl::auth::StoreStatus::LOCKED;
+  for (
+    const auto& args :
+    std::vector<std::vector<std::string>>{{"order", "place", "p0123456789"}, {"order", "cancel", "005930"}}
+  ) {
+    INFO(cmdatl::join(args));
+    const auto lost = run_on(setup, args, true);
+    CHECK(lost.exit_ == 4);
+    CHECK(lost.err_.find("its outcome is unknown") != std::string::npos);
+  }
+  CHECK(run_on(setup, {"status"}, true).exit_ == 1);
+  CHECK(setup.identified_ == 3);
+  CHECK(!std::filesystem::exists(fixture.account()));
+  setup.logins_.failing_.reset();
+  // After a send: the minimal line names reconcile, and the order is in the journal.
+  const auto id = ready_plan(fixture, setup);
+  const auto sent = run_on(setup, {"order", "place", id}, true);
+  CHECK(sent.exit_ == 4);
+  CHECK(sent.err_.find("run cmdatl order reconcile before anything else") != std::string::npos);
+  CHECK(setup.trading().places_ == 1);
+  CHECK(outcomes(fixture.entries(), runner::JournalAction::PLACE).back() == runner::JournalOutcome::ACCEPTED);
+  const auto next = run_on(setup, {"order", "reconcile", "005930"});
+  INFO(next.out_);
+  CHECK(next.exit_ == 3);
+  CHECK(code_of(next.out_) == "refused.awaiting");
+}
+
+TEST_CASE("on a broker's account two orders owed on one symbol are the operator's and no withdrawal is sent") {
+  // Each placement owns at most one working order, and two owed on one symbol are held for the operator: a broker's
+  // account never sends several withdrawals in one call.
+  for (const bool cancel : {true, false}) {
+    INFO((cancel ? "order cancel" : "order plan, which would withdraw first"));
+    const KisFixture fixture;
+    fixture.paper_.arm();
+    StandIn setup;
+    const auto numbers = owned_orders(fixture, setup, {78000, 77900});
+    const auto ran = run_on(
+      setup,
+      cancel ?
+        std::vector<std::string>{"order", "cancel", "005930"} :
+        std::vector<std::string>{"order", "plan", "005930", "--target", "5", "--limit", "78000"}
+    );
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 4);
+    CHECK(code_of(ran.out_) == "unknown.unaccounted");
+    CHECK(next_of(ran).find("report to the operator") != std::string::npos);
+    CHECK(setup.trading().cancels_ == 0);
+    CHECK(still_working(setup, numbers[0]));
+    CHECK(still_working(setup, numbers[1]));
+    CHECK(outcomes(fixture.entries(), runner::JournalAction::CANCEL).empty());
+  }
+}
+
+TEST_CASE("on a broker's account a read error at the boundary is refused before sending") {
+  const KisFixture fixture;
+  StandIn setup;
+  const auto id = ready_plan(fixture, setup);
+  // Once()'s quote, then the boundary's own: only the boundary's fails.
+  const auto quotes = setup.trading().quotes_;
+  setup.trading().before_quote_ = [&setup, quotes](int n) {
+    if (n == quotes + 2) {
+      setup.client_->fail_next(atl::mock::Call::QUOTE, marker("boundary-quote"));
+    }
   };
-  // The clock readings a cancellation makes: its last follows the broker's answer.
-  const auto reads = [&] {
+  const auto ran = run_on(setup, {"order", "place", id});
+  INFO(ran.out_);
+  CHECK(ran.exit_ == 3);
+  CHECK(code_of(ran.out_) == "refused.not_reached");
+  CHECK(reply_of(ran.out_).at("error").as_object().at("message").as_string().find("no_price") != std::string::npos);
+  CHECK(setup.trading().places_ == 0);
+  CHECK(
+    outcomes(fixture.entries(), runner::JournalAction::PLACE) ==
+    std::vector<runner::JournalOutcome>{runner::JournalOutcome::PENDING, runner::JournalOutcome::REJECTED}
+  );
+  // Nothing is owed: a new plan is the way on.
+  setup.trading().before_quote_ = nullptr;
+  CHECK(run_on(setup, {"order", "plan", "005930", "--target", "1", "--limit", "78000"}).exit_ == 0);
+}
+
+TEST_CASE("on a broker's account a used or unarmed or moved plan sends nothing and a cancel needs no armed file") {
+  {
     const KisFixture fixture;
     StandIn setup;
-    resting(fixture, setup);
-    REQUIRE(through_broker(setup, cancel, "SYMBOL", "005930").exit_ == cmdatl::Exit::OK);
-    return setup.clock_calls_;
-  }();
-  for (const bool after_answer : {false, true}) {
-    INFO((after_answer ? "a stop just after the broker's answer" : "a stop while the request is in flight"));
+    const auto id = ready_plan(fixture, setup);
+    REQUIRE(run_on(setup, {"order", "place", id}).exit_ == 0);
+    const auto again = run_on(setup, {"order", "place", id});
+    INFO(again.out_);
+    CHECK(again.exit_ == 3);
+    CHECK(code_of(again.out_) == "refused.plan_used");
+    CHECK(setup.trading().places_ == 1);
+    CHECK(outcomes(fixture.entries(), runner::JournalAction::PLACE).size() == 2);
+  }
+  {
     const KisFixture fixture;
     StandIn setup;
-    const auto number = resting(fixture, setup);
-    if (after_answer) {
-      setup.hook_at_ = reads - 1;
-      setup.hook_ = [&setup] {
-        setup.stop_after_ = setup.checks_;
+    const auto id = ready_plan(fixture, setup);
+    std::filesystem::remove(fixture.paper_.armed());
+    const auto unarmed = run_on(setup, {"order", "place", id});
+    INFO(unarmed.out_);
+    CHECK(unarmed.exit_ == 3);
+    CHECK(code_of(unarmed.out_) == "refused.not_armed");
+    CHECK(setup.trading().places_ == 0);
+    CHECK(fixture.entries().empty());
+  }
+  {
+    const KisFixture fixture;
+    StandIn setup;
+    const auto id = ready_plan(fixture, setup);
+    // Another order on the account since the plan: its snapshot no longer holds.
+    REQUIRE(setup.trading().place(order("000660", true, "1", "181000")));
+    setup.trading().places_ = 0;
+    const auto moved = run_on(setup, {"order", "place", id});
+    INFO(moved.out_);
+    CHECK(moved.exit_ == 3);
+    CHECK(code_of(moved.out_) == "refused.stale_plan");
+    CHECK(setup.trading().places_ == 0);
+    CHECK(fixture.entries().empty());
+  }
+  // A cancel needs neither the armed file nor a permitted phase.
+  const KisFixture fixture;
+  StandIn setup;
+  const auto number = owned_orders(fixture, setup).front();
+  setup.times_ = {kst("2024-03-26T16:00")};
+  const auto ran = run_on(setup, {"order", "cancel", "005930"});
+  INFO(ran.out_);
+  CHECK(ran.exit_ == 0);
+  CHECK(reply_of(ran.out_).at("reason").as_string() == "withdrawal_sent");
+  CHECK(reply_of(ran.out_).at("phase").as_string() == "post_close");
+  CHECK(!std::filesystem::exists(fixture.paper_.armed()));
+  CHECK(setup.trading().cancels_ == 1);
+  CHECK(!still_working(setup, number));
+}
+
+TEST_CASE("on a broker's account the phase is checked at the boundary's sample and not at the broker's receipt") {
+  const auto before_close = kst("2024-03-26T15:29") + std::chrono::seconds(50);
+  const auto after_close = kst("2024-03-26T15:45");
+  {
+    // The phase closes between once()'s check and the boundary's sample: refused there, nothing sent.
+    const KisFixture fixture;
+    StandIn setup;
+    const auto id = ready_plan(fixture, setup, before_close);
+    const auto quotes = setup.trading().quotes_;
+    setup.trading().before_quote_ = [&setup, quotes, after_close](int n) {
+      if (n == quotes + 2) {
+        setup.times_ = {after_close};
+      }
+    };
+    const auto ran = run_on(setup, {"order", "place", id});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 3);
+    CHECK(code_of(ran.out_) == "refused.not_reached");
+    CHECK(reply_of(ran.out_).at("error").as_object().at("message").as_string().find("phase") != std::string::npos);
+    CHECK(setup.trading().places_ == 0);
+  }
+  // A slow calendar read after the sample, or a slow send (a token request, the broker's pace), carries the order past
+  // the phase it was checked in: the stated limit, an observation and not a guarantee at receipt.
+  for (const bool calendar : {true, false}) {
+    INFO((calendar ? "the boundary's calendar read" : "the send"));
+    const KisFixture fixture;
+    StandIn setup;
+    const auto id = ready_plan(fixture, setup, before_close);
+    const auto quotes = setup.trading().quotes_;
+    bool sampled = false;
+    setup.trading().before_quote_ = [&sampled, quotes](int n) {
+      sampled = sampled || n == quotes + 2;
+    };
+    if (calendar) {
+      setup.trading().before_calendar_ = [&setup, &sampled, after_close](int) {
+        if (sampled) {
+          setup.times_ = {after_close};
+        }
       };
     } else {
-      // The account's calendar check passes; a cancellation is not checked for a stop; the next check sees it.
-      setup.stop_after_ = setup.checks_ + 1;
+      setup.trading().before_place_ = [&setup, after_close] {
+        setup.times_ = {after_close};
+      };
     }
-    cmdatl::Reply reply;
-    REQUIRE_NOTHROW(reply = through_broker(setup, cancel, "SYMBOL", "005930"));
-    INFO(boost::json::serialize(reply.body_));
-    CHECK(reply.exit_ == cmdatl::Exit::OK);
-    CHECK(reply.body_.at("reason").as_string() == "withdrawal_sent");
-    CHECK(words(reply.body_.at("withdrawals")) == std::vector<std::string>{number});
-    CHECK(reply.body_.at("owed").is_null());
-    CHECK(!still_working(setup, number));
+    const auto ran = run_on(setup, {"order", "place", id});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 0);
+    CHECK(reply_of(ran.out_).at("reason").as_string() == "placed");
+    CHECK(setup.trading().places_ == 1);
+    const auto lines = fixture.entries();
+    REQUIRE(!lines.empty());
+    CHECK(lines.back().outcome_ == runner::JournalOutcome::ACCEPTED);
+    CHECK(lines.back().recorded_at_ >= after_close);
   }
+  {
+    // Midnight between the plan and its placement, in phases the operator allows on both sides.
+    const KisFixture fixture("12345678-01", "phases = [\"pre_open\", \"open\", \"post_close\"]\n");
+    StandIn setup;
+    const auto id = ready_plan(fixture, setup, kst("2024-03-26T23:59") + std::chrono::seconds(40));
+    const auto after = kst("2024-03-27T00:00") + std::chrono::seconds(10);
+    setup.market_->advance_to(after);
+    setup.times_ = {after};
+    const auto ran = run_on(setup, {"order", "place", id});
+    INFO(ran.out_);
+    CHECK(ran.exit_ == 0);
+    CHECK(reply_of(ran.out_).at("phase").as_string() == "pre_open");
+    CHECK(setup.trading().places_ == 1);
+    // It counts on the new day.
+    const auto status = run_on(setup, {"status"});
+    INFO(status.out_);
+    CHECK(reply_of(status.out_).at("orders_left_today").as_int64() == 2);
+  }
+}
+
+TEST_CASE("on a broker's account an order command beside a run is busy and both count the journal's placements") {
+  {
+    const KisFixture fixture;
+    StandIn setup;
+    const auto id = ready_plan(fixture, setup);
+    const auto plans = slurp(fixture.account() / "plans.json");
+    cmdatl::OwnerLock run_lock(fixture.account().string());
+    REQUIRE(
+      run_lock.acquire(
+        std::chrono::milliseconds(100),
+        [] {
+          return false;
+        },
+        [](const std::string&) {}
+      ) == cmdatl::OwnerLock::Outcome::HELD
+    );
+    spit(
+      fixture.account() / "owner.json",
+      R"({"role":"agent","pid":4242,"what":"run r1 pid 4242"})"
+      "\n"
+    );
+    for (
+      const auto& args : std::vector<std::vector<std::string>>{{"order", "place", id}, {"order", "cancel", "005930"}}
+    ) {
+      INFO(cmdatl::join(args));
+      const auto busy = run_on(setup, args);
+      CHECK(busy.exit_ == 1);
+      CHECK(code_of(busy.out_) == "busy.locked");
+      // Its reply lost inside the account dispatch: 4, though nothing was sent.
+      CHECK(run_on(setup, args, true).exit_ == 4);
+    }
+    CHECK(setup.trading().places_ + setup.trading().cancels_ == 0);
+    CHECK(slurp(fixture.account() / "plans.json") == plans);
+  }
+  const KisFixture fixture;
+  // Two placements a run made today, both refused by the broker: nothing owed, two of the three counted.
+  fixture.journal({
+    place_entry("r1", runner::JournalOutcome::PENDING, kst("2024-03-26T09:10")),
+    place_entry("r1", runner::JournalOutcome::REJECTED, kst("2024-03-26T09:10")),
+    place_entry("r2", runner::JournalOutcome::PENDING, kst("2024-03-26T09:20")),
+    place_entry("r2", runner::JournalOutcome::REJECTED, kst("2024-03-26T09:20")),
+  });
+  StandIn setup;
+  const auto id = ready_plan(fixture, setup);
+  const auto placed = run_on(setup, {"order", "place", id});
+  INFO(placed.out_);
+  CHECK(placed.exit_ == 0);
+  const auto over = run_on(setup, {"order", "plan", "005930", "--target", "2", "--limit", "78000"});
+  INFO(over.out_);
+  CHECK(over.exit_ == 3);
+  CHECK(code_of(over.out_) == "refused.daily_order_limit");
+  // A run's start counts the command's placement with the run's, from the same journal and the same rule.
+  const auto snapshot = cmdatl::load_operator_config();
+  REQUIRE(snapshot.config_);
+  const auto view = cmdatl::journal_view(
+    setup.trading(), runner::read_journal_file(fixture.journal_file().string()), SCOPE,
+    cmdatl::kst_day(kst("2024-03-26T10:00"))
+  );
+  CHECK(view.placed_today_ == 3);
+  CHECK(cmdatl::orders_left(*snapshot.config_, view) == std::optional<std::int64_t>(0));
 }
 
 #endif
