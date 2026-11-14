@@ -1071,6 +1071,7 @@ TEST_CASE("B1 a buy and its sale are placed on the trading session with the mark
     CHECK(sale.text("reason") == "placed");
     world.check_send_order(ORDER);
     REQUIRE(world.trading().requests(ORDER).size() == 1);
+    CHECK(world.trading().requests(ORDER).front().header("tr_id") == (demo ? "VTTC0011U" : "TTTC0011U"));
     CHECK(field(body_of(world.trading().requests(ORDER).front()), "ORD_QTY") == "1");
     world.broker().fill(std::string(sale.reply_.at("order").as_object().at("order_id").as_string()), 1);
     const auto sold = world.run({"order", "reconcile"});
