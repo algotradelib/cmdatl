@@ -3,7 +3,7 @@
 // A loopback HTTPS server for the KIS command tests: a trimmed copy of algotradelib's tests/local_https_server.hpp at
 // c917f84 (its test certificate, scripted replies and recorded requests), with one connection served per thread and two
 // additions: a hold on a named occurrence of a path, released by the test or by stopping the server, and a wait until
-// every request read has been answered.
+// every connection has closed.
 
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -302,15 +302,15 @@ public:
   }
 
   /**
-   * @brief Waits until every request read so far has had its reply made and written (or its connection closed), so
-   *   that a script the reply ran has finished.
+   * @brief Waits until every connection has closed: a connection whose client is gone is closed by its thread after
+   *   the reply it was making, so a script that reply ran has finished.
    * @param timeout The longest wait.
-   * @return Whether that happened.
+   * @return Whether every connection closed.
    */
-  bool wait_answered(std::chrono::milliseconds timeout) {
+  bool wait_closed(std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(mutex_);
     return changed_.wait_for(lock, timeout, [this] {
-      return answering_ == 0;
+      return open_sockets_.empty();
     });
   }
 
@@ -342,15 +342,6 @@ public:
   void clear_requests() {
     std::lock_guard<std::mutex> lock(mutex_);
     requests_.clear();
-  }
-
-  /**
-   * @brief How many connections are open now.
-   * @return The count.
-   */
-  std::size_t open_connections() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return open_sockets_.size();
   }
 
 private:
@@ -431,7 +422,6 @@ private:
         if (ec) {
           break;
         }
-        const Answering answering(*this);
         const auto reply = answer(request, ++position);
         if (!reply) {
           break;
@@ -458,34 +448,6 @@ private:
       forget(fd);
     }
   }
-
-  /** @brief Counts a request from when it was read until its reply was written or abandoned. */
-  class Answering {
-  public:
-    /**
-     * @brief Counts it.
-     * @param server The server.
-     */
-    explicit Answering(LocalHttpsServer& server) : server_(server) {
-      std::lock_guard<std::mutex> lock(server_.mutex_);
-      ++server_.answering_;
-    }
-
-    Answering(const Answering&) = delete;
-    Answering& operator=(const Answering&) = delete;
-
-    /** @brief Stops counting it. */
-    ~Answering() {
-      {
-        std::lock_guard<std::mutex> lock(server_.mutex_);
-        --server_.answering_;
-      }
-      server_.changed_.notify_all();
-    }
-
-  private:
-    LocalHttpsServer& server_;
-  };
 
   /**
    * @brief Whether the server is stopping.
@@ -555,8 +517,11 @@ private:
    * @param fd Its descriptor.
    */
   void forget(int fd) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    open_sockets_.erase(fd);
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      open_sockets_.erase(fd);
+    }
+    changed_.notify_all();
   }
 
   net::io_context ioc_;
@@ -566,7 +531,6 @@ private:
   mutable std::mutex mutex_;
   std::condition_variable changed_;
   bool stopped_{false};
-  std::size_t answering_{0};
   std::set<int> open_sockets_;
   std::map<std::string, Script> scripts_;
   std::optional<Hold> hold_;

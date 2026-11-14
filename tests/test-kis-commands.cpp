@@ -28,7 +28,6 @@
 #include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -965,8 +964,8 @@ const std::string TOKEN_REFUSED =
 
 /**
  * @brief Kills a command with SIGKILL while it waits for a held reply, reaps it, lets the reply go (into a closed
- *   connection), and waits until the server has answered every request it read, so that the next command never runs
- *   beside a script still answering.
+ *   connection), and waits until the server has closed every connection, so that the next command never runs beside a
+ *   script still answering.
  * @param child The command.
  * @param server The server holding the reply.
  * @param before_release Runs after the kill and before the release, when set.
@@ -977,7 +976,7 @@ void kill_held(Child& child, support::LocalHttpsServer& server, const std::funct
     before_release();
   }
   server.release();
-  CHECK(server.wait_answered(std::chrono::seconds(10)));
+  CHECK(server.wait_closed(std::chrono::seconds(10)));
 }
 
 /**
@@ -1792,15 +1791,8 @@ TEST_CASE("D5 killed commands leave no child process and no connection behind") 
     const auto id = world.plan_id("1");
     kill_at(world, world.trading(), ORDER, 1, {"order", "place", id});
     CHECK(support::no_children());
-    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (
-      (world.trading().open_connections() > 0 || world.market().open_connections() > 0) &&
-      std::chrono::steady_clock::now() < until
-    ) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    CHECK(world.trading().open_connections() == 0);
-    CHECK(world.market().open_connections() == 0);
+    CHECK(world.trading().wait_closed(std::chrono::seconds(5)));
+    CHECK(world.market().wait_closed(std::chrono::seconds(5)));
   }
   CHECK(support::no_children());
   CHECK(support::open_fds() == before);
