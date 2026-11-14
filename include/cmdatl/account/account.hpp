@@ -306,12 +306,12 @@ inline Reply lock_lost_reply() {
 // Every desk has:
 //   - `broker_name`: static; the broker, as its messages name it (the mock's also has `env_name`, every reply's `env`).
 //   - `Session`, `session()`: the trading session, the placement boundary (`GuardedSession`) over a session with the
-//     calls of the library's `BlockingSession`: holdings, buying power, the working-order listing, reference data,
+//     calls of the library's `BlockingSession`: holdings, buying power, the working-order listing, the order history,
 //     placements and cancellations. Every placement and cancellation through it passes the final checks of the
 //     operator's file (the armed file for a placement, the lock for both) before it can reach the broker; on a
 //     broker's desk it is the only session with `place` or `cancel` the desk lends.
-//   - `MarketSession`, `market_session()`: the session quotes, price bands and the calendar (so the phase) are read
-//     from, each as its own capabilities allow; on a broker's desk a read-only view (`MarketView`), since on a real
+//   - `MarketSession`, `market_session()`: the session quotes, price bands, reference data and the calendar (so the
+//     phase) are read from, each as its own capabilities allow; on a broker's desk a read-only view (`MarketView`), since on a real
 //     account the market session is the trading session.
 //   - `now()`: the instant a reply's figures are as of, and the phase a read shows.
 //   - `live_now()`: the clock that dates the runner's decisions, the journal's lines, and a plan's issue and expiry;

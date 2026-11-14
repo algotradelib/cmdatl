@@ -394,17 +394,10 @@ std::vector<std::string> words(const boost::json::value& value) {
 
 } // namespace
 
-TEST_CASE("on a KIS account order place and order cancel and the clock commands are refused before any login is read") {
+TEST_CASE("on a KIS account the clock commands are refused before any login is read") {
   const KisFixture fixture;
   StandIn setup;
-  for (
-    const auto& args : std::vector<std::vector<std::string>>{
-      {"order", "place", "p9cc4b94da4"},
-      {"order", "cancel", "005930"},
-      {"clock"},
-      {"clock", "advance", "--minutes", "1"},
-    }
-  ) {
+  for (const auto& args : std::vector<std::vector<std::string>>{{"clock"}, {"clock", "advance", "--minutes", "1"}}) {
     INFO(cmdatl::join(args));
     const auto ran = run_on(setup, args);
     CHECK(ran.exit_ == 1);
@@ -909,7 +902,7 @@ TEST_CASE("the owed rows' next on a broker's account") {
   CHECK(cmdatl::owed_next("005930", "operator", std::nullopt, false).find("order release 005930") != std::string::npos);
 }
 
-TEST_CASE("the table cannot mark a command that sends as working on a broker's account") {
+TEST_CASE("on a broker's account the table lets only order place and order cancel send and never the clock") {
   const auto problems_with = [](const std::string& name, const std::function<void(cmdatl::Command&)>& change) {
     auto list = cmdatl::command_list();
     for (auto& command : list) {
@@ -926,25 +919,58 @@ TEST_CASE("the table cannot mark a command that sends as working on a broker's a
     }
     return named;
   };
-  const auto none = [](cmdatl::Command&) {};
-  CHECK(cmdatl::check_table(cmdatl::Table(cmdatl::command_list())).empty());
-  CHECK(problems_with("order place", none).empty());
-  for (const auto* name : {"order place", "order cancel"}) {
+  const cmdatl::Table shipped(cmdatl::command_list());
+  CHECK(cmdatl::check_table(shipped).empty());
+  // The shipped broker set, by name: a tenth command on a broker's account is an edit here too.
+  std::vector<std::string> on_broker;
+  std::vector<std::string> sending;
+  for (const auto& command : shipped.commands()) {
+    if (command.broker_) {
+      on_broker.push_back(cmdatl::join(command.path_));
+      if (command.may_send_) {
+        sending.push_back(cmdatl::join(command.path_));
+      }
+    }
+  }
+  std::sort(on_broker.begin(), on_broker.end());
+  CHECK(
+    on_broker ==
+    std::vector<std::string>{
+      "account", "order cancel", "order list", "order place", "order plan", "order reconcile", "order release", "quote",
+      "status"
+    }
+  );
+  CHECK(sending == std::vector<std::string>{"order place", "order cancel"});
+  // The mock clock's two never answer on a broker's account.
+  for (const auto* name : {"clock", "clock advance"}) {
     INFO(name);
     CHECK(problems_with(name, [](cmdatl::Command& command) {
       command.broker_ = true;
     }).size() == 1);
-    // A kind that sends without the mark would run on a broker's account unchecked.
+  }
+  // A command that is not an account command never answers there, sending or not.
+  for (const auto* name : {"run", "env"}) {
+    INFO(name);
+    CHECK(!problems_with(name, [](cmdatl::Command& command) {
+      command.broker_ = true;
+    }).empty());
+  }
+  // Every other rule stays: a kind that sends is marked sends(), and only those kinds are.
+  for (const auto* name : {"order place", "order cancel"}) {
+    INFO(name);
     CHECK(problems_with(name, [](cmdatl::Command& command) {
       command.may_send_ = false;
     }).size() == 1);
   }
+  for (const auto* name : {"order plan", "order reconcile"}) {
+    INFO(name);
+    CHECK(problems_with(name, [](cmdatl::Command& command) {
+      command.may_send_ = true;
+    }).size() == 2);
+  }
   CHECK(problems_with("order release", [](cmdatl::Command& command) {
     command.mutates_ = false;
   }).size() == 1);
-  CHECK(problems_with("order plan", [](cmdatl::Command& command) {
-    command.may_send_ = true;
-  }).size() >= 1);
 }
 
 TEST_CASE("order plan on a broker's account plans on its sessions and starts its journal and sends nothing") {

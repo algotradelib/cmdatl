@@ -549,7 +549,8 @@ OnceResult once(
   if (bound.obligation_state(request.instrument_) == atl::runner::ObligationState::OPERATOR) {
     return unaccounted();
   }
-  auto reference = session.instrument(request.instrument_);
+  // Reference data is market data: a KIS demo account's trading host does not answer it.
+  auto reference = desk.market_session().instrument(request.instrument_);
   if (!reference) {
     if (once_detail::owes_unknown(bound, request.instrument_)) {
       return unaccounted();

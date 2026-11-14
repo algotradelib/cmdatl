@@ -1,9 +1,10 @@
 #pragma once
 
 // An account command on a broker's account, written once over a setup that reads the logins and owns the sessions
-// (`kis.hpp` for KIS; the tests' stand-in): only the commands the table marks `on_broker()` answer (the reads,
-// `order plan`, `order reconcile` and `order release`, none of which sends), through the account's desk over those
-// sessions; every other account command is refused before any login is opened.
+// (`kis.hpp` for KIS; the tests' stand-in): only the commands the table marks `on_broker()` answer (the reads and the
+// order commands, of which only `order place` and `order cancel` send, through the placement boundary), through the
+// account's desk over those sessions; every other account command (the mock clock's) is refused before any login is
+// opened.
 //
 // A setup has:
 // - `std::optional<Reply> identify(const OperatorConfig& config, OperatorConfig& effective)`: reads the logins, checks

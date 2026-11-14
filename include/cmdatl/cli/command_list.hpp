@@ -237,8 +237,13 @@ inline std::vector<Command> command_list() {
     .exits(ORDER_EXITS));
   add(make_command({"order", "place"}, "Trade", "send that plan, if nothing moved since")
     .example("cmdatl order place p9cc4b94da4")
+    .describe(
+      "Sends the plan order plan gave, once, if the account has not moved since and the plan has not lapsed,\n"
+      "with the armed file present and the market in a permitted phase. On the mock account the order goes to the\n"
+      "mock market; on a KIS account it goes to KIS, to the demo or the real account the operator's file names."
+    )
     .arg("PLAN_ID", "a plan id from order plan")
-    .returns("now", "the account's time after the command's simulated second, KST with its offset")
+    .returns("now", "the account's time, KST with its offset; on the mock account after the command's simulated second")
     .returns("plan_id", "the plan")
     .returns("symbol", "the instrument")
     .returns("target", "the position asked for")
@@ -250,25 +255,35 @@ inline std::vector<Command> command_list() {
     .returns("withdrawals", "the order ids a withdrawal was sent for")
     .returns("next", "the command to run next")
     .returns("owed", "orders the journal still waits on, for this symbol")
-    .returns("events", "what the market did in the command's simulated second")
+    .returns("events", "what the mock market did in the command's simulated second; null on a broker's account")
     .returns("result", "done, refused or unknown")
     .sends()
+    .on_broker()
     .on_account(AccountKind::PLACE, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "cancel"}, "Trade", "withdraw working orders on SYMBOL (never places)")
     .example("cmdatl order cancel 005930")
+    .describe(
+      "Withdraws the working orders on SYMBOL; needs no armed file and works in any phase. It withdraws only\n"
+      "orders this account placed: on a KIS account, an order its journal placed and KIS acknowledged today with\n"
+      "the same instrument, side, quantity and price; any other order is the operator's to withdraw in KIS's app."
+    )
     .arg("SYMBOL", "an instrument")
-    .returns("now", "the account's time, one simulated second on unless at the data's end, KST with its offset")
+    .returns(
+      "now",
+      "the account's time, KST with its offset; on the mock account one simulated second on unless at the data's end"
+    )
     .returns("symbol", "the instrument")
     .returns("phase", "the market phase")
     .returns("reason", "withdrawal_sent or nothing_working; on a refusal or unknown, the reason")
     .returns("detail", "what happened")
     .returns("withdrawals", "the order ids a withdrawal was sent for (sent, not confirmed)")
     .returns("owed", "orders the journal still waits on, for this symbol")
-    .returns("events", "what the market did in the command's simulated second")
+    .returns("events", "what the mock market did in the command's simulated second; null on a broker's account")
     .returns("result", "done, refused or unknown")
     .error("quote.no_data")
     .sends()
+    .on_broker()
     .on_account(AccountKind::CANCEL, check_order_args)
     .exits(ORDER_EXITS));
   add(make_command({"order", "reconcile"}, "Trade", "record fills from holdings (never places)")

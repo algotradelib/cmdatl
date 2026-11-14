@@ -14,7 +14,7 @@
 namespace cmdatl {
 
 /** @brief The version of `cmdatl schema`'s format; raised when a command is renamed or a field changes meaning. */
-inline constexpr int SCHEMA_VERSION = 17;
+inline constexpr int SCHEMA_VERSION = 18;
 
 /** @brief Where the documentation and the issue tracker are. */
 inline constexpr const char* HOME_PAGE = "https://github.com/algotradelib/cmdatl";
@@ -471,9 +471,18 @@ inline std::vector<std::string> check_table(const Table& table) {
     if (runs_on_account && (kind == AccountKind::RELEASE || kind == AccountKind::ADVANCE) != command.mutates_) {
       problems.push_back(name + ": an account command that changes the journal or the clock is not marked mutates()");
     }
-    // Nothing sends on a broker's account in this version.
-    if (command.broker_ && (!runs_on_account || command.may_send_)) {
-      problems.push_back(name + ": answers on a broker's account but is not an account command, or may send");
+    // On a broker's account only an account command answers; of those only `order place` and `order cancel` send,
+    // and the mock clock's two never answer there.
+    if (
+      command.broker_ &&
+      (!runs_on_account || (command.may_send_ && kind != AccountKind::PLACE && kind != AccountKind::CANCEL) ||
+        kind == AccountKind::CLOCK || kind == AccountKind::ADVANCE)
+    ) {
+      problems.push_back(
+        name +
+        ": answers on a broker's account but is not an account command, sends as neither place nor cancel, or "
+        "moves the mock clock"
+      );
     }
     if (
       command.mutates_ && std::find(command.exits_.begin(), command.exits_.end(), Exit::UNKNOWN) == command.exits_.end()

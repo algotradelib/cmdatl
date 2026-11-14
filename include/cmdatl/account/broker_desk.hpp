@@ -30,8 +30,8 @@ struct Stopped : std::runtime_error {
 };
 
 /**
- * @brief A market-data session as a desk lends it: quotes, price bands, bars and the calendar, and nothing that places,
- *   cancels, amends or hands out the session.
+ * @brief A market-data session as a desk lends it: quotes, price bands, reference data, bars and the calendar, and
+ *   nothing that places, cancels, amends or hands out the session.
  * @tparam Market The session, borrowed.
  */
 template <typename Market>
@@ -54,6 +54,10 @@ public:
   /** @brief Forwarded. @param instrument The instrument. @return The answer. */
   auto quote(atl::InstrumentId instrument) {
     return market_.quote(std::move(instrument));
+  }
+  /** @brief Forwarded: the instrument's reference data. @param subject The instrument. @return The answer. */
+  auto instrument(atl::InstrumentId subject) {
+    return market_.instrument(std::move(subject));
   }
   /** @brief Forwarded. @param instrument The instrument. @return The answer. */
   auto price_limits(atl::InstrumentId instrument) {
@@ -79,7 +83,8 @@ private:
  * calendar, and the figures read after it are later by the seconds the reads take.
  * The calendar gives days, not hours or halts: the phase is the library's KRX window on them.
  * @tparam Trading The account's session.
- * @tparam Market The session market data and the calendar are read from (the trading one, or one that cannot trade).
+ * @tparam Market The session market data, reference data and the calendar are read from (the trading one, or one that
+ *   cannot trade).
  */
 template <typename Trading, typename Market>
 class BrokerDesk {
