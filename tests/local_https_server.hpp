@@ -493,7 +493,7 @@ private:
   }
 
   /**
-   * @brief Records a request, waits out a hold on it, and makes its reply.
+   * @brief Records a request, waits out a hold on it, and makes its reply with the path's script as it then stands.
    * @param request The request.
    * @param connection Its connection.
    * @param position Where it stood on the connection.
@@ -521,7 +521,6 @@ private:
       std::unique_lock<std::mutex> lock(mutex_);
       requests_.push_back(recorded);
       if (const auto found = scripts_.find(recorded.path_); found != scripts_.end()) {
-        responder = found->second.responder_;
         occurrence = ++found->second.answered_;
       }
       if (
@@ -536,6 +535,10 @@ private:
         if (stopped_) {
           return std::nullopt;
         }
+      }
+      // The script as it stands when the reply is made: a test may change it while the request is held.
+      if (const auto found = scripts_.find(recorded.path_); found != scripts_.end()) {
+        responder = found->second.responder_;
       }
     }
     if (!responder) {

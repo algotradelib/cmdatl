@@ -23,10 +23,12 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -168,7 +170,8 @@ public:
   }
 
   /**
-   * @brief One daily-inquiry row.
+   * @brief One daily-inquiry row, with the exchange field the workbook spells `excg_id_dvsn_Cd` (required, KRX on
+   *   demo).
    * @param order The order.
    * @return The row.
    */
@@ -179,7 +182,7 @@ public:
       R"(","ord_unpr":")" + std::to_string(order.price_) + R"(","ord_tmd":")" + order.time_ + R"(","tot_ccld_qty":")" +
       std::to_string(order.filled_) + R"(","tot_ccld_amt":")" + std::to_string(order.filled_ * order.price_) +
       R"(","avg_prvs":")" + std::to_string(order.filled_ > 0 ? order.price_ : 0) + R"(","cncl_yn":"N","rmn_qty":")" +
-      std::to_string(order.remaining()) + R"(","rjct_qty":"0"})";
+      std::to_string(order.remaining()) + R"(","rjct_qty":"0","excg_dvsn_cd":"02","excg_id_dvsn_Cd":"KRX"})";
   }
 
   /**
@@ -364,9 +367,10 @@ public:
     posix_spawn_file_actions_adddup2(&actions, err[1], STDERR_FILENO);
     short flags = POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK;
 #if defined(__APPLE__)
-    // Only what the file actions name is inherited: none of the servers' sockets reaches the child.
+    // Only what the file actions name is inherited: none of the servers' sockets reaches the child (on glibc
+    // before 2.34, which has no way to say so, the sockets asio opens without close-on-exec are inherited).
     flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
-#elif defined(__GLIBC__)
+#elif defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 34))
     posix_spawn_file_actions_addclosefrom_np(&actions, 3);
 #endif
     sigset_t defaults;
@@ -1572,4 +1576,271 @@ TEST_CASE("B7 a login that is not the operator file's account is refused before 
       ));
     }
   }
+}
+
+TEST_CASE("D1 a kill after the plan is marked used and before the pending line leaves nothing owed") {
+  on_both([](bool demo) {
+    KisWorld world(demo);
+    world.arm();
+    const auto id = world.plan_id("1");
+    // Held: once()'s first read after the plan book was saved, the instrument's reference data.
+    kill_at(world, world.market(), REFERENCE, 1, {"order", "place", id});
+    CHECK(world.plans().at("plans").as_object().at(id).as_object().at("used") == json::value(true));
+    CHECK(world.outcomes().empty());
+    const auto reconcile = world.run({"order", "reconcile"});
+    INFO(reconcile.out_);
+    CHECK(reconcile.exit_ == 0);
+    CHECK(reconcile.text("reason") == "clean");
+    CHECK(owed_of(reconcile).empty());
+    const auto again = world.run({"order", "place", id});
+    INFO(again.out_);
+    CHECK(again.exit_ == 3);
+    CHECK(again.code() == "refused.plan_used");
+    CHECK(world.count(ORDER) == 0);
+    CHECK(world.outcomes().empty());
+  });
+}
+
+TEST_CASE("D2 a pending placement killed before its request or with it unanswered reads the same afterwards") {
+  SECTION("killed at the boundary's quote: unresolved in the window and unnamed after it") {
+    KisWorld world(true);
+    world.arm();
+    const auto id = world.plan_id("1");
+    kill_at(world, world.market(), PRICE, 3, {"order", "place", id});
+    CHECK(world.outcomes() == std::vector<std::string>{"place pending"});
+    CHECK(world.count(ORDER) == 0);
+    const auto open = world.run({"order", "reconcile"});
+    INFO(open.out_);
+    CHECK(open.exit_ == 4);
+    CHECK(open.code() == "unknown.unresolved");
+    world.advance(std::chrono::minutes(5));
+    const auto closed = world.run({"order", "reconcile"});
+    INFO(closed.out_);
+    CHECK(closed.exit_ == 4);
+    CHECK(closed.code() == "unknown.unaccounted");
+    CHECK(owed_of(closed) == std::vector<std::string>{"unnamed unnamed"});
+    // A later dated match still names it.
+    BrokerOrder late;
+    late.odno_ = "0000030001";
+    late.date_ = compact_kst_date(world.day());
+    late.time_ = compact_kst_time(world.day() + std::chrono::seconds(4));
+    world.broker().add(late);
+    const auto named = world.run({"order", "reconcile"});
+    INFO(named.out_);
+    CHECK(owed_of(named) == std::vector<std::string>{"named 0000030001"});
+    CHECK(world.count(ORDER) == 0);
+  }
+  on_both([](bool demo) {
+    SECTION("killed with the order request received and unanswered") {
+      KisWorld world(demo);
+      world.arm();
+      const auto id = world.plan_id("1");
+      kill_at(world, world.trading(), ORDER, 1, {"order", "place", id});
+      // The reply went into a closed connection: the stand-in broker took the order.
+      CHECK(world.outcomes() == std::vector<std::string>{"place pending"});
+      REQUIRE(world.count(ORDER) == 1);
+      CHECK(support::no_children());
+      const auto named = world.run({"order", "reconcile"});
+      INFO(named.out_);
+      CHECK(owed_of(named) == std::vector<std::string>{"named 0000010001"});
+      // Named by the sweep and resting: not settled, and not cmdatl's to withdraw on either path.
+      cancel_refused(world);
+      const auto plan = world.run({"order", "plan", "005930", "--target", "2", "--limit", "70000"});
+      INFO(plan.out_);
+      CHECK(plan.exit_ == 3);
+      CHECK(plan.code() == "refused.unjournaled_order");
+      world.broker().fill("0000010001", 1);
+      const auto settled = world.run({"order", "reconcile"});
+      INFO(settled.out_);
+      CHECK(settled.exit_ == 0);
+      CHECK(settled.text("reason") == "clean");
+      CHECK(world.outcomes().back() == "place confirmed");
+      CHECK(world.count(ORDER) == 1);
+      CHECK(world.count(AMEND) == 0);
+    }
+  });
+  SECTION("two orders that each match are ambiguous") {
+    KisWorld world(true);
+    world.arm();
+    const auto id = world.plan_id("1");
+    kill_at(world, world.trading(), ORDER, 1, {"order", "place", id});
+    BrokerOrder twin;
+    twin.odno_ = "0000020001";
+    twin.date_ = compact_kst_date(world.day());
+    twin.time_ = compact_kst_time(world.day() + std::chrono::seconds(4));
+    world.broker().add(twin);
+    // Inside the window two candidates leave the instruction open: unresolved, and nothing is named.
+    const auto reconcile = world.run({"order", "reconcile"});
+    INFO(reconcile.out_);
+    CHECK(reconcile.exit_ == 4);
+    CHECK(reconcile.code() == "unknown.unresolved");
+    CHECK(owed_of(reconcile) == std::vector<std::string>{"unnamed unnamed"});
+    CHECK(world.outcomes() == std::vector<std::string>{"place pending"});
+    CHECK(world.count(ORDER) == 1);
+  }
+}
+
+TEST_CASE("D3 an acknowledged placement killed before its listing is a named row of this account") {
+  on_both([](bool demo) {
+    const auto kill_after_answer = [demo](KisWorld& world) {
+      const auto id = world.plan_id("1");
+      // Held: the first read after the answer, the reply's own listing.
+      kill_at(world, world.trading(), demo ? DAILY : AMENDABLE, 3, {"order", "place", id}, demo ? "CCLD_DVSN=02" : "");
+      CHECK(world.outcomes() == std::vector<std::string>{"place pending", "place accepted"});
+    };
+    SECTION("missing from the list: awaiting then unconfirmed until holdings settle it") {
+      KisWorld world(demo);
+      world.arm();
+      kill_after_answer(world);
+      world.broker().change("0000010001", [](BrokerOrder& order) {
+        order.unlisted_ = true;
+      });
+      const auto waiting = world.run({"order", "plan", "005930", "--target", "1", "--limit", "70000"});
+      INFO(waiting.out_);
+      CHECK(waiting.exit_ == 3);
+      CHECK(waiting.code() == "refused.awaiting_confirmation");
+      world.advance(std::chrono::minutes(11));
+      const auto late = world.run({"order", "plan", "005930", "--target", "1", "--limit", "70000"});
+      INFO(late.out_);
+      CHECK(late.exit_ == 4);
+      CHECK(late.code() == "unknown.unconfirmed");
+      world.broker().fill("0000010001", 1);
+      const auto settled = world.run({"order", "reconcile"});
+      INFO(settled.out_);
+      CHECK(settled.exit_ == 0);
+      CHECK(world.outcomes().back() == "place confirmed");
+      CHECK(world.count(ORDER) == 1);
+    }
+    SECTION("still listed: owed and this account's to cancel") {
+      KisWorld world(demo);
+      world.arm();
+      kill_after_answer(world);
+      const auto owed = world.run({"order", "reconcile"});
+      INFO(owed.out_);
+      CHECK(owed_of(owed) == std::vector<std::string>{"named 0000010001"});
+      const auto cancel = world.run({"order", "cancel", "005930"});
+      INFO(cancel.out_);
+      CHECK(cancel.exit_ == 0);
+      CHECK(cancel.text("reason") == "withdrawal_sent");
+      CHECK(world.count(AMEND) == 1);
+    }
+  });
+}
+
+TEST_CASE("D4 a pending cancellation names its order and leaves the placement owed until accounted for") {
+  const std::string no_effect =
+    R"({"rt_cd":"0","msg_cd":"APBK0013","msg1":"주문 전송 완료 되었습니다.","output":{"KRX_FWDG_ORD_ORGNO":"06010",)"
+    R"("ODNO":"0000099999","ORD_TMD":"100010"}})";
+  on_both([&no_effect](bool demo) {
+    SECTION("killed at the cancel request: no fill and still listed") {
+      KisWorld world(demo);
+      world.arm();
+      const auto order_id = world.placed("10");
+      // The broker never acts on the held cancel: its reply goes into a closed connection and the order rests.
+      kill_at(world, world.trading(), AMEND, 1, {"order", "cancel", "005930"}, "", [&world, &no_effect] {
+        world.trading().script(AMEND, 200, no_effect);
+      });
+      CHECK(world.outcomes() == std::vector<std::string>{"place pending", "place accepted", "cancel pending"});
+      const auto reconcile = world.run({"order", "reconcile"});
+      INFO(reconcile.out_);
+      // The cancellation is matched by its order's number, still listed; the placement stays owed and no row is
+      // added for it.
+      CHECK(reconcile.exit_ == 3);
+      CHECK(reconcile.code() == "refused.awaiting");
+      CHECK(owed_of(reconcile) == std::vector<std::string>{"named " + order_id});
+      const auto lines = world.outcomes();
+      CHECK(std::count(lines.begin(), lines.end(), std::string("place pending")) == 1);
+      world.trading().respond(AMEND, [&world](const Recorded& request, std::size_t) {
+        return world.broker().cancel(request);
+      });
+      const auto cancel = world.run({"order", "cancel", "005930"});
+      INFO(cancel.out_);
+      CHECK(cancel.exit_ == 0);
+      CHECK(cancel.text("reason") == "withdrawal_sent");
+      const auto settled = world.run({"order", "reconcile"});
+      INFO(settled.out_);
+      CHECK(world.outcomes().back() == "place confirmed");
+    }
+    SECTION("killed at the cancel request: partly filled and gone from the list") {
+      KisWorld world(demo);
+      world.arm();
+      const auto order_id = world.placed("10");
+      world.broker().fill(order_id, 4);
+      // The broker takes the held cancel: the order ends with 4 filled and leaves the list.
+      kill_at(world, world.trading(), AMEND, 1, {"order", "cancel", "005930"});
+      CHECK(world.outcomes().back() == "cancel pending");
+      // An absent number is no answer inside the matching window: the cancellation stays open.
+      const auto open = world.run({"order", "reconcile"});
+      INFO(open.out_);
+      CHECK(open.exit_ == 4);
+      CHECK(open.code() == "unknown.unresolved");
+      CHECK(owed_of(open) == std::vector<std::string>{"named " + order_id});
+      world.advance(std::chrono::minutes(5));
+      const auto reconcile = world.run({"order", "reconcile"});
+      INFO(reconcile.out_);
+      CHECK(reconcile.exit_ == 0);
+      CHECK(owed_of(reconcile).empty());
+      CHECK(world.outcomes().back() == "place confirmed");
+      CHECK(world.count(AMEND) == 1);
+    }
+  });
+  SECTION("killed at a token request between the pending line and the cancel request") {
+    KisWorld world(true);
+    world.arm();
+    const auto order_id = world.placed("10");
+    std::filesystem::remove_all(world.dir() / "cache" / "cmdatl" / "tokens");
+    world.trading().script_sequence(
+      TOKEN,
+      {Scripted{200, R"({"access_token":"short-token","token_type":"Bearer","expires_in":303})", {}},
+        Scripted{200, TOKEN_REPLY, {}}}
+    );
+    world.clear();
+    // Held at the market session's quote, after the trading session's reads, until the token is no longer valid;
+    // then held again at the token request the cancellation makes after its pending line.
+    world.market().hold(PRICE, 2);
+    auto child = world.start({"order", "cancel", "005930"});
+    REQUIRE(world.market().wait_held(std::chrono::seconds(20)));
+    const auto issued = world.trading().requests(TOKEN);
+    REQUIRE(issued.size() == 1);
+    const auto until = issued.front().at_ + std::chrono::milliseconds(3500);
+    while (std::chrono::steady_clock::now() < until) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    world.trading().hold(TOKEN, 1);
+    world.market().release();
+    const bool held = world.trading().wait_held(std::chrono::seconds(20));
+    child->kill();
+    world.trading().release();
+    REQUIRE(held);
+    CHECK(world.outcomes().back() == "cancel pending");
+    CHECK(world.count(AMEND) == 0);
+    const auto reconcile = world.run({"order", "reconcile"});
+    INFO(reconcile.out_);
+    CHECK(reconcile.exit_ == 3);
+    CHECK(reconcile.code() == "refused.awaiting");
+    CHECK(owed_of(reconcile) == std::vector<std::string>{"named " + order_id});
+    CHECK(world.count(AMEND) == 0);
+  }
+}
+
+TEST_CASE("D5 killed commands leave no child process and no connection behind") {
+  const auto before = support::open_fds();
+  {
+    KisWorld world(true);
+    world.arm();
+    const auto id = world.plan_id("1");
+    kill_at(world, world.trading(), ORDER, 1, {"order", "place", id});
+    CHECK(support::no_children());
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (
+      (world.trading().open_connections() > 0 || world.market().open_connections() > 0) &&
+      std::chrono::steady_clock::now() < until
+    ) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    CHECK(world.trading().open_connections() == 0);
+    CHECK(world.market().open_connections() == 0);
+  }
+  CHECK(support::no_children());
+  CHECK(support::open_fds() == before);
 }
