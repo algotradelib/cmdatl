@@ -1,6 +1,8 @@
 // The guides and skills: `cmdatl guide`, the skills' files and the plugin's manifests, the words they share with the
-// help and the docs, and the agent guide's session run as written on a mock account.
+// help and the docs, the agent guide's session run as written on a mock account, and its KIS procedure on the stand-in
+// for a broker's account.
 
+#include "./broker-support.hpp"
 #include "./order-support.hpp"
 
 #include <cmdatl/cmdatl>
@@ -10,6 +12,7 @@
 #include <boost/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -331,6 +334,9 @@ TEST_CASE("every next cmdatl gives leaves the operator's decisions with the oper
   texts.emplace_back("owed row: unnamed", cmdatl::owed_next("005930", "unnamed", std::nullopt));
   texts.emplace_back("owed row on a broker: listed", cmdatl::owed_next("005930", "named", "pending", false));
   texts.emplace_back("owed row on a broker: unlisted", cmdatl::owed_next("005930", "named", std::nullopt, false));
+  for (const auto* code : {"refused.phase", "refused.awaiting"}) {
+    texts.emplace_back(std::string(code) + " on a broker", cmdatl::broker_next(code));
+  }
   for (const auto* code : {"config.missing", "config.invalid", "unsupported.broker"}) {
     cmdatl::ConfigSnapshot snapshot;
     snapshot.error_.code_ = code;
@@ -580,3 +586,92 @@ TEST_CASE("the agent guide's order rules each on its own account") {
     CHECK(awaiting.code_ == "refused.awaiting");
   }
 }
+
+#if !defined(_WIN32)
+TEST_CASE("the agent guide's KIS procedure runs as written on a broker's account") {
+  const auto agent = skill("agent");
+  const auto at = agent.find("## Orders on a KIS account");
+  REQUIRE(at != std::string::npos);
+  const auto section = agent.substr(at, agent.find("\n## ", at + 1) - at);
+  // The procedure's command lines, in its numbered steps' order: a changed procedure changes this case too.
+  std::vector<std::string> steps;
+  const std::regex command("`(cmdatl [^`]*)`");
+  for (const auto& line : lines_of(section)) {
+    if (line.size() < 3 || std::isdigit(static_cast<unsigned char>(line[0])) == 0 || line.compare(1, 2, ". ") != 0) {
+      continue;
+    }
+    for (std::sregex_iterator it(line.begin(), line.end(), command), end; it != end; ++it) {
+      steps.push_back((*it)[1].str());
+    }
+  }
+  const std::vector<std::string> expected{
+    "cmdatl status", "cmdatl order plan SYMBOL --target N --limit P", "cmdatl order place PLAN_ID", "cmdatl account",
+    "cmdatl order reconcile SYMBOL"
+  };
+  REQUIRE(steps == expected);
+  // A KIS demo account on the stand-in: buy 1 of 005930 at 79500, which the 27th's bar fills.
+  const broker_support::KisFixture fixture;
+  fixture.paper_.arm();
+  broker_support::StandIn setup;
+  setup.market_->advance_to(kst("2024-03-26T10:00"));
+  std::string plan;
+  const auto step = [&setup, &plan](const std::string& line) {
+    auto words = *shell_words(line);
+    words.erase(words.begin());
+    const std::map<std::string, std::string> values{
+      {"SYMBOL", "005930"}, {"N", "1"}, {"P", "79500"}, {"PLAN_ID", plan}
+    };
+    for (auto& word : words) {
+      const auto found = values.find(word);
+      if (found != values.end()) {
+        word = found->second;
+      }
+    }
+    return broker_support::run_on(setup, words);
+  };
+  for (const auto& line : steps) {
+    const auto ran = step(line);
+    INFO(line << " -> " << ran.out_);
+    const auto body = reply_of(ran.out_);
+    CHECK(body.at("env").as_string() == "kis-demo");
+    if (line == "cmdatl status") {
+      CHECK(ran.exit_ == 0);
+      CHECK(body.at("owed").as_array().empty());
+    } else if (line.rfind("cmdatl order plan", 0) == 0) {
+      REQUIRE(ran.exit_ == 0);
+      plan = std::string(body.at("plan_id").as_string());
+      CHECK(body.at("next").as_string() == "cmdatl order place " + plan);
+    } else if (line.rfind("cmdatl order place", 0) == 0) {
+      CHECK(ran.exit_ == 0);
+      CHECK(body.at("reason").as_string() == "placed");
+    } else if (line == "cmdatl account") {
+      // Owed until holdings show it: resting, so the hint names the cancel this account may send.
+      CHECK(ran.exit_ == 0);
+      const auto& owed = body.at("owed").as_array();
+      REQUIRE(owed.size() == 1);
+      CHECK(owed[0].as_object().at("state").as_string() == "named");
+      CHECK(owed[0].as_object().at("next").as_string().find("cmdatl order cancel 005930") != std::string::npos);
+    } else {
+      CHECK(ran.exit_ == 3);
+      CHECK(code_of(ran.out_) == "refused.awaiting");
+      CHECK(body.at("error").as_object().at("next").as_string() == cmdatl::broker_next("refused.awaiting"));
+    }
+  }
+  // Step 3 again once the bar filled it: nothing owed, and nothing else was sent.
+  setup.market_->advance_to(kst("2024-03-27T15:30"));
+  setup.times_ = {kst("2024-03-27T15:30")};
+  const auto account = step("cmdatl account");
+  INFO(account.out_);
+  CHECK(account.exit_ == 0);
+  const auto filled = reply_of(account.out_);
+  const auto& positions = filled.at("positions").as_array();
+  REQUIRE(positions.size() == 1);
+  CHECK(positions[0].as_object().at("quantity").as_string() == "1");
+  const auto clean = step("cmdatl order reconcile SYMBOL");
+  INFO(clean.out_);
+  CHECK(clean.exit_ == 0);
+  CHECK(reply_of(clean.out_).at("owed").as_array().empty());
+  CHECK(setup.trading().places_ == 1);
+  CHECK(setup.trading().cancels_ == 0);
+}
+#endif
