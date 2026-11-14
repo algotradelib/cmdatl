@@ -27,7 +27,8 @@ namespace cmdatl {
  * @param state The library's state: `named`, `unnamed` or `operator`.
  * @param status What the market shows for its order (`pending`, `filled`, `canceled`), or nothing; a broker's account
  *   shows `pending` or nothing, its list holding open orders only.
- * @param simulated Whether the account is the mock's; on a broker's account `order cancel` does not reach it yet.
+ * @param simulated Whether the account is the mock's; on a broker's account the state alone cannot tell an order this
+ *   account placed and the broker acknowledged from one a recovery sweep named, so the hint says when a cancel works.
  * @return The hint.
  */
 inline std::string owed_next(
@@ -37,8 +38,10 @@ inline std::string owed_next(
     return "report to the operator, who settles it with cmdatl order release " + symbol + " and the approval file";
   }
   if (!simulated && status) {
-    return "still working at the broker: report to the operator, who cancels it in the broker's app (order cancel " +
-      std::string("does not reach this account in this version); then cmdatl order reconcile ") + symbol;
+    return "still working at the broker: cmdatl order cancel " + symbol +
+      " withdraws it only when this account placed it and the broker acknowledged it; refused.unjournaled_order hands "
+      "it to the operator, who cancels it in the broker's app; then cmdatl order reconcile " +
+      symbol;
   }
   if (!simulated && state == "named") {
     return "not in the broker's order list now: it may have filled, been canceled or not be listed yet; cmdatl " +

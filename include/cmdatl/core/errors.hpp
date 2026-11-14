@@ -88,8 +88,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"unsupported.capability", Exit::FAILED, false,
       "the broker folder's client does not state what a run needs; nothing was sent: trade it another way"},
     {"unsupported.broker", Exit::FAILED, false,
-      "order place, order cancel and the clock commands work on the mock account only; on a KIS account the reads, "
-      "order plan and order reconcile work (the operator can run order release), and cmdatl run trades it"},
+      "the clock commands work on the mock account only; on a KIS account the reads and the order commands work (order "
+      "release is the operator's), and cmdatl run trades it"},
     {"account.unreadable", Exit::FAILED, true,
       "the broker did not answer a holdings, buying-power or order-list read; nothing was sent: run the command again"},
     {"state.unavailable", Exit::FAILED, false,
@@ -145,7 +145,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
       "was placed (on a broker's account, in the broker's app)"},
     {"refused.guard", Exit::REFUSED, false, "a risk limit refused it: cmdatl env shows the limits"},
     {"refused.not_reached", Exit::REFUSED, true,
-      "refused before the request reached the mock market (the armed file, the lock, the collar, the phases, its state file): read the message"},
+      "refused before the request reached the market (the armed file, the lock, the collar, the phases, the mock's state file, a broker's token): read the message"},
     {"refused.withheld", Exit::REFUSED, true,
       "the runner withheld the plan (unknown or stale book, or a hold): cmdatl order reconcile SYMBOL, then plan again"},
     {"refused.journal_unwritable", Exit::REFUSED, false,

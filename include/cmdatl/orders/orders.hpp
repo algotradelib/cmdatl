@@ -451,6 +451,8 @@ inline Reply interrupted_before_send(json::object body) {
 /**
  * @brief The reply's last fields: the journal checked and its view read again (`owed`), and the lock checked.
  *
+ * On a broker's account a refusal whose catalog hint would move the mock clock takes the broker's hint
+ * (`broker_next`).
  * The result is known by then: a stop or a failed read while reading `owed` leaves it null and the result as it is.
  * A journal no longer the file the account opened or started, or no longer whole and this account's, leaves `owed` null
  * and turns a success into `unknown.journal_missing` or `unknown.journal_damaged` (exit 4) with the result's fields; a
@@ -463,6 +465,14 @@ inline Reply interrupted_before_send(json::object body) {
  */
 template <typename Desk>
 Reply finish(BasicAccount<Desk>& account, Reply reply, const std::optional<std::string>& symbol) {
+  if constexpr (!Desk::simulated) {
+    if (auto* error = reply.body_.if_contains("error")) {
+      const auto next = broker_next(std::string(error->as_object().at("code").as_string()));
+      if (!next.empty()) {
+        error->as_object()["next"] = next;
+      }
+    }
+  }
 #if !defined(_WIN32)
   if (!account.journal_absent()) {
     std::optional<Reply> broken;

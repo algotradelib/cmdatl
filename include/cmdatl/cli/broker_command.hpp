@@ -45,10 +45,9 @@ Reply broker_command_reply(
   if (!command.broker_) {
     return error_reply(
       Exit::FAILED, "unsupported.broker",
-      "this command works on the mock account only in this version; on a " + config.broker_ +
-        " account status, account, quote, order list, order plan, order reconcile and order release work, and "
-        "cmdatl run trades it",
-      "read the account with cmdatl status, or run a strategy with cmdatl run"
+      "cmdatl clock and cmdatl clock advance are the mock account's: a " + config.broker_ +
+        " account's time is the market's own, and no command moves it",
+      "cmdatl status"
     );
   }
   auto effective = config;

@@ -34,6 +34,22 @@ inline std::string catalog_next(const std::string& code) {
   return {};
 }
 
+/**
+ * @brief The `next` a code takes on a broker's account, whose time no command moves, where the catalog's would move the
+ *   mock clock.
+ * @param code The code.
+ * @return The text, or empty for every other code.
+ */
+inline std::string broker_next(const std::string& code) {
+  if (code == "refused.phase") {
+    return "cmdatl env shows limits.phases; the market's time moves by itself: cmdatl status shows the phase now";
+  }
+  if (code == "refused.awaiting") {
+    return "an order is owed or resting: cmdatl order list and cmdatl account show it; then cmdatl order reconcile again";
+  }
+  return {};
+}
+
 namespace orders_detail {
 
 namespace atl = algotradelib;

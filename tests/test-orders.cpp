@@ -511,6 +511,15 @@ TEST_CASE("map_report: every step reached and and its precedence") {
   );
   CHECK(mapped(binding, 0, true, 0).reason_ == "journal_unwritable");
   CHECK(mapped(binding, 0, true, 0).exit_ == OnceExit::REFUSED);
+  // On a broker's account the same outcomes name the broker, with the same reasons and exits.
+  for (const auto* report : {&placed, &broker, &binding}) {
+    const auto mock = sending::map_report(*report, report == &binding ? 0 : 1, report == &placed, 0, "", "");
+    const auto kis = sending::map_report(*report, report == &binding ? 0 : 1, report == &placed, 0, "", "", false);
+    CHECK(kis.reason_ == mock.reason_);
+    CHECK(kis.exit_ == mock.exit_);
+    CHECK(kis.detail_.find("mock") == std::string::npos);
+    CHECK(kis.detail_.find("the broker") != std::string::npos);
+  }
   Report guard;
   guard.refused_.emplace_back();
   CHECK(mapped(guard, 0, false, 0).reason_ == "guard");
