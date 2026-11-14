@@ -22,7 +22,6 @@ The mock account's clock moves by `cmdatl clock advance` and one simulated secon
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
 The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed` or `<stem>.release`, or the account's state directory.
-A missing armed file (`refused.not_armed`) is the operator's decision: quote it and ask.
 Broker logins are the operator's too: `cmdatl auth status` lists them, masked, and sends nothing; never run `cmdatl auth login` or `cmdatl auth logout`, and never ask for or handle a key or secret.
 
 ## Read first
@@ -39,6 +38,7 @@ Broker logins are the operator's too: `cmdatl auth status` lists them, masked, a
 3. Every order is a limit on the tick grid, inside the collar of `last_price` from the latest `cmdatl quote SYMBOL`.
    A fill is known only from `cmdatl account` (or a mock `filled` event), never from the price.
    To reprice: `cmdatl order cancel SYMBOL` (`withdrawal_sent`: sent, not confirmed), then plan once `cmdatl order list` shows it gone; once without asking, unless the task gives a price bound.
+   On KIS a missing row is not a fill or a cancel: plan once `order reconcile` shows nothing owed.
 4. Only `cmdatl order reconcile SYMBOL` settles an `owed` row, never reading it.
 5. Before you finish, read `cmdatl order list`; report every working order, and cancel only those the task no longer wants.
 
@@ -48,14 +48,13 @@ Mock market closed, with `not_accepted` naming nothing but `phase` or `market_cl
 
 ## Orders on a KIS account
 
-On `kis-demo` and `kis-real` alike; the symbol and target come from the task, never from a reply's hint.
+On demo and real alike; the symbol and target come from the task, never from a reply's hint.
 
-1. `cmdatl status`: nothing owed on the symbol.
+1. `cmdatl status`: nothing owed or resting on the symbol; else reconcile (step 3); ask if it stays.
 2. `cmdatl order plan SYMBOL --target N --limit P`, then `cmdatl order place PLAN_ID` once.
 3. `cmdatl account` and `cmdatl order reconcile SYMBOL`, until nothing is owed.
 
 - A result once given stands, also with `owed: null`.
-- A row missing from `cmdatl order list` is not a fill or a cancel.
 - Phase, calendar and plan life are checked before the request leaves; a token request, KIS's pace and the network come after, so an order can reach KIS after its phase or plan; a signal does not cut short a request in flight.
 - A read refused for KIS's rate (`EGW00201`) may run again after a second; report any other failed read; never retry an order command for pace.
 - One writer: no orders from another app, machine or state directory while anything is owed.
@@ -65,11 +64,11 @@ On `kis-demo` and `kis-real` alike; the symbol and target come from the task, ne
 0 ok, 1 failed and nothing sent, 2 usage, 3 refused (nothing was sent), 4 unknown (follow error.next before anything else), 5 strategy errors, 130 interrupted.
 
 On 3, retry only when the reason itself has passed; from `order place` or `order cancel` it says that call sent nothing, not that nothing is owed.
-Yours to correct: `refused.stale_plan`, `refused.plan_used` (plan again), `refused.collar`, `refused.off_tick` (a price nearer the last price, on the grid), `refused.phase`.
+Yours to correct: `refused.stale_plan`, `refused.plan_used` (plan again; after a place with no reply or a 4, once `order reconcile` shows the symbol clean), `refused.collar`, `refused.off_tick` (a price nearer the last price, on the grid), `refused.phase`.
 A cap the operator set is not yours to get past: `refused.symbol_not_allowed`, `refused.position_limit`, `refused.order_value`, `refused.daily_order_limit`, `refused.guard`, `refused.not_armed`; no smaller, split or other-symbol orders, no new run, and no clock advance to reach the same end.
 Stop, quote the refusal, and offer what the limits allow as a question.
 `refused.unjournaled_order`: an order the journal cannot claim rests there (one only a recovery named too: a named row is no proof this account placed it); stop and report.
-`refused.awaiting` or `refused.awaiting_confirmation`: something is still owed; place nothing until `order reconcile` shows the symbol clean, then plan again if the task stands (a used plan never sends; a refused `order cancel` may run again); after two reconciles (on mock, each after an advance), ask.
+`refused.awaiting` or `refused.awaiting_confirmation`: something is still owed; place nothing until `order reconcile` shows the symbol clean, then plan again if the task stands (a refused `order cancel` may run again); after two reconciles (on mock, each after an advance), ask.
 Any other 3: follow `error.next` when it names a cmdatl read, a new plan or the same command once; when it names a limit, the armed file or the operator, stop and ask.
 `error.retry: true` means the same call may succeed later unchanged, not that you should repeat it now.
 
@@ -88,7 +87,7 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 
 - Start a run only when the task asks for one, and never start again a run that a stop, the operator, a refusal or a limit ended, whatever its exit.
 - `cmdatl run TARGET [KEY=VALUE]...` runs in the foreground: JSON events, its reply last, and the run's exit as its own.
-  On a KIS account it first settles earlier runs' owed orders on its symbols (`owed_at_start`); other resting orders refuse it (`refused.orders_resting`, exit 3): the operator's to clear.
+  On a KIS account it first settles, as its own, what the journal owes on its symbols, order commands' too (`owed_at_start`); other resting orders refuse it (`refused.orders_resting`, exit 3): the operator's to clear.
   A run may sell every share of its symbols the account holds.
 - To stop it, send SIGINT or SIGTERM (Ctrl-C): it stops placing, cancels what rests, confirms and replies (exit 0, `stopped: signal`); never `kill -9` it.
 - `outcome: refused_orders`: a limit or the market refused some orders; report it.
@@ -96,7 +95,6 @@ Never run `cmdatl order release`, even when a reply names it: it is the operator
 - Exit 4: report the reply's `error`.
   On mock its market ended with it; no account changed.
   On a KIS account an order may have gone out (`owed_at_end`: what the journal owes): the operator reads it in KIS's app; start nothing there.
-- Removing the armed file stops every run: the operator's lever, not yours.
 
 ## A session
 
