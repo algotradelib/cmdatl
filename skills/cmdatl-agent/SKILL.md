@@ -21,7 +21,7 @@ On a KIS account (`kis-demo`, `kis-real`) orders reach KIS, with real money on `
 The mock account's clock moves by `cmdatl clock advance` and one simulated second per order command; a KIS account (`cmdatl env` shows `account.broker`) takes every account command but `clock`.
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
-The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed` or `<stem>.release`, or the account's state directory.
+The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed` or `<stem>.release`, or the account's state directory.
 Broker logins are the operator's too: `cmdatl auth status` lists them, masked, and sends nothing; never run `cmdatl auth login` or `cmdatl auth logout`, and never ask for or handle a key or secret.
 
 ## Read first

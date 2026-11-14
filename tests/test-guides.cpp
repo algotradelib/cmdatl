@@ -311,7 +311,7 @@ TEST_CASE("every next cmdatl gives leaves the operator's decisions with the oper
   // Words that ask the reader to act outside cmdatl's commands, or to start what the operator may have stopped.
   const std::vector<std::string> outside{
     "aside", "remov", "creat", "delete", "rename", "edit", "restore", "write", "smaller", "start another run",
-    "CMDATL_CONFIG", "XDG_STATE_HOME", " HOME", "order release"
+    "CMDATL_CONFIG", "XDG_STATE_HOME", "XDG_CACHE_HOME", " HOME", "order release"
   };
   // Phrases that hand such an act to the operator; a bare mention ("the operator's file") does not.
   const std::vector<std::string> handed{
