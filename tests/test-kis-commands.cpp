@@ -6,6 +6,11 @@
 // Time: the child's live clock starts at 10:00 KST on the day before this machine's date in Seoul, a day the scripted
 // calendar marks open, and moves with the steady clock. That day, not today, so the live clock always runs behind
 // the system clock the KIS client stamps its replies with (between 14 and 38 hours), whatever the hour the test runs.
+// Ahead of it, every holdings read would be stale to the runner, which measures freshness at the later of cmdatl's
+// instant and a quote's stamp; behind it, the runner's own timeouts see restored orders as hours old, which changes
+// none of the outcomes asserted here (each is decided by the listing's sweep or by once()'s checks on cmdatl's clock).
+// The demo list's date and the calendar's anchor are the client's own, from the system clock: the calendar covers
+// both days.
 
 #include "./local_https_server.hpp"
 #include "./support.hpp"
@@ -41,15 +46,25 @@ namespace {
 
 namespace json = boost::json;
 
+/** @brief The token request. */
 constexpr const char* TOKEN = "/oauth2/tokenP";
+/** @brief The holiday inquiry (the calendar). */
 constexpr const char* HOLIDAY = "/uapi/domestic-stock/v1/quotations/chk-holiday";
+/** @brief The current price: the quote and the price band. */
 constexpr const char* PRICE = "/uapi/domestic-stock/v1/quotations/inquire-price";
+/** @brief An instrument's reference data. */
 constexpr const char* REFERENCE = "/uapi/domestic-stock/v1/quotations/search-stock-info";
+/** @brief Holdings. */
 constexpr const char* BALANCE = "/uapi/domestic-stock/v1/trading/inquire-balance";
+/** @brief Buying power. */
 constexpr const char* POWER = "/uapi/domestic-stock/v1/trading/inquire-psbl-order";
+/** @brief A real account's working orders. */
 constexpr const char* AMENDABLE = "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl";
+/** @brief The daily inquiry: the dated history, and a demo account's working orders. */
 constexpr const char* DAILY = "/uapi/domestic-stock/v1/trading/inquire-daily-ccld";
+/** @brief A cash order. */
 constexpr const char* ORDER = "/uapi/domestic-stock/v1/trading/order-cash";
+/** @brief An amendment or cancellation. */
 constexpr const char* AMEND = "/uapi/domestic-stock/v1/trading/order-rvsecncl";
 
 /** @brief The demo account's login: account 12345678-01. */
@@ -129,6 +144,10 @@ struct BrokerOrder {
   }
 };
 
+/** @brief The end of a daily-inquiry reply, after its rows: the totals KIS sends beside them. */
+const std::string DAILY_TAIL =
+  R"(],"output2":{"tot_ord_qty":"0","tot_ccld_qty":"0","tot_ccld_amt":"0","prsm_tlex_smtl":"0","pchs_avg_pric":"0"}})";
+
 /** @brief A KIS reply's common part. */
 const std::string OK_HEAD = R"("rt_cd":"0","msg_cd":"MCA00000","msg1":"정상처리 되었습니다.")";
 
@@ -203,8 +222,7 @@ public:
       }
       rows += (rows.empty() ? "" : ",") + daily_row(order);
     }
-    return "{" + OK_HEAD + R"(,"ctx_area_fk100":"","ctx_area_nk100":"","output1":[)" + rows +
-      R"(],"output2":{"tot_ord_qty":"0","tot_ccld_qty":"0","tot_ccld_amt":"0","prsm_tlex_smtl":"0","pchs_avg_pric":"0"}})";
+    return "{" + OK_HEAD + R"(,"ctx_area_fk100":"","ctx_area_nk100":"","output1":[)" + rows + DAILY_TAIL;
   }
 
   /**
@@ -1280,7 +1298,7 @@ void two_history_pages(KisWorld& world, std::optional<Scripted> second_fails = s
       return Scripted{
         200,
         "{" + OK_HEAD + R"(,"ctx_area_fk100":"F1","ctx_area_nk100":"N1","output1":[)" + Broker::daily_row(decoy) +
-          R"(],"output2":{"tot_ord_qty":"0","tot_ccld_qty":"0","tot_ccld_amt":"0","prsm_tlex_smtl":"0","pchs_avg_pric":"0"}})",
+          DAILY_TAIL,
         {{"tr_cont", "M"}}
       };
     }
