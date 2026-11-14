@@ -88,8 +88,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"unsupported.capability", Exit::FAILED, false,
       "the broker folder's client does not state what a run needs; nothing was sent: trade it another way"},
     {"unsupported.broker", Exit::FAILED, false,
-      "the clock commands work on the mock account only; on a KIS account the reads and the order commands work (order "
-      "release is the operator's), and cmdatl run trades it"},
+      "the clock commands work on the mock account only; on a KIS account the reads and the order commands work (only "
+      "the operator can run order release), and cmdatl run trades it"},
     {"account.unreadable", Exit::FAILED, true,
       "the broker did not answer a holdings, buying-power or order-list read; nothing was sent: run the command again"},
     {"state.unavailable", Exit::FAILED, false,
