@@ -116,7 +116,7 @@ inline std::size_t set_count(const Grid& grid) {
   std::size_t sets = 1;
   for (const auto& entry : grid) {
     if (entry.second.size() > MAX_REPLAYS / sets) {
-      check_count(MAX_REPLAYS + 1);
+      throw std::invalid_argument("the grid makes more than " + std::to_string(MAX_REPLAYS) + " parameter sets");
     }
     sets *= entry.second.size();
   }
