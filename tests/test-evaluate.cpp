@@ -761,6 +761,15 @@ TEST_CASE("evaluate: a broken stdin stream prints the stop line naming its line 
     CHECK(lines.back().find(message) != std::string::npos);
     CHECK(ran.out_.find("\"summary\"") == std::string::npos);
   }
+  // A device macOS cannot poll is read all the same; a descriptor that is not open is a broken stream.
+  const int null = ::open("/dev/null", O_RDONLY);
+  const std::vector<std::string> args{
+    "bars.source=stdin", "bars.symbol=AAA", "instrument.x=AAA", "evaluate.method=grid"
+  };
+  CHECK(drive(args, null).out_.find("stdin:1: no header: standard input is empty") != std::string::npos);
+  ::close(null);
+  CHECK(drive(args, null).out_.find("stdin:1: standard input is not open") != std::string::npos);
+  CHECK(drive(args, -1).out_.find("stdin:1: standard input is not open") != std::string::npos);
   // The first path's line stands before the stop line.
   const auto first = on_stdin(std::get<0>(cases[0]), {"bars.path_column=path"});
   CHECK(lines_of(first.out_).at(0).rfind("{\"index\":0,", 0) == 0);

@@ -7,6 +7,7 @@
 #include <limits>
 
 #if !defined(_WIN32)
+#include <fcntl.h>
 #include <poll.h>
 #include <unistd.h>
 #endif
@@ -75,12 +76,16 @@ public:
       if (ended_) {
         return partial_.empty() ? std::nullopt : std::optional<std::string>(line());
       }
+      if (fd_ < 0) {
+        throw broken("standard input is not open");
+      }
       pollfd ready{fd_, POLLIN, 0};
       const int got = ::poll(&ready, 1, 100);
       if (got == 0 || (got < 0 && errno == EINTR)) {
         continue;
       }
-      if (got < 0 || (ready.revents & POLLNVAL) != 0) {
+      // macOS answers POLLNVAL for a device it cannot poll (`< /dev/null`): only a closed descriptor is broken.
+      if (got < 0 || ((ready.revents & POLLNVAL) != 0 && ::fcntl(fd_, F_GETFD) < 0)) {
         throw broken(got < 0 ? std::strerror(errno) : "standard input is not open");
       }
       const auto n = ::read(fd_, buffer_.data(), buffer_.size());
