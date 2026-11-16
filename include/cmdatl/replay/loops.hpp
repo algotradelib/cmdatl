@@ -588,6 +588,14 @@ int loops_main(
     std::vector<std::size_t> have;
     for (const auto& f : folds) {
       have.push_back(instants(*prepared, p, f.train_warmup_, f.train_.begin_));
+      // Whatever the sets: a training replay needs 2 bars to measure a return (an empty one has no bar to date).
+      if (have.back() < 2) {
+        throw Refused(
+          "fold " + std::to_string(f.index_) + ": the training window holds " + std::to_string(have.back()) +
+            " bars, fewer than 2",
+          "give a longer walk_forward.train"
+        );
+      }
       if (f.train_.end_ - f.train_.begin_ < 2) {
         throw Refused(
           "fold " + std::to_string(f.index_) + ": the test holds fewer than 2 periods",
