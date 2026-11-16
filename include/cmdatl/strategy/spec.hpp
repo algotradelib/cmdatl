@@ -1334,6 +1334,8 @@ struct Program {
   std::vector<std::pair<std::string, ParamType>> params_;
   /** @brief The names in `data {}`, in order; empty without it (or from an atlc that reports none). */
   std::vector<std::string> data_;
+  /** @brief The names in `measures {}`, in order; empty without it (or from an atlc that reports none). */
+  std::vector<std::string> measures_;
 };
 
 /** @brief The settings checked against their program: the build's settings and the driver's arguments. */
@@ -2195,6 +2197,14 @@ inline std::vector<Error> resolve(
       }
     }
   }
+  // The report's key is the name: one the program's `measures {}` holds cannot be the spec's too.
+  if (const auto* e = get("measures")) {
+    for (const auto& item : e->value_.type_ == Value::Type::LIST ? e->value_.items_ : std::vector<Value>{e->value_}) {
+      if (std::find(program.measures_.begin(), program.measures_.end(), item.text()) != program.measures_.end()) {
+        errors.push_back(Error::at(e->origin_, "`measures`: \"" + item.text() + "\" is the program's own measure"));
+      }
+    }
+  }
   if (!errors.empty()) {
     return errors;
   }
@@ -2794,7 +2804,8 @@ inline bool info_diagnostic(const json::value& value) {
  * @brief Reads `atlc check FILE --info`'s one JSON object and checks every field cmdatl uses: `atlc_info` 1; `status`
  *   `error` exactly when a diagnostic is an error, and `program` null exactly then; the program's path absolute and the
  *   one cmdatl passed; its struct one cmdatl may paste into C++; its mode one of three, with instruments only when
- *   named; parameters and instruments named by bare keys; `session` a boolean.
+ *   named; parameters and instruments named by bare keys; `session` a boolean; `measures`, when given, distinct
+ *   unqualified C++ names of at most 64 characters, each of type `real`.
  * @param text atlc's standard output.
  * @param passed The program's path as cmdatl passed it.
  * @return The answer, or nothing when it is not one.
@@ -2912,6 +2923,28 @@ inline std::optional<Info> read_info(const std::string& text, const std::string&
         return std::nullopt;
       }
       p.data_.emplace_back(value_name->as_string());
+    }
+  }
+  if (const auto* measures = facts.if_contains("measures")) {
+    if (!measures->is_array() || measures->as_array().size() > MAX_ARGS) {
+      return std::nullopt;
+    }
+    for (const auto& value : measures->as_array()) {
+      const auto* entry = value.if_object();
+      const auto* measure = entry == nullptr ? nullptr : entry->if_contains("name");
+      const auto* type = entry == nullptr ? nullptr : entry->if_contains("type");
+      if (
+        measure == nullptr || !measure->is_string() || type == nullptr || !type->is_string() ||
+        type->as_string() != "real"
+      ) {
+        return std::nullopt;
+      }
+      const std::string name(measure->as_string());
+      const bool seen = std::find(p.measures_.begin(), p.measures_.end(), name) != p.measures_.end();
+      if (!cpp_name(name) || name.find(':') != std::string::npos || name.size() > 64 || seen) {
+        return std::nullopt;
+      }
+      p.measures_.push_back(name);
     }
   }
   return info;

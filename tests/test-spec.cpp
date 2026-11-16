@@ -1209,6 +1209,54 @@ TEST_CASE("atlc check --info's data names are read in order and an atlc without 
   CHECK(!sp::read_info(base + ",\"data\":[{\"name\":\"a b\",\"type\":\"real\"}]}}", "/p/m.atls"));
 }
 
+TEST_CASE(
+  "atlc check --info's measures are read in order, an atlc without them reads as none, and a bad one is refused"
+) {
+  const std::string base =
+    "{\"atlc_info\":1,\"status\":\"ok\",\"atlc\":\"x\",\"diagnostics\":[],\"program\":{\"path\":\"/p/m.atls\","
+    "\"struct\":\"M\",\"mode\":\"single\",\"instruments\":[],\"session\":false,\"params\":[]";
+  const auto with = sp::read_info(
+    base + ",\"measures\":[{\"name\":\"total\",\"type\":\"real\"},{\"name\":\"cmdatl_x\",\"type\":\"real\"}]}}",
+    "/p/m.atls"
+  );
+  REQUIRE(with);
+  CHECK(with->program_.measures_ == std::vector<std::string>{"total", "cmdatl_x"});
+  const auto without = sp::read_info(base + "}}", "/p/m.atls");
+  REQUIRE(without);
+  CHECK(without->program_.measures_.empty());
+  const auto none = sp::read_info(base + ",\"measures\":[]}}", "/p/m.atls");
+  REQUIRE(none);
+  CHECK(none->program_.measures_.empty());
+  for (
+    const auto& bad : std::vector<std::string>{
+      "{}", "[1]", "[{\"name\":\"a\"}]", "[{\"name\":\"a\",\"type\":\"int\"}]", "[{\"name\":\"\",\"type\":\"real\"}]",
+      "[{\"name\":\"a-b\",\"type\":\"real\"}]", "[{\"name\":\"a::b\",\"type\":\"real\"}]",
+      "[{\"name\":\"1a\",\"type\":\"real\"}]", "[{\"name\":\"" + std::string(65, 'a') + "\",\"type\":\"real\"}]",
+      "[{\"name\":\"a\",\"type\":\"real\"},{\"name\":\"a\",\"type\":\"real\"}]"
+    }
+  ) {
+    INFO(bad);
+    CHECK(!sp::read_info(base + ",\"measures\":" + bad + "}}", "/p/m.atls"));
+  }
+  const auto longest = "[{\"name\":\"" + std::string(64, 'a') + "\",\"type\":\"real\"}]";
+  CHECK(sp::read_info(base + ",\"measures\":" + longest + "}}", "/p/m.atls"));
+}
+
+TEST_CASE("a run spec's measure named like one of the program's is refused at the key's line") {
+  auto program = single();
+  program.measures_ = {"total", "one"};
+  const auto other = run("measures = [\"calmar\"]\n" + WIDE_SPEC, program);
+  REQUIRE(other.errors_.empty());
+  CHECK(other.resolved_.measures_ == std::vector<std::string>{"calmar"});
+  for (const std::string value : {"[\"calmar\", \"one\"]", "\"one\""}) {
+    INFO(value);
+    const auto clash = run("measures = " + value + "\n" + WIDE_SPEC, program);
+    REQUIRE(clash.errors_.size() == 1);
+    CHECK(has(clash.errors_.front(), FILE_PATH + ":1"));
+    CHECK(has(clash.errors_.front(), "`measures`: \"one\" is the program's own measure"));
+  }
+}
+
 TEST_CASE("orders are checked on their text, across the file and the command line") {
   const auto p = single();
   const auto none = run(WIDE_SPEC, p);
