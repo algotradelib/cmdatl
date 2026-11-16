@@ -521,3 +521,31 @@ TEST_CASE("evaluate: a stop with a worker waiting at admission returns within a 
   CHECK(waiting.exit_ == 1);
   CHECK(waiting.seconds_ < 1.0);
 }
+
+TEST_CASE("evaluate: a sink that throws stops the batch and is never called again", "[threads]") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", HEADER + "\n" + rows_of("AAA", {100, 101, 103}));
+  auto args = on_csv(file, {"grid.k=1,2,3,4,5,6,7,8,9,10,11,12"});
+  std::vector<char*> argv{const_cast<char*>("d")};
+  for (auto& arg : args) {
+    argv.push_back(arg.data());
+  }
+  const auto s = replay::Settings::from_args(static_cast<int>(argv.size()), argv.data());
+  replay::GridSource source(std::make_shared<const replay::Prepared>(replay::prepare<Ticker>(s)), replay::grid_of(s));
+  auto fills = [](atl::backtest::NextBarFillModel model) {
+    return model;
+  };
+  auto keep = [](const atl::backtest::ReplayResult&, const atl::backtest::NextBarFillModel&) {
+    return std::string("kept");
+  };
+  auto work = [&](replay::Task task) {
+    return replay::finish_one<Ticker>(s, std::move(task), fills, keep);
+  };
+  std::vector<std::string> seen;
+  auto sink = [&seen](replay::Finished<std::string>&& done) {
+    seen.push_back(std::move(done.kept_));
+    throw std::runtime_error("the sink broke");
+  };
+  CHECK_THROWS_AS(replay::run_replays(source, 2, work, sink), std::runtime_error);
+  CHECK(seen == std::vector<std::string>{"kept"});
+}
