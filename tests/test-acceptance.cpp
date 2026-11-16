@@ -1330,8 +1330,11 @@ TEST_CASE(
     CHECK(failed.exit_ == 1);
     CHECK(code_of(failed.out_) == "build.failed");
     const std::string message(reply_of(failed.out_).at("error").as_object().at("message").as_string());
+    // The compiler's first error is the assertion's line (a short stderr is given whole, after `In file included`).
+    const auto first = message.find("error: ");
+    REQUIRE(first != std::string::npos);
     CHECK(
-      message.substr(0, message.find('\n'))
+      message.substr(first, message.find('\n', first) - first)
         .find("measures: " + name + " must be callable as double(const algotradelib::backtest::MeasureInput&)") !=
       std::string::npos
     );
