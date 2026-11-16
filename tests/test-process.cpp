@@ -494,6 +494,23 @@ TEST_CASE("a failing or throwing output stream while atlc runs kills its group a
   CHECK(open_fds() == before);
 }
 
+TEST_CASE("an evaluation's line that cannot be written ends its driver's group and leaks nothing") {
+  const Watchdog watchdog("the evaluation's broken output", 60);
+  const int before = open_fds();
+  const FakeAtlc fake(
+    "check out " + INFO_OK + "\ndriver grandchild hold\ndriver pid\n" + "driver out {\"index\":0,\"params\":{}," +
+    "\"window\":null,\"path\":null,\"report\":" + REPORT + "}\ndriver block\n"
+  );
+  RefusingAfter refusing(0);
+  std::ostream out(&refusing);
+  out.exceptions(std::ios::badbit);
+  std::ostringstream err;
+  CHECK(cmdatl::run({"--format", "json", "strategy", "evaluate", "s.toml"}, out, err, false) == 1);
+  CHECK(no_children());
+  CHECK(all_gone(fake.pids()));
+  CHECK(open_fds() == before);
+}
+
 TEST_CASE("an allocation failing anywhere in strategy reference or guide becomes a reply and never a leak") {
   const Watchdog watchdog("the reference and guide sweep", 300);
   const FakeAtlc fake("reference out # The atls language reference\n");

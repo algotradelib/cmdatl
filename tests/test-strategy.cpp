@@ -936,6 +936,150 @@ TEST_CASE("strategy reference refuses a topic atlc could not have before atlc ru
   CHECK(cmdatl::valid_topic("types-and-definedness"));
 }
 
+namespace {
+
+/**
+ * @brief A replay line as the evaluation driver prints it.
+ * @param index Its index.
+ * @param tail What follows `path`: its report, or `report` null and a failure.
+ * @return The line.
+ */
+std::string replay_line(int index, const std::string& tail = "\"report\":" + REPORT) {
+  return "{\"index\":" + std::to_string(index) + ",\"params\":{\"lookback\":" + std::to_string(10 * (index + 1)) +
+    "},\"window\":null,\"path\":null," + tail + "}";
+}
+
+/** @brief The summary of two replays, with a key the command does not declare. */
+const std::string SUMMARY =
+  R"({"summary":{"method":"grid","jobs":1,"param_sets":2,"invalid":0,"tried":2,"replays":2,"paths":null,)"
+  R"("failed":0,"objective":"total_return","direction":"max","best":{"index":1,"params":{"lookback":20},)"
+  R"("value":0.012345},"undeclared":1}})";
+
+/**
+ * @brief A script whose driver prints these lines.
+ * @param lines The lines.
+ * @return The script.
+ */
+std::string evaluation(const std::vector<std::string>& lines) {
+  std::string script = "check out " + INFO_OK + "\ndriver args\n";
+  for (const auto& line : lines) {
+    script += "driver out " + line + "\n";
+  }
+  return script;
+}
+
+} // namespace
+
+TEST_CASE("strategy evaluate emits each replay as an event and replies with the summary's declared keys") {
+  const Watchdog watchdog("the evaluation", 60);
+  const FakeAtlc fake(evaluation({replay_line(0), replay_line(1), SUMMARY}));
+  const auto ran = run({"--json", "strategy", "evaluate", "s.toml", "grid.lookback=10,20"});
+  INFO(ran.out_ << ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  const auto lines = lines_of(ran.out_);
+  REQUIRE(lines.size() == 3);
+  const auto first = reply_of(lines[0]);
+  CHECK(first.at("event").as_string() == "replay");
+  CHECK(first.at("env").as_string() == "offline");
+  CHECK(first.at("index").as_int64() == 0);
+  CHECK(first.at("report").as_object().at("executions").as_int64() == 4);
+  const auto final_reply = reply_of(lines[2]);
+  CHECK(final_reply.at("best").as_object().at("index").as_int64() == 1);
+  CHECK(final_reply.at("param_sets").as_int64() == 2);
+  CHECK(!final_reply.contains("undeclared"));
+  CHECK(final_reply.at("program").as_string() == (fake.dir() / "dip.atls").string());
+  const auto args = fake.args("driver");
+  CHECK(std::find(args.begin(), args.end(), "evaluate.method=grid") != args.end());
+  CHECK(std::find(args.begin(), args.end(), "grid.lookback=10,20") != args.end());
+  // A summary key the table declares: every key the driver may give is one.
+  const auto table = cmdatl::Table(cmdatl::command_list());
+  const auto* evaluate = table.resolve({"strategy", "evaluate"}).command_;
+  for (const auto& key : cmdatl::EVALUATE_SUMMARY) {
+    CHECK(cmdatl::declares_field(*evaluate, key));
+  }
+}
+
+TEST_CASE("strategy evaluate: --fields selects in the lines and the reply, --value in the reply only") {
+  const Watchdog watchdog("the evaluation's selections", 60);
+  const auto script = evaluation({replay_line(0), replay_line(1), SUMMARY});
+  {
+    const FakeAtlc fake(script);
+    const auto ran = run({"--json", "--fields", "index,report.total_return,best", "strategy", "evaluate", "s.toml"});
+    REQUIRE(ran.exit_ == 0);
+    const auto lines = lines_of(ran.out_);
+    REQUIRE(lines.size() == 3);
+    const auto line = reply_of(lines[1]);
+    CHECK(line.size() == 4);
+    CHECK(line.at("report").as_object().size() == 1);
+    CHECK(line.at("event").as_string() == "replay");
+    const auto final_reply = reply_of(lines[2]);
+    CHECK(final_reply.contains("best"));
+    CHECK(!final_reply.contains("warning"));
+    CHECK(!final_reply.contains("param_sets"));
+  }
+  {
+    const FakeAtlc fake(script);
+    const auto ran = run({"--json", "--value", "best.index", "strategy", "evaluate", "s.toml"});
+    CHECK(lines_of(ran.out_).back() == "1");
+  }
+  for (const auto* field : {"index", "report.total_return"}) {
+    const FakeAtlc fake(script);
+    const auto ran = run({"--json", "--value", field, "strategy", "evaluate", "s.toml"});
+    CHECK(ran.exit_ == 2);
+    CHECK(code_of(ran.out_) == "usage.no_such_field");
+    CHECK(fake.args("driver").empty());
+  }
+}
+
+TEST_CASE("strategy evaluate: a broken line protocol, a stop or no report is replay.failed with the lines counted") {
+  const Watchdog watchdog("the evaluation's failures", 60);
+  const auto failed = replay_line(0, R"("report":null,"failure":{"kind":"params","message":"k is below 0"})");
+  const auto stopped = evaluation({replay_line(0), R"({"stopped":{"code":"evaluate.refused","message":"no fold"}})"}) +
+    "driver err error: no fold\ndriver exit 1\n";
+  const std::vector<std::tuple<std::string, std::string, std::int64_t>> cases{
+    {evaluation({replay_line(1)}), "the evaluation driver broke its line protocol: replay 1 where 0 was next", 0},
+    {evaluation({replay_line(0), "nope"}),
+      "the evaluation driver broke its line protocol: a line that is not a JSON object", 1},
+    {evaluation({replay_line(0)}), "the evaluation failed: the evaluation driver exited 0 without its summary", 1},
+    {evaluation({replay_line(0), SUMMARY}), "the evaluation driver's summary disagrees with its lines", 1},
+    {stopped, "the evaluation stopped: no fold", 1},
+    {evaluation({replay_line(0)}) + "driver err error: cannot open bars.csv\ndriver exit 1\n",
+      "the evaluation failed: error: cannot open bars.csv", 1},
+    {evaluation({failed, R"({"summary":{"replays":1}})"}), "every replay failed or was refused: k is below 0", 1},
+  };
+  for (const auto& [script, message, replays] : cases) {
+    INFO(message);
+    const FakeAtlc fake(script);
+    const auto ran = run({"--json", "strategy", "evaluate", "s.toml"});
+    CHECK(ran.exit_ == 1);
+    const auto reply = reply_of(lines_of(ran.out_).back());
+    CHECK(reply.at("error").as_object().at("code").as_string() == "replay.failed");
+    CHECK(reply.at("error").as_object().at("message").as_string() == message);
+    CHECK(reply.at("replays").as_int64() == replays);
+  }
+}
+
+TEST_CASE("an interruption while strategy evaluate streams stops its driver, keeps the lines and answers 130") {
+  const Watchdog watchdog("interrupted evaluation", 60);
+  const FakeAtlc fake(evaluation({replay_line(0)}) + "driver pid\ndriver touch streaming\ndriver block\n");
+  // As SIGINT's handler would: the note, once the driver has printed its line.
+  std::thread signal([&fake]() {
+    if (fake.wait_for("streaming")) {
+      cmdatl::interruption = 1;
+    }
+  });
+  const auto ran = run({"--json", "strategy", "evaluate", "s.toml"});
+  signal.join();
+  cmdatl::interruption = 0;
+  CHECK(ran.exit_ == 130);
+  const auto lines = lines_of(ran.out_);
+  REQUIRE(lines.size() == 2);
+  CHECK(reply_of(lines[0]).at("index").as_int64() == 0);
+  CHECK(code_of(lines[1]) == "interrupted");
+  CHECK(reply_of(lines[1]).at("replays").as_int64() == 1);
+  CHECK(all_gone(fake.pids()));
+}
+
 TEST_CASE("SIGINT or SIGTERM while atlc reference runs stops it and answers 130 with no child left") {
   const Watchdog watchdog("interrupted reference", 60);
   for (const int sig : {SIGINT, SIGTERM}) {

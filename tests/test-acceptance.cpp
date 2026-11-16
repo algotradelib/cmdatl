@@ -521,6 +521,50 @@ TEST_CASE(
 }
 
 TEST_CASE(
+  "strategy evaluate replays each example as its backtest, and a grid alike on one job and four", "[acceptance]"
+) {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const auto examples = std::filesystem::path(CMDATL_SOURCE_DIR) / "examples";
+  const auto fixtures = std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "fixtures" / "examples";
+  for (const auto* name : {"mean-reversion", "pairs", "trailing-stop", "universe", "user-indicator"}) {
+    INFO(name);
+    const auto ran = run({"--json", "strategy", "evaluate", (examples / (std::string(name) + ".toml")).string()});
+    INFO(ran.out_ << ran.err_);
+    REQUIRE(ran.exit_ == 0);
+    const auto lines = lines_of(ran.out_);
+    REQUIRE(lines.size() == 2);
+    CHECK(reply_of(lines[0]).at("report") == boost::json::parse(slurp(fixtures / (std::string(name) + ".json"))));
+    CHECK(reply_of(lines[1]).at("replays").as_int64() == 1);
+  }
+  const auto spec = (examples / "mean-reversion.toml").string();
+  const std::vector<std::string> grid{
+    "--json", "strategy", "evaluate", spec, "grid.lookback=10,20,30", "grid.entry=1,2",
+    "evaluate.objective=total_return"
+  };
+  auto four = grid;
+  four.push_back("evaluate.jobs=4");
+  const auto one = run(grid);
+  const auto many = run(four);
+  REQUIRE(one.exit_ == 0);
+  REQUIRE(many.exit_ == 0);
+  auto one_lines = lines_of(one.out_);
+  auto many_lines = lines_of(many.out_);
+  REQUIRE(one_lines.size() == 7);
+  REQUIRE(many_lines.size() == 7);
+  CHECK(reply_of(many_lines.back()).at("jobs").as_int64() == 4);
+  CHECK(reply_of(one_lines.back()).at("best") == reply_of(many_lines.back()).at("best"));
+  one_lines.pop_back();
+  many_lines.pop_back();
+  CHECK(one_lines == many_lines);
+  // Names in byte order, the last fastest: set 4 is entry 2, lookback 20, the backtest of those parameters.
+  CHECK(reply_of(one_lines[4]).at("report") == report_of({spec, "params.lookback=20", "params.entry=2"}));
+}
+
+TEST_CASE(
   "strategy backtest's settings: limits, parameters, overrides, a program alone, --fills, warnings and failures",
   "[acceptance]"
 ) {

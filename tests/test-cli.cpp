@@ -281,7 +281,10 @@ TEST_CASE("tune and check are gone; new and backtest and reference are the strat
       available.push_back(cmdatl::join(command->path_));
     }
   }
-  CHECK(available == std::vector<std::string>{"strategy new", "strategy backtest", "strategy reference"});
+  CHECK(
+    available ==
+    std::vector<std::string>{"strategy new", "strategy backtest", "strategy evaluate", "strategy reference"}
+  );
   CHECK(cmdatl::SCHEMA_VERSION == 19);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
   CHECK(backtest.at("returns").as_object().contains("settings_given"));
@@ -503,6 +506,34 @@ TEST_CASE("the schema declares the errors its commands return") {
     return problem.find("bogus.code") != std::string::npos;
   };
   CHECK(std::any_of(problems.begin(), problems.end(), names_bogus));
+}
+
+TEST_CASE("a command's line fields are in its help and schema and never also its reply's") {
+  CHECK(
+    std::string(reply_of(run({"help", "strategy", "evaluate"}).out_).at("text").as_string())
+      .find("\nLines: index params window path report failure\n") != std::string::npos
+  );
+  const auto schema = reply_of(run({"schema", "strategy.evaluate"}).out_).at("commands").as_array()[0].as_object();
+  CHECK(schema.at("streams").as_object().contains("index"));
+  CHECK(!schema.at("returns").as_object().contains("index"));
+  CHECK(
+    reply_of(run({"schema", "env"}).out_).at("commands").as_array()[0].as_object().at("streams").as_object().empty()
+  );
+  std::vector<cmdatl::Command> bad;
+  bad.push_back(cmdatl::make_command({"x"}, "Read", "x").example("cmdatl x").returns("x", "x").streams("x", "x"));
+  const auto problems = cmdatl::check_table(cmdatl::Table(std::move(bad)));
+  CHECK(std::find(problems.begin(), problems.end(), "x: the line field x is also a reply's field") != problems.end());
+  // A missing line field is no warning in a reply; any other missing field is.
+  cmdatl::Reply reply;
+  reply.body_["best"] = nullptr;
+  cmdatl::Rendering rendering;
+  rendering.fields_ = {"index", "best"};
+  std::ostringstream quiet;
+  cmdatl::write_reply(quiet, reply, rendering, "offline", {"index"});
+  CHECK(!reply_of(quiet.str()).contains("warning"));
+  std::ostringstream warned;
+  cmdatl::write_reply(warned, reply, rendering, "offline");
+  CHECK(reply_of(warned.str()).contains("warning"));
 }
 
 TEST_CASE("an alias makes its old group a group") {

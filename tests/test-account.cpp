@@ -1390,6 +1390,7 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
     "schema",
     "status",
     "strategy backtest",
+    "strategy evaluate",
     "strategy new",
     "strategy reference",
   };
