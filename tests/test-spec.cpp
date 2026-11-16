@@ -1768,6 +1768,7 @@ TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by t
     has(evaluate(WIDE_SPEC, sp::Purpose::EVALUATE, {"grid.entry=1e-400,0"}).errors_.front(), "gives one value twice")
   );
   CHECK(has(cli_error("grid.entry.step=1,2"), "`grid.entry.step` is a number"));
+  CHECK(cli_value("grid.lookback=[ 10 , 20 ]") == "10,20");
 }
 
 TEST_CASE("an evaluation's ranges are exact decimals, each value read as the replay reads it, within the caps") {
@@ -1789,7 +1790,19 @@ TEST_CASE("an evaluation's ranges are exact decimals, each value read as the rep
   ));
   CHECK(has(grid_error("[grid.entry]\nfrom = 1\nto = 3\nstep = 0\n"), "a range's step is above 0"));
   CHECK(has(grid_error("[grid.entry]\nfrom = 3\nto = 1\nstep = 1\n"), "a range's from is after its to"));
-  CHECK(has(grid_error("[grid.entry]\nfrom = 100\nto = 200\nstep = 1e-17\n"), "do not fit 18 digits"));
+  CHECK(
+    has(grid_error("[grid.entry]\nfrom = 100\nto = 200\nstep = 1e-17\n"), "at most 18 decimal places and 18 digits")
+  );
+  CHECK(has(grid_error("[grid.entry]\nfrom = 0\nto = 1\nstep = 1e-19\n"), "at most 18 decimal places"));
+  // Compared and stepped at the common scale, whatever scales the three are written at.
+  const auto a =
+    evaluate(WIDE_SPEC + "[grid.entry]\nfrom = 9.00000000000000002\nto = 9.3\nstep = 0.49999999999999999\n");
+  CHECK(a.arg("grid.entry") == std::optional<std::string>("9.00000000000000002"));
+  const auto b = evaluate(WIDE_SPEC + "[grid.entry]\nfrom = -9.50000000000000001\nto = -9.3\nstep = 0.5\n");
+  CHECK(b.arg("grid.entry") == std::optional<std::string>("-9.50000000000000001"));
+  CHECK(
+    has(grid_error("[grid.entry]\nfrom = 9.50000000000000001\nto = 9.3\nstep = 1\n"), "a range's from is after its to")
+  );
   // The count is refused before a value is made: 10^18 + 1 values.
   CHECK(has(
     grid_error("[grid.entry]\nfrom = 0\nto = 1\nstep = 1e-18\n"), "the range makes more values than 4096 bytes hold"
