@@ -1665,4 +1665,138 @@ TEST_CASE("hostile settings through the command: every input answers with exactl
   }
   CHECK(answered == 600);
 }
+namespace {
+
+/**
+ * @brief Resolves a spec's text for an evaluation, or for another purpose.
+ * @param src The text.
+ * @param purpose The purpose.
+ * @param words Command-line settings.
+ * @return The run.
+ */
+Run evaluate(const std::string& src, sp::Purpose purpose = sp::Purpose::EVALUATE, std::vector<std::string> words = {}) {
+  const auto parsed = spec(src);
+  INFO(src);
+  REQUIRE(parsed.errors_.empty());
+  std::vector<std::string> errors;
+  const auto line = cli(words, errors);
+  REQUIRE(errors.empty());
+  Run run;
+  run.errors_ = texts(sp::resolve({parsed.entries_, line}, single(), run.resolved_, false, purpose));
+  return run;
+}
+
+/**
+ * @brief The one error of an evaluation's spec.
+ * @param src The text after the bars.
+ * @return It.
+ */
+std::string grid_error(const std::string& src) {
+  const auto r = evaluate(WIDE_SPEC + src);
+  INFO(src);
+  REQUIRE(r.errors_.size() == 1);
+  return r.errors_.front();
+}
+
+} // namespace
+
+TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by the program, the jobs bounded") {
+  const auto ok = evaluate(
+    WIDE_SPEC +
+    "[params]\nlookback = 5\nentry = 1\n[evaluate]\njobs = 4\nobjective = \"max_drawdown\"\n"
+    "direction = \"min\"\n[grid]\nlookback = [30, 10, 20]\nentry = [0.5, -1.25]\n"
+  );
+  REQUIRE(ok.errors_.empty());
+  CHECK(ok.arg("grid.lookback") == std::optional<std::string>("30,10,20"));
+  CHECK(ok.arg("grid.entry") == std::optional<std::string>("0.5,-1.25"));
+  CHECK(ok.arg("evaluate.method") == std::optional<std::string>("grid"));
+  CHECK(ok.arg("evaluate.jobs") == std::optional<std::string>("4"));
+  CHECK(ok.arg("evaluate.objective") == std::optional<std::string>("max_drawdown"));
+  // The grid wins over [params] for its names; byte order, so `entry` comes first.
+  CHECK(!ok.arg("param.lookback"));
+  CHECK(!ok.arg("param.entry"));
+  const auto& args = ok.resolved_.args_;
+  CHECK(args[args.size() - 2].first == "grid.entry");
+  for (const auto purpose : {sp::Purpose::BACKTEST, sp::Purpose::RUN}) {
+    const auto refused = evaluate(WIDE_SPEC + "[evaluate]\njobs = 2\n[grid]\nlookback = [1, 2]\n", purpose);
+    REQUIRE(refused.errors_.size() == 2);
+    CHECK(has(refused.errors_[0], "`evaluate.jobs` is an evaluation's key: use cmdatl strategy evaluate"));
+    CHECK(has(refused.errors_[1], "`grid.lookback` is an evaluation's key"));
+  }
+  CHECK(has(grid_error("[evaluate]\njobs = 0\n"), "`evaluate.jobs` is 1 to 256"));
+  CHECK(has(grid_error("[evaluate]\njobs = 257\n"), "`evaluate.jobs` is 1 to 256"));
+  CHECK(has(one_error(WIDE_SPEC + "[evaluate]\nobjective = \"measures.calmar\"\n"), "`evaluate.objective` is one of"));
+  CHECK(has(grid_error("[grid]\nflag = [1, 0]\n"), "`flag` is a bool parameter, which a grid does not take"));
+  CHECK(has(grid_error("[grid]\nnope = [1, 2]\n"), "the program has no parameter `nope` for a grid"));
+  CHECK(has(grid_error("[grid]\nlookback = [1, 2.5]\n"), "`lookback` is an int parameter"));
+  CHECK(has(one_error(WIDE_SPEC + "[grid]\nlookback = [\"a\"]\n"), "`grid.lookback` is a list of numbers"));
+  CHECK(has(one_error(WIDE_SPEC + "[grid.lookback]\nfrom = 1\nby = 2\n"), "unknown setting `grid.lookback.by`"));
+  CHECK(has(
+    grid_error("[grid]\nlookback = [1]\n[grid.entry]\nfrom = 1\nto = 2\n"), "gives `grid.entry.from`, `.to` and `.step`"
+  ));
+  // An evaluation reads stored bars: a broker folder's fetch is refused.
+  const auto fetch = evaluate(
+    "[bars]\nsource = \"vendor\"\nadapter = \"/a\"\ncount = 10\nstore_root = \"/s\"\n[replay]\nmarket = \"kr\"\n"
+  );
+  REQUIRE(fetch.errors_.size() == 1);
+  CHECK(has(fetch.errors_.front(), "an evaluation does not fetch"));
+  // The command line: comma-separated decimals or a one-line TOML array, a range's parts as numbers.
+  const auto line = evaluate(
+    WIDE_SPEC, sp::Purpose::EVALUATE,
+    {"grid.lookback=10,20,30", "grid.entry=[0.1, 2e-1]", "evaluate.objective=total_return"}
+  );
+  REQUIRE(line.errors_.empty());
+  CHECK(line.arg("grid.lookback") == std::optional<std::string>("10,20,30"));
+  CHECK(line.arg("grid.entry") == std::optional<std::string>("0.1,2e-1"));
+  CHECK(has(cli_error("grid.lookback=10,,30"), "`grid.lookback` is a list of numbers"));
+  CHECK(has(cli_error("grid.lookback=ten"), "`grid.lookback` is a list of numbers"));
+  CHECK(cli_value("grid.entry.step=1e-3") == "1e-3");
+}
+
+TEST_CASE("an evaluation's ranges are exact decimals, each value read as the replay reads it, within the caps") {
+  CHECK(
+    evaluate(WIDE_SPEC + "[grid.entry]\nfrom = 0.1\nto = 0.3\nstep = 0.1\n").arg("grid.entry") ==
+    std::optional<std::string>("0.1,0.2,0.3")
+  );
+  CHECK(
+    evaluate(WIDE_SPEC + "[grid.entry]\nfrom = -0.5\nto = 0.5\nstep = 0.25\n").arg("grid.entry") ==
+    std::optional<std::string>("-0.5,-0.25,0,0.25,0.5")
+  );
+  CHECK(
+    evaluate(WIDE_SPEC + "[grid.lookback]\nfrom = 10\nto = 35\nstep = 10\n").arg("grid.lookback") ==
+    std::optional<std::string>("10,20,30")
+  );
+  CHECK(
+    has(grid_error("[grid.lookback]\nfrom = 1\nto = 3\nstep = 0.5\n"), "an int parameter's range takes whole numbers")
+  );
+  CHECK(has(grid_error("[grid.entry]\nfrom = 1\nto = 3\nstep = 0\n"), "a range's step is above 0"));
+  CHECK(has(grid_error("[grid.entry]\nfrom = 3\nto = 1\nstep = 1\n"), "a range's from is after its to"));
+  CHECK(has(grid_error("[grid.entry]\nfrom = -9\nto = 9\nstep = 1e-18\n"), "do not fit 18 digits"));
+  CHECK(has(grid_error("[grid.entry]\nfrom = 100\nto = 200\nstep = 1e-17\n"), "do not fit 18 digits"));
+  // The count is refused before a value is made: 10^18 + 1 values.
+  CHECK(
+    has(grid_error("[grid.entry]\nfrom = 0\nto = 1\nstep = 1e-18\n"), "the range makes 1000000000000000001 values")
+  );
+  CHECK(
+    has(grid_error("[grid.entry]\nfrom = 0.1\nto = 0.100000000000000002\nstep = 1e-18\n"), "gives one value twice")
+  );
+  CHECK(has(grid_error("[grid]\nentry = [1, 1.000000000000000001]\n"), "gives one value twice"));
+  CHECK(has(grid_error("[grid]\nentry = [0, -0]\n"), "gives one value twice"));
+  CHECK(has(grid_error("[grid]\nentry = [0.1, 0.10]\n"), "gives one value twice"));
+  CHECK(
+    has(grid_error("[grid.lookback]\nfrom = 1000000\nto = 2000000\nstep = 1\n"), "values, more than 4096 bytes hold")
+  );
+  CHECK(has(
+    grid_error("[grid.lookback]\nfrom = 1000000\nto = 1001000\nstep = 1\n"),
+    "the range's values take more than 4096 bytes"
+  ));
+  CHECK(has(
+    grid_error("[grid.lookback]\nfrom = 1\nto = 400\nstep = 1\n[grid.entry]\nfrom = 1\nto = 300\nstep = 1\n"),
+    "more than 100000 parameter sets"
+  ));
+  CHECK(
+    evaluate(WIDE_SPEC + "[grid.lookback]\nfrom = 1\nto = 400\nstep = 1\n[grid.entry]\nfrom = 1\nto = 250\nstep = 1\n")
+      .errors_.empty()
+  );
+}
 #endif
