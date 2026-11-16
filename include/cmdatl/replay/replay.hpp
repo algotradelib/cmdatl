@@ -2040,6 +2040,8 @@ struct Outcome {
   bool halted_{false};
   /** @brief What `keep` returned. */
   Kept kept_;
+  /** @brief The strategy's counts over the traded events (history's taken away). */
+  Counters counters_;
 };
 
 /**
@@ -2184,7 +2186,9 @@ auto replay_one(
   }
   // The user's measures after the session check, then `keep` (a backtest's files), so a failed replay leaves none.
   const auto values = input ? run_measures(measures, *input) : std::vector<std::pair<std::string, double>>{};
-  Outcome<decltype(keep(result, engine.fills()))> out{{}, {}, report.halted_.has_value(), keep(result, engine.fills())};
+  Outcome<decltype(keep(result, engine.fills()))> out{
+    {}, {}, report.halted_.has_value(), keep(result, engine.fills()), counts
+  };
   out.report_ = report_json(result, report, counts.pricing_, session, reads_data<Strategy>::value, {}, values);
   out.figures_ = {
     {"total_return", report.total_return_},

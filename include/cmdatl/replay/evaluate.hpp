@@ -242,6 +242,8 @@ struct Finished {
   std::vector<std::pair<std::string, double>> figures_;
   /** @brief What `keep` returned. */
   Kept kept_{};
+  /** @brief The strategy's counts over the traded events. */
+  Counters counters_;
 };
 
 /**
@@ -360,6 +362,7 @@ auto finish_one(const Settings& s, Task task, Fills& fills_of, const Measures& m
   done.halted_ = outcome->halted_;
   done.figures_ = std::move(outcome->figures_);
   done.kept_ = std::move(outcome->kept_);
+  done.counters_ = outcome->counters_;
   return done;
 }
 
@@ -511,8 +514,9 @@ struct Best {
  * @param replay The replay.
  * @param figures Its figures; none for a replay without a report.
  * @param halted Whether it halted.
+ * @return Whether it was eligible: a report, not halted, a finite value.
  */
-inline void choose(
+inline bool choose(
   std::optional<Best>& best, const std::string& objective, bool minimize, const Replay& replay,
   const std::vector<std::pair<std::string, double>>& figures, bool halted
 ) {
@@ -520,7 +524,7 @@ inline void choose(
     return figure.first == objective;
   });
   if (halted || found == figures.end() || !std::isfinite(found->second)) {
-    return;
+    return false;
   }
   const double value = found->second;
   const bool better = !best || (minimize ? value < best->value_ : value > best->value_) ||
@@ -528,6 +532,7 @@ inline void choose(
   if (better) {
     best = Best{replay.index_, replay.params_, value};
   }
+  return true;
 }
 
 template <typename Strategy, typename Fills, typename Measures>
@@ -562,8 +567,8 @@ int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, 
   };
   try {
     const auto method = s.get_or("evaluate.method", "");
-    if (method != "grid" && method != "windows" && method != "bootstrap") {
-      throw std::invalid_argument("evaluate.method is grid, windows or bootstrap, not '" + method + "'");
+    if (method != "grid" && method != "windows" && method != "walk-forward" && method != "bootstrap") {
+      throw std::invalid_argument("evaluate.method is grid, windows, walk-forward or bootstrap, not '" + method + "'");
     }
     const auto jobs = whole_of(s.get_or("evaluate.jobs", "1"), "evaluate.jobs");
     if (jobs < 1 || jobs > 256) {
