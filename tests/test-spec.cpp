@@ -1887,6 +1887,21 @@ TEST_CASE("windows and bootstrap keys: lengths in periods or spans; each method 
     INFO(bad);
     CHECK(has(one_error(windows + "length = " + std::string(bad) + "\n"), "`windows.length` is a whole number"));
   }
+  // A value of another type, or empty, is refused by its type, never read as a number.
+  CHECK(has(one_error(windows + "length = 5\nwarmup = false\n"), "`windows.warmup` is a whole number"));
+  CHECK(has(one_error(windows + "length = \"\"\n"), "`windows.length` is a whole number"));
+  CHECK(has(one_error(WIDE_SPEC + "[evaluate]\njobs = false\n"), "`evaluate.jobs` is a whole number"));
+  CHECK(has(one_error(windows + "length = [5]\n"), "`windows.length` is a whole number"));
+  CHECK(has(cli_error("windows.warmup="), "`windows.warmup` is a whole number"));
+  // Weekly and monthly bars take the program's warm-up by default; intraday bars need one given.
+  for (const auto* interval : {"1w", "1mo", "5m"}) {
+    INFO(interval);
+    const auto ran = evaluate(
+      "strategy = \"m.atls\"\n[bars]\nsource = \"csv\"\nfile = \"b.csv\"\nsymbol = \"AAA\"\ninterval = \"" +
+      std::string(interval) + "\"\n[evaluate]\nmethod = \"windows\"\n[windows]\nlength = 5\n"
+    );
+    CHECK(ran.errors_.empty() == (std::string(interval) != "5m"));
+  }
   // A warm-up of -0 is refused as -1 is, here, not in the driver.
   CHECK(has(one_error(windows + "length = 5\nwarmup = -0\n"), "`windows.warmup` is a whole number"));
   CHECK(has(cli_error("windows.warmup=-0"), "`windows.warmup` is a whole number"));
@@ -1929,7 +1944,6 @@ TEST_CASE("windows and bootstrap keys: lengths in periods or spans; each method 
   CHECK(has(one_error(boot + "block = 5\nseed = 9007199254740992\n"), "0 to 2^53 - 1"));
   CHECK(has(one_error(boot + "block = 5\nseed = -1\n"), "0 to 2^53 - 1"));
   CHECK(has(evaluate(boot + "block = 5\nlevel = 1\n").errors_.at(0), "`bootstrap.level` is above 0 and below 1"));
-  CHECK(has(evaluate(boot + "block = 5\nintervals = [\"calmer\"]\n").errors_.at(0), "not \"calmer\""));
   // What a path cannot carry: open, high and low; an OHLCV source; limit orders.
   CHECK(has(
     evaluate(

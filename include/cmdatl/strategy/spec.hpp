@@ -1167,7 +1167,7 @@ inline std::optional<Error> check(Entry& e) {
       const auto v = e.value_.number_;
       const auto least = known(e.key_)->min_;
       // A length's -0 would reach the driver, which reads only digits.
-      const bool negative_zero = e.value_.text_.front() == '-';
+      const bool negative_zero = e.value_.type_ == Value::Type::NUM && e.value_.text_.rfind('-', 0) == 0;
       if (
         e.value_.type_ == Value::Type::NUM && integer_text(e.value_.text_) && v >= least && v <= 1e9 &&
         !(kind == Kind::LENGTH && negative_zero)
@@ -1818,8 +1818,14 @@ inline std::vector<Error> resolve(
   // Whether every bar is daily: wide tables always, a CSV by its interval, a store by each coordinate's.
   bool daily = true;
   std::string intraday;
+  // Whether a bar is shorter than a day (weekly and monthly bars are not daily, nor intraday).
+  bool sub_daily = false;
+  const auto shorter = [](const std::string& interval) {
+    return interval != "1d" && interval != "1w" && interval != "1mo";
+  };
   if (source == "csv") {
     const auto interval = text("bars.interval").value_or("1d");
+    sub_daily = shorter(interval);
     if (interval != "1d") {
       daily = false;
       intraday = "bars.interval";
@@ -1829,6 +1835,7 @@ inline std::vector<Error> resolve(
     if (const auto* e = get("bars.store"); e != nullptr && e->value_.type_ == Value::Type::LIST) {
       for (const auto& item : e->value_.items_) {
         const auto parts = split(item.text(), '/');
+        sub_daily = sub_daily || parts.size() < 2 || shorter(parts[1]);
         if (parts.size() < 2 || parts[1] != "1d") {
           daily = false;
           intraday = "bars.store";
@@ -2126,7 +2133,7 @@ inline std::vector<Error> resolve(
     } else if (method == "windows" && !span("windows.length") && span("windows.warmup")) {
       errors.push_back(at("windows.warmup", "with windows.length in periods, give windows.warmup in periods"));
     }
-    if (method == "windows" && !daily && get("windows.warmup") == nullptr) {
+    if (method == "windows" && sub_daily && get("windows.warmup") == nullptr) {
       errors.push_back(Error::nowhere("on intraday bars the warm-up is yours to give: set windows.warmup"));
     }
     if (method == "bootstrap") {
@@ -2157,17 +2164,6 @@ inline std::vector<Error> resolve(
       }
       if (const auto* e = get("bootstrap.level"); e != nullptr && !(e->value_.number_ < 1)) {
         errors.push_back(Error::at(e->origin_, "`bootstrap.level` is above 0 and below 1"));
-      }
-      figures.insert(figures.end(), {"turnover", "executions"});
-      const auto* named = get("bootstrap.intervals");
-      for (const auto& item : named != nullptr ? named->value_.items_ : std::vector<Value>{}) {
-        if (std::find(figures.begin(), figures.end(), item.text()) == figures.end()) {
-          errors.push_back(
-            Error::at(
-              named->origin_, "`bootstrap.intervals` names " + join(figures, ", ") + ", not \"" + item.text() + "\""
-            )
-          );
-        }
       }
     }
   }
