@@ -1318,49 +1318,18 @@ struct Resolved {
 };
 
 /**
- * @brief A plain decimal as a whole number of units of `10^-places`.
- * @param plain The decimal, as `plain_decimal` gives it, of at most `places` fractional digits.
- * @param places The decimal places.
- * @return The units, or nothing when they do not fit 64 bits.
- */
-inline std::optional<long long> grid_units(const std::string& plain, std::size_t places) {
-  const bool negative = plain.front() == '-';
-  const auto point = plain.find('.');
-  const auto whole =
-    plain.substr(negative ? 1 : 0, point == std::string::npos ? std::string::npos : point - (negative ? 1 : 0));
-  auto fraction = point == std::string::npos ? std::string() : plain.substr(point + 1);
-  fraction.resize(places, '0');
-  long long units = 0;
-  for (const char c : whole + fraction) {
-    if (units > (std::numeric_limits<long long>::max() - (c - '0')) / 10) {
-      return std::nullopt;
-    }
-    units = units * 10 + (c - '0');
-  }
-  return negative ? -units : units;
-}
-
-/**
- * @brief Units of `10^-places` as a plain decimal, without trailing zeros.
- * @param units The units.
- * @param places The decimal places.
+ * @brief An int parameter's value as the driver reads it: the whole number, `-0` kept.
+ * @param v The value, a whole number.
  * @return The text.
  */
-inline std::string grid_text(long long units, std::size_t places) {
-  auto digits =
-    std::to_string(units < 0 ? -static_cast<unsigned long long>(units) : static_cast<unsigned long long>(units));
-  digits.insert(0, places + 1 > digits.size() ? places + 1 - digits.size() : 0, '0');
-  digits.insert(digits.size() - places, ".");
-  digits.erase(digits.find_last_not_of('0') + 1);
-  if (digits.back() == '.') {
-    digits.pop_back();
-  }
-  return (units < 0 ? "-" : "") + digits;
+inline std::string whole_text(const Value& v) {
+  return v.number_ == 0 && v.text_.front() == '-' ? "-0" : std::to_string(static_cast<long long>(v.number_));
 }
 
 /**
- * @brief A grid range's values, `from`, `from + step`, ... up to `to`, in exact decimal arithmetic: the three numbers at
- *   a common number of decimal places (at most 18) as 64-bit integers, the count checked before any value is made.
+ * @brief A grid range's values, `from`, `from + step`, ... up to `to`, added as exact decimals (the library's
+ *   `Decimal64`, at most 18 digits), never as doubles; refused at the first value past what `MAX_VALUE` bytes hold
+ *   (each value takes two bytes with its comma), so a huge count is never made.
  * @param range `from`, `to` and `step`.
  * @param whole Whether the parameter is an int.
  * @param values Set to the values.
@@ -1369,50 +1338,33 @@ inline std::string grid_text(long long units, std::size_t places) {
 inline std::optional<std::string> grid_range(
   const std::vector<const Value*>& range, bool whole, std::vector<std::string>& values
 ) {
-  std::vector<std::string> plain;
-  std::size_t places = 0;
+  std::vector<algotradelib::Decimal64> d;
   for (const auto* v : range) {
-    const auto p = plain_decimal(v->text_);
-    if (!p || (whole && !integer_text(v->text_))) {
-      return whole ?
-        std::string("an int parameter's range takes whole numbers written as integers") :
-        "a range takes numbers of at most 18 digits";
+    const auto plain = plain_decimal(v->text_);
+    if (!plain || (whole && (!integer_text(v->text_) || std::abs(v->number_) > 9e15))) {
+      return std::string(
+        whole ?
+          "an int parameter's range takes whole numbers of magnitude at most 9e15" :
+          "a range takes numbers of at most 18 digits"
+      );
     }
-    places = std::max(places, p->find('.') == std::string::npos ? 0 : p->size() - p->find('.') - 1);
-    plain.push_back(*p);
+    d.push_back(algotradelib::Decimal64::parse(*plain));
   }
-  std::vector<long long> units;
-  for (const auto& p : plain) {
-    const auto u = places <= 18 ? grid_units(p, places) : std::nullopt;
-    if (!u) {
+  if (!algotradelib::decimal_less(algotradelib::Decimal64(), d[2]) || algotradelib::decimal_less(d[1], d[0])) {
+    return std::string(
+      algotradelib::decimal_less(d[1], d[0]) ? "a range's from is after its to" : "a range's step is above 0"
+    );
+  }
+  for (auto v = d[0]; !algotradelib::decimal_less(d[1], v);) {
+    if (values.size() == (MAX_VALUE + 1) / 2) {
+      return "the range makes more values than " + std::to_string(MAX_VALUE) + " bytes hold";
+    }
+    values.push_back(v.str());
+    const auto next = algotradelib::decimal_add(v, d[2]);
+    if (!next) {
       return std::string("the range's numbers do not fit 18 digits at its decimal places");
     }
-    units.push_back(*u);
-  }
-  const long long from = units[0], to = units[1], step = units[2];
-  if (step <= 0 || from > to) {
-    return std::string(step <= 0 ? "a range's step is above 0" : "a range's from is after its to");
-  }
-  if (from < 0 && to > std::numeric_limits<long long>::max() + from) {
-    return std::string("the range's numbers do not fit 18 digits at its decimal places");
-  }
-  // Each value takes at least two bytes with its comma: refused before any is made.
-  const auto count = static_cast<unsigned long long>((to - from) / step) + 1;
-  if (count > (MAX_VALUE + 1) / 2) {
-    return "the range makes " + std::to_string(count) + " values, more than " + std::to_string(MAX_VALUE) +
-      " bytes hold";
-  }
-  std::size_t bytes = 0;
-  for (unsigned long long k = 0; k < count; ++k) {
-    const long long value = from + static_cast<long long>(k) * step;
-    if (whole && std::abs(static_cast<double>(value)) > 9e15) {
-      return std::string("an int parameter's values are of magnitude at most 9e15");
-    }
-    values.push_back(grid_text(value, places));
-    bytes += values.back().size() + 1;
-    if (bytes > MAX_VALUE + 1) {
-      return "the range's values take more than " + std::to_string(MAX_VALUE) + " bytes";
-    }
+    v = *next;
   }
   return std::nullopt;
 }
@@ -1458,13 +1410,7 @@ inline void read_grid(
             "`" + name + "` is an int parameter: give whole numbers written as integers, of magnitude at most 9e15";
           break;
         }
-        values.push_back(
-          found->second == ParamType::REAL ?
-            v.text_ :
-            v.number_ == 0 && v.text_.front() == '-' ?
-            "-0" :
-            std::to_string(static_cast<long long>(v.number_))
-        );
+        values.push_back(found->second == ParamType::REAL ? v.text_ : whole_text(v));
       }
     } else if (parts.size() != 3) {
       refused = "a range gives `grid." + name + ".from`, `.to` and `.step`";
@@ -2003,7 +1949,7 @@ inline std::vector<Error> resolve(
           );
           continue;
         }
-        value = v.number_ == 0 && v.text_.front() == '-' ? "-0" : std::to_string(static_cast<long long>(v.number_));
+        value = whole_text(v);
         break;
       case ParamType::REAL:
         if (v.type_ != Value::Type::NUM) {
@@ -2218,27 +2164,20 @@ inline std::optional<Error> from_command_line(const std::string& word, Entry& en
     return std::nullopt;
   }
   // A grid's list: comma-separated decimals, or a one-line TOML array of numbers; anything else stays text, refused.
-  if (entry.key_.rfind("grid.", 0) == 0 && std::count(entry.key_.begin(), entry.key_.end(), '.') == 1) {
-    auto body = text;
-    if (body.size() >= 2 && body.front() == '[' && body.back() == ']') {
-      body = body.substr(1, body.size() - 2);
-    }
-    std::vector<Value> items;
-    for (auto item : split(body, ',')) {
-      item.erase(0, item.find_first_not_of(' '));
-      item.erase(item.find_last_not_of(' ') + 1);
-      if (auto n = decimal(item)) {
-        items.push_back(std::move(*n));
-      } else {
-        entry.value_ = Value::str(text);
-        return std::nullopt;
-      }
-    }
-    entry.value_ = Value::list(std::move(items));
-    return std::nullopt;
-  }
   if (entry.key_.rfind("grid.", 0) == 0) {
-    entry.value_ = number_or_text();
+    const bool list = std::count(entry.key_.begin(), entry.key_.end(), '.') == 1;
+    const auto body =
+      list && text.size() >= 2 && text.front() == '[' && text.back() == ']' ? text.substr(1, text.size() - 2) : text;
+    std::vector<Value> items;
+    for (const auto& item : split(body, ',')) {
+      auto n = decimal(item.substr(item.find_first_not_of(' ') == std::string::npos ? 0 : item.find_first_not_of(' ')));
+      items.push_back(n ? *n : Value::str(text));
+    }
+    const bool numbers =
+      (list ? !items.empty() : items.size() == 1) && std::all_of(items.begin(), items.end(), [](const Value& v) {
+        return v.type_ == Value::Type::NUM;
+      });
+    entry.value_ = !numbers ? Value::str(text) : list ? Value::list(std::move(items)) : items.front();
     return std::nullopt;
   }
   const auto* key = known(entry.key_);

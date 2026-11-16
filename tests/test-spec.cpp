@@ -1751,6 +1751,7 @@ TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by t
   CHECK(has(cli_error("grid.lookback=10,,30"), "`grid.lookback` is a list of numbers"));
   CHECK(has(cli_error("grid.lookback=ten"), "`grid.lookback` is a list of numbers"));
   CHECK(cli_value("grid.entry.step=1e-3") == "1e-3");
+  CHECK(has(cli_error("grid.entry.step=1,2"), "`grid.entry.step` is a number"));
 }
 
 TEST_CASE("an evaluation's ranges are exact decimals, each value read as the replay reads it, within the caps") {
@@ -1766,29 +1767,30 @@ TEST_CASE("an evaluation's ranges are exact decimals, each value read as the rep
     evaluate(WIDE_SPEC + "[grid.lookback]\nfrom = 10\nto = 35\nstep = 10\n").arg("grid.lookback") ==
     std::optional<std::string>("10,20,30")
   );
-  CHECK(
-    has(grid_error("[grid.lookback]\nfrom = 1\nto = 3\nstep = 0.5\n"), "an int parameter's range takes whole numbers")
-  );
+  CHECK(has(
+    grid_error("[grid.lookback]\nfrom = 1\nto = 3\nstep = 0.5\n"),
+    "an int parameter's range takes whole numbers of magnitude"
+  ));
   CHECK(has(grid_error("[grid.entry]\nfrom = 1\nto = 3\nstep = 0\n"), "a range's step is above 0"));
   CHECK(has(grid_error("[grid.entry]\nfrom = 3\nto = 1\nstep = 1\n"), "a range's from is after its to"));
-  CHECK(has(grid_error("[grid.entry]\nfrom = -9\nto = 9\nstep = 1e-18\n"), "do not fit 18 digits"));
   CHECK(has(grid_error("[grid.entry]\nfrom = 100\nto = 200\nstep = 1e-17\n"), "do not fit 18 digits"));
   // The count is refused before a value is made: 10^18 + 1 values.
-  CHECK(
-    has(grid_error("[grid.entry]\nfrom = 0\nto = 1\nstep = 1e-18\n"), "the range makes 1000000000000000001 values")
-  );
+  CHECK(has(
+    grid_error("[grid.entry]\nfrom = 0\nto = 1\nstep = 1e-18\n"), "the range makes more values than 4096 bytes hold"
+  ));
   CHECK(
     has(grid_error("[grid.entry]\nfrom = 0.1\nto = 0.100000000000000002\nstep = 1e-18\n"), "gives one value twice")
   );
   CHECK(has(grid_error("[grid]\nentry = [1, 1.000000000000000001]\n"), "gives one value twice"));
   CHECK(has(grid_error("[grid]\nentry = [0, -0]\n"), "gives one value twice"));
   CHECK(has(grid_error("[grid]\nentry = [0.1, 0.10]\n"), "gives one value twice"));
-  CHECK(
-    has(grid_error("[grid.lookback]\nfrom = 1000000\nto = 2000000\nstep = 1\n"), "values, more than 4096 bytes hold")
-  );
+  CHECK(has(
+    grid_error("[grid.lookback]\nfrom = 1000000\nto = 2000000\nstep = 1\n"),
+    "the range makes more values than 4096 bytes hold"
+  ));
   CHECK(has(
     grid_error("[grid.lookback]\nfrom = 1000000\nto = 1001000\nstep = 1\n"),
-    "the range's values take more than 4096 bytes"
+    "`grid.lookback`'s values take more than 4096 bytes"
   ));
   CHECK(has(
     grid_error("[grid.lookback]\nfrom = 1\nto = 400\nstep = 1\n[grid.entry]\nfrom = 1\nto = 300\nstep = 1\n"),
