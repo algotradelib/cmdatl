@@ -1059,6 +1059,56 @@ TEST_CASE("the program's header: read against the spec, a regular file the inclu
   CHECK(reply_of(ran.out_).at("errors").as_array().at(0).at("code").as_string() == "unreadable");
 }
 
+TEST_CASE("measures: C++ names in order, from the spec file only, never a driver argument") {
+  const auto plain = run(WIDE_SPEC, single());
+  const auto listed = run("measures = [\"calmar\", \"_hit2\"]\n" + WIDE_SPEC, single());
+  REQUIRE(listed.errors_.empty());
+  CHECK(listed.resolved_.measures_ == std::vector<std::string>{"calmar", "_hit2"});
+  CHECK(listed.resolved_.args_ == plain.resolved_.args_);
+  CHECK_FALSE(listed.arg("measures"));
+  CHECK(run("measures = \"calmar\"\n" + WIDE_SPEC, single()).resolved_.measures_ == std::vector<std::string>{"calmar"});
+  CHECK(plain.resolved_.measures_.empty());
+  // Each refusal at the key's line.
+  std::string many = "[";
+  for (int k = 0; k < 65; ++k) {
+    many += (k == 0 ? "\"m" : ", \"m") + std::to_string(k) + "\"";
+  }
+  const std::vector<std::pair<std::string, std::string>> cases{
+    {"\"\"", "a string or a list of strings"},
+    {"[]", "a string or a list of strings"},
+    {"[\"1x\"]", "\"1x\" is not a C++ function's name"},
+    {"\"a-b\"", "\"a-b\" is not a C++ function's name"},
+    {"\"a::b\"", "\"a::b\" is not a C++ function's name"},
+    {"\"caf\xc3\xa9\"", "is not a C++ function's name"},
+    {"\"" + std::string(65, 'a') + "\"", "is not a C++ function's name"},
+    {"\"cmdatl_x\"", "a name starting with cmdatl_ is cmdatl's own"},
+    {many + "]", "at most 64 measures, not 65"},
+    {"[\"a\", \"b\", \"a\"]", "\"a\" is named twice"},
+    {"1", "a string or a list of strings"},
+    {"{ a = \"b\" }", "unknown setting `measures.a`"},
+  };
+  for (const auto& [value, message] : cases) {
+    const auto error = one_error("strategy = \"m.atls\"\nmeasures = " + value);
+    INFO(value);
+    CHECK(has(error, FILE_PATH + ":2"));
+    CHECK(has(error, message));
+  }
+  CHECK(run("measures = \"" + std::string(64, 'a') + "\"\n" + WIDE_SPEC, single()).errors_.empty());
+  // Not a setting on the command line: after a program the word is read as a run spec, as `header=` is.
+  CHECK_FALSE(sp::is_setting("measures=calmar"));
+  const ScopedVariable none("CMDATL_ATLC", "/nonexistent/atlc");
+  const auto after_program = run({"--json", "strategy", "backtest", "m.atls", "measures=calmar"});
+  CHECK(after_program.exit_ == 2);
+  CHECK(code_of(after_program.out_) == "spec.invalid");
+  CHECK(reply_of(after_program.out_).at("errors").as_array().at(0).at("code").as_string() == "unreadable");
+  const ScratchDir dir;
+  spit(dir.path() / "s.toml", WIDE_SPEC);
+  const auto after_spec = run({"--json", "strategy", "backtest", (dir.path() / "s.toml").string(), "measures=calmar"});
+  INFO(after_spec.out_);
+  CHECK(after_spec.exit_ == 2);
+  CHECK(code_of(after_spec.out_) == "usage.bad_value");
+}
+
 TEST_CASE("a program with session handlers takes intraday bars as they are, with its market stated") {
   sp::Program session;
   session.mode_ = "universe";
