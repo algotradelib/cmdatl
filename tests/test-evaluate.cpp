@@ -1,11 +1,13 @@
-// Many replays in one driver (include/cmdatl/replay/evaluate.hpp): the index order, the lines, the choice of the best,
-// and the runner on threads (order, the waiting-line bound, stops that join every thread). The `[threads]` cases also
+// Many replays in one driver (include/cmdatl/replay/evaluate.hpp, loops.hpp): the index order, the lines, the choice of
+// the best, the runner on threads (order, the waiting-line bound, stops that join every thread), and the methods
+// windows and bootstrap. The `[threads]` cases also
 // run under ThreadSanitizer (a build with `-fsanitize=thread`, `test-replay "[threads]"`), so the program here keeps its
 // state per instance; the few atomics below are what the tests observe.
 #include <cmdatl/replay/evaluate.hpp>
 
 #include "./run-strategy.hpp"
 
+#include <boost/json.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -952,3 +954,474 @@ TEST_CASE("evaluate: 100,000 one-row stdin paths peak within 10 % of 1,000", "[.
 }
 
 #endif
+namespace {
+
+namespace json = boost::json;
+
+/**
+ * @brief A program without state: on every bar it holds `k` shares of the bar's instrument; it states `w` bars of
+ *   warm-up; `k` below 0 is a refused bound.
+ */
+struct Holder {
+  static constexpr const char* atls_mode = "named";
+  static constexpr bool atls_session = false;
+  static std::vector<std::string> atls_instruments() {
+    return {"x", "y"};
+  }
+
+  explicit Holder(std::vector<atl::InstrumentId> ids) : ids_(std::move(ids)) {}
+
+  std::size_t warmup_bars() const {
+    return static_cast<std::size_t>(w_);
+  }
+
+  void set(std::string_view name, double value) {
+    if (name == "k") {
+      k_ = value;
+    } else if (name == "w") {
+      w_ = value;
+    } else {
+      throw std::invalid_argument("the program has no parameter '" + std::string(name) + "'");
+    }
+    if (k_ < 0) {
+      throw std::invalid_argument("k is below 0");
+    }
+  }
+
+  void set_order_pricing(atl::OrderType, const atl::Decimal64&) {}
+
+  const runtest::Refusals& pricing_refusals() const {
+    return refusals_;
+  }
+
+  template <class Ctx>
+  void on_bar(Ctx& ctx, const atl::strategy::BarEvent& event) {
+    atl::strategy::TargetPosition target;
+    target.instrument_ = event.instrument_;
+    target.target_quantity_ = atl::Decimal64(static_cast<std::int64_t>(k_), 0);
+    target.tag_ = "hold";
+    ctx.submit(target);
+  }
+
+  std::vector<atl::InstrumentId> ids_;
+  runtest::Refusals refusals_;
+  double k_{1};
+  double w_{1};
+};
+
+/**
+ * @brief Long CSV rows of two symbols at midnight UTC, one bar a day from a date, every day or weekdays only; each
+ *   symbol's four prices one value, AAA rising and falling by its own rule, BBB by another.
+ * @param from The first date, yyyymmdd.
+ * @param count The bars of each symbol.
+ * @param weekdays Whether Saturdays and Sundays have none.
+ * @return The file's text, with its header.
+ */
+std::string days_of(int from, std::size_t count, bool weekdays = false) {
+  std::string text = HEADER + "\n";
+  long long day = replay::day_seconds(from) / 86400;
+  for (std::size_t made = 0; made < count; ++day) {
+    // 1970-01-01 was a Thursday: (day + 4) % 7 is 0 on Sundays, 6 on Saturdays.
+    if (weekdays && ((day + 4) % 7 == 0 || (day + 4) % 7 == 6)) {
+      continue;
+    }
+    for (
+      const auto& [symbol, price] :
+      {std::pair<std::string, std::size_t>{"AAA", 100 + made % 7 + made / 3}, {"BBB", 200 + (made * 5) % 11}}
+    ) {
+      const auto p = std::to_string(price);
+      text += std::to_string(day * 86400) + "," + symbol + "," + p + "," + p + "," + p + "," + p + ",1000\n";
+    }
+    ++made;
+  }
+  return text;
+}
+
+/**
+ * @brief The settings of an evaluation of `Holder` on a CSV of AAA and BBB.
+ * @param file The CSV.
+ * @param method The method, or empty for a single backtest.
+ * @param more Further arguments.
+ * @return The arguments.
+ */
+std::vector<std::string> on_pair(const std::string& file, const std::string& method, std::vector<std::string> more) {
+  std::vector<std::string> args{
+    "bars.source=csv", "bars.file=" + file, "bars.symbol_column=symbol", "instrument.x=AAA", "instrument.y=BBB",
+    "evaluate.method=" + method
+  };
+  if (method.empty()) {
+    args.pop_back();
+  }
+  args.insert(args.end(), more.begin(), more.end());
+  return args;
+}
+
+/**
+ * @brief A line of a driver's output as JSON.
+ * @param ran What the driver gave.
+ * @param k The line, from 0; the last when past the end.
+ * @return The object.
+ */
+json::object line_of(const Ran& ran, std::size_t k) {
+  const auto lines = lines_of(ran.out_);
+  REQUIRE(!lines.empty());
+  return json::parse(lines[std::min(k, lines.size() - 1)]).as_object();
+}
+
+/**
+ * @brief The summary of a driver's output.
+ * @param ran What it gave.
+ * @return The summary object.
+ */
+json::object summary_of(const Ran& ran) {
+  INFO(ran.out_ << ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  return line_of(ran, std::size_t(-1)).at("summary").as_object();
+}
+
+/**
+ * @brief Each line's window, as `from` and `to` dates and its periods.
+ * @param ran What the driver gave.
+ * @return One text per replay line, `FROM..TO/PERIODS`, with `<WARM` when it has a warm-up.
+ */
+std::vector<std::string> windows_of(const Ran& ran) {
+  std::vector<std::string> out;
+  for (const auto& line : lines_of(ran.out_)) {
+    const auto value = json::parse(line).as_object();
+    if (const auto* w = value.if_contains("window"); w != nullptr && w->is_object()) {
+      const auto& o = w->as_object();
+      const auto date = [&o](const char* key) {
+        return o.at(key).is_null() ? std::string() : std::string(o.at(key).as_string()).substr(0, 10);
+      };
+      out.push_back(
+        (o.at("warm_from").is_null() ? "" : date("warm_from") + "<") + date("from") + ".." + date("to") + "/" +
+        std::to_string(o.at("periods").as_int64())
+      );
+    }
+  }
+  return out;
+}
+
+/**
+ * @brief A single backtest's report text on one line, as a replay line carries it.
+ * @param ran The backtest.
+ * @return The text.
+ */
+std::string flat(const Ran& ran) {
+  return replay::one_line(ran.out_);
+}
+
+/**
+ * @brief The report a line carries, as text.
+ * @param line The line.
+ * @return The report's text, as the line has it.
+ */
+std::string report_text(const std::string& line) {
+  return line.substr(line.find("\"report\":") + 9, line.size() - line.find("\"report\":") - 10);
+}
+
+} // namespace
+
+TEST_CASE("loops: a span adds months first clamped to the month's last day and then days; a length's grammar") {
+  CHECK(replay::plus(20240131, 1, 0) == 20240229);
+  CHECK(replay::plus(20240131, 2, 0) == 20240331);
+  CHECK(replay::plus(20240131, 13, 0) == 20250228);
+  CHECK(replay::plus(20230131, 1, 0) == 20230228);
+  CHECK(replay::plus(20240229, 12, 0) == 20250228);
+  CHECK(replay::plus(20240131, 1, 7) == 20240307);
+  CHECK(replay::plus(20241231, 0, 1) == 20250101);
+  CHECK_THROWS_AS(replay::plus(20240131, 12 * 99999, 0), replay::Refused);
+  CHECK(replay::length_of("k", "252", 2).periods_ == std::optional<std::size_t>(252));
+  CHECK(replay::length_of("k", "0", 0).periods_ == std::optional<std::size_t>(0));
+  const auto year = replay::length_of("k", "3y", 2);
+  CHECK((!year.periods_ && year.months_ == 36 && year.days_ == 0));
+  CHECK(replay::length_of("k", "2w", 2).days_ == 14);
+  CHECK(replay::length_of("k", "6mo", 2).months_ == 6);
+  CHECK(replay::length_of("k", "99999d", 2).days_ == 99999);
+  for (const auto* bad : {"0y", "1.5y", "3Y", "100000d", "-1", "1", "01", "y", "", "1e3", "1000000001"}) {
+    INFO(bad);
+    CHECK_THROWS_AS(replay::length_of("k", bad, 2), std::invalid_argument);
+  }
+}
+
+TEST_CASE("loops: windows in periods are the library's folds rolling and expanding with the tail uncovered") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", days_of(20240101, 30, true));
+  const auto rolling =
+    drive<Holder>(on_pair(file, "windows", {"windows.length=10", "windows.step=5", "windows.warmup=2"}));
+  const auto summary = summary_of(rolling);
+  CHECK(
+    windows_of(rolling) ==
+    std::vector<std::string>{
+      "2024-01-01<2024-01-03..2024-01-16/10", "2024-01-08<2024-01-10..2024-01-23/10",
+      "2024-01-15<2024-01-17..2024-01-30/10", "2024-01-22<2024-01-24..2024-02-06/10"
+    }
+  );
+  CHECK(summary.at("windows").as_int64() == 4);
+  CHECK(summary.at("uncovered_from") == json::value("2024-02-07"));
+  CHECK(summary.at("length").as_int64() == 10);
+  CHECK(summary.at("warmup").as_int64() == 2);
+  CHECK(summary.at("summary").at("total_return").at("defined").as_int64() == 4);
+  const auto expanding = drive<Holder>(
+    on_pair(file, "windows", {"windows.scheme=expanding", "windows.length=10", "windows.step=5", "windows.warmup=0"})
+  );
+  CHECK(
+    windows_of(expanding) ==
+    std::vector<std::string>{
+      "2024-01-01..2024-01-12/10", "2024-01-01..2024-01-19/15", "2024-01-01..2024-01-26/20",
+      "2024-01-01..2024-02-02/25", "2024-01-01..2024-02-09/30"
+    }
+  );
+  CHECK(summary_of(expanding).at("uncovered_from").is_null());
+  // The default warm-up on daily bars is the program's warm-up, with its parameters.
+  CHECK(summary_of(drive<Holder>(on_pair(file, "windows", {"windows.length=10", "param.w=3"}))).at("warmup") == 3);
+  // A warm-up shorter than the program's is refused before any line; so is a window that does not fit.
+  const auto short_warm =
+    drive<Holder>(on_pair(file, "windows", {"windows.length=10", "windows.warmup=2", "param.w=3"}));
+  CHECK(short_warm.exit_ == 1);
+  CHECK(lines_of(short_warm.out_).size() == 1);
+  CHECK(
+    short_warm.out_ ==
+    "{\"stopped\":{\"code\":\"evaluate.refused\",\"message\":\"window 0's warm-up holds 2 bars, and the program needs "
+    "3\",\"next\":\"give a longer windows.warmup\"}}\n"
+  );
+  const auto none = drive<Holder>(on_pair(file, "windows", {"windows.length=29", "windows.warmup=2"}));
+  CHECK(
+    none.out_.find("\"code\":\"evaluate.refused\",\"message\":\"no window fits the history's 30 periods\"") !=
+    std::string::npos
+  );
+}
+
+TEST_CASE("loops: span windows end on the anchored boundary; whole windows only; no warm-up before the anchor") {
+  Scratch dir;
+  const auto every = dir.write("every.csv", days_of(20240131, 130));
+  const auto monthly = [&](std::vector<std::string> more) {
+    more.insert(more.end(), {"windows.length=1mo", "windows.step=1mo"});
+    return drive<Holder>(on_pair(every, "windows", more));
+  };
+  // From 2024-01-31 by months: Jan-31, Feb-29, Mar-31, Apr-30, May-31; each window ends where the next starts.
+  CHECK(
+    windows_of(monthly({"windows.warmup=0", "replay.from=20240131"})) ==
+    std::vector<std::string>{
+      "2024-01-31..2024-02-28/29", "2024-02-29..2024-03-30/31", "2024-03-31..2024-04-29/30", "2024-04-30..2024-05-30/31"
+    }
+  );
+  // Window 1 ends on Mar-31, after replay.to (Mar-28) plus a day.
+  CHECK(
+    windows_of(monthly({"windows.warmup=0", "replay.to=20240328"})) ==
+    std::vector<std::string>{"2024-01-31..2024-02-28/29"}
+  );
+  // A span warm-up from Mar-31: warm over [Mar-31, Apr-30), trade [Apr-30, May-31).
+  const auto warm = monthly({"windows.warmup=1mo", "replay.from=20240331"});
+  CHECK(windows_of(warm).front() == "2024-03-31<2024-04-30..2024-05-30/31");
+  CHECK(summary_of(warm).at("warmup") == json::value("1mo"));
+  // A warm-up in periods with span lengths: the anchor is the date of period 3.
+  CHECK(windows_of(monthly({"windows.warmup=3"})).front() == "2024-01-31<2024-02-03..2024-03-02/29");
+  // Weekdays to Friday Mar-29: the window ending Apr-1 is kept only when replay.to says the history reaches Mar-31.
+  const auto weekdays = dir.write("weekdays.csv", days_of(20240101, 65, true));
+  const auto by_month = [&](std::vector<std::string> more) {
+    more.insert(more.end(), {"windows.length=1mo", "windows.warmup=0"});
+    return summary_of(drive<Holder>(on_pair(weekdays, "windows", more))).at("windows").as_int64();
+  };
+  CHECK(by_month({}) == 2);
+  CHECK(by_month({"replay.to=20240331"}) == 3);
+  // A day's window holds one period at most: refused, naming it.
+  const auto daily = drive<Holder>(on_pair(weekdays, "windows", {"windows.length=1d", "windows.warmup=0"}));
+  CHECK(daily.out_.find("\"message\":\"window 0 holds fewer than 2 periods\"") != std::string::npos);
+}
+
+TEST_CASE("loops: a window replays as a backtest of its span and a warm stateless window as one of the window") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", days_of(20240101, 30, true));
+  const auto windows = drive<Holder>(on_pair(file, "windows", {"windows.length=5", "windows.warmup=0", "param.k=3"}));
+  const auto lines = lines_of(windows.out_);
+  REQUIRE(lines.size() == 7);
+  const auto backtest = drive<Holder>(on_pair(file, "", {"param.k=3", "replay.from=20240108", "replay.to=20240112"}));
+  REQUIRE(backtest.exit_ == 0);
+  CHECK(report_text(lines[1]) == flat(backtest));
+  // With two days of history before it, a program without state reports what a backtest of the window alone does.
+  const auto warm = drive<Holder>(on_pair(file, "windows", {"windows.length=5", "windows.warmup=2", "param.k=3"}));
+  const auto warm_lines = lines_of(warm.out_);
+  CHECK(
+    warm_lines[0].find("\"warm_from\":\"2024-01-01T00:00:00Z\",\"from\":\"2024-01-03T00:00:00Z\"") != std::string::npos
+  );
+  CHECK(
+    report_text(warm_lines[0]) ==
+    flat(drive<Holder>(on_pair(file, "", {"param.k=3", "replay.from=20240103", "replay.to=20240109"})))
+  );
+}
+
+TEST_CASE("loops: bootstrap path 0 is the backtest; a path depends on its number alone; a block is given") {
+  Scratch dir;
+  std::string table = "date,AAA,BBB,CCC\n";
+  for (int k = 0; k < 40; ++k) {
+    table += std::to_string(20240101 + (k / 28) * 100 + k % 28 + (k / 28 == 0 ? 0 : 0)) + "," +
+      std::to_string(5000 + 10 * ((k * k) % 17)) + "," + std::to_string(7000 + 10 * ((k * 7) % 13)) + ",9000\n";
+  }
+  const auto wide = dir.write("closes.csv", table);
+  const auto boot = [&](std::vector<std::string> more, const std::string& y = "BBB") {
+    std::vector<std::string> args{
+      "bars.source=wide", "bars.file=" + wide, "replay.market=kr", "instrument.x=AAA", "instrument.y=" + y,
+      "evaluate.method=bootstrap"
+    };
+    args.insert(args.end(), more.begin(), more.end());
+    return drive<Holder>(args);
+  };
+  const auto ran = boot({"bootstrap.seed=7", "bootstrap.block=5", "bootstrap.paths=2", "param.k=10"});
+  const auto summary = summary_of(ran);
+  const auto lines = lines_of(ran.out_);
+  REQUIRE(lines.size() == 4);
+  CHECK(
+    lines[1].find("\"path\":{\"number\":1,\"seed\":7,\"id\":null,\"scheme\":\"circular\",\"block\":5}") !=
+    std::string::npos
+  );
+  CHECK(summary.at("paths") == 3);
+  CHECK(summary.at("intervals").as_object().empty());
+  CHECK(!summary.contains("summary"));
+  const auto backtest = drive<Holder>(
+    {"bars.source=wide", "bars.file=" + wide, "replay.market=kr", "instrument.x=AAA", "instrument.y=BBB", "param.k=10"}
+  );
+  REQUIRE(backtest.exit_ == 0);
+  CHECK(report_text(lines[0]) == flat(backtest));
+  CHECK(summary.at("history").at("total_return") == line_of(ran, 0).at("report").at("total_return"));
+  // Path 2 is the same with 2 paths and with 5; another seed draws another path.
+  const auto five = boot({"bootstrap.seed=7", "bootstrap.block=5", "bootstrap.paths=5", "param.k=10"});
+  CHECK(lines_of(five.out_)[2] == lines[2]);
+  CHECK(
+    lines_of(boot({"bootstrap.seed=8", "bootstrap.block=5", "bootstrap.paths=2", "param.k=10"}).out_)[2] != lines[2]
+  );
+  CHECK(summary.at("scheme") == json::value("circular"));
+  // Without a seed one is drawn and echoed, below 2^53; without a block, the key is asked for, before any line.
+  const auto drawn = summary_of(boot({"bootstrap.block=5", "bootstrap.paths=1"}));
+  CHECK(drawn.at("seed").to_number<std::uint64_t>() < (std::uint64_t{1} << 53));
+  const auto unblocked = boot({"bootstrap.paths=1"});
+  CHECK(unblocked.exit_ == 1);
+  CHECK(
+    unblocked.out_ ==
+    "{\"stopped\":{\"code\":\"evaluate.refused\",\"message\":\"bootstrap draws blocks of bootstrap.block periods: "
+    "give one\",\"next\":\"give bootstrap.block = N\"}}\n"
+  );
+  // Below the program's warm-up the block is a warning, not a refusal.
+  CHECK(
+    summary_of(boot({"bootstrap.block=3", "bootstrap.paths=1", "param.w=4"})).at("warnings") ==
+    json::parse("[{\"code\":\"block_below_lookback\",\"block\":3,\"lookback\":4}]")
+  );
+  CHECK(summary_of(boot({"bootstrap.block=4", "bootstrap.paths=1", "param.w=4"})).at("warnings").as_array().empty());
+}
+
+TEST_CASE("loops: bootstrap refusals come before any line with the key to give") {
+  Scratch dir;
+  const auto wide = [&](const std::string& name, const std::string& rows) {
+    return dir.write(name, "date,AAA,BBB\n" + rows);
+  };
+  const auto boot = [&](const std::string& file, std::vector<std::string> more) {
+    std::vector<std::string> args{
+      "bars.source=wide", "bars.file=" + file, "instrument.x=AAA", "instrument.y=BBB", "evaluate.method=bootstrap"
+    };
+    args.insert(args.end(), more.begin(), more.end());
+    const auto ran = drive<Holder>(args);
+    CHECK(ran.exit_ == 1);
+    CHECK(lines_of(ran.out_).size() == 1);
+    return ran.out_;
+  };
+  std::string short_rows;
+  for (int k = 1; k <= 8; ++k) {
+    short_rows += "202401" + std::string(k < 10 ? "0" : "") + std::to_string(k) + "," +
+      std::to_string(100 + k * k % 5) + "," + std::to_string(50 + k % 3) + "\n";
+  }
+  CHECK(
+    boot(wide("short2.csv", short_rows), {"bootstrap.block=8"})
+      .find("\"message\":\"bootstrap.block 8 is above the history's 7 returns\"") != std::string::npos
+  );
+  CHECK(
+    boot(wide("ragged.csv", "20240102,100,50\n20240103,101,\n20240104,102,51\n"), {"bootstrap.block=1"})
+      .find("\"message\":\"BBB has no close on 20240103\"") != std::string::npos
+  );
+}
+
+TEST_CASE("loops: the summary's quantiles are type 7 with nulls counted apart") {
+  CHECK(
+    replay::spread_json({}, 2) ==
+    "{\"defined\":0,\"null\":2,\"mean\":null,\"min\":null,\"q05\":null,\"q25\":null,\"median\":null,\"q75\":null,\"q95\":null,\"max\":null}"
+  );
+  CHECK(
+    replay::spread_json({3}, 0) ==
+    "{\"defined\":1,\"null\":0,\"mean\":3,\"min\":3,\"q05\":3,\"q25\":3,\"median\":3,\"q75\":3,\"q95\":3,\"max\":3}"
+  );
+  // Two values: h = p, so q05 = 1 + 0.05 * 2.
+  CHECK(
+    replay::spread_json({3, 1}, 1) ==
+    "{\"defined\":2,\"null\":1,\"mean\":2,\"min\":1,\"q05\":1.1,\"q25\":1.5,\"median\":2,\"q75\":2.5,\"q95\":2.9,\"max\":3}"
+  );
+  // Five values 1, 2, 4, 8, 16: h = 4p; q05 = 1 + 0.2 * 1, q25 = 2, q75 = 8, q95 = 8 + 0.8 * 8.
+  CHECK(
+    replay::spread_json({16, 1, 8, 2, 4}, 0) ==
+    "{\"defined\":5,\"null\":0,\"mean\":6.2,\"min\":1,\"q05\":1.2,\"q25\":2,\"median\":4,\"q75\":8,\"q95\":14.4,\"max\":16}"
+  );
+}
+
+TEST_CASE("loops: one job and four print the same bytes for every method", "[threads]") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", days_of(20240101, 40, true));
+  std::string table = "date,AAA,BBB\n";
+  for (int k = 0; k < 30; ++k) {
+    table +=
+      std::to_string(20240101 + k) + "," + std::to_string(100 + (k * k) % 7) + "," + std::to_string(50 + k % 4) + "\n";
+  }
+  const auto wide = dir.write("closes.csv", table);
+  for (
+    const auto& args : std::vector<std::vector<std::string>>{
+      on_pair(file, "windows", {"windows.length=8", "windows.step=3"}),
+      {"bars.source=wide", "bars.file=" + wide, "instrument.x=AAA", "instrument.y=BBB", "evaluate.method=bootstrap",
+        "bootstrap.seed=3", "bootstrap.block=4", "bootstrap.paths=12", "bootstrap.scheme=stationary"}
+    }
+  ) {
+    auto four = args;
+    four.push_back("evaluate.jobs=4");
+    const auto one = drive<Holder>(args);
+    const auto many = drive<Holder>(four);
+    INFO(args.back() << one.out_ << one.err_);
+    REQUIRE(one.exit_ == 0);
+    auto expected = one.out_;
+    expected.replace(expected.find("\"jobs\":1,"), 9, "\"jobs\":4,");
+    CHECK(many.out_ == expected);
+  }
+}
+
+TEST_CASE("loops: bootstrap intervals for the metrics the user names; measures included") {
+  Scratch dir;
+  std::string table = "date,AAA,BBB\n";
+  for (int k = 0; k < 28; ++k) {
+    table += std::to_string(20240101 + k) + "," + std::to_string(5000 + 10 * ((k * k) % 17)) + "," +
+      std::to_string(7000 + 10 * ((k * 7) % 13)) + "\n";
+  }
+  const auto wide = dir.write("closes.csv", table);
+  const auto boot = [&](std::vector<std::string> more) {
+    std::vector<std::string> args{
+      "bars.source=wide", "bars.file=" + wide, "replay.market=kr", "instrument.x=AAA", "instrument.y=BBB",
+      "evaluate.method=bootstrap", "bootstrap.seed=11", "bootstrap.block=3", "bootstrap.paths=20", "param.k=10"
+    };
+    args.insert(args.end(), more.begin(), more.end());
+    return drive<Holder>(args, -1, {}, Measures{{"executions", executions}});
+  };
+  const auto wide95 = summary_of(boot({"bootstrap.intervals=total_return,measures.executions"})).at("intervals");
+  const auto narrow = summary_of(boot({"bootstrap.intervals=total_return", "bootstrap.level=0.5"})).at("intervals");
+  const auto& total = wide95.at("total_return").as_object();
+  CHECK(total.at("level").to_number<double>() == 0.95);
+  CHECK(total.at("defined").as_int64() + total.at("null").as_int64() == 20);
+  CHECK(wide95.at("measures.executions").at("defined").as_int64() == 20);
+  // A narrower level nests inside a wider one, around the same median.
+  const auto& half = narrow.at("total_return").as_object();
+  CHECK(half.at("median") == total.at("median"));
+  CHECK(total.at("lower").to_number<double>() <= half.at("lower").to_number<double>());
+  CHECK(half.at("upper").to_number<double>() <= total.at("upper").to_number<double>());
+  CHECK(half.at("lower").to_number<double>() <= half.at("upper").to_number<double>());
+  const auto unknown = boot({"bootstrap.intervals=total_return,calmar"});
+  CHECK(unknown.exit_ == 1);
+  CHECK(
+    unknown.out_ ==
+    "{\"stopped\":{\"code\":\"evaluate.refused\",\"message\":\"bootstrap.intervals names no figure of the report and "
+    "no measure: 'calmar'\",\"next\":\"name report figures (total_return, sharpe_annualized, ...) or "
+    "measures.NAME\"}}\n"
+  );
+}
