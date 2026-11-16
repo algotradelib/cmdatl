@@ -352,8 +352,8 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 | `pricing_refusal_reasons` | object | each pricing refusal reason with its count, when nonzero: `no_basis_price`, `no_price_grid`, `price_not_representable`, `price_not_positive`, `net_not_representable` |
 | `caveats` | object | `gaps` (bars that did not follow their predecessor), `unfilled` (orders still queued at the end), `expired` (`DAY` orders withdrawn unfilled when their session ended, as they would expire live; on daily bars, after one bar), `unvalued_bars`, `multiple_instruments`, `cost_totals_incomplete`, `volume_ignored` (always true: fills are not capped by volume), `market_price_rule` and `market_fills_by_rule` (the rule named by `replay.fill_function` and the fills it priced, only when one is set), `open_points` (true with `bars.open_point`), `lowest_cash` (the lowest cash a fill left, as a decimal string, when below zero) and `shorts_borrow_nothing` (always true) |
 | `first_bar`, `last_bar` | string | the first and last recorded times, ISO 8601 in UTC; absent when nothing was replayed |
-| `warning` | string | only when `--fills` and `--equity` turned out to be one file, which then holds the equity curve |
 | `measures` | object | each of the run spec's `measures` with its value, a number or null, in order; only when it names any |
+| `warning` | string | only when `--fills` and `--equity` turned out to be one file, which then holds the equity curve |
 
 A number is printed with ten significant digits; a figure the library leaves undefined (a return on zero equity, a ratio without variance) is null.
 

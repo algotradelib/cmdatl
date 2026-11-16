@@ -837,14 +837,14 @@ TEST_CASE("replay main: the measures' values end the report, null when not finit
       ", \"nan\": null, \"inf\": null, \"zero\": -0}\n}\n"
   );
   CHECK(field(plain.out_, "total_return") == "0.075");
-  // After the warning, when the report has one.
+  // Before the warning, when the report has one.
   std::filesystem::create_symlink("target.csv", dir.at("alias.csv"));
   auto both = args;
   both.push_back("output.fills=" + dir.at("target.csv"));
   both.push_back("output.equity=" + dir.at("alias.csv"));
   const auto warned = replay_main<runtest::Program>(both, same_fills, measures_of({table[1]}));
   REQUIRE(warned.exit_ == 0);
-  const auto at = warned.out_.find(",\n  \"warning\": " + ONE_FILE + ",\n  \"measures\": {\"nan\": null}\n}\n");
+  const auto at = warned.out_.find(",\n  \"measures\": {\"nan\": null},\n  \"warning\": " + ONE_FILE + "\n}\n");
   CHECK(at != std::string::npos);
 }
 

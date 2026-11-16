@@ -1719,15 +1719,15 @@ std::string report_json(
     o << ",\n  \"first_bar\": " << quoted(iso(result.equity_.front().at_));
     o << ",\n  \"last_bar\": " << quoted(iso(result.equity_.back().at_));
   }
-  if (!warning.empty()) {
-    o << ",\n  \"warning\": " << quoted(warning);
-  }
   if (!measures.empty()) {
     o << ",\n  \"measures\": {";
     for (std::size_t k = 0; k < measures.size(); ++k) {
       o << (k == 0 ? "" : ", ") << quoted(measures[k].first) << ": " << number(measures[k].second);
     }
     o << "}";
+  }
+  if (!warning.empty()) {
+    o << ",\n  \"warning\": " << quoted(warning);
   }
   o << "\n}\n";
   return o.str();
