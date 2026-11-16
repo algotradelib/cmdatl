@@ -1,6 +1,6 @@
 // Many replays in one driver (include/cmdatl/replay/evaluate.hpp, loops.hpp): the index order, the lines, the choice of
 // the best, the runner on threads (order, the waiting-line bound, stops that join every thread), and the methods
-// windows and bootstrap. The `[threads]` cases also
+// windows, walk-forward and bootstrap. The `[threads]` cases also
 // run under ThreadSanitizer (a build with `-fsanitize=thread`, `test-replay "[threads]"`), so the program here keeps its
 // state per instance; the few atomics below are what the tests observe.
 #include <cmdatl/replay/evaluate.hpp>
@@ -1251,6 +1251,73 @@ TEST_CASE("loops: a window replays as a backtest of its span and a warm stateles
   );
 }
 
+TEST_CASE("loops: walk-forward chooses on each training window then tests the choice and chains the tests") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", days_of(20240101, 30, true));
+  const auto ran = drive<Holder>(on_pair(
+    file, "walk-forward",
+    {"walk_forward.train=10", "walk_forward.test=5", "grid.k=1,-1,3", "grid.w=1,2", "evaluate.objective=total_return"}
+  ));
+  const auto summary = summary_of(ran);
+  const auto lines = lines_of(ran.out_);
+  // Four folds of six sets (k, then w fastest), then four tests.
+  REQUIRE(lines.size() == 4 * 6 + 4 + 1);
+  CHECK(lines[2].find("\"failure\":{\"kind\":\"params\"") != std::string::npos);
+  CHECK(
+    lines[6].find("\"window\":{\"fold\":1,\"role\":\"train\",\"warm_from\":null,\"from\":\"2024-01-08") !=
+    std::string::npos
+  );
+  CHECK(lines[24].rfind("{\"index\":24,\"params\":{\"k\":", 0) == 0);
+  CHECK(lines[24].find("\"window\":{\"fold\":0,\"role\":\"test\",\"warm_from\":\"2024-01-01") != std::string::npos);
+  CHECK(summary.at("param_sets") == 6);
+  CHECK(summary.at("invalid") == 2);
+  CHECK(summary.at("tried") == 4);
+  CHECK(summary.at("train_replays") == 16);
+  CHECK(summary.at("replays") == 28);
+  CHECK(summary.at("best").is_null());
+  const auto& folds = summary.at("folds").as_array();
+  REQUIRE(folds.size() == 4);
+  double product = 1;
+  for (std::size_t k = 0; k < 4; ++k) {
+    const auto& f = folds[k].as_object();
+    INFO(k << " " << json::serialize(f));
+    CHECK(f.at("eligible") == 4);
+    CHECK(f.at("test_index") == static_cast<std::int64_t>(24 + k));
+    CHECK(f.at("test_periods") == 5);
+    product *= 1 + f.at("test_total_return").to_number<double>();
+    // w changes nothing traded: each tie goes to the lower set, w = 1 (sets 0 and 4).
+    CHECK((f.at("chosen") == 0 || f.at("chosen") == 4));
+  }
+  CHECK(summary.at("chained_null_reason").is_null());
+  const auto chained = summary.at("chained").at("total_return").to_number<double>();
+  CHECK(std::abs(chained - (product - 1)) < 1e-8);
+  // One fold: the chain is that fold's test report.
+  const auto one = drive<Holder>(on_pair(
+    file, "walk-forward",
+    {"walk_forward.train=20", "walk_forward.test=10", "grid.k=1,2", "evaluate.objective=total_return"}
+  ));
+  const auto one_lines = lines_of(one.out_);
+  REQUIRE(one_lines.size() == 4);
+  CHECK(json::parse(report_text(one_lines[2])) == summary_of(one).at("chained"));
+  // No set eligible in a fold: no test there, and no chain.
+  const auto none = drive<Holder>(on_pair(
+    file, "walk-forward",
+    {"walk_forward.train=10", "walk_forward.test=5", "grid.k=-1,-2", "evaluate.objective=total_return"}
+  ));
+  CHECK(summary_of(none).at("chained_null_reason") == json::value("unchosen"));
+  CHECK(summary_of(none).at("folds").at(0).at("chosen").is_null());
+  // A training window shorter than the warm-up and two bars is refused for the set that needs it.
+  const auto refused = drive<Holder>(on_pair(
+    file, "walk-forward",
+    {"walk_forward.train=10", "walk_forward.test=5", "grid.w=1,9", "evaluate.objective=total_return"}
+  ));
+  CHECK(
+    refused.out_.find(
+      "\"message\":\"set 1 {\\\"w\\\":9}, fold 0: the training window holds 10 bars, and the program needs 11\""
+    ) != std::string::npos
+  );
+}
+
 TEST_CASE("loops: bootstrap path 0 is the backtest; a path depends on its number alone; a block is given") {
   Scratch dir;
   std::string table = "date,AAA,BBB,CCC\n";
@@ -1372,6 +1439,10 @@ TEST_CASE("loops: one job and four print the same bytes for every method", "[thr
   for (
     const auto& args : std::vector<std::vector<std::string>>{
       on_pair(file, "windows", {"windows.length=8", "windows.step=3"}),
+      on_pair(
+        file, "walk-forward",
+        {"walk_forward.train=8", "walk_forward.test=4", "grid.k=1,2,3", "evaluate.objective=sharpe_annualized"}
+      ),
       {"bars.source=wide", "bars.file=" + wide, "instrument.x=AAA", "instrument.y=BBB", "evaluate.method=bootstrap",
         "bootstrap.seed=3", "bootstrap.block=4", "bootstrap.paths=12", "bootstrap.scheme=stationary"}
     }
