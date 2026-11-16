@@ -1725,7 +1725,13 @@ TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by t
   }
   CHECK(has(grid_error("[evaluate]\njobs = 0\n"), "`evaluate.jobs` is 1 to 256"));
   CHECK(has(grid_error("[evaluate]\njobs = 257\n"), "`evaluate.jobs` is 1 to 256"));
-  CHECK(has(one_error(WIDE_SPEC + "[evaluate]\nobjective = \"measures.calmar\"\n"), "`evaluate.objective` is one of"));
+  CHECK(
+    has(grid_error("[evaluate]\nobjective = \"measures.calmar\"\n"), "`evaluate.objective` is one of total_return,")
+  );
+  const auto measured =
+    evaluate("measures = [\"calmar\"]\n" + WIDE_SPEC + "[evaluate]\nobjective = \"measures.calmar\"\n");
+  CHECK(measured.errors_.empty());
+  CHECK(measured.arg("evaluate.objective") == std::optional<std::string>("measures.calmar"));
   CHECK(has(grid_error("[grid]\nflag = [1, 0]\n"), "`flag` is a bool parameter, which a grid does not take"));
   CHECK(has(grid_error("[grid]\nnope = [1, 2]\n"), "the program has no parameter `nope` for a grid"));
   CHECK(has(grid_error("[grid]\nlookback = [1, 2.5]\n"), "`lookback` is an int parameter"));

@@ -171,8 +171,7 @@ inline const std::vector<Key>& keys() {
     {"build.indicators", Kind::CHOICE, {}, {"incremental", "naive", "exact"}},
     {"evaluate.method", Kind::CHOICE, {}, {"grid"}},
     {"evaluate.jobs", Kind::COUNT, {}, {}},
-    {"evaluate.objective", Kind::CHOICE, {},
-      {"total_return", "sharpe_per_period", "sharpe_annualized", "sortino_per_period", "max_drawdown"}},
+    {"evaluate.objective", Kind::TEXT, {}, {}},
     {"evaluate.direction", Kind::CHOICE, {}, {"max", "min"}},
   };
   return table;
@@ -2001,6 +2000,23 @@ inline std::vector<Error> resolve(
     }
     if (const auto* e = get("evaluate.jobs"); e != nullptr && !(e->value_.number_ >= 1 && e->value_.number_ <= 256)) {
       errors.push_back(Error::at(e->origin_, "`evaluate.jobs` is 1 to 256"));
+    }
+    // A figure of the report, or one of the spec's measures.
+    std::vector<std::string> figures{
+      "total_return", "sharpe_per_period", "sharpe_annualized", "sortino_per_period", "max_drawdown"
+    };
+    for (const auto& item : get("measures") != nullptr ? get("measures")->value_.items_ : std::vector<Value>{}) {
+      figures.push_back("measures." + item.text());
+    }
+    if (
+      const auto* e = get("evaluate.objective");
+      e != nullptr && std::find(figures.begin(), figures.end(), e->value_.text()) == figures.end()
+    ) {
+      errors.push_back(
+        Error::at(
+          e->origin_, "`evaluate.objective` is one of " + join(figures, ", ") + ", not \"" + e->value_.text() + "\""
+        )
+      );
     }
     read_grid(merged, program, grid, errors);
   }
