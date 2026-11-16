@@ -1471,6 +1471,7 @@ TEST_CASE(
   const auto most = summary_of(run({"grid.k=1,3", "evaluate.objective=total_return"}));
   const auto least = summary_of(run({"grid.k=1,3", "evaluate.objective=total_return", "evaluate.direction=min"}));
   CHECK(least.at("direction") == json::value("min"));
+  std::size_t differ = 0;
   for (std::size_t k = 0; k < 4; ++k) {
     const auto& high = most.at("folds").at(k).as_object();
     const auto& low = least.at("folds").at(k).as_object();
@@ -1479,7 +1480,9 @@ TEST_CASE(
     const auto bottom = low.at("objective_value").to_number<double>();
     CHECK(bottom <= top);
     CHECK((top == bottom) == (high.at("chosen") == low.at("chosen")));
+    differ += high.at("chosen") != low.at("chosen");
   }
+  CHECK(differ > 0);
   // By a measure: k = 0 executes nothing, so every fold chooses k = 2; the chain's measure counts the tests'.
   const auto measured = run({"grid.k=0,2", "evaluate.objective=measures.executions"}, {{"executions", executions}});
   const auto summary = summary_of(measured);

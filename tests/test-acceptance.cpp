@@ -666,10 +666,11 @@ TEST_CASE("strategy evaluate walks forward by calendar months alike on one job a
       ++tests;
     }
   }
+  // Every fold has a choice on these bars, so the tests chain.
+  REQUIRE(tests == 8);
   REQUIRE(one_lines.size() == 32 + tests + 1);
-  if (reply.at("chained_null_reason").is_null()) {
-    CHECK(std::abs(reply.at("chained").at("total_return").to_number<double>() - (product - 1)) < 1e-8);
-  }
+  REQUIRE(reply.at("chained_null_reason").is_null());
+  CHECK(std::abs(reply.at("chained").at("total_return").to_number<double>() - (product - 1)) < 1e-8);
   CHECK(reply_of(many_lines.back()).at("folds") == reply.at("folds"));
   CHECK(reply_of(many_lines.back()).at("chained") == reply.at("chained"));
   one_lines.pop_back();
