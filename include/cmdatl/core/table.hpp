@@ -114,6 +114,8 @@ struct Command {
   std::vector<OptionSpec> options_;
   /** @brief The reply's fields and what each holds. */
   std::vector<std::pair<std::string, std::string>> returns_;
+  /** @brief The fields of the lines it streams before its reply (`emit`), and what each holds. */
+  std::vector<std::pair<std::string, std::string>> streams_;
   /** @brief The exit codes it can end with. */
   std::vector<Exit> exits_;
   /** @brief The error codes it can answer with. */
@@ -239,6 +241,17 @@ struct Command {
    */
   Command& returns(std::string field, std::string help) {
     returns_.emplace_back(std::move(field), std::move(help));
+    return *this;
+  }
+
+  /**
+   * @brief Adds a field of the lines it streams before its reply, which `--fields` may name and `--value` may not.
+   * @param field The field's name.
+   * @param help What it holds.
+   * @return The command.
+   */
+  Command& streams(std::string field, std::string help) {
+    streams_.emplace_back(std::move(field), std::move(help));
     return *this;
   }
 

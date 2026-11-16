@@ -247,6 +247,13 @@ inline void write_command_help(std::ostream& out, const Command& command) {
     }
     out << "\n";
   }
+  if (!command.streams_.empty()) {
+    out << "Lines:";
+    for (const auto& field : command.streams_) {
+      out << " " << field.first;
+    }
+    out << "\n";
+  }
   out << "Exit:";
   for (const auto exit : command.exits_) {
     out << " " << static_cast<int>(exit);
@@ -331,6 +338,11 @@ inline json::object schema_entry(const Command& command) {
     returns[field.first] = field.second;
   }
   entry["returns"] = std::move(returns);
+  json::object streams;
+  for (const auto& field : command.streams_) {
+    streams[field.first] = field.second;
+  }
+  entry["streams"] = std::move(streams);
   json::array exits;
   for (const auto exit : command.exits_) {
     exits.push_back(static_cast<int>(exit));
@@ -436,6 +448,14 @@ inline std::vector<std::string> check_table(const Table& table) {
     }
     if (command.examples_.empty()) {
       problems.push_back(name + ": no example");
+    }
+    for (const auto& field : command.streams_) {
+      const auto returned = [&field](const auto& reply_field) {
+        return reply_field.first == field.first;
+      };
+      if (std::any_of(command.returns_.begin(), command.returns_.end(), returned)) {
+        problems.push_back(name + ": the line field " + field.first + " is also a reply's field");
+      }
     }
     // An example calls its own command: its leading words resolve to this entry, not to a longer path (an
     // example of `clock` must not be `clock advance`). Its arguments and options are checked by the tests.

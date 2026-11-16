@@ -171,16 +171,19 @@ inline std::optional<Reply> parse_command(
  *   every reply may carry.
  * @param command The command.
  * @param path The path (`cash`, `positions.0.quantity`).
+ * @param lines Whether the fields of the lines it streams count too.
  * @return Whether its first word is a field the command replies with.
  */
-inline bool declares_field(const Command& command, const std::string& path) {
+inline bool declares_field(const Command& command, const std::string& path, bool lines = false) {
   const auto head = path.substr(0, path.find('.'));
   if (head == "env" || head == "result" || head == "warning" || head == "note" || head == "error") {
     return true;
   }
-  return std::any_of(command.returns_.begin(), command.returns_.end(), [&head](const auto& field) {
+  const auto named = [&head](const auto& field) {
     return field.first == head;
-  });
+  };
+  return std::any_of(command.returns_.begin(), command.returns_.end(), named) ||
+    (lines && std::any_of(command.streams_.begin(), command.streams_.end(), named));
 }
 
 /** @brief What a command line asks for, once it is read and checked, before anything runs. */
@@ -293,8 +296,9 @@ inline Prepared prepare(const std::vector<std::string>& args, const Table& table
     prepared.refusal_->body_["usage"] = usage_line;
     return prepared;
   }
+  // `--fields` also selects inside the streamed lines; `--value` reads the final reply only.
   for (const auto& field : asked) {
-    if (!declares_field(command, field)) {
+    if (!declares_field(command, field, &field != &asked.back() || !globals.rendering_.value_)) {
       prepared.refusal_ = error_reply(
         Exit::USAGE, "usage.no_such_field", "cmdatl " + join(command.path_) + " replies have no field " + field,
         "cmdatl schema " + join(command.path_, ".") + " lists its fields"
@@ -649,6 +653,9 @@ inline int run(
   // A command not built that touches an account has no account to take an environment from: offline.
   const auto env = command.env_ == "account" ? std::string("offline") : command.env_;
   Output output(out, err, rendering, env);
+  for (const auto& field : command.streams_) {
+    output.add_line_field(field.first);
+  }
   // From here the command may act: nothing below may let an exception reach main, whose fallback says nothing was
   // sent. A failure to report the outcome is reported as a minimal line and, for a command that may send, exit 4.
   try {
