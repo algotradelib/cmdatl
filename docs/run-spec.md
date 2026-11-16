@@ -106,7 +106,7 @@ inline double final_level(const algotradelib::backtest::MeasureInput& in) {
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `bars.source` | `"wide"`, `"csv"`, `"store"` or a broker folder's name | `"store"` when `bars.store` is set, else `"wide"` | where the bars come from |
+| `bars.source` | `"wide"`, `"csv"`, `"store"`, `"stdin"` or a broker folder's name | `"store"` when `bars.store` is set, else `"wide"` | where the bars come from |
 
 `source = "wide"`: tables of one field each, a header and then rows of a yyyymmdd date and one cell per symbol (an empty cell, `NaN` or `nan` is missing), as Chan's book publishes them.
 
@@ -137,6 +137,18 @@ A long file names its symbols one way: `bars.symbol` with `bars.file`, `bars.sym
 Every row has as many cells as the header.
 A time must lie in the years 1 to 9999 and inside what the platform's clock holds, less two days: about the years 1678 to 2262 where it counts nanoseconds, as on Linux; a time outside is refused, never wrapped.
 Rows outside `replay.from` and `replay.to` are dropped, a row with an empty close is skipped, a price that is not positive is refused with its line, and times must increase within a symbol.
+
+`source = "stdin"`: the long layout above, read from standard input (a header line, then rows), for an evaluation only: `strategy backtest` and `cmdatl run` refuse it.
+`bars.file`, `bars.files`, `bars.symbols` and `bars.layout = "wide"` do not apply; the symbols are `bars.symbol` or `bars.symbol_column`.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `bars.path_column` | string | none: the stream is one path | the column naming each row's path |
+
+- A path ends when the cell changes: a later run of rows with an earlier cell is a new path, numbered in the order read; a cell is 1 to 64 bytes.
+- Every path carries the first path's symbols; `replay.from` and `replay.to` filter each path, and a path left with no bar stops the evaluation.
+- A malformed row, a line over 1 MiB or a path that breaks these rules stops the evaluation with its line (`stdin:LINE`), after the lines already printed.
+- A generator that dies between rows leaves a stream that looks complete: run the pipeline with `set -o pipefail` and read the generator's own exit.
 
 `source = "store"`: a Parquet store, laid out as `<store_root>/bars/source=SOURCE/interval=INTERVAL/symbol=SYMBOL/bars.parquet` with the columns `ts`, `stamp`, `open`, `high`, `low`, `close`, `volume` and `fetched_at`.
 The store keeps every fetched version of a bar; the replay reads, of each bar, the latest version.

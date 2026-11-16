@@ -1839,3 +1839,27 @@ TEST_CASE("an evaluation's ranges are exact decimals, each value read as the rep
   );
 }
 #endif
+
+TEST_CASE("standard input is an evaluation's bar source, in the long layout, and never a folder") {
+  const auto with = [](const std::string& bars, sp::Purpose purpose = sp::Purpose::EVALUATE) {
+    return evaluate("strategy = \"m.atls\"\n[bars]\nsource = \"stdin\"\n" + bars, purpose);
+  };
+  const std::string plain = "symbol_column = \"s\"\npath_column = \"p\"\ntime_format = \"iso\"\n";
+  const auto evaluation = with(plain);
+  CHECK(evaluation.errors_.empty());
+  CHECK(evaluation.arg("bars.source") == std::optional<std::string>("stdin"));
+  CHECK(evaluation.arg("bars.path_column") == std::optional<std::string>("p"));
+  for (const auto purpose : {sp::Purpose::BACKTEST, sp::Purpose::RUN}) {
+    const auto refused = with(plain, purpose).errors_;
+    REQUIRE(refused.size() == 1);
+    CHECK(has(refused.front(), "bars.source = \"stdin\" is an evaluation's key: use cmdatl strategy evaluate"));
+  }
+  CHECK(!cmdatl::user_broker_name("stdin"));
+  CHECK(has(with("file = \"c.csv\"\nsymbol = \"A\"\n").errors_.at(0), "`bars.file` applies to bars.source = \"wide\""));
+  CHECK(has(with("symbol = \"A\"\nlayout = \"wide\"\n").errors_.at(0), "reads the long layout"));
+  CHECK(has(with("").errors_.at(0), "names its symbols once"));
+  CHECK(has(with("symbol = \"A\"\nsymbol_column = \"s\"\n").errors_.at(0), "names its symbols once"));
+  const auto path = evaluate("strategy = \"m.atls\"\n[bars]\nfile = \"c\"\npath_column = \"p\"\n").errors_;
+  REQUIRE(path.size() == 1);
+  CHECK(has(path.front(), "`bars.path_column` applies to bars.source = \"stdin\""));
+}

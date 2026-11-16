@@ -114,17 +114,20 @@ inline const std::vector<std::string> INTERVALS{"1m", "5m", "15m", "30m", "1h", 
  */
 inline const std::vector<Key>& keys() {
   static const std::vector<std::string> csv{"csv"};
+  // A long CSV's keys, from a file or standard input.
+  static const std::vector<std::string> long_csv{"csv", "stdin"};
   static const std::vector<std::string> wide{"wide"};
   static const std::vector<std::string> store{"store"};
   // A broker folder's name as bars.source: the bars fetched through its adapter into the store.
   static const std::vector<std::string> folder{"folder"};
-  static const std::vector<std::string> csv_or_folder{"csv", "folder"};
+  static const std::vector<std::string> csv_or_folder{"csv", "stdin", "folder"};
   static const std::vector<std::string> store_or_folder{"store", "folder"};
   static const std::vector<Key> table{
     {"strategy", Kind::PATH, {}, {}},
     {"header", Kind::PATH, {}, {}},
     {"measures", Kind::TEXTS, {}, {}},
-    {"bars.source", Kind::CHOICE, {}, {"wide", "csv", "store"}},
+    {"bars.source", Kind::CHOICE, {}, {"wide", "csv", "store", "stdin"}},
+    {"bars.path_column", Kind::TEXT, {"stdin"}, {}},
     {"bars.adapter", Kind::PATH, folder, {}},
     {"bars.file", Kind::PATH, {"wide", "csv"}, {}},
     {"bars.close", Kind::PATH, wide, {}},
@@ -133,20 +136,20 @@ inline const std::vector<Key>& keys() {
     {"bars.low", Kind::PATH, wide, {}},
     {"bars.names", Kind::PATH, wide, {}},
     {"bars.files", Kind::PATHS, csv, {}},
-    {"bars.symbol", Kind::TEXT, csv, {}},
+    {"bars.symbol", Kind::TEXT, long_csv, {}},
     {"bars.symbols", Kind::TEXTS, csv, {}},
-    {"bars.symbol_column", Kind::TEXT, csv, {}},
-    {"bars.layout", Kind::CHOICE, csv, {"long", "wide"}},
-    {"bars.time", Kind::TEXT, csv, {}},
-    {"bars.time_format", Kind::CHOICE, csv, {"unix", "unix_ms", "yyyymmdd", "iso"}},
-    {"bars.timezone", Kind::OFFSET, csv, {}},
-    {"bars.stamp", Kind::TEXT, csv, {}},
+    {"bars.symbol_column", Kind::TEXT, long_csv, {}},
+    {"bars.layout", Kind::CHOICE, long_csv, {"long", "wide"}},
+    {"bars.time", Kind::TEXT, long_csv, {}},
+    {"bars.time_format", Kind::CHOICE, long_csv, {"unix", "unix_ms", "yyyymmdd", "iso"}},
+    {"bars.timezone", Kind::OFFSET, long_csv, {}},
+    {"bars.stamp", Kind::TEXT, long_csv, {}},
     {"bars.interval", Kind::CHOICE, csv_or_folder, INTERVALS},
-    {"bars.columns.open", Kind::TEXT, csv, {}},
-    {"bars.columns.high", Kind::TEXT, csv, {}},
-    {"bars.columns.low", Kind::TEXT, csv, {}},
-    {"bars.columns.close", Kind::TEXT, csv, {}},
-    {"bars.columns.volume", Kind::TEXT, csv, {}},
+    {"bars.columns.open", Kind::TEXT, long_csv, {}},
+    {"bars.columns.high", Kind::TEXT, long_csv, {}},
+    {"bars.columns.low", Kind::TEXT, long_csv, {}},
+    {"bars.columns.close", Kind::TEXT, long_csv, {}},
+    {"bars.columns.volume", Kind::TEXT, long_csv, {}},
     {"bars.store", Kind::COORDINATES, store, {}},
     {"bars.store_root", Kind::PATH, store_or_folder, {}},
     {"bars.count", Kind::COUNT, folder, {}},
@@ -1643,6 +1646,25 @@ inline std::vector<Error> resolve(
         Error::nowhere(
           "a long CSV names its symbol: give `bars.symbol`, or `bars.symbol_column` for a file of many symbols"
         )
+      );
+    }
+  } else if (source == "stdin") {
+    // Read only by an evaluation; one CSV of rows in the long layout, its symbols named once.
+    if (purpose != Purpose::EVALUATE) {
+      errors.push_back(
+        Error::at(
+          get("bars.source")->origin_, "bars.source = \"stdin\" is an evaluation's key: use cmdatl strategy evaluate"
+        )
+      );
+    }
+    if (text("bars.layout").value_or("long") == "wide") {
+      errors.push_back(
+        Error::at(get("bars.layout")->origin_, "bars.source = \"stdin\" reads the long layout: remove `bars.layout`")
+      );
+    }
+    if ((get("bars.symbol") == nullptr) == (get("bars.symbol_column") == nullptr)) {
+      errors.push_back(
+        Error::nowhere("bars.source = \"stdin\" names its symbols once: give `bars.symbol` or `bars.symbol_column`")
       );
     }
   } else {

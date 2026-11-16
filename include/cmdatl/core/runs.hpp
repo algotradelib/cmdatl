@@ -43,7 +43,9 @@ inline bool account_number_text(const std::string& text) {
  * @return Whether it can.
  */
 inline bool user_broker_name(const std::string& name) {
-  static const std::vector<std::string> reserved{"mock", "paper", "kis", "kiwoom", "toss", "csv", "wide", "store"};
+  static const std::vector<std::string> reserved{
+    "mock", "paper", "kis", "kiwoom", "toss", "csv", "wide", "store", "stdin"
+  };
   if (name.empty() || name.size() > 32 || name[0] < 'a' || name[0] > 'z') {
     return false;
   }
@@ -95,7 +97,7 @@ inline constexpr const char* START_LONG_WAIT_NEXT =
 
 /**
  * @brief Why a run spec's market settings are refused before anything is loaded, or nothing: the market `kr`, no store,
- *   no short sales, no fill at a decided close, no open points.
+ *   no standard input, no short sales, no fill at a decided close, no open points.
  * @param args atlc's arguments.
  * @return The key at fault and why, or nothing.
  */
@@ -105,6 +107,12 @@ inline std::optional<std::pair<std::string, std::string>> spec_refusal(const std
     return std::make_pair(
       std::string("replay.market"),
       std::string("a run trades KRX shares in won, under the operator's limits: set [replay] market = \"kr\"")
+    );
+  }
+  if (atlc_value(args, "bars.source") == std::optional<std::string>("stdin")) {
+    return std::make_pair(
+      std::string("bars.source"),
+      std::string("bars.source = \"stdin\" is an evaluation's key: use cmdatl strategy evaluate")
     );
   }
   if (atlc_value(args, "bars.store")) {
