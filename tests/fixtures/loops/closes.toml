@@ -1,0 +1,16 @@
+# The loops' acceptance spec: mean-reversion on wide tables of closes (closes.csv, from examples/data/daily.csv).
+strategy = "../../../examples/mean-reversion.atls"
+
+[bars]
+file = "closes.csv"
+
+[instruments]
+stock = "AAA"
+
+[replay]
+cash = 100000
+commission = 0.0005
+
+[params]
+lookback = 10
+entry = 1

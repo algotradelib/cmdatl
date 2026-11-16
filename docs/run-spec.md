@@ -466,7 +466,7 @@ One parameter set, replayed on each window of the history.
 ### Bootstrap paths
 
 ```sh
-cmdatl strategy evaluate dip.toml evaluate.method=bootstrap bootstrap.block=10 bootstrap.paths=500 bootstrap.intervals=total_return,max_drawdown
+cmdatl strategy evaluate dip.toml evaluate.method=bootstrap bootstrap.block=10 bootstrap.paths=500 'bootstrap.intervals=["total_return", "max_drawdown"]'
 ```
 
 One parameter set, replayed on the history (path 0) and on `paths` block-bootstrap paths of it.

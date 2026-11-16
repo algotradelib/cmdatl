@@ -1487,3 +1487,76 @@ TEST_CASE("a program's extern function and indicator come from the run spec's he
   CHECK(message.find("atls::user::mean_of is not defined") != std::string::npos);
   CHECK(message.find("the run spec's header key") != std::string::npos);
 }
+
+TEST_CASE("strategy evaluate windows and bootstrap with atlc: spans; history counted apart; path 0", "[acceptance]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const auto source = std::filesystem::path(CMDATL_SOURCE_DIR);
+  const auto spec = (source / "tests" / "fixtures" / "loops" / "closes.toml").string();
+  const auto evaluate = [&](const std::string& target, std::vector<std::string> more) {
+    std::vector<std::string> args{"--json", "strategy", "evaluate", target};
+    args.insert(args.end(), more.begin(), more.end());
+    const auto ran = run(args);
+    INFO(ran.out_ << ran.err_);
+    REQUIRE(ran.exit_ == 0);
+    return lines_of(ran.out_);
+  };
+  const auto backtest = [&](const std::string& target, std::vector<std::string> more) {
+    std::vector<std::string> args{"--json", "strategy", "backtest", target};
+    args.insert(args.end(), more.begin(), more.end());
+    const auto ran = run(args);
+    INFO(ran.out_ << ran.err_);
+    REQUIRE(ran.exit_ == 0);
+    return reply_of(lines_of(ran.out_).back()).at("report");
+  };
+  const auto date = [](const boost::json::value& at) {
+    return std::string(at.as_string()).substr(0, 10);
+  };
+  // A window without warm-up reports what a backtest of its dates does.
+  const auto windows = evaluate(spec, {"evaluate.method=windows", "windows.length=20", "windows.warmup=0"});
+  REQUIRE(windows.size() == 5);
+  const auto window = reply_of(windows[1]);
+  const auto& w = window.at("window").as_object();
+  CHECK(window.at("report") == backtest(spec, {"replay.from=" + date(w.at("from")), "replay.to=" + date(w.at("to"))}));
+  // Months from the first date, 2024-01-02: three whole windows; the fourth would end after the history.
+  const auto months = evaluate(spec, {"evaluate.method=windows", "windows.length=1mo", "windows.warmup=0"});
+  REQUIRE(months.size() == 4);
+  CHECK(date(reply_of(months[1]).at("window").at("from")) == "2024-02-02");
+  const auto months_reply = reply_of(months.back());
+  CHECK(months_reply.at("windows").as_int64() == 3);
+  CHECK(months_reply.at("uncovered_from") == boost::json::value("2024-04-02"));
+  // A universe with open points: two history days, then two traded days that open and close two sessions.
+  const auto universe = evaluate(
+    (source / "examples" / "universe.toml").string(),
+    {"params.lookback=1", "evaluate.method=windows", "windows.length=2", "windows.warmup=2", "replay.from=20240102",
+      "replay.to=20240105"}
+  );
+  REQUIRE(universe.size() == 2);
+  const auto first = reply_of(universe[0]);
+  const auto& caveats = first.at("report").at("caveats").as_object();
+  CHECK(caveats.at("sessions_opened").as_int64() == 2);
+  CHECK(caveats.at("sessions_closed").as_int64() == 2);
+  // Bootstrap: path 0 is the backtest; seed 7, circular blocks of 5, three paths, as recorded.
+  const auto paths = evaluate(
+    spec,
+    {"evaluate.method=bootstrap", "bootstrap.seed=7", "bootstrap.block=5", "bootstrap.paths=3",
+      "bootstrap.intervals=[\"total_return\", \"max_drawdown\"]"}
+  );
+  REQUIRE(paths.size() == 5);
+  CHECK(reply_of(paths[0]).at("report") == backtest(spec, {}));
+  std::string recorded;
+  for (std::size_t k = 0; k < 4; ++k) {
+    recorded += paths[k] + "\n";
+  }
+  CHECK(recorded == slurp(source / "tests" / "fixtures" / "loops" / "bootstrap-seed7.jsonl"));
+  const auto reply = reply_of(paths.back());
+  CHECK(reply.at("seed").as_int64() == 7);
+  CHECK(
+    reply.at("intervals").at("total_return").at("defined").as_int64() +
+      reply.at("intervals").at("total_return").at("null").as_int64() ==
+    3
+  );
+}
