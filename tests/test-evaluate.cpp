@@ -1425,3 +1425,47 @@ TEST_CASE("loops: bootstrap intervals for the metrics the user names; measures i
     "measures.NAME\"}}\n"
   );
 }
+
+TEST_CASE("loops: a driver called directly refuses bootstrap on bars with their own open high or low") {
+  Scratch dir;
+  std::string rows = HEADER + "\n";
+  for (int day = 0; day < 6; ++day) {
+    const auto ts = std::to_string(1704067200 + 86400 * day);
+    rows += ts + ",AAA,100,103,99," + std::to_string(101 + day) + ",1000\n" + ts + ",BBB,50,52,49,51,1000\n";
+  }
+  const auto ran = drive<Holder>(
+    on_pair(dir.write("ohlc.csv", rows), "bootstrap", {"bootstrap.block=2", "bootstrap.paths=1", "bootstrap.seed=7"})
+  );
+  CHECK(ran.exit_ == 1);
+  REQUIRE(lines_of(ran.out_).size() == 1);
+  CHECK(
+    ran.out_.rfind(
+      "{\"stopped\":{\"code\":\"evaluate.refused\",\"message\":\"a bootstrap path rebuilds daily closes", 0
+    ) == 0
+  );
+}
+
+TEST_CASE("loops: windows in periods meet the replay limit before any worker starts") {
+  Scratch dir;
+  // 100,002 days from 1700, inside every platform's clock: length 2, step 1, no warm-up make one window fewer.
+  std::string rows = HEADER + "\n";
+  const long long first = replay::day_seconds(17000101);
+  for (long long day = 0; day < 100002; ++day) {
+    rows += std::to_string(first + 86400 * day) + ",AAA,100,100,100,100,1000\n";
+  }
+  const auto file = dir.write("long.csv", rows);
+  replay::RunnerHooks hooks;
+  hooks.starting_ = [](std::size_t) {
+    throw std::runtime_error("the workers start");
+  };
+  std::vector<std::string> args{
+    "bars.source=csv", "bars.file=" + file, "bars.symbol_column=symbol", "instrument.x=AAA", "evaluate.method=windows",
+    "windows.length=2", "windows.step=1", "windows.warmup=0", "evaluate.jobs=2"
+  };
+  const auto over = drive(args, -1, hooks);
+  INFO(over.out_ << over.err_);
+  CHECK(over.out_.find("\"message\":\"the evaluation makes 100001 replays, more than 100000\"") != std::string::npos);
+  args.push_back("replay.to=" + std::to_string(replay::plus(17000101, 0, 100000)));
+  const auto at = drive(args, -1, hooks);
+  CHECK(at.out_ == "{\"stopped\":{\"code\":\"replay.failed\",\"message\":\"the workers start\"}}\n");
+}

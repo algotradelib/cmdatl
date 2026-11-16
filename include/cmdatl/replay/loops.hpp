@@ -516,6 +516,7 @@ int loops_main(
     if (folds.empty()) {
       throw Refused("no window fits the history's " + std::to_string(n) + " periods", "give a shorter windows.length");
     }
+    check_count(folds.size());
     std::vector<Task> tasks;
     for (const auto& f : folds) {
       const auto have = instants(*prepared, p, f.train_warmup_, f.train_.begin_);
@@ -572,6 +573,20 @@ int loops_main(
     } else {
       std::random_device device;
       seed = ((static_cast<std::uint64_t>(device()) << 32) | device()) & ((std::uint64_t{1} << 53) - 1);
+    }
+    // A path rebuilds daily closes, and nothing else a bar or a program could read: refused here too, for a driver
+    // called without the run spec's checks.
+    const bool flat = std::all_of(events.begin(), events.end(), [](const atl::strategy::BarEvent& e) {
+      const auto& b = e.bar_;
+      return e.interval_ == atl::BarInterval::ONE_DAY && (!b.open_ || *b.open_ == b.close_) && b.high_ == b.close_ &&
+        b.low_ == b.close_;
+    });
+    if (!flat || Strategy::atls_session || reads_data<Strategy>::value || s.get_or("orders.type", "") == "limit") {
+      throw Refused(
+        "a bootstrap path rebuilds daily closes only: no bar with its own open, high or low, no on_open, on_close or "
+        "data {}, no limit orders",
+        "give wide tables of closes, or a CSV with bars.layout = \"wide\""
+      );
     }
     // The closes by symbol and period: every symbol a close on every period.
     const auto symbols = prepared->symbols_.size();
