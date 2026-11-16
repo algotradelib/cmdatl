@@ -340,6 +340,8 @@ inline constexpr std::size_t STDERR_TAIL_LINES = 20;
 inline constexpr std::size_t STDERR_TAIL_BYTES = 8192;
 /** @brief The longest stderr line handed on whole; a longer one is handed on in pieces of this size. */
 inline constexpr std::size_t STDERR_LINE_BYTES = 8192;
+/** @brief The longest stdout line handed to a line callback; a longer one fails the run. */
+inline constexpr std::size_t STDOUT_LINE_BYTES = std::size_t{1} << 20;
 /** @brief How long the loop waiting on a child sleeps at most before it looks at the interruption note again. */
 inline constexpr int CHILD_POLL_MS = 100;
 /** @brief How long a child's group has, after SIGTERM, or after its leader ended, before it is killed. */
@@ -396,11 +398,14 @@ inline int lifted_pipe(int (&fds)[2]) noexcept {
  * @param environment The child's environment as `NAME=VALUE` entries, or nothing for cmdatl's own.
  * @param descriptor_3 A descriptor the child receives as descriptor 3 (a login's pipe), or -1 for none; this process's
  *   own descriptor 3 is left alone.
+ * @param on_stdout_line When set, called with each stdout line instead of keeping stdout whole (`stdout_` stays
+ *   empty), as `on_stderr_line` is; a line longer than `STDOUT_LINE_BYTES` fails the run (`IO_FAILED`).
  * @return How it ended; partial output after a failure is never `FINISHED`.
  */
 inline ChildResult run_child(
   const std::vector<std::string>& argv, const std::function<void(const std::string&)>& on_stderr_line,
-  const std::vector<std::string>* environment = nullptr, int descriptor_3 = -1
+  const std::vector<std::string>* environment = nullptr, int descriptor_3 = -1,
+  const std::function<void(const std::string&)>& on_stdout_line = {}
 ) {
   ChildResult result;
 #if defined(_WIN32)
@@ -431,6 +436,7 @@ inline ChildResult run_child(
   }
   std::string line;
   line.reserve(256);
+  std::string out_line;
   int out_fds[2] = {-1, -1};
   if (const int error = lifted_pipe(out_fds)) {
     result.error_ = std::strerror(error);
@@ -595,6 +601,9 @@ inline ChildResult run_child(
       if (n == 0) {
         if (is_out) {
           out_read.reset();
+          if (on_stdout_line && !out_line.empty()) {
+            on_stdout_line(out_line);
+          }
         } else {
           err_read.reset();
           if (!line.empty()) {
@@ -604,8 +613,24 @@ inline ChildResult run_child(
         }
         continue;
       }
-      if (is_out) {
+      if (is_out && !on_stdout_line) {
         result.stdout_.append(buffer, static_cast<std::size_t>(n));
+        continue;
+      }
+      for (ssize_t at = 0; is_out && at < n; ++at) {
+        if (buffer[at] != '\n') {
+          out_line.push_back(buffer[at]);
+        } else {
+          on_stdout_line(out_line);
+          out_line.clear();
+        }
+        if (out_line.size() > STDOUT_LINE_BYTES) {
+          result.kind_ = ChildResult::Kind::IO_FAILED;
+          result.error_ = "a line of the child's output is longer than " + std::to_string(STDOUT_LINE_BYTES) + " bytes";
+          return result;
+        }
+      }
+      if (is_out) {
         continue;
       }
       for (ssize_t at = 0; at < n; ++at) {
