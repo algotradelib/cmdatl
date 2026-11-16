@@ -2191,8 +2191,9 @@ inline std::optional<Error> from_command_line(const std::string& word, Entry& en
     const auto body =
       list && text.size() >= 2 && text.front() == '[' && text.back() == ']' ? text.substr(1, text.size() - 2) : text;
     std::vector<Value> items;
-    for (const auto& item : split(body, ',')) {
-      auto n = decimal(item.substr(item.find_first_not_of(' ') == std::string::npos ? 0 : item.find_first_not_of(' ')));
+    for (auto item : split(body, ',')) {
+      item.erase(item.find_last_not_of(' ') + 1);
+      auto n = decimal(item.substr(std::min(item.find_first_not_of(' '), item.size())));
       items.push_back(n ? *n : Value::str(text));
     }
     const bool numbers =
