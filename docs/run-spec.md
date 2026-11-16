@@ -395,7 +395,7 @@ With `bars.source = "stdin"` it replays the paths a generator pipes in (`GENERAT
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `evaluate.method` | `"grid"` | `"grid"` | how the replays are chosen |
+| `evaluate.method` | `"grid"`, `"windows"` or `"bootstrap"` | `"grid"` | how the replays are chosen: a grid of parameter sets, one set over windows of the history ("Windows"), or one set over bootstrap paths of it ("Bootstrap paths") |
 | `evaluate.jobs` | whole number, 1 to 256 | 1 | replays run at once, each on its own thread |
 | `evaluate.objective` | `"total_return"`, `"sharpe_per_period"`, `"sharpe_annualized"`, `"sortino_per_period"`, `"max_drawdown"`, or `"measures.NAME"` for one of the spec's `measures` | none | the report figure the reply's `best` compares; without it `best` is null |
 | `evaluate.direction` | `"max"` or `"min"` | `"max"` | which end is best (`max_drawdown` is a positive fraction: use `min`) |
@@ -417,14 +417,78 @@ Each replay is one JSON line, in index order, whatever `evaluate.jobs` is, with 
 
 - `report` is exactly the report `strategy backtest` gives for these settings and parameters ("The report"), its `measures` included; a measure that throws fails that replay only, and one that runs out of memory stops the evaluation.
 - A replay without a report has `"report":null` and `failure`: `{"kind":"params","message":...}` when the program's bounds refused the set, `{"kind":"replay",...}` for any other error of that replay; the others go on.
-- `window` is null: it is for the evaluation methods to come.
-- `path` is null, or with `bars.source = "stdin"` (`[bars]`) the path's `number` (from 0, in the order read), `seed` (null) and `id` (its `bars.path_column` cell, or null): each path is replayed once per parameter set, replay `p * G + g` being set `g` of `G` on path `p`.
+- `window` is null in a grid; `windows` fills it ("Windows").
+- `path` is null in a grid, or with `bars.source = "stdin"` (`[bars]`) the path's `number` (from 0, in the order read), `seed` (null) and `id` (its `bars.path_column` cell, or null): each path is replayed once per parameter set, replay `p * G + g` being set `g` of `G` on path `p`; `bootstrap` fills it with its own paths ("Bootstrap paths").
 
 The final reply gives `method`, `jobs`, `param_sets`, `invalid` (sets the bounds refused), `tried` (`param_sets - invalid`), `replays` (the lines printed), `paths` (the paths read from stdin, else null), `failed` (replays that failed otherwise), `objective`, `direction`, and `best`: the index, parameters and value of the best replay with a report, not halted and with a defined figure, a tie going to the lower index (null with stdin paths, an aggregate this version does not make).
 It exits 0 when at least one replay has a report; 1 (`replay.failed`) when every replay failed or was refused, or when the driver stopped (it ran out of memory, or the program threw something that is not a `std::exception`): the lines already printed stand, and the reply's `replays` counts them.
 
 With `evaluate.jobs` above 1 the program's own C++ (its `header` and a market-price rule) runs on several threads at once and must be thread-safe; a race in it gives wrong numbers, not an error.
 Each running replay holds its own engine and result, so memory grows with `evaluate.jobs`.
+
+### Lengths: periods or calendar spans
+
+A length is a whole number of **periods**, the market dates holding at least one bar of the replay (after `replay.from` and `replay.to`), or a string with a unit, a **calendar span**: `"10d"` (days), `"2w"` (weeks of seven days), `"6mo"` (months), `"3y"` (years of twelve months), 1 to 99999 units.
+
+- A daily (weekly, monthly) bar's date is its market date, as `bars.open_point` dates it; an intraday bar's is the market-local date of its start, so a window never starts or ends inside a session; with `bars.open_point` a day is one period; a universe's symbols share the periods.
+- Spans are arithmetic on those dates: months first, the day kept or clamped to the month's last (2024-01-31 plus `1mo` is 2024-02-29), then days.
+- Every boundary is the anchor plus a sum of lengths, never one boundary plus another, so a clamp never drifts: from 2024-01-31 by `1mo`, the windows start on Jan-31, Feb-29, Mar-31, Apr-30, and each ends where the next starts.
+- The anchor is the `replay.from` date when given, else the first period's date.
+- A window is replayed only when it ends at most a day after `replay.to` (or the last period's date): whole windows only, and a holiday at the end does not drop the last window when `replay.to` says the history reaches it.
+- A window of one span can hold more periods than another (a March against a February); each line's `window.periods` says how many.
+
+### Windows
+
+```sh
+cmdatl strategy evaluate dip.toml evaluate.method=windows windows.length=252 windows.step=63
+cmdatl strategy evaluate dip.toml evaluate.method=windows windows.length=1y windows.step=3mo windows.warmup=3mo
+```
+
+One parameter set, replayed on each window of the history.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `windows.scheme` | `"rolling"` or `"expanding"` | `"rolling"` | rolling: windows of `length` moving by `step`; expanding: every window starts at the first and its end moves by `step` |
+| `windows.length` | periods (2 or more) or a span | required | the length traded (the first window's when expanding) |
+| `windows.step` | periods (1 or more) or a span | `length` | between window starts (rolling) or ends (expanding) |
+| `windows.warmup` | periods (0 or more) or a span | on daily or coarser bars the program's warm-up in periods; on intraday bars required | the history fed before each window without trading |
+
+- `windows.length` and `windows.step` are both periods or both spans; a span warm-up goes with span lengths only. A warm-up in periods with span lengths starts the first window at the date of that period.
+- The warm-up is history: every handler runs and series and states warm up, but what the program asks for is dropped (not counted as rejected), nothing fills and no equity point is recorded; a target stated during the warm-up is not held at the window's start, and the program trades on its next statement, with the `state` the warm-up left. Session and pricing counts in the report are the window's own.
+- A warm-up that holds fewer bars than the program's warm-up is refused, naming the window; so is a window of fewer than 2 periods, and a history no window fits. A warm-up of 0 replays the window as a backtest of its dates would.
+- `[data.NAME]` values known before a window's trading start are fed as history; values after its last bar are not fed.
+- A `[grid]` is refused: windows replay one set.
+- Each line's `window` is `{"fold": k, "role": "window", "warm_from": ..., "from": ..., "to": ..., "periods": N}` (instants of the first and last bars, `warm_from` null without a warm-up); replay `k` is window `k`.
+- The reply adds `scheme`, `length`, `step`, `warmup` (as written, or the default used), `windows`, `uncovered_from` (the date of the first period after the last window, or null), `halted`, and `summary`: for `total_return`, `sharpe_annualized`, `sortino_per_period`, `max_drawdown`, `turnover`, `executions` and each measure (under `measures`), the replays with a report that did not halt give `defined`, `null` (undefined values, not used), `mean`, `min`, `q05`, `q25`, `median`, `q75`, `q95` and `max`.
+- Quantiles are Hyndman and Fan's type 7 (numpy's default): of `m` sorted values, `h = (m - 1) p`, `j = floor(h)`, then `x[j] + (h - j)(x[j + 1] - x[j])`, or `x[j]` at the last; with no value every statistic is null.
+- Windows overlap or grow, so they are not chained into one curve.
+
+### Bootstrap paths
+
+```sh
+cmdatl strategy evaluate dip.toml evaluate.method=bootstrap bootstrap.block=10 bootstrap.paths=500 bootstrap.intervals=total_return,max_drawdown
+```
+
+One parameter set, replayed on the history (path 0) and on `paths` block-bootstrap paths of it.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `bootstrap.scheme` | `"circular"`, `"moving"` or `"stationary"` | `"circular"` | circular blocks wrap from the history's end to its start; moving blocks stay inside it; stationary blocks have geometric lengths of mean `block` and wrap |
+| `bootstrap.block` | whole number, 1 or more | required | the block length in periods (the mean length when stationary); at most the history's returns for circular and moving |
+| `bootstrap.paths` | whole number, 1 to 10000 | 100 | the paths drawn |
+| `bootstrap.seed` | whole number, 0 to 2^53 - 1 | drawn, and echoed | the seed |
+| `bootstrap.intervals` | a list of figures or `"measures.NAME"` | none | the metrics given an interval over the paths |
+| `bootstrap.level` | a number above 0 and below 1 | 0.95 | the intervals' coverage |
+
+- A path redraws the history's close-to-close returns in blocks, the same days for every symbol, and rebuilds each symbol's closes from them on its price grid; every path has the history's dates. Path 0 is the history itself, so its report is `strategy backtest`'s.
+- Path `p` depends only on the seed, `p`, the scheme, the block and the history: not on `paths` or `evaluate.jobs`; the reply's `seed` given back reproduces every path.
+- Closes only: wide tables of closes (no `bars.open`, `bars.high` or `bars.low`) or a CSV with `bars.layout = "wide"`, daily bars, every symbol a close on every date. Refused: other sources, a program with `on_open`, `on_close` or `data {}`, limit orders, `replay.fill_header`, and a `[grid]`. Allowed: `replay.fill` (on a flat bar both next-bar rules fill at the next close), shorts, costs, `replay.from` and `replay.to` (the history drawn from), measures.
+- Bars are flat (open, high and low are the close) with a fixed volume, which the replay never caps fills by.
+- `warnings` holds `{"code": "block_below_lookback", "block": b, "lookback": w}` when the block is shorter than the program's warm-up: an indicator longer than a block reads joined, unrelated days. It does not refuse.
+- Each line's `path` is `{"number": p, "seed": S, "id": null, "scheme": ..., "block": b}`; replay `p` is path `p`.
+- The reply adds `paths` (the paths replayed, path 0 included), `scheme`, `block`, `seed`, `history` (path 0's `total_return`, `sharpe_annualized`, `sortino_per_period`, `max_drawdown`, `turnover`, `executions` and measures), `warnings`, `halted`, and `intervals`: for each name of `bootstrap.intervals`, over paths 1 to N, `{"level", "lower", "median", "upper", "defined", "null"}`, the type-7 quantiles at `(1 - level) / 2`, 0.5 and `(1 + level) / 2` of the paths where the metric is defined; a failed, halted or undefined path counts as null, so `defined + null` is N.
+
+A refusal of the settings before any replay (no window fits, a warm-up too short, a missing close, a block above the returns) is exit 2, `evaluate.refused`, with a `next` naming the key to change.
 
 ## Limit orders
 
