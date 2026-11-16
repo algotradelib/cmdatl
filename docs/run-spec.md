@@ -390,6 +390,7 @@ It takes no `--fills` or `--equity`, and does not fetch: a spec whose `bars.sour
 | `grid.NAME.from`, `.to`, `.step` | numbers | none | the same as a range: `from`, `from + step`, ... up to `to` inclusive |
 
 - NAME is one of the program's `int` or `real` parameters (a `bool` is refused), typed as `params.NAME` is; for a name also in `[params]`, the grid's values win.
+- The command line wins as for any key: its `grid.NAME`, a list or a range, replaces the run spec's for that name; one layer giving both a list and a range of a name is refused.
 - A range is computed in exact decimals (`from = 0.1, to = 0.3, step = 0.1` is exactly 0.1, 0.2, 0.3), at most 18 decimal places; `step` is above 0 and `from` at most `to`.
 - A value listed twice is refused, also two values the replay reads as one number (`1` and `1.000000000000000001`, `0` and `-0`).
 - Each parameter's values take at most 4,096 bytes, and the grid makes at most 100,000 parameter sets.

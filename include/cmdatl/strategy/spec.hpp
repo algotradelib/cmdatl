@@ -1461,6 +1461,14 @@ inline std::vector<Error> resolve(
 ) {
   std::vector<Entry> merged;
   for (const auto& layer : layers) {
+    // A later layer's `grid.NAME`, a list or a range, replaces every earlier entry of that name.
+    for (const auto& e : layer) {
+      const auto name = e.key_.substr(0, e.key_.find('.', 5));
+      const auto earlier = [&e, &name](const Entry& m) {
+        return e.key_.rfind("grid.", 0) == 0 && (m.key_ == name || m.key_.rfind(name + ".", 0) == 0);
+      };
+      merged.erase(std::remove_if(merged.begin(), merged.end(), earlier), merged.end());
+    }
     for (const auto& e : layer) {
       auto found = std::find_if(merged.begin(), merged.end(), [&e](const Entry& m) {
         return m.key_ == e.key_;
