@@ -306,13 +306,13 @@ struct CheckedSettings {
  * @param given The settings, read by `read_given`.
  * @param atlc atlc's path.
  * @param output Where progress goes.
- * @param run Whether the settings are a run's (`run`).
+ * @param purpose What the settings are for: a backtest, an evaluation or a run (`run`).
  * @param checked Set to the result.
  * @param broker Whether the run trades a broker's account, which reads no [bars].
  * @return The refusal, or nothing.
  */
 inline std::optional<Reply> check_given(
-  const GivenSettings& given, const std::string& atlc, Output& output, bool run, CheckedSettings& checked,
+  const GivenSettings& given, const std::string& atlc, Output& output, spec::Purpose purpose, CheckedSettings& checked,
   bool broker = false
 ) {
   if (auto refused = program_info(atlc, given.program_, output, checked.info_)) {
@@ -322,12 +322,13 @@ inline std::optional<Reply> check_given(
     return interrupted_reply();
   }
   // No bar of a run opens a session before it closes: the driver's own refusal, before the settings' rules.
-  if (run && checked.info_.program_.session_) {
+  if (purpose == spec::Purpose::RUN && checked.info_.program_.session_) {
     auto reply = error_reply(Exit::PROGRAM, "program.live_unsupported", SESSION_UNSUPPORTED, SESSION_UNSUPPORTED_NEXT);
     reply.body_["unsupported"] = "session";
     return reply;
   }
-  const auto errors = spec::resolve({given.file_, given.line_}, checked.info_.program_, checked.resolved_, broker);
+  const auto errors =
+    spec::resolve({given.file_, given.line_}, checked.info_.program_, checked.resolved_, broker, purpose);
   if (!errors.empty()) {
     return settings_refusal(errors, given.spec_);
   }

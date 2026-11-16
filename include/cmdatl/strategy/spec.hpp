@@ -27,6 +27,7 @@
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -48,6 +49,15 @@ inline constexpr std::size_t MAX_SPEC_BYTES = 1u << 20;
 inline constexpr std::size_t MAX_ARGS = 1000;
 /** @brief The longest argument value passed to a driver. */
 inline constexpr std::size_t MAX_VALUE = 4096;
+/** @brief The most parameter sets an evaluation's grid makes. */
+inline constexpr std::size_t MAX_SETS = 100000;
+
+/** @brief What settings are read for: a backtest, an evaluation of many replays, or a run. */
+enum class Purpose {
+  BACKTEST,
+  EVALUATE,
+  RUN,
+};
 
 /** @brief What a key holds. */
 enum class Kind {
@@ -159,6 +169,10 @@ inline const std::vector<Key>& keys() {
     {"orders.offset", Kind::FRACTION, {}, {}},
     {"build.duckdb", Kind::PATH, {}, {}},
     {"build.indicators", Kind::CHOICE, {}, {"incremental", "naive", "exact"}},
+    {"evaluate.method", Kind::CHOICE, {}, {"grid"}},
+    {"evaluate.jobs", Kind::COUNT, {}, {}},
+    {"evaluate.objective", Kind::TEXT, {}, {}},
+    {"evaluate.direction", Kind::CHOICE, {}, {"max", "min"}},
   };
   return table;
 }
@@ -947,6 +961,23 @@ inline std::optional<Error> check(Entry& e) {
     return refused;
   }
   Kind kind = Kind::TEXT;
+  if (e.key_.rfind("grid.", 0) == 0) {
+    // `grid.NAME`, a list of numbers, or `grid.NAME.from`, `.to` and `.step`, each a number.
+    const auto parts = split(e.key_.substr(5), '.');
+    const bool range = parts.size() == 2 && (parts[1] == "from" || parts[1] == "to" || parts[1] == "step");
+    if (parts.empty() || !bare(parts[0]) || (parts.size() != 1 && !range)) {
+      return Error::at(at, "unknown setting `" + e.key_ + "` ([grid] takes NAME = [...] or NAME.from, .to, .step)");
+    }
+    const auto& v = e.value_;
+    const bool numbers = v.type_ == Value::Type::LIST && !v.items_.empty() &&
+      std::all_of(v.items_.begin(), v.items_.end(), [](const Value& item) {
+        return item.type_ == Value::Type::NUM;
+      });
+    if (range ? v.type_ != Value::Type::NUM : !numbers) {
+      return bad(range ? "a number" : "a list of numbers");
+    }
+    return std::nullopt;
+  }
   const bool instrument = e.key_.rfind("instruments.", 0) == 0;
   const bool parameter = e.key_.rfind("params.", 0) == 0;
   if (instrument || parameter) {
@@ -1286,19 +1317,178 @@ struct Resolved {
 };
 
 /**
+ * @brief An int parameter's value as the driver reads it: the whole number, `-0` kept.
+ * @param v The value, a whole number.
+ * @return The text.
+ */
+inline std::string whole_text(const Value& v) {
+  return v.number_ == 0 && v.text_.front() == '-' ? "-0" : std::to_string(static_cast<long long>(v.number_));
+}
+
+/**
+ * @brief A grid range's values, `from`, `from + step`, ... up to `to`, in exact decimals, never doubles: the three
+ *   numbers at their common scale (at most 18 places) as 64-bit integers, and the count checked before any value is
+ *   made.
+ * @param range `from`, `to` and `step`.
+ * @param whole Whether the parameter is an int.
+ * @param values Set to the values.
+ * @return Why the range is refused, or nothing.
+ */
+inline std::optional<std::string> grid_range(
+  const std::vector<const Value*>& range, bool whole, std::vector<std::string>& values
+) {
+  std::vector<algotradelib::Decimal64> d;
+  for (const auto* v : range) {
+    const auto plain = plain_decimal(v->text_);
+    if (!plain || (whole && (!integer_text(v->text_) || std::abs(v->number_) > 9e15))) {
+      return std::string(
+        whole ?
+          "an int parameter's range takes whole numbers of magnitude at most 9e15" :
+          "a range takes numbers of at most 18 digits"
+      );
+    }
+    d.push_back(algotradelib::Decimal64::parse(*plain));
+  }
+  // All three at their common scale, as 64-bit integers: every comparison and step is exact there.
+  std::uint8_t scale = 0;
+  for (const auto& x : d) {
+    scale = std::max(scale, x.scale());
+  }
+  bool fits = scale <= 18;
+  std::vector<long long> u;
+  for (const auto& x : d) {
+    long long v = x.coefficient();
+    for (auto k = x.scale(); fits && k < scale; ++k) {
+      fits = std::abs(v) <= std::numeric_limits<long long>::max() / 10;
+      v *= fits ? 10 : 1;
+    }
+    u.push_back(v);
+  }
+  if (!fits || (u[0] < 0 && u[1] > std::numeric_limits<long long>::max() + u[0])) {
+    return std::string("a range takes at most 18 decimal places and 18 digits at them");
+  }
+  if (u[2] <= 0 || u[0] > u[1]) {
+    return std::string(u[2] <= 0 ? "a range's step is above 0" : "a range's from is after its to");
+  }
+  // Each value takes at least two bytes with its comma: refused before any is made.
+  const auto count = static_cast<unsigned long long>((u[1] - u[0]) / u[2]) + 1;
+  if (count > (MAX_VALUE + 1) / 2) {
+    return "the range makes more values than " + std::to_string(MAX_VALUE) + " bytes hold";
+  }
+  for (unsigned long long k = 0; k < count; ++k) {
+    const auto value = algotradelib::Decimal64(u[0] + static_cast<long long>(k) * u[2], scale);
+    values.push_back(algotradelib::decimal_normalized(value).str());
+  }
+  return std::nullopt;
+}
+
+/**
+ * @brief An evaluation's grid checked against the program: each name a parameter that is not a bool, given as a list or
+ *   a range, its values typed as `params.NAME` is, no two the same number once read as the driver reads them
+ *   (`std::stod`), at most `MAX_VALUE` bytes, at most `MAX_SETS` sets in all.
+ * @param merged The settings.
+ * @param program The program's facts.
+ * @param args Set to `grid.NAME` and its values, names in byte order.
+ * @param errors Where the errors go.
+ */
+inline void read_grid(
+  const std::vector<Entry>& merged, const Program& program, std::vector<std::pair<std::string, std::string>>& args,
+  std::vector<Error>& errors
+) {
+  std::map<std::string, std::map<std::string, const Entry*>> named;
+  for (const auto& e : merged) {
+    if (e.key_.rfind("grid.", 0) == 0) {
+      const auto parts = split(e.key_.substr(5), '.');
+      named[parts[0]][parts.size() == 2 ? parts[1] : ""] = &e;
+    }
+  }
+  std::size_t sets = 1;
+  for (const auto& entry : named) {
+    const auto& name = entry.first;
+    const auto& parts = entry.second;
+    const auto& origin = parts.begin()->second->origin_;
+    const auto found = std::find_if(program.params_.begin(), program.params_.end(), [&name](const auto& p) {
+      return p.first == name;
+    });
+    std::vector<std::string> values;
+    std::optional<std::string> refused;
+    if (found == program.params_.end() || found->second == ParamType::BOOL) {
+      refused = found == program.params_.end() ?
+        "the program has no parameter `" + name + "` for a grid" :
+        "`" + name + "` is a bool parameter, which a grid does not take";
+    } else if (parts.count("") != 0 && parts.size() > 1) {
+      refused = "give `grid." + name + "` as a list or as from, to and step, not both";
+    } else if (parts.count("") != 0) {
+      for (const auto& v : parts.at("")->value_.items_) {
+        if (found->second == ParamType::INT && (!integer_text(v.text_) || std::abs(v.number_) > 9e15)) {
+          refused =
+            "`" + name + "` is an int parameter: give whole numbers written as integers, of magnitude at most 9e15";
+          break;
+        }
+        values.push_back(found->second == ParamType::REAL ? v.text_ : whole_text(v));
+      }
+    } else if (parts.size() != 3) {
+      refused = "a range gives `grid." + name + ".from`, `.to` and `.step`";
+    } else {
+      refused = grid_range(
+        {&parts.at("from")->value_, &parts.at("to")->value_, &parts.at("step")->value_},
+        found->second == ParamType::INT, values
+      );
+    }
+    std::vector<double> numbers;
+    for (const auto& v : values) {
+      // As the driver reads it (`std::stod`, which refuses what is out of a double's range, below it included).
+      errno = 0;
+      numbers.push_back(std::strtod(v.c_str(), nullptr));
+      if (errno == ERANGE && !refused) {
+        refused = "`grid." + name + "`: " + v + " is out of the range of the replay's numbers";
+      }
+    }
+    std::sort(numbers.begin(), numbers.end());
+    if (!refused && std::adjacent_find(numbers.begin(), numbers.end()) != numbers.end()) {
+      refused = "`grid." + name + "` gives one value twice, as the replay reads numbers";
+    }
+    const auto joined = join(values, ",");
+    if (!refused && joined.size() > MAX_VALUE) {
+      refused = "`grid." + name + "`'s values take more than " + std::to_string(MAX_VALUE) + " bytes";
+    }
+    if (refused) {
+      errors.push_back(Error::at(origin, *refused));
+      continue;
+    }
+    if (values.size() > MAX_SETS / sets) {
+      errors.push_back(Error::nowhere("the grid makes more than " + std::to_string(MAX_SETS) + " parameter sets"));
+      return;
+    }
+    sets *= values.size();
+    args.emplace_back("grid." + name, joined);
+  }
+}
+
+/**
  * @brief Merges the layers (later winning: the file, then the command line) and checks them together against the
  *   program; every error found.
  * @param layers The layers, each checked key by key.
  * @param program The program's facts.
  * @param resolved Set to the result when there is no error.
  * @param broker Whether the run trades a broker's account: no [bars] key is taken, the broker gives the bars.
+ * @param purpose What the settings are for: only an evaluation takes `[evaluate]` and `[grid]`.
  * @return The errors.
  */
 inline std::vector<Error> resolve(
-  const std::vector<std::vector<Entry>>& layers, const Program& program, Resolved& resolved, bool broker = false
+  const std::vector<std::vector<Entry>>& layers, const Program& program, Resolved& resolved, bool broker = false,
+  Purpose purpose = Purpose::BACKTEST
 ) {
   std::vector<Entry> merged;
   for (const auto& layer : layers) {
+    // A later layer's `grid.NAME`, a list or a range, replaces every earlier entry of that name.
+    for (const auto& e : layer) {
+      const auto name = e.key_.substr(0, e.key_.find('.', 5));
+      const auto earlier = [&e, &name](const Entry& m) {
+        return e.key_.rfind("grid.", 0) == 0 && (m.key_ == name || m.key_.rfind(name + ".", 0) == 0);
+      };
+      merged.erase(std::remove_if(merged.begin(), merged.end(), earlier), merged.end());
+    }
     for (const auto& e : layer) {
       auto found = std::find_if(merged.begin(), merged.end(), [&e](const Entry& m) {
         return m.key_ == e.key_;
@@ -1787,7 +1977,7 @@ inline std::vector<Error> resolve(
           );
           continue;
         }
-        value = v.number_ == 0 && v.text_.front() == '-' ? "-0" : std::to_string(static_cast<long long>(v.number_));
+        value = whole_text(v);
         break;
       case ParamType::REAL:
         if (v.type_ != Value::Type::NUM) {
@@ -1798,6 +1988,44 @@ inline std::vector<Error> resolve(
         break;
     }
     params.emplace_back("param." + name, value);
+  }
+
+  // An evaluation's keys: an evaluation only, on bars already stored.
+  std::vector<std::pair<std::string, std::string>> grid;
+  if (purpose != Purpose::EVALUATE) {
+    for (const auto& e : merged) {
+      if (e.key_.rfind("evaluate.", 0) == 0 || e.key_.rfind("grid.", 0) == 0) {
+        errors.push_back(Error::at(e.origin_, "`" + e.key_ + "` is an evaluation's key: use cmdatl strategy evaluate"));
+      }
+    }
+  } else {
+    if (folder) {
+      errors.push_back(at(
+        "bars.source",
+        "an evaluation does not fetch: fetch with cmdatl strategy backtest, then evaluate on bars.source = \"store\""
+      ));
+    }
+    if (const auto* e = get("evaluate.jobs"); e != nullptr && !(e->value_.number_ >= 1 && e->value_.number_ <= 256)) {
+      errors.push_back(Error::at(e->origin_, "`evaluate.jobs` is 1 to 256"));
+    }
+    // A figure of the report, or one of the spec's measures.
+    std::vector<std::string> figures{
+      "total_return", "sharpe_per_period", "sharpe_annualized", "sortino_per_period", "max_drawdown"
+    };
+    for (const auto& item : get("measures") != nullptr ? get("measures")->value_.items_ : std::vector<Value>{}) {
+      figures.push_back("measures." + item.text());
+    }
+    if (
+      const auto* e = get("evaluate.objective");
+      e != nullptr && std::find(figures.begin(), figures.end(), e->value_.text()) == figures.end()
+    ) {
+      errors.push_back(
+        Error::at(
+          e->origin_, "`evaluate.objective` is one of " + join(figures, ", ") + ", not \"" + e->value_.text() + "\""
+        )
+      );
+    }
+    read_grid(merged, program, grid, errors);
   }
   if (!errors.empty()) {
     return errors;
@@ -1813,7 +2041,7 @@ inline std::vector<Error> resolve(
     if (
       e.key_ == "strategy" || e.key_ == "bars.source" || e.key_.rfind("build.", 0) == 0 ||
       e.key_.rfind("params.", 0) == 0 || e.key_ == "replay.fill_header" || e.key_ == "replay.fill_function" ||
-      e.key_ == "bars.adapter" || e.key_.rfind("bars.options", 0) == 0
+      e.key_ == "bars.adapter" || e.key_.rfind("bars.options", 0) == 0 || e.key_.rfind("grid.", 0) == 0
     ) {
       if (folder && e.key_.rfind("bars.options.", 0) == 0) {
         out.fetch_options_.push_back(e);
@@ -1823,7 +2051,19 @@ inline std::vector<Error> resolve(
     const auto key = e.key_.rfind("instruments.", 0) == 0 ? "instrument." + e.key_.substr(12) : e.key_;
     out.args_.emplace_back(key, e.value_.text());
   }
-  out.args_.insert(out.args_.end(), params.begin(), params.end());
+  // A parameter on the grid takes the grid's values.
+  for (const auto& param : params) {
+    const auto on_grid = std::find_if(grid.begin(), grid.end(), [&param](const auto& g) {
+      return g.first.substr(5) == param.first.substr(6);
+    });
+    if (on_grid == grid.end()) {
+      out.args_.push_back(param);
+    }
+  }
+  if (purpose == Purpose::EVALUATE && get("evaluate.method") == nullptr) {
+    out.args_.emplace_back("evaluate.method", "grid");
+  }
+  out.args_.insert(out.args_.end(), grid.begin(), grid.end());
   out.store_ = source == "store" || folder;
   out.fetch_source_ = folder ? source : std::string();
   if (const auto* e = get("bars.adapter"); e != nullptr && folder) {
@@ -1966,6 +2206,24 @@ inline std::optional<Error> from_command_line(const std::string& word, Entry& en
   };
   if (entry.key_.rfind("params.", 0) == 0) {
     entry.value_ = text == "true" ? Value::boolean(true) : text == "false" ? Value::boolean(false) : number_or_text();
+    return std::nullopt;
+  }
+  // A grid's list: comma-separated decimals, or a one-line TOML array of numbers; anything else stays text, refused.
+  if (entry.key_.rfind("grid.", 0) == 0) {
+    const bool list = std::count(entry.key_.begin(), entry.key_.end(), '.') == 1;
+    const auto body =
+      list && text.size() >= 2 && text.front() == '[' && text.back() == ']' ? text.substr(1, text.size() - 2) : text;
+    std::vector<Value> items;
+    for (auto item : split(body, ',')) {
+      item.erase(item.find_last_not_of(' ') + 1);
+      auto n = decimal(item.substr(std::min(item.find_first_not_of(' '), item.size())));
+      items.push_back(n ? *n : Value::str(text));
+    }
+    const bool numbers =
+      (list ? !items.empty() : items.size() == 1) && std::all_of(items.begin(), items.end(), [](const Value& v) {
+        return v.type_ == Value::Type::NUM;
+      });
+    entry.value_ = !numbers ? Value::str(text) : list ? Value::list(std::move(items)) : items.front();
     return std::nullopt;
   }
   const auto* key = known(entry.key_);

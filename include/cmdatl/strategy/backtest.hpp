@@ -178,6 +178,111 @@ public:
 private:
   std::filesystem::path path_;
 };
+
+/**
+ * @brief The steps a backtest and an evaluation share before their driver: the settings read, atlc found, and the
+ *   settings checked against the program.
+ * @param given The settings, sorted by `sort_words`.
+ * @param output Where progress goes.
+ * @param purpose What the settings are for.
+ * @param atlc Set to the atlc found.
+ * @param checked Set to the checked settings.
+ * @return The refusal, or nothing.
+ */
+inline std::optional<Reply> checked_settings(
+  GivenSettings& given, Output& output, spec::Purpose purpose, Atlc& atlc, CheckedSettings& checked
+) {
+  if (interrupted()) {
+    return interrupted_reply();
+  }
+  if (auto refused = read_given(given)) {
+    return refused;
+  }
+  // After the settings' own checks: finding atlc runs `atlc --version`, which may take a while.
+  auto located = locate_atlc();
+  if (located.refusal_) {
+    return located.refusal_;
+  }
+  atlc = located.atlc_;
+  return check_given(given, atlc.path_, output, purpose, checked);
+}
+
+/**
+ * @brief The backtest driver, built once per program shape and copied into a scratch directory, and its arguments; a
+ *   broker folder's history is read from the store it is fetched into.
+ * @param given The settings.
+ * @param checked The checked settings.
+ * @param atlc The atlc found.
+ * @param adapter A broker folder's files, for a fetch.
+ * @param output Where progress goes.
+ * @param scratch Set to the scratch directory that holds the copy.
+ * @param argv Set to the driver and its arguments.
+ * @return The refusal, or nothing.
+ */
+inline std::optional<Reply> driver_argv(
+  const GivenSettings& given, const CheckedSettings& checked, const Atlc& atlc,
+  const std::optional<auth::AdapterSnapshot>& adapter, Output& output, std::optional<ScratchCopy>& scratch,
+  std::vector<std::string>& argv
+) {
+#if defined(CMDATL_RUN_TEST_HOOKS)
+  // Test builds only: a stand-in driver instead of the build, so the reply's mapping is tested without CMake.
+  if (const auto stand_in = variable("CMDATL_TEST_BACKTEST_DRIVER")) {
+    argv.push_back(*stand_in);
+  }
+#endif
+  if (argv.empty()) {
+    const auto root = build::cache_root();
+    if (!root) {
+      return error_reply(
+        Exit::FAILED, "cache.unavailable", "neither XDG_CACHE_HOME nor HOME names an absolute directory"
+      );
+    }
+    scratch.emplace(*root);
+    if (scratch->path().empty()) {
+      return error_reply(
+        Exit::FAILED, "cache.unavailable", "a scratch directory for the backtest cannot be made under " + *root
+      );
+    }
+    build::Request request{
+      atlc.path_,
+      atlc.version_,
+      given.program_,
+      checked.info_.program_.struct_,
+      checked.resolved_.indicators_,
+    };
+    request.kind_ = build::DriverKind::BACKTEST;
+    request.store_ = checked.resolved_.store_;
+    request.duckdb_ = checked.resolved_.duckdb_;
+    request.fill_header_ = checked.resolved_.fill_header_;
+    request.fill_function_ = checked.resolved_.fill_function_;
+    request.header_ = checked.resolved_.header_;
+    request.measures_ = checked.resolved_.measures_;
+    request.adapter_ = adapter;
+    const auto progress = [&output](const std::string& line) {
+      output.progress(line);
+    };
+    if (auto failed = build::build_driver(request, scratch->path(), progress)) {
+      return failed;
+    }
+    if (interrupted()) {
+      return interrupted_reply();
+    }
+    argv.push_back((scratch->path() / "driver").string());
+  }
+  const bool fetching = !checked.resolved_.fetch_source_.empty();
+  for (const auto& [key, value] : checked.resolved_.args_) {
+    // A broker folder's history is read from the store it is fetched into; how many bars and of which interval are
+    // the fetch's.
+    if (fetching && key == "bars.source") {
+      argv.push_back("bars.source=store");
+    } else if (fetching && (key == "bars.count" || key == "bars.interval")) {
+      argv.push_back("fetch." + key.substr(5) + "=" + value);
+    } else {
+      argv.push_back(key + "=" + value);
+    }
+  }
+  return std::nullopt;
+}
 #endif
 
 /**
@@ -229,20 +334,9 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     );
   }
   output.progress("cmdatl: replaying " + given.target_);
-  if (interrupted()) {
-    return interrupted_reply();
-  }
-  if (auto refused = read_given(given)) {
-    return std::move(*refused);
-  }
-  // After the settings' own checks: finding atlc runs `atlc --version`, which may take a while.
-  const auto located = locate_atlc();
-  if (located.refusal_) {
-    return *located.refusal_;
-  }
-  const auto& atlc = located.atlc_;
+  Atlc atlc;
   CheckedSettings checked;
-  if (auto refused = check_given(given, atlc.path_, output, false, checked)) {
+  if (auto refused = checked_settings(given, output, spec::Purpose::BACKTEST, atlc, checked)) {
     return std::move(*refused);
   }
   // A broker folder's history: the folder found and its files read once, its options checked against its
@@ -300,63 +394,10 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   }
   std::vector<std::string> argv;
   std::optional<ScratchCopy> scratch;
-#if defined(CMDATL_RUN_TEST_HOOKS)
-  // Test builds only: a stand-in driver instead of the build, so the reply's mapping is tested without CMake.
-  if (const auto stand_in = variable("CMDATL_TEST_BACKTEST_DRIVER")) {
-    argv.push_back(*stand_in);
-  }
-#endif
-  if (argv.empty()) {
-    const auto root = build::cache_root();
-    if (!root) {
-      return error_reply(
-        Exit::FAILED, "cache.unavailable", "neither XDG_CACHE_HOME nor HOME names an absolute directory"
-      );
-    }
-    scratch.emplace(*root);
-    if (scratch->path().empty()) {
-      return error_reply(
-        Exit::FAILED, "cache.unavailable", "a scratch directory for the backtest cannot be made under " + *root
-      );
-    }
-    build::Request request{
-      atlc.path_,
-      atlc.version_,
-      given.program_,
-      checked.info_.program_.struct_,
-      checked.resolved_.indicators_,
-    };
-    request.kind_ = build::DriverKind::BACKTEST;
-    request.store_ = checked.resolved_.store_;
-    request.duckdb_ = checked.resolved_.duckdb_;
-    request.fill_header_ = checked.resolved_.fill_header_;
-    request.fill_function_ = checked.resolved_.fill_function_;
-    request.header_ = checked.resolved_.header_;
-    request.measures_ = checked.resolved_.measures_;
-    request.adapter_ = adapter;
-    const auto progress = [&output](const std::string& line) {
-      output.progress(line);
-    };
-    if (auto failed = build::build_driver(request, scratch->path(), progress)) {
-      return std::move(*failed);
-    }
-    if (interrupted()) {
-      return interrupted_reply();
-    }
-    argv.push_back((scratch->path() / "driver").string());
+  if (auto failed = driver_argv(given, checked, atlc, adapter, output, scratch, argv)) {
+    return std::move(*failed);
   }
   std::filesystem::path outcome;
-  for (const auto& [key, value] : checked.resolved_.args_) {
-    // A broker folder's history is read from the store it is fetched into; how many bars and of which interval are
-    // the fetch's.
-    if (!fetching.empty() && key == "bars.source") {
-      argv.push_back("bars.source=store");
-    } else if (!fetching.empty() && (key == "bars.count" || key == "bars.interval")) {
-      argv.push_back("fetch." + key.substr(5) + "=" + value);
-    } else {
-      argv.push_back(key + "=" + value);
-    }
-  }
   if (!fetching.empty()) {
     outcome = (scratch ? scratch->path() : std::filesystem::temp_directory_path()) / "fetch.json";
     argv.push_back("fetch.source=" + fetching);

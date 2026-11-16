@@ -2,6 +2,7 @@
 
 ```sh
 cmdatl strategy backtest TARGET [KEY=VALUE]... [--fills FILE] [--equity FILE]
+cmdatl strategy evaluate TARGET [KEY=VALUE]...
 cmdatl run TARGET [KEY=VALUE]...
 ```
 
@@ -38,7 +39,7 @@ A run spec is TOML, read as TOML 1.0 reads it, with these limits:
 - no string holds a control character once its escapes are read: `"C:\temp\new.csv"` holds a tab and a new line, so write a Windows path in single quotes (`'C:\temp\new.csv'`) or with forward slashes.
 
 Errors, each with the file and line:
-- an unknown key (including a misspelled one under `[build]` or `[orders]`), with the tables a spec has: `[bars]`, `[data.NAME]`, `[instruments]`, `[replay]`, `[params]`, `[orders]`, `[build]`;
+- an unknown key (including a misspelled one under `[build]` or `[orders]`), with the tables a spec has: `[bars]`, `[data.NAME]`, `[instruments]`, `[replay]`, `[params]`, `[orders]`, `[build]`, and for `strategy evaluate` `[evaluate]` and `[grid]` ("Many replays");
 - a key set twice, a table defined twice, or a name used both as a value and as a table, as TOML refuses them;
 - a value of the wrong type or outside its range, or a key that does not apply to the run (a CSV column mapping for wide tables, say).
 
@@ -53,6 +54,7 @@ A value on the command line is typed by its key, never read as TOML:
 - a date takes `YYYY-MM-DD` or `yyyymmdd`;
 - a list key takes one item (`bars.symbols=AAA`) or a one-line TOML array of strings (`bars.symbols=["AAA","BBB"]`, quoted for the shell);
 - `params.NAME` takes a number, or `true` or `false`; then the program's type decides (`params.flag=1` is refused for a `bool`).
+- `grid.NAME` takes comma-separated numbers (`grid.lookback=10,20,30`) or a one-line TOML array of numbers.
 
 `strategy`, `header` and `measures` are not settings on the command line: the program is the `.atls` word, or else the run spec's `strategy`, and its header and measures are the run spec's.
 A key given twice on the command line is an error.
@@ -79,6 +81,7 @@ header = "include/statistics.hpp"
 - A path that is not a regular file, or that holds `"`, `\`, `??` (which starts a trigraph) or a line break, is refused at its line before anything is built.
 - Without it, such a program fails its build (`build.failed`), and the reply's message starts with the compiler's first error, which names the class or function to define.
 - The header is native code compiled into the process that runs the program, and trades in a run: name only code you trust.
+- When `evaluate.jobs` is above 1 ("Many replays"), its functions run on several threads at once and must be thread-safe: no mutable static or global state, no unsynchronized cache, and no change of the locale.
 
 #### Measures of your own
 
@@ -263,6 +266,7 @@ The report's `caveats` name the rule (`market_price_rule`) and count its fills (
 A rule needs market orders: with `orders.type = "limit"` it is refused.
 Both keys come from the spec file: given on the command line they are refused, since the header is C++ that cmdatl compiles and runs.
 A function of the wrong signature fails the build with one line naming the expected one.
+When `evaluate.jobs` is above 1, the rule runs on several threads at once and must be thread-safe, as the program's `header`.
 
 `on_open` and `on_close` run on the bars that open and close each session, whatever the interval, by the market's session (`kr`: 09:00-15:30 KST; `us`: 09:30-16:00 at UTC-5, daylight saving not modelled):
 
@@ -364,6 +368,49 @@ The return is empty where the library leaves it undefined: on the first point, a
 Both are written after the replay's own checks, so a replay those checks fail writes neither; the reply names each file by its absolute path (`fills`, `equity`).
 Give `--fills` and `--equity` different files: the same file by its spelling or an existing link is refused before anything runs.
 Two names that become one file only when created (a case variant on a case-insensitive volume, a dangling link) are not refused: the equity file then replaces the fills file, and the report's `warning` says so.
+
+## Many replays
+
+```sh
+cmdatl strategy evaluate dip.toml grid.lookback=10,20,30
+cmdatl strategy evaluate dip.toml grid.lookback.from=10 grid.lookback.to=60 grid.lookback.step=10 evaluate.objective=sharpe_annualized evaluate.jobs=4
+```
+
+`cmdatl strategy evaluate` reads its target and settings as `strategy backtest` does, builds the same driver (a backtest's build serves it), loads the bars once, and replays them once per parameter set of `[grid]`.
+It takes no `--fills` or `--equity`, and does not fetch: a spec whose `bars.source` names an adapter folder is refused (fetch with `strategy backtest`, then evaluate on `bars.source = "store"`).
+`strategy backtest` and `cmdatl run` refuse the keys below.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `evaluate.method` | `"grid"` | `"grid"` | how the replays are chosen |
+| `evaluate.jobs` | whole number, 1 to 256 | 1 | replays run at once, each on its own thread |
+| `evaluate.objective` | `"total_return"`, `"sharpe_per_period"`, `"sharpe_annualized"`, `"sortino_per_period"`, `"max_drawdown"`, or `"measures.NAME"` for one of the spec's `measures` | none | the report figure the reply's `best` compares; without it `best` is null |
+| `evaluate.direction` | `"max"` or `"min"` | `"max"` | which end is best (`max_drawdown` is a positive fraction: use `min`) |
+| `grid.NAME` | a list of numbers | none | the values of parameter NAME, in the order written |
+| `grid.NAME.from`, `.to`, `.step` | numbers | none | the same as a range: `from`, `from + step`, ... up to `to` inclusive |
+
+- NAME is one of the program's `int` or `real` parameters (a `bool` is refused), typed as `params.NAME` is; for a name also in `[params]`, the grid's values win.
+- The command line wins as for any key: its `grid.NAME`, a list or a range, replaces the run spec's for that name; one layer giving both a list and a range of a name is refused.
+- A range is computed in exact decimals (`from = 0.1, to = 0.3, step = 0.1` is exactly 0.1, 0.2, 0.3), at most 18 decimal places; `step` is above 0 and `from` at most `to`.
+- A value listed twice is refused, also two values the replay reads as one number (`1` and `1.000000000000000001`, `0` and `-0`).
+- Each parameter's values take at most 4,096 bytes, and the grid makes at most 100,000 parameter sets.
+- The order: names in byte order, values in the order written, the last name varying fastest; replay `i` is set `i`.
+
+Each replay is one JSON line, in index order, whatever `evaluate.jobs` is, with `event: "replay"`:
+
+```json
+{"env":"offline","event":"replay","index":4,"params":{"fast":10,"slow":60},"window":null,"path":null,"report":{...}}
+```
+
+- `report` is exactly the report `strategy backtest` gives for these settings and parameters ("The report"), its `measures` included; a measure that throws fails that replay only, and one that runs out of memory stops the evaluation.
+- A replay without a report has `"report":null` and `failure`: `{"kind":"params","message":...}` when the program's bounds refused the set, `{"kind":"replay",...}` for any other error of that replay; the others go on.
+- `window` and `path` are null: they are for the evaluation methods to come.
+
+The final reply gives `method`, `jobs`, `param_sets`, `invalid` (sets the bounds refused), `tried` (`param_sets - invalid`), `replays` (the lines printed), `paths` (null), `failed` (replays that failed otherwise), `objective`, `direction`, and `best`: the index, parameters and value of the best replay with a report, not halted and with a defined figure, a tie going to the lower index.
+It exits 0 when at least one replay has a report; 1 (`replay.failed`) when every replay failed or was refused, or when the driver stopped (it ran out of memory, or the program threw something that is not a `std::exception`): the lines already printed stand, and the reply's `replays` counts them.
+
+With `evaluate.jobs` above 1 the program's own C++ (its `header` and a market-price rule) runs on several threads at once and must be thread-safe; a race in it gives wrong numbers, not an error.
+Each running replay holds its own engine and result, so memory grows with `evaluate.jobs`.
 
 ## Limit orders
 

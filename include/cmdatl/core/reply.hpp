@@ -423,9 +423,13 @@ inline bool is_failure(const Reply& reply) {
  * @param reply The reply.
  * @param rendering How to write it.
  * @param env The reply's environment (`offline`, `mock`, `demo`, `live`).
+ * @param lines The fields of the command's streamed lines, which a final reply lacks without a warning.
  * @return The exit code the process should end with.
  */
-inline Exit write_reply(std::ostream& out, const Reply& reply, const Rendering& rendering, const std::string& env) {
+inline Exit write_reply(
+  std::ostream& out, const Reply& reply, const Rendering& rendering, const std::string& env,
+  const std::vector<std::string>& lines = {}
+) {
   auto body = envelope(reply, env);
   const bool failed = body.contains("error");
   json::value shown = body;
@@ -442,7 +446,8 @@ inline Exit write_reply(std::ostream& out, const Reply& reply, const Rendering& 
   } else if (!failed && !rendering.fields_.empty()) {
     json::array missing;
     for (const auto& field : rendering.fields_) {
-      if (!present(body, split(field, '.'))) {
+      const auto head = field.substr(0, field.find('.'));
+      if (!present(body, split(field, '.')) && std::find(lines.begin(), lines.end(), head) == lines.end()) {
         missing.push_back(json::value(field));
       }
     }
@@ -541,7 +546,8 @@ public:
   : out_(out), err_(err), rendering_(std::move(rendering)), env_(std::move(env)) {}
 
   /**
-   * @brief Writes one event of a stream at once (a JSON line, or a text line on a terminal), flushed.
+   * @brief Writes one event of a stream at once (a JSON line, or a text line on a terminal), flushed; with `--fields` it
+   *   keeps `env`, `event`, `index` and the fields asked that it has, without a warning.
    * @param event The event; it should carry `event` (its kind) and `at` (its time).
    * @throws std::runtime_error When the event could not be written.
    */
@@ -550,6 +556,13 @@ public:
     line.body_ = event;
     auto rendering = rendering_;
     rendering.value_.reset();
+    if (!rendering.fields_.empty()) {
+      auto fields = rendering.fields_;
+      fields.push_back("event");
+      fields.push_back("index");
+      line.body_ = select_fields(event, fields).as_object();
+      rendering.fields_.clear();
+    }
     write_reply(out_, line, rendering, env_);
     require_written(out_);
   }
@@ -580,9 +593,17 @@ public:
    */
   Exit finish(const Reply& reply) {
     auto& stream = stream_for(reply, rendering_, out_, err_);
-    const auto exit = write_reply(stream, reply, rendering_, env_);
+    const auto exit = write_reply(stream, reply, rendering_, env_, lines_);
     require_written(stream);
     return exit;
+  }
+
+  /**
+   * @brief Names a field of the command's streamed lines, which its final reply lacks without a warning.
+   * @param field The field.
+   */
+  void add_line_field(std::string field) {
+    lines_.push_back(std::move(field));
   }
 
   /**
@@ -614,6 +635,7 @@ private:
   std::ostream& err_;
   Rendering rendering_;
   std::string env_;
+  std::vector<std::string> lines_;
 };
 
 } // namespace cmdatl

@@ -203,6 +203,41 @@ TEST_CASE("run_child hands on an unterminated last line and splits a line too lo
   }
 }
 
+TEST_CASE("run_child hands stdout on by lines when asked: split across reads, unterminated, too long, throwing") {
+  const Watchdog watchdog("the stdout lines", 30);
+  {
+    const FakeAtlc fake("run outpart {\"a\":\nrun sleep 50\nrun out 1}\nrun out two\nrun outpart last\n");
+    std::vector<std::string> lines;
+    const auto result =
+      cmdatl::run_child({CMDATL_FAKE_ATLC, "run"}, ignore_lines, nullptr, -1, [&lines](const std::string& line) {
+        lines.push_back(line);
+      });
+    REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
+    CHECK(lines == std::vector<std::string>{"{\"a\":1}", "two", "last"});
+    CHECK(result.stdout_.empty());
+  }
+  const int before = open_fds();
+  const auto long_line = cmdatl::run_child(
+    {"/bin/sh", "-c", "head -c 1100000 /dev/zero | tr '\\000' a; sleep 30"}, ignore_lines, nullptr, -1,
+    [](const std::string&) {}
+  );
+  CHECK(long_line.kind_ == cmdatl::ChildResult::Kind::IO_FAILED);
+  CHECK(long_line.error_ == "a line of the child's output is longer than 1048576 bytes");
+  const FakeAtlc fake("run grandchild hold\nrun pid\nrun out hello\nrun block\n");
+  CHECK_THROWS_AS(
+    cmdatl::run_child(
+      {CMDATL_FAKE_ATLC, "run"}, ignore_lines, nullptr, -1,
+      [](const std::string&) {
+        throw std::runtime_error("the output broke");
+      }
+    ),
+    std::runtime_error
+  );
+  CHECK(open_fds() == before);
+  CHECK(no_children());
+  CHECK(all_gone(fake.pids()));
+}
+
 TEST_CASE("run_child tells a signal from an exit code and a missing program from both") {
   const Watchdog watchdog("the endings", 30);
   {
@@ -456,6 +491,23 @@ TEST_CASE("a failing or throwing output stream while atlc runs kills its group a
     CHECK(no_children());
     CHECK(all_gone(fake.pids()));
   }
+  CHECK(open_fds() == before);
+}
+
+TEST_CASE("an evaluation's line that cannot be written ends its driver's group and leaks nothing") {
+  const Watchdog watchdog("the evaluation's broken output", 60);
+  const int before = open_fds();
+  const FakeAtlc fake(
+    "check out " + INFO_OK + "\ndriver grandchild hold\ndriver pid\n" + "driver out {\"index\":0,\"params\":{}," +
+    "\"window\":null,\"path\":null,\"report\":" + REPORT + "}\ndriver block\n"
+  );
+  RefusingAfter refusing(0);
+  std::ostream out(&refusing);
+  out.exceptions(std::ios::badbit);
+  std::ostringstream err;
+  CHECK(cmdatl::run({"--format", "json", "strategy", "evaluate", "s.toml"}, out, err, false) == 1);
+  CHECK(no_children());
+  CHECK(all_gone(fake.pids()));
   CHECK(open_fds() == before);
 }
 

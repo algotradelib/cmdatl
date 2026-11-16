@@ -196,6 +196,8 @@ if(CMDATL_BUILD_TESTS)
     FetchContent_Declare(catch2 GIT_REPOSITORY https://github.com/catchorg/Catch2.git GIT_TAG v3.8.1 GIT_SHALLOW TRUE)
     FetchContent_MakeAvailable(catch2)
   endif()
+  # Threads for the evaluations the replay module's tests and the store's backtest driver run.
+  find_package(Threads REQUIRED)
   # A stand-in for atlc whose behaviour each test writes in a script.
   add_executable(fake-atlc tests/fake-atlc.cpp)
   # Holds an account's lock, as another cmdatl process would.
@@ -259,13 +261,13 @@ if(CMDATL_BUILD_TESTS)
     )
     target_include_directories(backtest-adapter-vendor SYSTEM PRIVATE ${CMDATL_TEST_DUCKDB})
     target_compile_definitions(backtest-adapter-vendor PRIVATE TOML_HEADER_ONLY=1 CMDATL_DUCKDB=1 CMDATL_FETCH_ADAPTER=1)
-    target_link_libraries(backtest-adapter-vendor PRIVATE cmdatl_core ${CMDATL_TEST_DUCKDB_LIBRARY})
+    target_link_libraries(backtest-adapter-vendor PRIVATE cmdatl_core Threads::Threads ${CMDATL_TEST_DUCKDB_LIBRARY})
     set_target_properties(backtest-adapter-vendor PROPERTIES BUILD_RPATH ${CMDATL_TEST_DUCKDB})
   endif()
   # The replay module with hand-written programs and files written by the test, as the drivers build it: no
   # floating-point contraction on GCC.
-  add_executable(test-replay tests/test-replay.cpp)
-  target_link_libraries(test-replay PRIVATE cmdatl_core Catch2::Catch2WithMain)
+  add_executable(test-replay tests/test-replay.cpp tests/test-evaluate.cpp)
+  target_link_libraries(test-replay PRIVATE cmdatl_core Catch2::Catch2WithMain Threads::Threads)
   target_compile_options(test-replay PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)
   add_test(NAME test-replay COMMAND test-replay)
   # The fault tests: their own executable, whose one translation unit defines CMDATL_FAULT_HOOKS and gives the

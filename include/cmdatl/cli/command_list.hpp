@@ -5,6 +5,7 @@
 #include "../core/table.hpp"
 #include "../orders/orders.hpp"
 #include "../strategy/backtest.hpp"
+#include "../strategy/evaluate.hpp"
 #include "../strategy/runs.hpp"
 #include "../strategy/strategy.hpp"
 #include "./describe.hpp"
@@ -403,6 +404,59 @@ inline std::vector<Command> command_list() {
     .error("fetch.failed")
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return backtest_reply(invocation, output);
+    }));
+  add(make_command({"strategy", "evaluate"}, "Strategy", "replay a program once per parameter set of a grid")
+    .describe(
+      "TARGET and the settings are read as strategy backtest reads them, with [evaluate] and [grid] (cmdatl strategy "
+      "reference run-spec, \"Many replays\"); the backtest's build serves it. Each replay is one JSON line, in index "
+      "order, then the reply; --fields selects in both, --value in the reply only. With evaluate.jobs above 1 the "
+      "program's own C++ must be thread-safe."
+    )
+    .example("cmdatl strategy evaluate dip.toml grid.lookback=10,20,30")
+    .example("cmdatl strategy evaluate dip.toml grid.lookback=10,20,30 evaluate.objective=total_return evaluate.jobs=4")
+    .example("cmdatl strategy evaluate dip.toml grid.lookback=10,20 --fields index,params,report.total_return,best")
+    .arg("TARGET", "a program (.atls), a run spec, or both")
+    .arg("SETTING", "KEY=VALUE with a dotted key (grid.lookback=10,20,30), before or after TARGET", false, true)
+    .streams("index", "a line's replay, from 0, in the order the grid gives")
+    .streams("params", "the grid's values of this replay, by name")
+    .streams("window", "null")
+    .streams("path", "null")
+    .streams("report", "the replay's report, as strategy backtest gives it, or null")
+    .streams("failure", "without a report: kind (params, when the bounds refused the set, or replay) and message")
+    .returns("method", "grid")
+    .returns("jobs", "the replays run at once")
+    .returns("param_sets", "the grid's parameter sets")
+    .returns("invalid", "the sets the program's bounds refused")
+    .returns("tried", "param_sets - invalid")
+    .returns("replays", "the lines printed; also on a failure after the driver started")
+    .returns("paths", "null")
+    .returns("failed", "the replays that failed otherwise")
+    .returns("objective", "evaluate.objective, or null")
+    .returns("direction", "max or min with an objective, else null")
+    .returns("best", "index, params and value of the best replay by the objective, or null")
+    .returns("spec", "the run spec, absolute, or null when no spec is given")
+    .returns("program", "the program, absolute")
+    .returns("settings_given", "the KEY=VALUE settings given")
+    .returns("atlc", "atlc's version")
+    .returns("errors", "on a settings or program failure: the diagnostics, with file and line")
+    .returns("stderr", "on a failure atlc, the build or the driver reported: its last stderr lines")
+    .exits(PROGRAM_EXITS)
+    .error("interrupted")
+    .error("usage.missing_argument")
+    .error("usage.bad_value")
+    .error("cache.unavailable")
+    .error("atlc.missing")
+    .error("atlc.unsupported")
+    .error("atlc.failed")
+    .error("program.invalid")
+    .error("spec.invalid")
+    .error("build.failed")
+    .error("replay.failed")
+    .error("unavailable.platform")
+    .error("config.missing")
+    .error("config.invalid")
+    .runs([](const Invocation& invocation, const Table&, Output& output) {
+      return evaluate_reply(invocation, output);
     }));
   add(make_command({"strategy", "reference"}, "Strategy", "the atls language reference, from the atlc cmdatl runs")
     .example("cmdatl strategy reference")
