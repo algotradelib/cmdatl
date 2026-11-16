@@ -1,7 +1,7 @@
 # Run settings
 
 ```sh
-cmdatl strategy backtest TARGET [KEY=VALUE]... [--fills FILE]
+cmdatl strategy backtest TARGET [KEY=VALUE]... [--fills FILE] [--equity FILE]
 cmdatl run TARGET [KEY=VALUE]...
 ```
 
@@ -21,7 +21,7 @@ cmdatl strategy backtest dip.atls bars.file=bars.csv bars.source=csv bars.symbol
 cmdatl strategy backtest dip.atls daily.toml instruments.stock=005930
 ```
 
-A relative path is read against the directory of the file that sets it, and against the working directory on the command line (as `--fills`).
+A relative path is read against the directory of the file that sets it, and against the working directory on the command line (as `--fills` and `--equity`).
 The program's path is made lexically normal (`a/../b.atls` is `b.atls`), while data paths keep their `..` for the system to resolve, through any link.
 A run spec given with a program may still name it with `strategy`, and then only the same file: the two paths are compared once both are lexically normal, so a link or a name in another case is another file.
 The shell does not expand a `~` inside a `KEY=VALUE` word: write `bars.file=$HOME/bars.csv` or an absolute path.
@@ -335,6 +335,10 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 A number is printed with ten significant digits; a figure the library leaves undefined (a return on zero equity, a ratio without variance) is null.
 
 `--fills FILE` writes one line per fill, after the header `at,symbol,side,quantity,price,commission,tax`: the time (ISO 8601, UTC), the symbol, `buy` or `sell`, and decimals.
+
+`--equity FILE` writes the equity curve the report's figures are computed from, one line per recorded point, after the header `at,equity,period_return`: the time (ISO 8601, UTC), the equity as a decimal, and the return since the previous point as a number printed as the report's.
+The return is empty where the library leaves it undefined: on the first point, after a bar whose equity could not be valued, and after a point whose equity was zero or negative.
+Both are written after the replay's own checks, so a replay those checks fail writes neither; the reply names each file by its absolute path (`fills`, `equity`).
 
 ## Limit orders
 

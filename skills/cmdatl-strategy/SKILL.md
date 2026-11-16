@@ -46,6 +46,7 @@ Without it the build fails (`build.failed`), and the message names what to defin
 `cmdatl strategy backtest NAME.toml params.lookback=30` builds the program once (later backtests of an unchanged program build nothing) and replays it.
 `params.NAME=VALUE` sets a parameter for this call without editing the file.
 The reply's `report` is the replay's, unchanged: `total_return`, `sharpe_annualized`, `max_drawdown`, `executions`, `commission_paid`, `tax_paid` and more; `--fields report.total_return,report.max_drawdown` keeps those.
+`--equity FILE` writes the equity curve as CSV (`at,equity,period_return`), and `--fills FILE` every fill.
 Build progress goes to stderr.
 Exit 5 is a program error (`program.invalid`, with atlc's diagnostics in `errors`), 2 a settings error (`spec.invalid`, each with its file and line or the command line in `errors`), 1 a failed build or replay (`build.failed`; `replay.failed`, a parameter outside its bounds included).
 
