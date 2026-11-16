@@ -203,6 +203,41 @@ TEST_CASE("run_child hands on an unterminated last line and splits a line too lo
   }
 }
 
+TEST_CASE("run_child hands stdout on by lines when asked: split across reads, unterminated, too long, throwing") {
+  const Watchdog watchdog("the stdout lines", 30);
+  {
+    const FakeAtlc fake("run outpart {\"a\":\nrun sleep 50\nrun out 1}\nrun out two\nrun outpart last\n");
+    std::vector<std::string> lines;
+    const auto result =
+      cmdatl::run_child({CMDATL_FAKE_ATLC, "run"}, ignore_lines, nullptr, -1, [&lines](const std::string& line) {
+        lines.push_back(line);
+      });
+    REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
+    CHECK(lines == std::vector<std::string>{"{\"a\":1}", "two", "last"});
+    CHECK(result.stdout_.empty());
+  }
+  const int before = open_fds();
+  const auto long_line = cmdatl::run_child(
+    {"/bin/sh", "-c", "head -c 1100000 /dev/zero | tr '\\000' a; sleep 30"}, ignore_lines, nullptr, -1,
+    [](const std::string&) {}
+  );
+  CHECK(long_line.kind_ == cmdatl::ChildResult::Kind::IO_FAILED);
+  CHECK(long_line.error_ == "a line of the child's output is longer than 1048576 bytes");
+  const FakeAtlc fake("run grandchild hold\nrun pid\nrun out hello\nrun block\n");
+  CHECK_THROWS_AS(
+    cmdatl::run_child(
+      {CMDATL_FAKE_ATLC, "run"}, ignore_lines, nullptr, -1,
+      [](const std::string&) {
+        throw std::runtime_error("the output broke");
+      }
+    ),
+    std::runtime_error
+  );
+  CHECK(open_fds() == before);
+  CHECK(no_children());
+  CHECK(all_gone(fake.pids()));
+}
+
 TEST_CASE("run_child tells a signal from an exit code and a missing program from both") {
   const Watchdog watchdog("the endings", 30);
   {
