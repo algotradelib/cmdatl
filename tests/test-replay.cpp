@@ -18,6 +18,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <new>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -119,15 +121,18 @@ struct Replayed {
 };
 
 /**
- * @brief Runs `cmdatl::replay::main` with arguments and a fill model's maker, its standard output and error captured.
+ * @brief Runs `cmdatl::replay::main` with arguments, a fill model's maker and maybe the measures' maker, its standard
+ *   output and error captured.
  * @tparam Strategy The program.
  * @tparam Fills The fill model's maker.
+ * @tparam Measures The measures' maker, or nothing.
  * @param args The arguments.
  * @param fills Gives the fill model the replay uses.
+ * @param measures Gives the measures, or nothing.
  * @return What it gave.
  */
-template <typename Strategy, typename Fills>
-Replayed replay_main(std::vector<std::string> args, Fills fills) {
+template <typename Strategy, typename Fills, typename... Measures>
+Replayed replay_main(std::vector<std::string> args, Fills fills, Measures... measures) {
   std::vector<char*> argv{const_cast<char*>("driver")};
   for (auto& arg : args) {
     argv.push_back(arg.data());
@@ -137,7 +142,7 @@ Replayed replay_main(std::vector<std::string> args, Fills fills) {
   auto* const saved_out = std::cout.rdbuf(out.rdbuf());
   auto* const saved_err = std::cerr.rdbuf(err.rdbuf());
   Replayed replayed;
-  replayed.exit_ = replay::main<Strategy>(static_cast<int>(argv.size()), argv.data(), fills);
+  replayed.exit_ = replay::main<Strategy>(static_cast<int>(argv.size()), argv.data(), fills, measures...);
   std::cout.rdbuf(saved_out);
   std::cerr.rdbuf(saved_err);
   replayed.out_ = out.str();
@@ -187,6 +192,73 @@ std::string flat_bars(const std::vector<int>& prices) {
       ",1000\n";
   }
   return text;
+}
+
+/** @brief A table of measures, as a driver's `program_measures()` gives it. */
+using Measures = std::vector<std::pair<const char*, double (*)(const atl::backtest::MeasureInput&)>>;
+
+/**
+ * @brief Gives a table of measures, as `program_measures` does.
+ * @param table The table.
+ * @return The maker.
+ */
+auto measures_of(Measures table) {
+  return [table]() {
+    return table;
+  };
+}
+
+/**
+ * @brief A measure: the curve's points plus the total return.
+ * @param in The replay.
+ * @return The sum.
+ */
+double points(const atl::backtest::MeasureInput& in) {
+  return static_cast<double>(in.levels_.size()) + in.report_.total_return_;
+}
+
+/** @brief A measure never defined. @return NaN. */
+double not_a_number(const atl::backtest::MeasureInput&) {
+  return std::nan("");
+}
+
+/** @brief A measure below every number. @return Minus infinity. */
+double minus_infinity(const atl::backtest::MeasureInput&) {
+  return -std::numeric_limits<double>::infinity();
+}
+
+/** @brief A measure of negative zero. @return -0. */
+double minus_zero(const atl::backtest::MeasureInput&) {
+  return -0.0;
+}
+
+/** @brief A measure of the periods per year. @param in The replay. @return Them. */
+double periods(const atl::backtest::MeasureInput& in) {
+  return in.periods_per_year_;
+}
+
+/** @brief A measure throwing a std::exception. @return Nothing. */
+double broken(const atl::backtest::MeasureInput&) {
+  throw std::out_of_range("index 3");
+}
+
+/** @brief A measure throwing std::bad_alloc. @return Nothing. */
+double hungry(const atl::backtest::MeasureInput&) {
+  throw std::bad_alloc();
+}
+
+/** @brief A measure throwing what is not a std::exception. @return Nothing. */
+double odd(const atl::backtest::MeasureInput&) {
+  throw 7;
+}
+
+/**
+ * @brief The same fill model.
+ * @param model The model.
+ * @return It.
+ */
+atl::backtest::NextBarFillModel same_fills(atl::backtest::NextBarFillModel model) {
+  return model;
 }
 
 /** @brief Clears the hand-written program's script before a test, and after it. */
@@ -740,6 +812,79 @@ TEST_CASE("replay main: a dangling link to the other output is written through a
   REQUIRE(ran.exit_ == 0);
   CHECK(field(ran.out_, "warning") == ONE_FILE);
   CHECK(slurp(dir.at("target.csv")).rfind("at,equity,period_return\n", 0) == 0);
+}
+
+TEST_CASE("replay main: the measures' values end the report, null when not finite, and nothing else changes") {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", rising_bars(4));
+  runtest::script().decisions_[2] = runtest::Decision{5, "1", true};
+  const std::vector<std::string> args{
+    "bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "replay.cash=1000"
+  };
+  const auto plain = replay_main<runtest::Program>(args);
+  REQUIRE(plain.exit_ == 0);
+  const Measures table{{"points", points}, {"nan", not_a_number}, {"inf", minus_infinity}, {"zero", minus_zero}};
+  const auto with = replay_main<runtest::Program>(args, same_fills, measures_of(table));
+  INFO(with.err_);
+  REQUIRE(with.exit_ == 0);
+  // The report is the one without measures, field for field: one summary, the input's.
+  REQUIRE(plain.out_.size() > 3);
+  REQUIRE(plain.out_.substr(plain.out_.size() - 3) == "\n}\n");
+  CHECK(
+    with.out_ ==
+    plain.out_.substr(0, plain.out_.size() - 3) + ",\n  \"measures\": {\"points\": " + replay::number(4 + 0.075) +
+      ", \"nan\": null, \"inf\": null, \"zero\": -0}\n}\n"
+  );
+  CHECK(field(plain.out_, "total_return") == "0.075");
+  // After the warning, when the report has one.
+  std::filesystem::create_symlink("target.csv", dir.at("alias.csv"));
+  auto both = args;
+  both.push_back("output.fills=" + dir.at("target.csv"));
+  both.push_back("output.equity=" + dir.at("alias.csv"));
+  const auto warned = replay_main<runtest::Program>(both, same_fills, measures_of({table[1]}));
+  REQUIRE(warned.exit_ == 0);
+  const auto at = warned.out_.find(",\n  \"warning\": " + ONE_FILE + ",\n  \"measures\": {\"nan\": null}\n}\n");
+  CHECK(at != std::string::npos);
+}
+
+TEST_CASE("replay main: a measure's throw fails the replay before any file, with its name only for a std::exception") {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", rising_bars(4));
+  const std::vector<std::string> args{
+    "bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "output.fills=" + dir.at("f.csv"),
+    "output.equity=" + dir.at("e.csv")
+  };
+  const std::vector<std::pair<Measures, std::string>> cases{
+    {{{"fine", periods}, {"broken", broken}}, "error: the measure broken threw: index 3\n"},
+    {{{"hungry", hungry}}, "error: " + std::string(std::bad_alloc().what()) + "\n"},
+    {{{"odd", odd}}, "error: the replay threw something that is not a std::exception\n"},
+  };
+  for (const auto& [table, message] : cases) {
+    const auto ran = replay_main<runtest::Program>(args, same_fills, measures_of(table));
+    CHECK(ran.exit_ == 1);
+    CHECK(ran.err_ == message);
+    CHECK(ran.out_.empty());
+    CHECK_FALSE(std::filesystem::exists(dir.at("f.csv")));
+    CHECK_FALSE(std::filesystem::exists(dir.at("e.csv")));
+  }
+}
+
+TEST_CASE("run_measures: each measure in order, a std::exception named, bad_alloc and other throws as they are") {
+  const atl::backtest::ReplayResult result{};
+  const atl::backtest::MeasureInput in{result, {}, {}, {}, 252};
+  CHECK(replay::run_measures(Measures{}, in).empty());
+  const auto values = replay::run_measures(Measures{{"b", periods}, {"a", periods}}, in);
+  CHECK(values == std::vector<std::pair<std::string, double>>{{"b", 252}, {"a", 252}});
+  try {
+    (void)replay::run_measures(Measures{{"ok", periods}, {"bad", broken}}, in);
+    FAIL("no throw");
+  } catch (const std::runtime_error& e) {
+    CHECK(std::string(e.what()) == "the measure bad threw: index 3");
+  }
+  CHECK_THROWS_AS(replay::run_measures(Measures{{"hungry", hungry}}, in), std::bad_alloc);
+  CHECK_THROWS_AS(replay::run_measures(Measures{{"odd", odd}}, in), int);
 }
 
 TEST_CASE("replay main: two names of one file on a case-insensitive volume are written and the report warns") {
