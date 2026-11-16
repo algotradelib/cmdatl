@@ -282,7 +282,7 @@ TEST_CASE("tune and check are gone; new and backtest and reference are the strat
     }
   }
   CHECK(available == std::vector<std::string>{"strategy new", "strategy backtest", "strategy reference"});
-  CHECK(cmdatl::SCHEMA_VERSION == 18);
+  CHECK(cmdatl::SCHEMA_VERSION == 19);
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_).at("commands").as_array()[0].as_object();
   CHECK(backtest.at("returns").as_object().contains("settings_given"));
   CHECK(backtest.at("returns").as_object().contains("program"));
@@ -493,8 +493,9 @@ TEST_CASE("the schema declares the errors its commands return") {
   CHECK(declares("unknown.broker_refused"));
   const auto backtest = reply_of(run({"schema", "strategy.backtest"}).out_);
   const auto& options = backtest.at("commands").as_array()[0].as_object().at("options").as_array();
-  REQUIRE(options.size() == 1);
+  REQUIRE(options.size() == 2);
   CHECK(options[0].as_object().at("name").as_string() == "--fills");
+  CHECK(options[1].as_object().at("name").as_string() == "--equity");
   std::vector<cmdatl::Command> bad;
   bad.push_back(cmdatl::make_command({"x"}, "Read", "x").example("cmdatl x").returns("x", "x").error("bogus.code"));
   const auto problems = cmdatl::check_table(cmdatl::Table(std::move(bad)));

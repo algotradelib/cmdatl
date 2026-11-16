@@ -363,12 +363,14 @@ inline std::vector<Command> command_list() {
     .arg("TARGET", "a program (.atls), a run spec, or both")
     .arg("SETTING", "KEY=VALUE with a dotted key (params.lookback=30), before or after TARGET", false, true)
     .option("fills", "FILE", "also write every fill")
+    .option("equity", "FILE", "also write the equity curve")
     .returns("report", "the replay's report, unchanged")
     .returns("spec", "the run spec, absolute, or null when no spec is given")
     .returns("program", "the program, absolute")
     .returns("settings_given", "the KEY=VALUE settings given (the spec's and the program's own values are not listed)")
     .returns("atlc", "atlc's version")
     .returns("fills", "the fills file, absolute, when asked")
+    .returns("equity", "the equity file, absolute, when asked")
     .returns(
       "fetched",
       "with bars.source naming a broker folder: the source, fetched_at, and per symbol the bars fetched, those new to "

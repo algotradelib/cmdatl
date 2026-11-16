@@ -181,7 +181,7 @@ private:
 #endif
 
 /**
- * @brief `strategy backtest TARGET [KEY=VALUE]... [--fills FILE]`; see the file comment.
+ * @brief `strategy backtest TARGET [KEY=VALUE]... [--fills FILE] [--equity FILE]`; see the file comment.
  * @param invocation The arguments.
  * @param output Where progress goes: cmdatl's first line, then atlc's and the build's and the driver's stderr lines.
  * @return The reply.
@@ -337,6 +337,11 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     fills = std::filesystem::absolute(invocation.get("fills")).string();
     argv.push_back("output.fills=" + fills);
   }
+  std::string equity;
+  if (invocation.has("equity")) {
+    equity = std::filesystem::absolute(invocation.get("equity")).string();
+    argv.push_back("output.equity=" + equity);
+  }
   // The login on descriptor 3 for the driver only: a pipe made after the build (no build child sees it), mapped onto 3
   // in the driver alone, and closed here once the driver has ended, on every path.
   StagedLogin staged;
@@ -389,6 +394,9 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   reply.body_["atlc"] = atlc.version_;
   if (!fills.empty()) {
     reply.body_["fills"] = fills;
+  }
+  if (!equity.empty()) {
+    reply.body_["equity"] = equity;
   }
   if (fetched) {
     // The history is the vendor's as of the fetch, revisions included; the store as of it can hold more than it.
