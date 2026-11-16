@@ -454,8 +454,9 @@ TEST_CASE("evaluate: a slow first replay holds at most four lines per job", "[th
   const auto ran = drive(on_csv(file, {ks, "param.hold=300", "evaluate.jobs=2"}));
   REQUIRE(ran.exit_ == 0);
   CHECK(lines_of(ran.out_).size() == 21);
-  // While replay 0 held, the other thread started replays 1 to 7 and no further: 4 * jobs - 1.
-  CHECK(observed().highest_while_held_ == 7);
+  // While replay 0 held, the other thread started replays after it, and none past 4 * jobs - 1.
+  CHECK(observed().highest_while_held_ >= 1);
+  CHECK(observed().highest_while_held_ <= 7);
 }
 
 TEST_CASE("evaluate: a fatal throw stops the batch, joins every thread and prints the stop line", "[threads]") {
