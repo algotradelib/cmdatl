@@ -1751,6 +1751,17 @@ TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by t
   CHECK(has(cli_error("grid.lookback=10,,30"), "`grid.lookback` is a list of numbers"));
   CHECK(has(cli_error("grid.lookback=ten"), "`grid.lookback` is a list of numbers"));
   CHECK(cli_value("grid.entry.step=1e-3") == "1e-3");
+  // The command line's grid entry, a list or a range, replaces the file's for that name.
+  const auto range_file = WIDE_SPEC + "[grid.entry]\nfrom = 1\nto = 3\nstep = 1\n";
+  CHECK(
+    evaluate(range_file, sp::Purpose::EVALUATE, {"grid.entry=0.5,1"}).arg("grid.entry") ==
+    std::optional<std::string>("0.5,1")
+  );
+  const auto list_over = evaluate(
+    WIDE_SPEC + "[grid]\nentry = [7, 8]\n", sp::Purpose::EVALUATE,
+    {"grid.entry.from=1", "grid.entry.to=2", "grid.entry.step=0.5"}
+  );
+  CHECK(list_over.arg("grid.entry") == std::optional<std::string>("1,1.5,2"));
   // A value no double holds is the driver's to refuse, never an exception here.
   CHECK(evaluate(WIDE_SPEC, sp::Purpose::EVALUATE, {"grid.entry=1e-400"}).errors_.empty());
   CHECK(
