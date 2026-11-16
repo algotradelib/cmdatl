@@ -384,7 +384,7 @@ It takes no `--fills` or `--equity`, and does not fetch: a spec whose `bars.sour
 | --- | --- | --- | --- |
 | `evaluate.method` | `"grid"` | `"grid"` | how the replays are chosen |
 | `evaluate.jobs` | whole number, 1 to 256 | 1 | replays run at once, each on its own thread |
-| `evaluate.objective` | `"total_return"`, `"sharpe_per_period"`, `"sharpe_annualized"`, `"sortino_per_period"` or `"max_drawdown"` | none | the report figure the reply's `best` compares; without it `best` is null |
+| `evaluate.objective` | `"total_return"`, `"sharpe_per_period"`, `"sharpe_annualized"`, `"sortino_per_period"`, `"max_drawdown"`, or `"measures.NAME"` for one of the spec's `measures` | none | the report figure the reply's `best` compares; without it `best` is null |
 | `evaluate.direction` | `"max"` or `"min"` | `"max"` | which end is best (`max_drawdown` is a positive fraction: use `min`) |
 | `grid.NAME` | a list of numbers | none | the values of parameter NAME, in the order written |
 | `grid.NAME.from`, `.to`, `.step` | numbers | none | the same as a range: `from`, `from + step`, ... up to `to` inclusive |
@@ -402,7 +402,7 @@ Each replay is one JSON line, in index order, whatever `evaluate.jobs` is, with 
 {"env":"offline","event":"replay","index":4,"params":{"fast":10,"slow":60},"window":null,"path":null,"report":{...}}
 ```
 
-- `report` is exactly the report `strategy backtest` gives for these settings and parameters ("The report").
+- `report` is exactly the report `strategy backtest` gives for these settings and parameters ("The report"), its `measures` included; a measure that throws fails that replay only, and one that runs out of memory stops the evaluation.
 - A replay without a report has `"report":null` and `failure`: `{"kind":"params","message":...}` when the program's bounds refused the set, `{"kind":"replay",...}` for any other error of that replay; the others go on.
 - `window` and `path` are null: they are for the evaluation methods to come.
 
