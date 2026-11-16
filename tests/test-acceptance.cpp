@@ -1274,6 +1274,81 @@ TEST_CASE("a program's data {} reads its data file in time order with the bars",
   CHECK(!report_of({at("buy.toml")}).as_object().contains("records"));
 }
 
+/**
+ * @brief A scratch directory holding the measures fixture, 30 bars and a program buying one share.
+ * @param dir The directory.
+ * @param name The run spec's name.
+ * @param measures The run spec's `measures` line, or empty for a spec without them.
+ * @return The run spec.
+ */
+std::string measured_spec(const ScratchDir& dir, const std::string& name, const std::string& measures) {
+  std::filesystem::copy(
+    std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "fixtures" / "measures" / "measures.hpp",
+    dir.path() / "measures.hpp", std::filesystem::copy_options::overwrite_existing
+  );
+  spit(dir.path() / "bars.csv", walk_csv(walk(30)));
+  spit(dir.path() / "buy.atls", "on_bar {\n  target(1);\n}\n");
+  const auto spec = (dir.path() / (name + ".toml")).string();
+  spit(
+    spec,
+    "strategy = 'buy.atls'\nheader = 'measures.hpp'\n" + measures +
+      "\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n"
+  );
+  return spec;
+}
+
+TEST_CASE("measures of the run spec's header end the report and change nothing else", "[acceptance]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const ScratchDir dir;
+  auto report = report_of({measured_spec(dir, "measured", "measures = ['total_again', 'always_nan']")});
+  const auto plain = report_of({measured_spec(dir, "plain", "")});
+  const auto measures = report.as_object().at("measures").as_object();
+  REQUIRE(measures.size() == 2);
+  CHECK(measures.begin()->key() == "total_again");
+  CHECK(measures.at("total_again").to_number<double>() == plain.as_object().at("total_return").to_number<double>());
+  CHECK(measures.at("always_nan").is_null());
+  report.as_object().erase("measures");
+  CHECK(report == plain);
+}
+
+TEST_CASE(
+  "a measure that is not one fails the build in one line, and one that throws fails the replay", "[acceptance]"
+) {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const ScratchDir dir;
+  for (const std::string name : {"wrong", "undeclared", "explicit_only"}) {
+    const auto failed = backtest({measured_spec(dir, name, "measures = ['total_again', '" + name + "']")});
+    INFO(failed.out_);
+    CHECK(failed.exit_ == 1);
+    CHECK(code_of(failed.out_) == "build.failed");
+    const std::string message(reply_of(failed.out_).at("error").as_object().at("message").as_string());
+    CHECK(
+      message.substr(0, message.find('\n'))
+        .find("measures: " + name + " must be callable as double(const algotradelib::backtest::MeasureInput&)") !=
+      std::string::npos
+    );
+  }
+  const auto fills = dir.path() / "fills.csv";
+  const auto equity = dir.path() / "equity.csv";
+  const auto threw = backtest(
+    {measured_spec(dir, "throws", "measures = ['throws']"), "--fills", fills.string(), "--equity", equity.string()}
+  );
+  CHECK(threw.exit_ == 1);
+  CHECK(code_of(threw.out_) == "replay.failed");
+  const std::string message(reply_of(threw.out_).at("error").as_object().at("message").as_string());
+  CHECK(message.find("the measure throws threw: deliberately") != std::string::npos);
+  CHECK_FALSE(std::filesystem::exists(fills));
+  CHECK_FALSE(std::filesystem::exists(equity));
+}
+
 TEST_CASE("a program's extern function and indicator come from the run spec's header", "[acceptance]") {
   const auto equip = equipment();
   if (!equip) {

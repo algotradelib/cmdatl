@@ -819,16 +819,25 @@ TEST_CASE("run builds a program with its run spec's header and trades as its bac
     std::filesystem::copy_options::recursive
   );
   spit(dir / "bars.csv", dip_bars(160));
+  // A measure in the header: the backtest reports it, and the run computes none and trades as before.
+  const auto user = dir / "include" / "user.hpp";
+  spit(
+    user,
+    slurp(user) +
+      "\n#include <algotradelib/backtest>\n\ninline double one(const algotradelib::backtest::MeasureInput&) {\n"
+      "  return 1;\n}\n"
+  );
   const auto spec = (dir / "mean-gap.toml").string();
   spit(
     spec,
-    "strategy = \"mean-gap.atls\"\nheader = \"include/user.hpp\"\n\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\n"
+    "strategy = \"mean-gap.atls\"\nheader = \"include/user.hpp\"\nmeasures = [\"one\"]\n\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\n"
     "symbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n"
     "[replay]\ncash = 100000000\ncommission = 0.0005\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n"
   );
   const auto fills = dir / "fills.csv";
   const auto backtest = fixture.json({"strategy", "backtest", spec, "--fills", fills.string()});
   REQUIRE(backtest.exit_ == 0);
+  CHECK(reply_of(backtest.out_).at("report").at("measures").at("one").to_number<double>() == 1);
   const auto expected = backtest_fills(fills);
   REQUIRE(expected.size() >= 2);
   const auto ran = run_process({spec});
