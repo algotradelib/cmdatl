@@ -73,8 +73,12 @@ enum class Kind {
   CHOICE,
   /** @brief A number at least the key's minimum (above it when strict). */
   NUMBER,
-  /** @brief A whole number, 0 to 1e9. */
+  /** @brief A whole number, the key's least value to 1e9. */
   COUNT,
+  /** @brief A whole number of periods (the key's least value to 1e9), or a span: 1 to 99999 and `d`, `w`, `mo` or `y`. */
+  LENGTH,
+  /** @brief A whole number, 0 to 2^53 - 1. */
+  SEED,
   /** @brief `true` or `false`. */
   BOOL,
   /** @brief A date: `"YYYY-MM-DD"`, or yyyymmdd as a number or a string. */
@@ -172,10 +176,20 @@ inline const std::vector<Key>& keys() {
     {"orders.offset", Kind::FRACTION, {}, {}},
     {"build.duckdb", Kind::PATH, {}, {}},
     {"build.indicators", Kind::CHOICE, {}, {"incremental", "naive", "exact"}},
-    {"evaluate.method", Kind::CHOICE, {}, {"grid"}},
+    {"evaluate.method", Kind::CHOICE, {}, {"grid", "windows", "bootstrap"}},
     {"evaluate.jobs", Kind::COUNT, {}, {}},
     {"evaluate.objective", Kind::TEXT, {}, {}},
     {"evaluate.direction", Kind::CHOICE, {}, {"max", "min"}},
+    {"windows.scheme", Kind::CHOICE, {}, {"rolling", "expanding"}},
+    {"windows.length", Kind::LENGTH, {}, {}, 2},
+    {"windows.step", Kind::LENGTH, {}, {}, 1},
+    {"windows.warmup", Kind::LENGTH, {}, {}, 0},
+    {"bootstrap.scheme", Kind::CHOICE, {}, {"circular", "moving", "stationary"}},
+    {"bootstrap.block", Kind::COUNT, {}, {}, 1},
+    {"bootstrap.paths", Kind::COUNT, {}, {}, 1},
+    {"bootstrap.seed", Kind::SEED, {}, {}},
+    {"bootstrap.intervals", Kind::TEXTS, {}, {}},
+    {"bootstrap.level", Kind::NUMBER, {}, {}, 0, true},
   };
   return table;
 }
@@ -758,6 +772,17 @@ inline bool integer_text(const std::string& text) {
 }
 
 /**
+ * @brief Whether a text is a calendar span: 1 to 99999, without a leading zero, then `d`, `w`, `mo` or `y`.
+ * @param text The text.
+ * @return Whether it is.
+ */
+inline bool span_text(const std::string& text) {
+  const auto digits = std::min(text.find_first_not_of("0123456789"), text.size());
+  const auto unit = text.substr(digits);
+  return digits >= 1 && digits <= 5 && text[0] != '0' && (unit == "d" || unit == "w" || unit == "mo" || unit == "y");
+}
+
+/**
  * @brief A yyyymmdd date that exists, from 1970.
  * @param digits The text.
  * @return The date as a number, or nothing.
@@ -1137,14 +1162,33 @@ inline std::optional<Error> check(Entry& e) {
       }
       return bad(key->strict_ ? "a number above 0" : "a number, 0 or more");
     }
-    case Kind::COUNT: {
+    case Kind::COUNT:
+    case Kind::LENGTH: {
       const auto v = e.value_.number_;
-      if (e.value_.type_ == Value::Type::NUM && integer_text(e.value_.text_) && v >= 0 && v <= 1e9) {
+      const auto least = known(e.key_)->min_;
+      if (e.value_.type_ == Value::Type::NUM && integer_text(e.value_.text_) && v >= least && v <= 1e9) {
         const bool negative_zero = e.value_.text_.front() == '-';
         e.value_ = Value::num(negative_zero ? "-0" : std::to_string(static_cast<long long>(v)), v);
         return std::nullopt;
       }
-      return bad("a whole number written as an integer, 0 or more");
+      if (kind == Kind::LENGTH && e.value_.type_ == Value::Type::STR && span_text(e.value_.text_)) {
+        return std::nullopt;
+      }
+      return bad(
+        "a whole number written as an integer, " + std::to_string(static_cast<int>(least)) + " or more" +
+        (kind == Kind::LENGTH ? ", or a span such as \"10d\", \"2w\", \"6mo\" or \"3y\"" : "")
+      );
+    }
+    case Kind::SEED: {
+      const auto& t = e.value_.text_;
+      if (
+        e.value_.type_ == Value::Type::NUM && !t.empty() && t.find_first_not_of("0123456789") == std::string::npos &&
+        (t.size() < 16 || (t.size() == 16 && t <= "9007199254740991"))
+      ) {
+        e.value_ = Value::num(std::to_string(std::stoull(t)), e.value_.number_);
+        return std::nullopt;
+      }
+      return bad("a whole number written as an integer, 0 to 2^53 - 1");
     }
     case Kind::BOOL: {
       if (e.value_.type_ != Value::Type::BOOL) {
@@ -2016,7 +2060,8 @@ inline std::vector<Error> resolve(
   std::vector<std::pair<std::string, std::string>> grid;
   if (purpose != Purpose::EVALUATE) {
     for (const auto& e : merged) {
-      if (e.key_.rfind("evaluate.", 0) == 0 || e.key_.rfind("grid.", 0) == 0) {
+      const auto table = e.key_.substr(0, e.key_.find('.'));
+      if (table == "evaluate" || table == "grid" || table == "windows" || table == "bootstrap") {
         errors.push_back(Error::at(e.origin_, "`" + e.key_ + "` is an evaluation's key: use cmdatl strategy evaluate"));
       }
     }
@@ -2048,6 +2093,79 @@ inline std::vector<Error> resolve(
       );
     }
     read_grid(merged, program, grid, errors);
+    // The method's own table only; then what the method needs of the settings and the program.
+    const auto method = text("evaluate.method").value_or("grid");
+    for (const auto& e : merged) {
+      const auto table = e.key_.substr(0, e.key_.find('.'));
+      if ((table == "windows" || table == "bootstrap") && table != method) {
+        errors.push_back(Error::at(e.origin_, "`" + e.key_ + "` is for evaluate.method = \"" + table + "\""));
+      }
+    }
+    const auto span = [&get](const char* key) {
+      const auto* e = get(key);
+      return e != nullptr && e->value_.type_ == Value::Type::STR;
+    };
+    if (method != "grid" && (!grid.empty() || source == "stdin")) {
+      errors.push_back(
+        Error::nowhere(
+          method +
+          " replays one parameter set on loaded bars: a [grid] and stdin paths are evaluate.method = \"grid\"'s"
+        )
+      );
+    }
+    if (method == "windows" && get("windows.length") == nullptr) {
+      errors.push_back(Error::nowhere("evaluate.method = \"windows\" needs windows.length"));
+    } else if (
+      method == "windows" && get("windows.step") != nullptr && span("windows.length") != span("windows.step")
+    ) {
+      errors.push_back(at("windows.step", "give windows.length and windows.step both as periods or both as spans"));
+    } else if (method == "windows" && !span("windows.length") && span("windows.warmup")) {
+      errors.push_back(at("windows.warmup", "with windows.length in periods, give windows.warmup in periods"));
+    }
+    if (method == "windows" && !daily && get("windows.warmup") == nullptr) {
+      errors.push_back(Error::nowhere("on intraday bars the warm-up is yours to give: set windows.warmup"));
+    }
+    if (method == "bootstrap") {
+      // A path rebuilds daily closes only: nothing a program could read of a bar's open, high or low, or of data {}.
+      const bool closes = (source == "wide" && !get("bars.open") && !get("bars.high") && !get("bars.low")) ||
+        (source == "csv" && text("bars.layout").value_or("long") == "wide");
+      if (!closes || !daily) {
+        errors.push_back(at(
+          "bars.source",
+          "a bootstrap path rebuilds daily closes: give wide tables of closes, or a CSV with bars.layout = \"wide\""
+        ));
+      }
+      if (program.session_ || !program.data_.empty()) {
+        errors.push_back(Error::nowhere("a bootstrap path cannot carry what on_open, on_close or data {} read"));
+      }
+      if (text("orders.type").value_or("market") == "limit" || fill_header != nullptr) {
+        errors.push_back(
+          Error::nowhere(
+            "limit orders and a market-price rule of your own are not replayed on bootstrap paths in this version"
+          )
+        );
+      }
+      if (get("bootstrap.block") == nullptr) {
+        errors.push_back(Error::nowhere("bootstrap draws blocks of bootstrap.block periods: give bootstrap.block = N"));
+      }
+      if (const auto* e = get("bootstrap.paths"); e != nullptr && e->value_.number_ > 10000) {
+        errors.push_back(Error::at(e->origin_, "`bootstrap.paths` is 1 to 10000"));
+      }
+      if (const auto* e = get("bootstrap.level"); e != nullptr && !(e->value_.number_ < 1)) {
+        errors.push_back(Error::at(e->origin_, "`bootstrap.level` is above 0 and below 1"));
+      }
+      figures.insert(figures.end(), {"turnover", "executions"});
+      const auto* named = get("bootstrap.intervals");
+      for (const auto& item : named != nullptr ? named->value_.items_ : std::vector<Value>{}) {
+        if (std::find(figures.begin(), figures.end(), item.text()) == figures.end()) {
+          errors.push_back(
+            Error::at(
+              named->origin_, "`bootstrap.intervals` names " + join(figures, ", ") + ", not \"" + item.text() + "\""
+            )
+          );
+        }
+      }
+    }
   }
   if (!errors.empty()) {
     return errors;
@@ -2253,6 +2371,8 @@ inline std::optional<Error> from_command_line(const std::string& word, Entry& en
   switch (kind) {
     case Kind::NUMBER:
     case Kind::COUNT:
+    case Kind::LENGTH:
+    case Kind::SEED:
     case Kind::FRACTION:
       entry.value_ = number_or_text();
       break;

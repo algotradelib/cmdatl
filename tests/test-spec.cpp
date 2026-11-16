@@ -1863,3 +1863,84 @@ TEST_CASE("standard input is an evaluation's bar source, in the long layout, and
   REQUIRE(path.size() == 1);
   CHECK(has(path.front(), "`bars.path_column` applies to bars.source = \"stdin\""));
 }
+
+TEST_CASE("windows and bootstrap keys: lengths in periods or spans; each method its own table; what a path can carry") {
+  const auto ok = evaluate(
+    WIDE_SPEC +
+    "[evaluate]\nmethod = \"windows\"\n[windows]\nscheme = \"expanding\"\nlength = \"3y\"\nstep = \"6mo\"\nwarmup = \"2w\"\n"
+  );
+  REQUIRE(ok.errors_.empty());
+  CHECK(ok.arg("windows.length") == std::optional<std::string>("3y"));
+  CHECK(ok.arg("windows.warmup") == std::optional<std::string>("2w"));
+  CHECK(ok.arg("evaluate.method") == std::optional<std::string>("windows"));
+  CHECK(
+    evaluate(WIDE_SPEC, sp::Purpose::EVALUATE, {"evaluate.method=windows", "windows.length=252", "windows.warmup=0"})
+      .arg("windows.length") == std::optional<std::string>("252")
+  );
+  for (const auto* span : {"10d", "2w", "6mo", "3y", "99999d"}) {
+    CHECK(cli_value("windows.length=" + std::string(span)) == span);
+  }
+  const auto windows = WIDE_SPEC + "[evaluate]\nmethod = \"windows\"\n[windows]\n";
+  for (const auto* bad : {"\"0y\"", "\"252\"", "\"1.5y\"", "\"3Y\"", "\"100000d\"", "1", "1.5", "-2", "1000000001"}) {
+    INFO(bad);
+    CHECK(has(one_error(windows + "length = " + std::string(bad) + "\n"), "`windows.length` is a whole number"));
+  }
+  CHECK(has(grid_error("[evaluate]\nmethod = \"windows\"\n"), "needs windows.length"));
+  CHECK(has(grid_error(windows.substr(WIDE_SPEC.size()) + "length = 20\nstep = \"1mo\"\n"), "both as periods or both"));
+  CHECK(has(
+    grid_error(windows.substr(WIDE_SPEC.size()) + "length = 20\nwarmup = \"1mo\"\n"), "give windows.warmup in periods"
+  ));
+  CHECK(has(
+    grid_error(windows.substr(WIDE_SPEC.size()) + "length = 20\n[grid]\nlookback = [1, 2]\n"),
+    "replays one parameter set"
+  ));
+  // A method's table under another method, and both tables refused outside an evaluation.
+  CHECK(has(grid_error("[windows]\nlength = 20\n"), "`windows.length` is for evaluate.method = \"windows\""));
+  CHECK(has(
+    evaluate(
+      "strategy = \"m.atls\"\n[bars]\nsource = \"stdin\"\nsymbol = \"AAA\"\n[evaluate]\nmethod = \"windows\"\n[windows]\nlength = 5\n"
+    )
+      .errors_.at(0),
+    "stdin paths are evaluate.method = \"grid\"'s"
+  ));
+  for (const auto purpose : {sp::Purpose::BACKTEST, sp::Purpose::RUN}) {
+    const auto refused = evaluate(WIDE_SPEC + "[windows]\nlength = 2\n[bootstrap]\nblock = 3\n", purpose);
+    REQUIRE(refused.errors_.size() == 2);
+    CHECK(has(refused.errors_[0], "`windows.length` is an evaluation's key"));
+    CHECK(has(refused.errors_[1], "`bootstrap.block` is an evaluation's key"));
+  }
+  // Bootstrap: the block given; paths, seed and level in range; intervals name figures or measures.
+  const auto boot = "measures = [\"calmar\"]\n" + WIDE_SPEC + "[evaluate]\nmethod = \"bootstrap\"\n[bootstrap]\n";
+  const auto paths = evaluate(
+    boot +
+    "block = 5\npaths = 10000\nseed = 9007199254740991\nlevel = 0.9\nintervals = [\"total_return\", \"measures.calmar\"]\n"
+  );
+  REQUIRE(paths.errors_.empty());
+  CHECK(paths.arg("bootstrap.intervals") == std::optional<std::string>("total_return,measures.calmar"));
+  CHECK(paths.arg("bootstrap.seed") == std::optional<std::string>("9007199254740991"));
+  CHECK(has(grid_error("[evaluate]\nmethod = \"bootstrap\"\n"), "give bootstrap.block = N"));
+  CHECK(has(one_error(boot + "block = 0\n"), "1 or more"));
+  CHECK(has(evaluate(boot + "block = 5\npaths = 10001\n").errors_.at(0), "`bootstrap.paths` is 1 to 10000"));
+  CHECK(has(one_error(boot + "block = 5\nseed = 9007199254740992\n"), "0 to 2^53 - 1"));
+  CHECK(has(one_error(boot + "block = 5\nseed = -1\n"), "0 to 2^53 - 1"));
+  CHECK(has(evaluate(boot + "block = 5\nlevel = 1\n").errors_.at(0), "`bootstrap.level` is above 0 and below 1"));
+  CHECK(has(evaluate(boot + "block = 5\nintervals = [\"calmer\"]\n").errors_.at(0), "not \"calmer\""));
+  // What a path cannot carry: open, high and low; an OHLCV source; limit orders.
+  CHECK(has(
+    evaluate(
+      "strategy = \"m.atls\"\n[bars]\nfile = \"closes.csv\"\nopen = \"o.csv\"\n[evaluate]\nmethod = \"bootstrap\"\n[bootstrap]\nblock = 5\n"
+    )
+      .errors_.at(0),
+    "rebuilds daily closes"
+  ));
+  CHECK(has(
+    evaluate(
+      "strategy = \"m.atls\"\n[bars]\nsource = \"csv\"\nfile = \"b.csv\"\nsymbol = \"AAA\"\n[evaluate]\nmethod = \"bootstrap\"\n[bootstrap]\nblock = 5\n"
+    )
+      .errors_.at(0),
+    "rebuilds daily closes"
+  ));
+  CHECK(
+    has(evaluate(boot + "block = 5\n[orders]\ntype = \"limit\"\n").errors_.at(0), "not replayed on bootstrap paths")
+  );
+}
