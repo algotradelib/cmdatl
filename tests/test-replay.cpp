@@ -1028,6 +1028,34 @@ TEST_CASE("replay main: parameter bounds are checked against the final values an
   }
 }
 
+/** @brief The script's program reading one `data {}` value, which it ignores. */
+struct DataProgram : runtest::Program {
+  using Program::Program;
+  static constexpr bool atls_reads_data = true;
+  static std::vector<std::string> atls_data() {
+    return {"signal"};
+  }
+  struct data_type {
+    std::size_t name_{0};
+    std::optional<atl::InstrumentId> instrument_;
+    double value_{0};
+  };
+  template <class Ctx>
+  void on_data(Ctx&, const atl::strategy::DataEvent<data_type>&) {}
+};
+
+TEST_CASE("replay main: with a bad data file and a refused bound the data file's error is the one reported") {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", flat_bars({100, 101, 102}));
+  const auto ran = replay_main<DataProgram>(
+    {"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA",
+      "data.signal.file=" + dir.at("missing.csv"), "param.entry=200"}
+  );
+  CHECK(ran.exit_ == 1);
+  CHECK(ran.err_ == "error: cannot open " + dir.at("missing.csv") + "\n");
+}
+
 TEST_CASE("replay main: the pricing refusals by reason and the refusals before any replay") {
   const FreshScript fresh;
   Scratch dir;

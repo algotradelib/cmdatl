@@ -89,6 +89,15 @@ public:
   }
 
   /**
+   * @brief Adds `key=value` after the others, so it wins over an earlier value of the key.
+   * @param key The key.
+   * @param value The value.
+   */
+  void add(std::string key, std::string value) {
+    items_.emplace_back(std::move(key), std::move(value));
+  }
+
+  /**
    * @brief The last value of a key.
    * @param key The key.
    * @return Its value, if given.
