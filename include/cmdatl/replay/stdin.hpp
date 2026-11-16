@@ -187,7 +187,10 @@ public:
         throw std::overflow_error("the replays of standard input's paths outnumber an index");
       }
       const auto g = set_++;
-      return Task{Replay{p * sets_ + g, grid_set(grid_, g), std::nullopt, PathOf{p, std::nullopt, id_}}, current_};
+      return Task{
+        Replay{p * sets_ + g, grid_set(grid_, g), std::nullopt, PathOf{p, std::nullopt, id_, std::nullopt}}, current_,
+        nullptr, 0, std::numeric_limits<std::size_t>::max(), std::nullopt
+      };
     } catch (...) {
       done_ = true;
       throw;

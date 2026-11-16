@@ -245,11 +245,11 @@ inline Task window_task(
   std::size_t begin, std::size_t end
 ) {
   const auto& events = prepared->events_;
-  Window w{
-    fold, role, std::nullopt, events[p.first_[begin]].bar_.timestamp_, events[p.first_[end] - 1].bar_.timestamp_
+  const Window w{
+    fold, role, std::nullopt, events[p.first_[begin]].bar_.timestamp_, events[p.first_[end] - 1].bar_.timestamp_,
+    end - begin
   };
-  w.periods_ = end - begin;
-  Task task{Replay{index, std::move(params), w, std::nullopt}, prepared, nullptr, p.first_[from], p.first_[end]};
+  Task task{Replay{index, std::move(params), w, std::nullopt}, prepared, nullptr, p.first_[from], p.first_[end], {}};
   if (from < begin) {
     task.replay_.window_->warm_from_ = events[p.first_[from]].bar_.timestamp_;
     task.trade_from_ = events[p.first_[begin]].period_end_;
@@ -634,7 +634,10 @@ int loops_main(
     std::vector<Task> tasks;
     for (std::size_t k = 0; k <= paths; ++k) {
       tasks.push_back(
-        Task{Replay{k, {}, std::nullopt, PathOf{k, seed, std::nullopt, std::make_pair(scheme, block)}}, prepared}
+        Task{
+          Replay{k, {}, std::nullopt, PathOf{k, seed, std::nullopt, std::make_pair(scheme, block)}}, prepared, nullptr,
+          0, std::numeric_limits<std::size_t>::max(), std::nullopt
+        }
       );
     }
     // Path `p`: the returns drawn for every symbol at once, the closes rebuilt on each one's grid; path 0 the identity.

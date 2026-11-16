@@ -211,7 +211,10 @@ public:
     if (index >= sets_) {
       return std::nullopt;
     }
-    return Task{Replay{index, grid_set(grid_, index), std::nullopt, std::nullopt}, prepared_};
+    return Task{
+      Replay{index, grid_set(grid_, index), std::nullopt, std::nullopt}, prepared_, nullptr, 0,
+      std::numeric_limits<std::size_t>::max(), std::nullopt
+    };
   }
 
 private:
