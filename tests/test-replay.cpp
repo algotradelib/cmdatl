@@ -694,6 +694,7 @@ TEST_CASE("replay main: output.equity writes every point of the curve with its r
   );
   CHECK(field(ran.out_, "first_bar") == "\"2020-01-01T00:00:00Z\"");
   CHECK(field(ran.out_, "last_bar") == "\"2020-01-04T00:00:00Z\"");
+  CHECK(ran.out_.find("\"warning\"") == std::string::npos);
 }
 
 TEST_CASE(
@@ -719,6 +720,43 @@ TEST_CASE(
   CHECK(failed.exit_ == 1);
   CHECK(failed.err_ == "error: cannot write " + dir.at("no/such/equity.csv") + "\n");
   CHECK(slurp(dir.at("fills.csv")) == "at,symbol,side,quantity,price,commission,tax\n");
+}
+
+/** @brief The report's warning when the two outputs turned out to be one file. */
+const std::string ONE_FILE =
+  "\"output.fills and output.equity are one file (a case variant or a link): the equity curve "
+  "replaced the fills\"";
+
+TEST_CASE("replay main: a dangling link to the other output is written through and the report warns") {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", flat_bars({100, 101, 102}));
+  std::filesystem::create_symlink("target.csv", dir.at("alias.csv"));
+  const auto ran = replay_main<runtest::Program>(
+    {"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA",
+      "output.fills=" + dir.at("target.csv"), "output.equity=" + dir.at("alias.csv")}
+  );
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  CHECK(field(ran.out_, "warning") == ONE_FILE);
+  CHECK(slurp(dir.at("target.csv")).rfind("at,equity,period_return\n", 0) == 0);
+}
+
+TEST_CASE("replay main: two names of one file on a case-insensitive volume are written and the report warns") {
+  const FreshScript fresh;
+  Scratch dir;
+  dir.write("Probe", "");
+  if (!std::filesystem::exists(dir.at("probe"))) {
+    SKIP("the scratch volume is case-sensitive");
+  }
+  const auto file = dir.write("bars.csv", flat_bars({100, 101, 102}));
+  const auto ran = replay_main<runtest::Program>(
+    {"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA",
+      "output.fills=" + dir.at("Result.csv"), "output.equity=" + dir.at("result.csv")}
+  );
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  CHECK(field(ran.out_, "warning") == ONE_FILE);
 }
 
 /** @brief The session program, having met both session edges, as one whose on_open and on_close ran. */
