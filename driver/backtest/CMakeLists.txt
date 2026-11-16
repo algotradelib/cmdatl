@@ -32,9 +32,12 @@ if(NOT cmdatl_found_package STREQUAL cmdatl_expected_package)
   message(FATAL_ERROR "algotradelib was found in ${algotradelib_DIR}, not in ${CMDATL_ALGOTRADELIB_DIR}")
 endif()
 
+# Threads for an evaluation's `evaluate.jobs`: some toolchains need a flag, others none.
+find_package(Threads REQUIRED)
+
 add_executable(driver main.cpp)
 target_include_directories(driver PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(driver PRIVATE algotradelib::algotradelib)
+target_link_libraries(driver PRIVATE algotradelib::algotradelib Threads::Threads)
 # Floating-point contraction off: Clang by the runtime's pragmas, GCC by a flag, as atlc compiles its strategies.
 target_compile_options(driver PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)
 
