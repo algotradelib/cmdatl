@@ -39,7 +39,7 @@ A run spec is TOML, read as TOML 1.0 reads it, with these limits:
 - no string holds a control character once its escapes are read: `"C:\temp\new.csv"` holds a tab and a new line, so write a Windows path in single quotes (`'C:\temp\new.csv'`) or with forward slashes.
 
 Errors, each with the file and line:
-- an unknown key (including a misspelled one under `[build]` or `[orders]`), with the tables a spec has: `[bars]`, `[data.NAME]`, `[instruments]`, `[replay]`, `[params]`, `[orders]`, `[build]`, and for `strategy evaluate` `[evaluate]` and `[grid]` ("Many replays");
+- an unknown key (including a misspelled one under `[build]` or `[orders]`), with the tables a spec has: `[bars]`, `[data.NAME]`, `[instruments]`, `[replay]`, `[params]`, `[orders]`, `[build]`, and for `strategy evaluate` `[evaluate]`, `[grid]`, `[windows]`, `[walk_forward]` and `[bootstrap]` ("Many replays");
 - a key set twice, a table defined twice, or a name used both as a value and as a table, as TOML refuses them;
 - a value of the wrong type or outside its range, or a key that does not apply to the run (a CSV column mapping for wide tables, say).
 
@@ -395,7 +395,7 @@ With `bars.source = "stdin"` it replays the paths a generator pipes in (`GENERAT
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `evaluate.method` | `"grid"`, `"windows"` or `"bootstrap"` | `"grid"` | how the replays are chosen: a grid of parameter sets, one set over windows of the history ("Windows"), or one set over bootstrap paths of it ("Bootstrap paths") |
+| `evaluate.method` | `"grid"`, `"windows"`, `"walk-forward"` or `"bootstrap"` | `"grid"` | how the replays are chosen: a grid of parameter sets, one set over windows of the history ("Windows"), a set chosen on each training window and tested on the next ("Walk-forward"), or one set over bootstrap paths of the history ("Bootstrap paths") |
 | `evaluate.jobs` | whole number, 1 to 256 | 1 | replays run at once, each on its own thread |
 | `evaluate.objective` | `"total_return"`, `"sharpe_per_period"`, `"sharpe_annualized"`, `"sortino_per_period"`, `"max_drawdown"`, or `"measures.NAME"` for one of the spec's `measures` | none | the report figure the reply's `best` compares; without it `best` is null |
 | `evaluate.direction` | `"max"` or `"min"` | `"max"` | which end is best (`max_drawdown` is a positive fraction: use `min`) |
@@ -417,7 +417,7 @@ Each replay is one JSON line, in index order, whatever `evaluate.jobs` is, with 
 
 - `report` is exactly the report `strategy backtest` gives for these settings and parameters ("The report"), its `measures` included; a measure that throws fails that replay only, and one that runs out of memory stops the evaluation.
 - A replay without a report has `"report":null` and `failure`: `{"kind":"params","message":...}` when the program's bounds refused the set, `{"kind":"replay",...}` for any other error of that replay; the others go on.
-- `window` is null in a grid; `windows` fills it ("Windows").
+- `window` is null in a grid; `windows` and `walk-forward` fill it ("Windows", "Walk-forward").
 - `path` is null in a grid, or with `bars.source = "stdin"` (`[bars]`) the path's `number` (from 0, in the order read), `seed` (null) and `id` (its `bars.path_column` cell, or null): each path is replayed once per parameter set, replay `p * G + g` being set `g` of `G` on path `p`; `bootstrap` fills it with its own paths ("Bootstrap paths").
 
 The final reply gives `method`, `jobs`, `param_sets`, `invalid` (sets the bounds refused), `tried` (`param_sets - invalid`), `replays` (the lines printed), `paths` (the paths read from stdin, else null), `failed` (replays that failed otherwise), `objective`, `direction`, and `best`: the index, parameters and value of the best replay with a report, not halted and with a defined figure, a tie going to the lower index (null with stdin paths, an aggregate this version does not make).
@@ -463,6 +463,39 @@ One parameter set, replayed on each window of the history.
 - Quantiles are Hyndman and Fan's type 7 (numpy's default): of `m` sorted values, `h = (m - 1) p`, `j = floor(h)`, then `x[j] + (h - j)(x[j + 1] - x[j])`, or `x[j]` at the last; with no value every statistic is null.
 - Windows overlap or grow, so they are not chained into one curve.
 
+### Walk-forward
+
+```sh
+cmdatl strategy evaluate dip.toml evaluate.method=walk-forward walk_forward.train=504 walk_forward.test=126 grid.lookback=10,20,30 evaluate.objective=sharpe_annualized
+cmdatl strategy evaluate dip.toml evaluate.method=walk-forward walk_forward.train=3y walk_forward.test=1y grid.lookback=10,20,30 evaluate.objective=total_return
+```
+
+On each fold, every parameter set of `[grid]` is replayed on the training window, the best by `evaluate.objective` is replayed on the test window that follows, and the tests are chained into one report.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `walk_forward.scheme` | `"rolling"` or `"expanding"` | `"rolling"` | rolling: each training window is the last `train` before its test; expanding: every training window starts at the first period |
+| `walk_forward.train` | periods (2 or more) or a span | required | the training length (the first fold's when expanding) |
+| `walk_forward.test` | periods (2 or more) or a span | required | each test's length; the folds advance by `test`, so the tests tile |
+
+- `walk_forward.train` and `walk_forward.test` are both periods or both spans.
+- With spans ("Lengths"), fold `k` tests from the anchor plus `train` and `k` times `test` to the anchor plus `train` and `k + 1` times `test`; a rolling training window starts at the anchor plus `k` times `test`.
+- A `[grid]` of two parameter sets or more and `evaluate.objective` are required; `evaluate.direction` is as above.
+- There is no step: another step would leave gaps or overlaps between the tests, and the chain would not be one strategy's history.
+- Training: each set on each training window, from its first bar with no history (the program's warm-up spends the window's first bars, as a backtest of those dates would); with `S` sets, replay `k * S + g` is set `g` on fold `k`.
+- The choice: per fold, the set with the best objective among the replays with a report, not halted and with a defined value, a tie going to the lower set; a fold with no such set has `chosen: null` and no test.
+- Testing: the chosen set on the test window, its training window fed first as a warm-up (as in "Windows"); with `F` folds, the tests are replays `F * S` on, one per fold with a choice, in fold order.
+- A training window holding fewer bars than a set's warm-up plus 2, or a test of fewer than 2 periods, is refused before any replay, naming the set and the fold; so is a history no fold fits.
+- Each line's `window` is `{"fold": k, "role": "train" or "test", "warm_from": ..., "from": ..., "to": ..., "periods": N}`.
+- The chain: each test starts flat with `replay.cash`, and positions open at its end are valued at its last close, not sold (no exit cost).
+- Each test's curve is scaled to start where the chain stands, so `chained.total_return` is the product of the tests' `1 + total_return`, minus 1, and the period across a fold boundary has no return.
+- Sharpe, Sortino and the drawdown are over the chained curve, turnover over the chain's opening equity; costs, counts and executions are summed, and measures are computed on the chain.
+- `chained` is null, and `chained_null_reason` says why, when a fold had no choice (`"unchosen"`), a test failed or halted (`"failed"`, `"halted"`), a test recorded no equity point (`"empty"`), a test's equity is zero or below where the next fold would follow it (`"insolvent"`), or the chain could not be made or measured (`"chain_unavailable"`, with the message in `warnings`).
+- The reply's `best` is null (the choices are per fold); `param_sets`, `invalid` and `tried` count the grid's sets, and `failed` the training and test replays that failed.
+- It adds `scheme`, `train` and `test` (as written), `train_replays` (the folds times `tried`, the trials a selection-bias correction counts), `uncovered_from` (the date of the first period after the last test, or null), `warnings`, `folds`, `chained` and `chained_null_reason`.
+- Each `folds` entry gives `fold`, `train_from`, `train_to`, `test_from`, `test_to` (the first and last bars' instants), `train_periods`, `test_periods`, `eligible` (the sets the choice could take), `chosen` (the grid set, or null), `params`, `objective_value`, `test_index`, `test_total_return`, `test_max_drawdown` and `test_halted`.
+- No benchmark is computed.
+
 ### Bootstrap paths
 
 ```sh
@@ -488,7 +521,7 @@ One parameter set, replayed on the history (path 0) and on `paths` block-bootstr
 - Each line's `path` is `{"number": p, "seed": S, "id": null, "scheme": ..., "block": b}`; replay `p` is path `p`.
 - The reply adds `paths` (the paths replayed, path 0 included), `scheme`, `block`, `seed`, `history` (path 0's `total_return`, `sharpe_annualized`, `sortino_per_period`, `max_drawdown`, `turnover`, `executions` and measures), `warnings`, `halted`, and `intervals`: for each name of `bootstrap.intervals`, over paths 1 to N, `{"level", "lower", "median", "upper", "defined", "null"}`, the type-7 quantiles at `(1 - level) / 2`, 0.5 and `(1 + level) / 2` of the paths where the metric is defined; a failed, halted or undefined path counts as null, so `defined + null` is N.
 
-A refusal of the settings before any replay (no window fits, a warm-up too short, a missing close, a block above the returns) is exit 2, `evaluate.refused`, with a `next` naming the key to change.
+A refusal of the settings before any replay (no window or fold fits, a warm-up too short, a missing close, a block above the returns) is exit 2, `evaluate.refused`, with a `next` naming the key to change.
 
 ## Limit orders
 
