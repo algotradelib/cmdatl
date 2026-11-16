@@ -1084,6 +1084,13 @@ TEST_CASE("replay main: the pricing refusals by reason and the refusals before a
   // The session check comes before the files are written: a failed replay leaves neither behind.
   CHECK(!std::filesystem::exists(dir.at("missed-fills.csv")));
   CHECK(!std::filesystem::exists(dir.at("missed-equity.csv")));
+  // And before any measure: a measure that would throw is never called.
+  const auto checked_first =
+    replay_main<runtest::SessionProgram>(open_points, same_fills, measures_of({{"broken", broken}}));
+  CHECK(checked_first.exit_ == 1);
+  CHECK(checked_first.err_.find("on_open never ran") != std::string::npos);
+  CHECK(checked_first.err_.find("the measure") == std::string::npos);
+  CHECK(!std::filesystem::exists(dir.at("missed-fills.csv")));
 }
 
 TEST_CASE("replay sweep: generated settings and files are read or refused with an exception and nothing else") {
