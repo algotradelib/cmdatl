@@ -1318,6 +1318,239 @@ TEST_CASE("loops: walk-forward chooses on each training window then tests the ch
   );
 }
 
+namespace {
+
+/**
+ * @brief A program that changes after `after` bars: it holds `k` shares of each bar's instrument, then `q`, or throws
+ *   when `fail` is 1; so a training window shorter than `after` bars replays as `Holder` and a test fed more fails.
+ */
+struct Late {
+  static constexpr const char* atls_mode = "named";
+  static constexpr bool atls_session = false;
+  static std::vector<std::string> atls_instruments() {
+    return {"x", "y"};
+  }
+
+  explicit Late(std::vector<atl::InstrumentId> ids) : ids_(std::move(ids)) {}
+
+  std::size_t warmup_bars() const {
+    return 1;
+  }
+
+  void set(std::string_view name, double value) {
+    if (name == "k") {
+      k_ = value;
+    } else if (name == "q") {
+      q_ = value;
+    } else if (name == "after") {
+      after_ = value;
+    } else if (name == "fail") {
+      fail_ = value;
+    } else {
+      throw std::invalid_argument("the program has no parameter '" + std::string(name) + "'");
+    }
+  }
+
+  void set_order_pricing(atl::OrderType, const atl::Decimal64&) {}
+
+  const runtest::Refusals& pricing_refusals() const {
+    return refusals_;
+  }
+
+  template <class Ctx>
+  void on_bar(Ctx& ctx, const atl::strategy::BarEvent& event) {
+    ++seen_;
+    if (static_cast<double>(seen_) > after_ && fail_ == 1) {
+      throw std::runtime_error("late failure");
+    }
+    atl::strategy::TargetPosition target;
+    target.instrument_ = event.instrument_;
+    target.target_quantity_ =
+      atl::Decimal64(static_cast<std::int64_t>(static_cast<double>(seen_) > after_ ? q_ : k_), 0);
+    target.tag_ = "late";
+    ctx.submit(target);
+  }
+
+  std::vector<atl::InstrumentId> ids_;
+  runtest::Refusals refusals_;
+  std::size_t seen_{0};
+  double k_{1};
+  double q_{1};
+  double after_{1e9};
+  double fail_{0};
+};
+
+/** @brief A measure that throws on a curve of more than 12 points. */
+double short_only(const atl::backtest::MeasureInput& in) {
+  if (in.levels_.size() > 12) {
+    throw std::runtime_error("a long curve");
+  }
+  return 1;
+}
+
+/**
+ * @brief Each fold of a walk-forward's summary as dates and counts.
+ * @param summary The summary.
+ * @return One text per fold, `TRAIN_FROM..TRAIN_TO|TEST_FROM..TEST_TO/TRAIN_PERIODS+TEST_PERIODS`.
+ */
+std::vector<std::string> folds_of(const json::object& summary) {
+  std::vector<std::string> out;
+  for (const auto& fold : summary.at("folds").as_array()) {
+    const auto& f = fold.as_object();
+    const auto date = [&f](const char* key) {
+      return std::string(f.at(key).as_string()).substr(0, 10);
+    };
+    out.push_back(
+      date("train_from") + ".." + date("train_to") + "|" + date("test_from") + ".." + date("test_to") + "/" +
+      std::to_string(f.at("train_periods").as_int64()) + "+" + std::to_string(f.at("test_periods").as_int64())
+    );
+  }
+  return out;
+}
+
+} // namespace
+
+TEST_CASE("loops: walk-forward folds are the library's in periods and anchored at replay.from in spans") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", days_of(20240101, 30, true));
+  const auto expanding = drive<Holder>(on_pair(
+    file, "walk-forward",
+    {"walk_forward.scheme=expanding", "walk_forward.train=10", "walk_forward.test=5", "grid.k=1,2",
+      "evaluate.objective=total_return"}
+  ));
+  // Every training window starts at the first period; the tests tile the rest.
+  CHECK(
+    folds_of(summary_of(expanding)) ==
+    std::vector<std::string>{
+      "2024-01-01..2024-01-12|2024-01-15..2024-01-19/10+5", "2024-01-01..2024-01-19|2024-01-22..2024-01-26/15+5",
+      "2024-01-01..2024-01-26|2024-01-29..2024-02-02/20+5", "2024-01-01..2024-02-02|2024-02-05..2024-02-09/25+5"
+    }
+  );
+  CHECK(summary_of(expanding).at("scheme") == json::value("expanding"));
+  CHECK(summary_of(expanding).at("uncovered_from").is_null());
+  // A test line's history is its training window.
+  CHECK(windows_of(expanding)[8] == "2024-01-01<2024-01-15..2024-01-19/5");
+  CHECK(windows_of(expanding)[11] == "2024-01-01<2024-02-05..2024-02-09/5");
+  // Weekdays from Tuesday 2024-01-02 to Friday 2024-06-28; folds of two months' training and a month's test.
+  const auto weekdays = dir.write("weekdays.csv", days_of(20240102, 129, true));
+  const auto by_months = [&](std::vector<std::string> more) {
+    more.insert(
+      more.end(), {"walk_forward.train=2mo", "walk_forward.test=1mo", "grid.k=1,2", "evaluate.objective=total_return"}
+    );
+    return summary_of(drive<Holder>(on_pair(weekdays, "walk-forward", more)));
+  };
+  // Anchored at replay.from, 2024-01-01: the tests are March to June, the last ending on 2024-07-01, replay.to's next day.
+  const auto anchored = by_months({"replay.from=20240101", "replay.to=20240630"});
+  CHECK(
+    folds_of(anchored) ==
+    std::vector<std::string>{
+      "2024-01-02..2024-02-29|2024-03-01..2024-03-29/43+21", "2024-02-01..2024-03-29|2024-04-01..2024-04-30/42+22",
+      "2024-03-01..2024-04-30|2024-05-01..2024-05-31/43+23", "2024-04-01..2024-05-31|2024-06-03..2024-06-28/45+20"
+    }
+  );
+  CHECK(anchored.at("train") == json::value("2mo"));
+  CHECK(anchored.at("test") == json::value("1mo"));
+  CHECK(anchored.at("uncovered_from").is_null());
+  // Without replay.to the history ends on Friday 2024-06-28: the June test does not fit, and June is uncovered.
+  const auto unbounded = by_months({"replay.from=20240101"});
+  CHECK(unbounded.at("folds").as_array().size() == 3);
+  CHECK(unbounded.at("uncovered_from") == json::value("2024-06-03"));
+  // Anchored at the first bar (2024-01-02) instead, the last test would end on 2024-07-02: dropped.
+  CHECK(by_months({"replay.to=20240630"}).at("folds").as_array().size() == 3);
+}
+
+TEST_CASE(
+  "loops: walk-forward chooses either way and by a measure; skips failed sets; a failed or halted test nulls the chain"
+) {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", days_of(20240101, 30, true));
+  const auto run = [&](std::vector<std::string> more, const Measures& measures = {}) {
+    more.insert(more.end(), {"walk_forward.train=10", "walk_forward.test=5"});
+    return drive<Holder>(on_pair(file, "walk-forward", more), -1, {}, measures);
+  };
+  const auto most = summary_of(run({"grid.k=1,3", "evaluate.objective=total_return"}));
+  const auto least = summary_of(run({"grid.k=1,3", "evaluate.objective=total_return", "evaluate.direction=min"}));
+  CHECK(least.at("direction") == json::value("min"));
+  for (std::size_t k = 0; k < 4; ++k) {
+    const auto& high = most.at("folds").at(k).as_object();
+    const auto& low = least.at("folds").at(k).as_object();
+    INFO(k << " " << json::serialize(high) << " " << json::serialize(low));
+    const auto top = high.at("objective_value").to_number<double>();
+    const auto bottom = low.at("objective_value").to_number<double>();
+    CHECK(bottom <= top);
+    CHECK((top == bottom) == (high.at("chosen") == low.at("chosen")));
+  }
+  // By a measure: k = 0 executes nothing, so every fold chooses k = 2; the chain's measure counts the tests'.
+  const auto measured = run({"grid.k=0,2", "evaluate.objective=measures.executions"}, {{"executions", executions}});
+  const auto summary = summary_of(measured);
+  std::int64_t executed = 0;
+  for (const auto& fold : summary.at("folds").as_array()) {
+    CHECK(fold.at("chosen") == 1);
+    const auto line = json::parse(lines_of(measured.out_)[fold.at("test_index").to_number<std::size_t>()]);
+    executed += line.at("report").at("executions").as_int64();
+  }
+  CHECK(executed > 0);
+  CHECK(summary.at("chained").at("executions") == executed);
+  CHECK(summary.at("chained").at("measures").at("executions").to_number<double>() == static_cast<double>(executed));
+  // A measure that throws on the chain alone: the chain is unavailable, with the message in warnings.
+  const auto unavailable = summary_of(run({"grid.k=1,2", "evaluate.objective=total_return"}, {{"short", short_only}}));
+  CHECK(unavailable.at("chained").is_null());
+  CHECK(unavailable.at("chained_null_reason") == json::value("chain_unavailable"));
+  CHECK(unavailable.at("warnings").at(0).at("code") == json::value("chain_unavailable"));
+  CHECK(unavailable.at("warnings").at(0).at("message") == json::value("the measure short threw: a long curve"));
+  CHECK(run({"grid.k=1,2", "evaluate.objective=total_return"}).out_.find("\"warnings\":[]") != std::string::npos);
+  // Twenty bars train (two symbols), fifteen periods feed a test: failing after 24 bars fails only the tests.
+  const auto late = [&](std::vector<std::string> more) {
+    more.insert(more.end(), {"walk_forward.train=10", "walk_forward.test=5", "evaluate.objective=total_return"});
+    return drive<Late>(on_pair(file, "walk-forward", more));
+  };
+  const auto failed = summary_of(late({"grid.k=1,2", "param.after=24", "param.fail=1"}));
+  CHECK(failed.at("chained_null_reason") == json::value("failed"));
+  CHECK(failed.at("failed") == 4);
+  CHECK(!failed.at("folds").at(0).at("chosen").is_null());
+  CHECK(failed.at("folds").at(0).at("test_total_return").is_null());
+  // An order too large for the books after 24 bars halts every test: the chain is null.
+  const auto halted = summary_of(late({"grid.k=1,2", "param.after=24", "param.q=9000000000000000"}));
+  CHECK(halted.at("chained_null_reason") == json::value("halted"));
+  CHECK(halted.at("folds").at(0).at("test_halted") == true);
+  // A set that fails in training is skipped: the fold chooses among the others.
+  const auto skipped = summary_of(late({"grid.after=1,1000", "param.fail=1"}));
+  for (const auto& fold : skipped.at("folds").as_array()) {
+    CHECK(fold.at("eligible") == 1);
+    CHECK(fold.at("chosen") == 1);
+  }
+  CHECK(skipped.at("chained_null_reason").is_null());
+}
+
+TEST_CASE("loops: walk-forward refuses what fits no fold and lengths past the calendar") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", days_of(20240101, 30, true));
+  const auto run = [&](const std::string& train, const std::string& test) {
+    return drive<Holder>(on_pair(
+      file, "walk-forward",
+      {"walk_forward.train=" + train, "walk_forward.test=" + test, "grid.k=1,2", "evaluate.objective=total_return"}
+    ));
+  };
+  const auto refusal = [](const Ran& ran) {
+    INFO(ran.out_ << ran.err_);
+    CHECK(ran.exit_ == 1);
+    CHECK(lines_of(ran.out_).size() == 1);
+    return line_of(ran, 0).at("stopped").as_object();
+  };
+  const auto none = refusal(run("25", "10"));
+  CHECK(none.at("code") == json::value("evaluate.refused"));
+  CHECK(none.at("message") == json::value("no fold fits the history's 30 periods"));
+  CHECK(none.at("next") == json::value("give a shorter walk_forward.train"));
+  CHECK(refusal(run("1000000000", "1000000000")).at("code") == json::value("evaluate.refused"));
+  CHECK(refusal(run("99999y", "1d")).at("message") == json::value("a window's boundary falls after the year 9999"));
+  // The kinds are not mixed; the spec refuses these first, and the driver repeats it.
+  CHECK(
+    refusal(run("10", "1mo")).at("message") ==
+    json::value("give walk_forward.train and walk_forward.test both as periods or both as spans")
+  );
+  CHECK(refusal(run("1", "5")).at("message") == json::value("walk_forward.train is 2 periods or more, not 1"));
+}
+
 TEST_CASE("loops: bootstrap path 0 is the backtest; a path depends on its number alone; a block is given") {
   Scratch dir;
   std::string table = "date,AAA,BBB,CCC\n";
