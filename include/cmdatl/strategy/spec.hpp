@@ -2093,12 +2093,17 @@ inline std::vector<Error> resolve(
     if (const auto* e = get("evaluate.jobs"); e != nullptr && !(e->value_.number_ >= 1 && e->value_.number_ <= 256)) {
       errors.push_back(Error::at(e->origin_, "`evaluate.jobs` is 1 to 256"));
     }
-    // A figure of the report, or one of the spec's measures.
+    // A figure of the report, or one of its measures: the program's, then the spec's.
     std::vector<std::string> figures{
       "total_return", "sharpe_per_period", "sharpe_annualized", "sortino_per_period", "max_drawdown"
     };
-    for (const auto& item : get("measures") != nullptr ? get("measures")->value_.items_ : std::vector<Value>{}) {
-      figures.push_back("measures." + item.text());
+    for (const auto& name : program.measures_) {
+      figures.push_back("measures." + name);
+    }
+    if (const auto* e = get("measures")) {
+      for (const auto& item : e->value_.type_ == Value::Type::LIST ? e->value_.items_ : std::vector<Value>{e->value_}) {
+        figures.push_back("measures." + item.text());
+      }
     }
     if (
       const auto* e = get("evaluate.objective");

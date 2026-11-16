@@ -398,7 +398,7 @@ With `bars.source = "stdin"` it replays the paths a generator pipes in (`GENERAT
 | --- | --- | --- | --- |
 | `evaluate.method` | `"grid"`, `"windows"`, `"walk-forward"` or `"bootstrap"` | `"grid"` | how the replays are chosen: a grid of parameter sets, one set over windows of the history ("Windows"), a set chosen on each training window and tested on the next ("Walk-forward"), or one set over bootstrap paths of the history ("Bootstrap paths") |
 | `evaluate.jobs` | whole number, 1 to 256 | 1 | replays run at once, each on its own thread |
-| `evaluate.objective` | `"total_return"`, `"sharpe_per_period"`, `"sharpe_annualized"`, `"sortino_per_period"`, `"max_drawdown"`, or `"measures.NAME"` for one of the spec's `measures` | none | the report figure the reply's `best` compares; without it `best` is null |
+| `evaluate.objective` | `"total_return"`, `"sharpe_per_period"`, `"sharpe_annualized"`, `"sortino_per_period"`, `"max_drawdown"`, or `"measures.NAME"` for one of the program's `measures {}` or the spec's `measures` | none | the report figure the reply's `best` compares; without it `best` is null |
 | `evaluate.direction` | `"max"` or `"min"` | `"max"` | which end is best (`max_drawdown` is a positive fraction: use `min`) |
 | `grid.NAME` | a list of numbers | none | the values of parameter NAME, in the order written |
 | `grid.NAME.from`, `.to`, `.step` | numbers | none | the same as a range: `from`, `from + step`, ... up to `to` inclusive |

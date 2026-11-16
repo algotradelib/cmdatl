@@ -1242,6 +1242,27 @@ TEST_CASE(
   CHECK(sp::read_info(base + ",\"measures\":" + longest + "}}", "/p/m.atls"));
 }
 
+TEST_CASE("an evaluation's objective may name one of the program's measures, listed before the spec's") {
+  auto program = single();
+  program.measures_ = {"total"};
+  const auto resolved = [&program](const std::string& src) {
+    const auto parsed = spec(src);
+    INFO(src);
+    REQUIRE(parsed.errors_.empty());
+    Run run;
+    run.errors_ = texts(sp::resolve({parsed.entries_}, program, run.resolved_, false, sp::Purpose::EVALUATE));
+    return run;
+  };
+  const auto chosen = resolved(WIDE_SPEC + "[evaluate]\nobjective = \"measures.total\"\n[grid]\nlookback = [1, 2]\n");
+  CHECK(chosen.errors_.empty());
+  CHECK(chosen.arg("evaluate.objective") == std::optional<std::string>("measures.total"));
+  const auto other = resolved(
+    "measures = [\"calmar\"]\n" + WIDE_SPEC + "[evaluate]\nobjective = \"measures.nope\"\n[grid]\nlookback = [1, 2]\n"
+  );
+  REQUIRE(other.errors_.size() == 1);
+  CHECK(has(other.errors_.front(), "max_drawdown, measures.total, measures.calmar, not \"measures.nope\""));
+}
+
 TEST_CASE("a run spec's measure named like one of the program's is refused at the key's line") {
   auto program = single();
   program.measures_ = {"total", "one"};
@@ -1780,6 +1801,10 @@ TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by t
     evaluate("measures = [\"calmar\"]\n" + WIDE_SPEC + "[evaluate]\nobjective = \"measures.calmar\"\n");
   CHECK(measured.errors_.empty());
   CHECK(measured.arg("evaluate.objective") == std::optional<std::string>("measures.calmar"));
+  // One spec measure written as a string is a measure too.
+  CHECK(
+    evaluate("measures = \"calmar\"\n" + WIDE_SPEC + "[evaluate]\nobjective = \"measures.calmar\"\n").errors_.empty()
+  );
   CHECK(has(grid_error("[grid]\nflag = [1, 0]\n"), "`flag` is a bool parameter, which a grid does not take"));
   CHECK(has(grid_error("[grid]\nnope = [1, 2]\n"), "the program has no parameter `nope` for a grid"));
   CHECK(has(grid_error("[grid]\nlookback = [1, 2.5]\n"), "`lookback` is an int parameter"));

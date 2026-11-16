@@ -1516,7 +1516,10 @@ TEST_CASE("a program's measures {} come first in the report, before the run spec
   const auto equip = equipment();
   const auto atlc = cmdatl::variable("CMDATL_TEST_ATLC_MEASURES");
   if (!equip || !atlc) {
-    SKIP("CMDATL_TEST_ATLC_MEASURES or CMDATL_TEST_PREFIX is not set: the program's measures were not built");
+    SKIP(
+      "CMDATL_TEST_ATLC, CMDATL_TEST_PREFIX and CMDATL_TEST_ATLC_MEASURES name no atlc, prefix and atlc with "
+      "measures {}: the program's measures were not built"
+    );
   }
   const Equipped equipped(Equipment{*atlc, equip->prefix_});
   const ScratchDir dir;
