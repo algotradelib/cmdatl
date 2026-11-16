@@ -1595,7 +1595,8 @@ inline void check_outputs(const Settings& s) {
   std::error_code error;
   auto resolved = [&error](const std::filesystem::path& path) {
     auto canonical = std::filesystem::weakly_canonical(path, error);
-    return error ? std::filesystem::absolute(path).lexically_normal() : canonical;
+    // libstdc++ returns a relative, unnormalized path when the tail does not exist (`no/../x`, `./x`).
+    return std::filesystem::absolute(error ? path : canonical).lexically_normal();
   };
   const bool same =
     resolved(*fills) == resolved(*equity) || (std::filesystem::equivalent(*fills, *equity, error) && !error);

@@ -190,7 +190,8 @@ inline bool same_output(const std::filesystem::path& a, const std::filesystem::p
   std::error_code error;
   auto resolved = [&error](const std::filesystem::path& path) {
     auto canonical = std::filesystem::weakly_canonical(path, error);
-    return error ? std::filesystem::absolute(path).lexically_normal() : canonical;
+    // libstdc++ returns a relative, unnormalized path when the tail does not exist (`no/../x`, `./x`).
+    return std::filesystem::absolute(error ? path : canonical).lexically_normal();
   };
   if (resolved(a) == resolved(b)) {
     return true;
