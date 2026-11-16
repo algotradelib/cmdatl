@@ -32,13 +32,13 @@ int main(int argc, char** argv) {
   const auto documents = payload ? cmdatl::sys::unframe_credentials(*payload, 1) : std::nullopt;
   const auto login = documents ? std::optional<std::string>(documents->front()) : std::nullopt;
   return cmdatl::replay::fetch_main<Program>(
-    argc, argv, program_fills,
+    argc, argv, program_fills, program_measures,
     [](const std::string& document, const std::string& options) {
       return cmdatl_adapter::connect(document, options);
     },
     login
   );
 #else
-  return cmdatl::replay::main<Program>(argc, argv, program_fills);
+  return cmdatl::replay::main<Program>(argc, argv, program_fills, program_measures);
 #endif
 }

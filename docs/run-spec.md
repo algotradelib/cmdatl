@@ -54,7 +54,7 @@ A value on the command line is typed by its key, never read as TOML:
 - a list key takes one item (`bars.symbols=AAA`) or a one-line TOML array of strings (`bars.symbols=["AAA","BBB"]`, quoted for the shell);
 - `params.NAME` takes a number, or `true` or `false`; then the program's type decides (`params.flag=1` is refused for a `bool`).
 
-`strategy` and `header` are not settings on the command line: the program is the `.atls` word, or else the run spec's `strategy`, and its header is the run spec's `header`.
+`strategy`, `header` and `measures` are not settings on the command line: the program is the `.atls` word, or else the run spec's `strategy`, and its header and measures are the run spec's.
 A key given twice on the command line is an error.
 
 ## Keys
@@ -65,6 +65,7 @@ A key given twice on the command line is an error.
 | --- | --- | --- | --- |
 | `strategy` | path | required unless a program is given | the program |
 | `header` | path | none | the C++ header that defines the program's external functions and indicators |
+| `measures` | a C++ name or a list of them, in the spec file only | none | functions of `header` whose values a backtest's report adds (below) |
 
 A program that declares `extern` functions or indicators has its bodies in C++ of your own ([atlc's reference](https://github.com/algotradelib/atlc/blob/main/docs/reference/functions-and-indicators.md#external-c), "External C++"), and `header` names the header that defines them:
 
@@ -78,6 +79,25 @@ header = "include/statistics.hpp"
 - A path that is not a regular file, or that holds `"`, `\`, `??` (which starts a trigraph) or a line break, is refused at its line before anything is built.
 - Without it, such a program fails its build (`build.failed`), and the reply's message starts with the compiler's first error, which names the class or function to define.
 - The header is native code compiled into the process that runs the program, and trades in a run: name only code you trust.
+
+#### Measures of your own
+
+`measures` names functions of `header` that compute a figure of the finished replay, which the report's `measures` gives under each name, in order:
+
+```cpp
+#include <algotradelib/backtest>
+
+inline double final_level(const algotradelib::backtest::MeasureInput& in) {
+  return in.levels_.size() == 0 ? 0 : in.levels_[in.levels_.size() - 1];
+}
+```
+
+- Each is defined in the header (`inline`), callable as `double NAME(const algotradelib::backtest::MeasureInput&)`, and reads the replay, its report and the curve's levels and returns from the library's input; the header includes `<algotradelib/backtest>` itself.
+- Each name is a C++ identifier of at most 64 characters, not starting with `cmdatl_`, at most 64 names, none twice; a namespaced function is named through a `using` in the header.
+- A name that cannot be called so fails the build (`build.failed`), and the compiler's first error in the message usually says `measures: NAME must be callable as double(const algotradelib::backtest::MeasureInput&)`; for a C++ keyword or a namespace in scope (`std`, `algotradelib`, `atls`) it is the compiler's own.
+- A value that is not finite is null; a measure that throws fails the backtest (`replay.failed`, naming it for a `std::exception`), and no `--fills` or `--equity` file is written.
+- A measure computes from its input and returns: it never writes to stdout or changes process-wide state (the locale, the floating-point environment); if replays ever run on threads, it must also be thread-safe.
+- Only a backtest computes them: `cmdatl run` accepts the key and computes none.
 
 ### `[bars]`: what is loaded
 
@@ -304,6 +324,7 @@ A store backtest also links DuckDB's prebuilt C library (`duckdb.h` and the shar
 Builds are cached under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`), and CMake decides what to rebuild.
 Parameters, data and replay settings are arguments of the executable, so changing them never rebuilds.
 The program's `header` is compiled with it: its path and its bytes are part of the build's key, so an edited header is built again, and CMake tracks the headers it includes.
+A backtest's `measures` are part of the key too, by name and order, so a changed list builds once.
 Two backtests of one program at once share one build and do not wait on each other's replays.
 Each backtest runs a copy of the build from `$XDG_CACHE_HOME/cmdatl/backtests/` and removes it; a killed backtest leaves its copy there, and the directory is safe to delete while no backtest runs.
 
@@ -331,6 +352,7 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 | `pricing_refusal_reasons` | object | each pricing refusal reason with its count, when nonzero: `no_basis_price`, `no_price_grid`, `price_not_representable`, `price_not_positive`, `net_not_representable` |
 | `caveats` | object | `gaps` (bars that did not follow their predecessor), `unfilled` (orders still queued at the end), `expired` (`DAY` orders withdrawn unfilled when their session ended, as they would expire live; on daily bars, after one bar), `unvalued_bars`, `multiple_instruments`, `cost_totals_incomplete`, `volume_ignored` (always true: fills are not capped by volume), `market_price_rule` and `market_fills_by_rule` (the rule named by `replay.fill_function` and the fills it priced, only when one is set), `open_points` (true with `bars.open_point`), `lowest_cash` (the lowest cash a fill left, as a decimal string, when below zero) and `shorts_borrow_nothing` (always true) |
 | `first_bar`, `last_bar` | string | the first and last recorded times, ISO 8601 in UTC; absent when nothing was replayed |
+| `measures` | object | each of the run spec's `measures` with its value, a number or null, in order; only when it names any |
 | `warning` | string | only when `--fills` and `--equity` turned out to be one file, which then holds the equity curve |
 
 A number is printed with ten significant digits; a figure the library leaves undefined (a return on zero equity, a ratio without variance) is null.

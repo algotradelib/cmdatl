@@ -113,6 +113,7 @@ inline const std::vector<Key>& keys() {
   static const std::vector<Key> table{
     {"strategy", Kind::PATH, {}, {}},
     {"header", Kind::PATH, {}, {}},
+    {"measures", Kind::TEXTS, {}, {}},
     {"bars.source", Kind::CHOICE, {}, {"wide", "csv", "store"}},
     {"bars.adapter", Kind::PATH, folder, {}},
     {"bars.file", Kind::PATH, {"wide", "csv"}, {}},
@@ -880,6 +881,34 @@ inline std::string base_of(const Origin& origin) {
 }
 
 /**
+ * @brief Why a run spec's `measures` cannot name the report's measures: at most 64 names, each an unqualified C++ name
+ *   of at most 64 characters, not starting with `cmdatl_` (the generated table's own names), none twice.
+ * @param names The names.
+ * @return The reason, or nothing.
+ */
+inline std::optional<std::string> measures_refusal(const std::vector<std::string>& names) {
+  if (names.size() > 64) {
+    return "at most 64 measures, not " + std::to_string(names.size());
+  }
+  const auto word = [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+  };
+  std::set<std::string> seen;
+  for (const auto& name : names) {
+    if (name.size() > 64 || (name[0] >= '0' && name[0] <= '9') || !std::all_of(name.begin(), name.end(), word)) {
+      return "\"" + name + "\" is not a C++ function's name: a letter or _, then letters, digits and _, at most 64";
+    }
+    if (name.rfind("cmdatl_", 0) == 0) {
+      return "\"" + name + "\": a name starting with cmdatl_ is cmdatl's own";
+    }
+    if (!seen.insert(name).second) {
+      return "\"" + name + "\" is named twice";
+    }
+  }
+  return std::nullopt;
+}
+
+/**
  * @brief Checks one entry's key and value, making a path absolute against its base.
  * @param e The entry.
  * @return The error, or nothing.
@@ -1009,6 +1038,11 @@ inline std::optional<Error> check(Entry& e) {
       };
       if (items.empty() || std::any_of(items.begin(), items.end(), empty)) {
         return bad("a string or a list of strings");
+      }
+      if (e.key_ == "measures") {
+        if (const auto refused = measures_refusal(items)) {
+          return Error::at(at, "`measures`: " + *refused);
+        }
       }
       for (const auto& item : items) {
         if (item.find(',') != std::string::npos) {
@@ -1244,6 +1278,8 @@ struct Resolved {
   std::string fill_function_;
   /** @brief `header`, absolute, or empty: the C++ header of the program's external functions and indicators. */
   std::string header_;
+  /** @brief `measures`, in order: functions of `header` whose values a backtest's report adds. */
+  std::vector<std::string> measures_;
   /** @brief The driver's `key=value` arguments, one per key, parameters as `param.NAME` and instruments as
    * `instrument.NAME`. */
   std::vector<std::pair<std::string, std::string>> args_;
@@ -1770,8 +1806,8 @@ inline std::vector<Error> resolve(
   Resolved out;
   out.args_.emplace_back("bars.source", source);
   for (const auto& e : merged) {
-    // The program's header is the build's, not the driver's.
-    if (e.key_ == "header") {
+    // The program's header and its measures are the build's, not the driver's.
+    if (e.key_ == "header" || e.key_ == "measures") {
       continue;
     }
     if (
@@ -1806,6 +1842,11 @@ inline std::vector<Error> resolve(
   out.fill_header_ = text("replay.fill_header").value_or("");
   out.fill_function_ = text("replay.fill_function").value_or("");
   out.header_ = text("header").value_or("");
+  if (const auto* e = get("measures")) {
+    for (const auto& item : e->value_.type_ == Value::Type::LIST ? e->value_.items_ : std::vector<Value>{e->value_}) {
+      out.measures_.push_back(item.text());
+    }
+  }
   out.order_type_ = kind;
   out.offset_ = text("orders.offset").value_or("");
   // The driver's arguments are bounded, so a huge setting is refused here rather than failing at exec.

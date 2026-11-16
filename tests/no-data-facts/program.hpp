@@ -7,8 +7,15 @@
 
 #include <algotradelib/backtest>
 
+#include <utility>
+#include <vector>
+
 using Program = runtest::Program;
 
 inline algotradelib::backtest::NextBarFillModel program_fills(algotradelib::backtest::NextBarFillModel model) {
   return model;
+}
+
+inline std::vector<std::pair<const char*, double (*)(const algotradelib::backtest::MeasureInput&)>> program_measures() {
+  return {};
 }

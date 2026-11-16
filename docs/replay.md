@@ -19,3 +19,4 @@ int main(int argc, char** argv) {
 - To read a Parquet store, define `CMDATL_DUCKDB` and link DuckDB's C library.
 - It reads `replay.fill=decision-close` as a run spec's `fill` under `[replay]`.
   To price market orders by your own rule, pass a third argument that returns the fill model to use, as a run spec's `fill_header` does: `cmdatl::replay::main<atls::Dip>(argc, argv, [](auto model) { return model.with_market_price("typical_price", typical_price); })`.
+- A fourth argument adds measures to the report, as a run spec's `measures` does: a callable returning pairs of a name and a function `double(const algotradelib::backtest::MeasureInput&)`, such as `[]() { return std::vector<std::pair<const char*, double (*)(const algotradelib::backtest::MeasureInput&)>>{{"final_level", final_level}}; }`.

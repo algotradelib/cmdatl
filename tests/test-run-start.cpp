@@ -150,10 +150,14 @@ TEST_CASE("a driver's program header includes the program's own header first, an
   CHECK(
     build::program_header(request) ==
     "#pragma once\n\n// Written by cmdatl strategy backtest.\n\n#include \"strategy.hpp\"\n\n"
-    "#include <algotradelib/backtest>\n\n#include <optional>\n#include <type_traits>\n\nusing Program = atls::Dip;\n\n"
+    "#include <algotradelib/backtest>\n\n#include <optional>\n#include <type_traits>\n#include <utility>\n#include <vector>\n\n"
+    "using Program = atls::Dip;\n\n"
     "// The fill model, with the run's market-price rule when it has one.\n"
     "inline algotradelib::backtest::NextBarFillModel program_fills(algotradelib::backtest::NextBarFillModel model) {\n"
-    "  return model;\n}\n"
+    "  return model;\n}\n\n"
+    "// The report's measures: the program's `measures {}`, then the run spec's `measures`.\n"
+    "inline std::vector<std::pair<const char*, double (*)(const algotradelib::backtest::MeasureInput&)>> "
+    "program_measures() {\n  return {};\n}\n"
   );
   for (const auto kind : {build::DriverKind::BACKTEST, build::DriverKind::RUN}) {
     request.kind_ = kind;
@@ -167,6 +171,34 @@ TEST_CASE("a driver's program header includes the program's own header first, an
     without.erase(without.find(included), included.size() - std::string("#include \"strategy.hpp\"\n").size());
     CHECK(without == plain);
   }
+}
+
+TEST_CASE("a backtest's program header checks each measure in one line and lists them in order, a run's has none") {
+  build::Request request;
+  request.struct_ = "Dip";
+  request.kind_ = build::DriverKind::BACKTEST;
+  request.measures_ = {"calmar", "hit_rate"};
+  const auto text = build::program_header(request);
+  const std::string signature = " must be callable as double(const algotradelib::backtest::MeasureInput&)\"\n";
+  CHECK(text.find("    \"measures: calmar" + signature) != std::string::npos);
+  CHECK(text.find("    \"measures: hit_rate" + signature) != std::string::npos);
+  CHECK(
+    text.find("constexpr auto cmdatl_call_1 = [](const auto& cmdatl_input) -> decltype(hit_rate(cmdatl_input)) {\n") !=
+    std::string::npos
+  );
+  const auto first = text.find(
+    "    {\"calmar\", [](const algotradelib::backtest::MeasureInput& cmdatl_input) -> double {\n"
+    "      return calmar(cmdatl_input);\n    }},\n"
+  );
+  REQUIRE(first != std::string::npos);
+  CHECK(text.find("    {\"hit_rate\", [](", first) != std::string::npos);
+  CHECK(text.find("return {};") == std::string::npos);
+  request.kind_ = build::DriverKind::RUN;
+  const auto run = build::program_header(request);
+  request.measures_.clear();
+  CHECK(run == build::program_header(request));
+  CHECK(run.find("program_measures") == std::string::npos);
+  CHECK(run.find("#include <vector>") == std::string::npos);
 }
 
 TEST_CASE("the program's header is in the shape's key by its path and bytes, and nothing else changes without it") {
@@ -231,6 +263,47 @@ TEST_CASE("the program's header is in the shape's key by its path and bytes, and
     CHECK(files_in(drivers) == before);
   }
   ::chmod(request.header_.c_str(), 0600);
+}
+
+TEST_CASE("a backtest's measures are in the shape's key by name and order, and a run's are not") {
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+  std::filesystem::create_directories(dir.path() / "package");
+  spit(dir.path() / "package" / "algotradelibConfig.cmake", "");
+  build::Request request;
+  request.atlc_ = "/usr/bin/false";
+  request.program_ = (dir.path() / "dip.atls").string();
+  request.struct_ = "Dip";
+  request.indicators_ = "incremental";
+  request.package_ = (dir.path() / "package").string();
+  const auto drivers = dir.path() / "cache" / "cmdatl" / "drivers";
+  // The shapes made so far, each made before atlc runs (here atlc fails at once).
+  const auto shapes = [&request, &dir, &drivers]() {
+    REQUIRE(build::build_driver(request, dir.path(), [](const std::string&) {}));
+    return files_in(drivers);
+  };
+  const auto lookup = [](const std::string& key) {
+    return cmdatl::variable(key.c_str());
+  };
+  const auto name = [&request, &lookup](const std::vector<std::string>& extra) {
+    return build::shape_name(request.program_, request.struct_, request.indicators_, lookup, request.package_, extra);
+  };
+  // A run's measures change nothing: its shape is the one without them.
+  request.kind_ = build::DriverKind::RUN;
+  request.measures_ = {"a", "b"};
+  CHECK(shapes() == std::set<std::string>{name({})});
+  request.kind_ = build::DriverKind::BACKTEST;
+  request.measures_.clear();
+  CHECK(shapes().count(name({"backtest"})) == 1);
+  request.measures_ = {"a", "b"};
+  CHECK(shapes().count(name({"backtest", "measures=|a;b"})) == 1);
+  CHECK(shapes().size() == 3);
+  request.measures_ = {"b", "a"};
+  CHECK(shapes().size() == 4);
+  request.measures_ = {"a"};
+  CHECK(shapes().size() == 5);
+  request.measures_ = {"a", "b"};
+  CHECK(shapes().size() == 5);
 }
 
 TEST_CASE("a failed driver build's message leads with its first error, colored or not, then the tail as it was") {
@@ -746,16 +819,25 @@ TEST_CASE("run builds a program with its run spec's header and trades as its bac
     std::filesystem::copy_options::recursive
   );
   spit(dir / "bars.csv", dip_bars(160));
+  // A measure in the header: the backtest reports it, and the run computes none and trades as before.
+  const auto user = dir / "include" / "user.hpp";
+  spit(
+    user,
+    slurp(user) +
+      "\n#include <algotradelib/backtest>\n\ninline double one(const algotradelib::backtest::MeasureInput&) {\n"
+      "  return 1;\n}\n"
+  );
   const auto spec = (dir / "mean-gap.toml").string();
   spit(
     spec,
-    "strategy = \"mean-gap.atls\"\nheader = \"include/user.hpp\"\n\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\n"
+    "strategy = \"mean-gap.atls\"\nheader = \"include/user.hpp\"\nmeasures = [\"one\"]\n\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\n"
     "symbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n"
     "[replay]\ncash = 100000000\ncommission = 0.0005\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n"
   );
   const auto fills = dir / "fills.csv";
   const auto backtest = fixture.json({"strategy", "backtest", spec, "--fills", fills.string()});
   REQUIRE(backtest.exit_ == 0);
+  CHECK(reply_of(backtest.out_).at("report").at("measures").at("one").to_number<double>() == 1);
   const auto expected = backtest_fills(fills);
   REQUIRE(expected.size() >= 2);
   const auto ran = run_process({spec});
