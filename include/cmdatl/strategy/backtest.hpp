@@ -181,6 +181,25 @@ private:
 #endif
 
 /**
+ * @brief Whether two output paths name one file: the same path once links in it are resolved, or the same file.
+ * @param a One path.
+ * @param b The other.
+ * @return Whether writing one would overwrite the other.
+ */
+inline bool same_output(const std::filesystem::path& a, const std::filesystem::path& b) {
+  std::error_code error;
+  auto resolved = [&error](const std::filesystem::path& path) {
+    auto canonical = std::filesystem::weakly_canonical(path, error);
+    return error ? std::filesystem::absolute(path).lexically_normal() : canonical;
+  };
+  if (resolved(a) == resolved(b)) {
+    return true;
+  }
+  // Hard links: two paths, one file.
+  return std::filesystem::equivalent(a, b, error) && !error;
+}
+
+/**
  * @brief `strategy backtest TARGET [KEY=VALUE]... [--fills FILE] [--equity FILE]`; see the file comment.
  * @param invocation The arguments.
  * @param output Where progress goes: cmdatl's first line, then atlc's and the build's and the driver's stderr lines.
@@ -197,6 +216,16 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   GivenSettings given;
   if (auto refused = sort_words(target_and_settings(invocation), given)) {
     return std::move(*refused);
+  }
+  // Before anything runs: the equity file, written second, would replace the fills file.
+  if (
+    invocation.has("fills") && invocation.has("equity") &&
+    same_output(invocation.get("fills"), invocation.get("equity"))
+  ) {
+    return error_reply(
+      Exit::USAGE, "usage.bad_value", "--fills and --equity name the same file: " + invocation.get("fills"),
+      "give --fills and --equity different files"
+    );
   }
   output.progress("cmdatl: replaying " + given.target_);
   if (interrupted()) {

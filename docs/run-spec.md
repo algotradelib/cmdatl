@@ -339,6 +339,7 @@ A number is printed with ten significant digits; a figure the library leaves und
 `--equity FILE` writes the equity curve the report's figures are computed from, one line per recorded point, after the header `at,equity,period_return`: the time (ISO 8601, UTC), the equity as a decimal, and the return since the previous point as a number printed as the report's.
 The return is empty where the library leaves it undefined: on the first point, after a bar whose equity could not be valued, and after a point whose equity was zero or negative.
 Both are written after the replay's own checks, so a replay those checks fail writes neither; the reply names each file by its absolute path (`fills`, `equity`).
+The two must be different files: naming one file twice, through any spelling or link, is refused before anything runs.
 
 ## Limit orders
 

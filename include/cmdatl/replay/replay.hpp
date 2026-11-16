@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -21,6 +22,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -1579,6 +1581,29 @@ inline void write_equity(const atl::backtest::ReplayResult& result, const std::s
   }
 }
 
+/**
+ * @brief Refuses `output.fills` and `output.equity` naming one file (the same path once links in it are resolved, or
+ *   the same file), which the equity file, written second, would replace.
+ * @param s The settings.
+ */
+inline void check_outputs(const Settings& s) {
+  const auto fills = s.get("output.fills");
+  const auto equity = s.get("output.equity");
+  if (!fills || !equity) {
+    return;
+  }
+  std::error_code error;
+  auto resolved = [&error](const std::filesystem::path& path) {
+    auto canonical = std::filesystem::weakly_canonical(path, error);
+    return error ? std::filesystem::absolute(path).lexically_normal() : canonical;
+  };
+  const bool same =
+    resolved(*fills) == resolved(*equity) || (std::filesystem::equivalent(*fills, *equity, error) && !error);
+  if (same) {
+    throw std::invalid_argument("output.fills and output.equity name the same file: " + *fills);
+  }
+}
+
 /** @brief What a program with `on_open` or `on_close` met, for the report. */
 struct SessionFacts {
   /** @brief Whether the program has session handlers (nothing below is reported otherwise). */
@@ -1710,6 +1735,7 @@ template <typename Strategy, typename Fills>
 int main(int argc, char** argv, Fills fills_of) {
   try {
     const auto s = Settings::from_args(argc, argv);
+    check_outputs(s);
     const std::string mode = Strategy::atls_mode;
     const auto market = market_of(s);
     const auto symbols = symbols_of<Strategy>(s);
