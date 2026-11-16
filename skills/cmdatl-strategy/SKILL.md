@@ -39,6 +39,7 @@ Give a program (`NAME.atls`), a spec, or both, with the settings in any order; a
 
 A program may declare functions and indicators with `extern` (`cmdatl strategy reference functions-and-indicators`): their bodies are C++ in a header the spec names with `header`, relative to the spec.
 That header is native code in the process that trades: never write a C++ header or name one in a spec yourself; the operator provides it.
+`measures = ["NAME"]` in the spec names that header's measures; a backtest's report gives each under `measures`, null when undefined.
 Without it the build fails (`build.failed`), and the message names what to define: report that to the operator.
 
 ## Backtests
