@@ -331,6 +331,29 @@ TEST_CASE("run_child works with stdin or stdout or stderr closed") {
   }
 }
 
+TEST_CASE("run_child passes its own stdin only when asked, and /dev/null otherwise") {
+  const Watchdog watchdog("stdin passed through", 30);
+  int fds[2];
+  REQUIRE(::pipe(fds) == 0);
+  REQUIRE(::write(fds[1], "rows\n", 5) == 5);
+  ::close(fds[1]);
+  const int saved = ::dup(STDIN_FILENO);
+  REQUIRE(saved >= 0);
+  ::dup2(fds[0], STDIN_FILENO);
+  ::close(fds[0]);
+  const auto cat = [](cmdatl::ChildInput input) {
+    return cmdatl::run_child({"/bin/cat"}, ignore_lines, nullptr, -1, {}, input);
+  };
+  const auto nul = cat(cmdatl::ChildInput::NUL);
+  const auto inherited = cat(cmdatl::ChildInput::INHERITED);
+  ::dup2(saved, STDIN_FILENO);
+  ::close(saved);
+  CHECK(nul.stdout_.empty());
+  CHECK(inherited.stdout_ == "rows\n");
+  CHECK(inherited.code_ == 0);
+  CHECK(no_children());
+}
+
 TEST_CASE("cmdatl started with stdin or stdout or stderr closed") {
   const Watchdog watchdog("cmdatl without its descriptors", 60);
   // The shipped cmdatl builds the driver itself: atlc build, its second child, answers as a program with errors.

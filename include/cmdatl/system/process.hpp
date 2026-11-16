@@ -380,13 +380,21 @@ inline int lifted_pipe(int (&fds)[2]) noexcept {
 }
 #endif
 
+/** @brief What a child run by `run_child` reads on stdin. */
+enum class ChildInput {
+  /** @brief `/dev/null`. */
+  NUL,
+  /** @brief This process's own stdin (`bars.source = stdin`); never a terminal, which would stop the child's group. */
+  INHERITED,
+};
+
 /**
  * @brief Runs a program with arguments, no shell, in its own process group, reading its stdout whole and handing
  *   each stderr line on as it arrives.
  *
  * For offline work only (atlc's replies): a command that may send never maps a child's end to an outcome through
- * it. stdin is `/dev/null`; the child starts with the default dispositions of SIGPIPE, SIGINT, SIGTERM and SIGHUP
- * and no signal blocked. One loop reads both pipes (whichever is ready, so neither fills), waits at most 100 ms between
+ * it. stdin is `/dev/null` unless `input` says otherwise; the child starts with the default dispositions of SIGPIPE,
+ * SIGINT, SIGTERM and SIGHUP and no signal blocked. One loop reads both pipes (whichever is ready, so neither fills), waits at most 100 ms between
  * looks at the interruption note, and checks the leader without blocking. On an interruption the group gets
  * SIGTERM, and SIGKILL two seconds later on the monotonic clock if it has not ended; a group whose leader ended
  * while another process holds its pipes gets the same two seconds. Every descriptor and the group are owned, so an
@@ -400,18 +408,20 @@ inline int lifted_pipe(int (&fds)[2]) noexcept {
  *   own descriptor 3 is left alone.
  * @param on_stdout_line When set, called with each stdout line instead of keeping stdout whole (`stdout_` stays
  *   empty), as `on_stderr_line` is; a line longer than `STDOUT_LINE_BYTES` fails the run (`IO_FAILED`).
+ * @param input What the child reads on stdin.
  * @return How it ended; partial output after a failure is never `FINISHED`.
  */
 inline ChildResult run_child(
   const std::vector<std::string>& argv, const std::function<void(const std::string&)>& on_stderr_line,
   const std::vector<std::string>* environment = nullptr, int descriptor_3 = -1,
-  const std::function<void(const std::string&)>& on_stdout_line = {}
+  const std::function<void(const std::string&)>& on_stdout_line = {}, ChildInput input = ChildInput::NUL
 ) {
   ChildResult result;
 #if defined(_WIN32)
   (void)argv;
   (void)on_stderr_line;
   (void)environment;
+  (void)input;
   result.error_ = "running a program is not supported on this platform";
   return result;
 #else
@@ -466,7 +476,7 @@ inline ChildResult run_child(
     // Each of these returns an error number, not errno; the flags are what make the values below take effect.
     int error = actions.ok() ? attr.status() : ENOMEM;
     const short flags = POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK;
-    if (error == 0) {
+    if (error == 0 && input == ChildInput::NUL) {
       error = posix_spawn_file_actions_addopen(actions.get(), STDIN_FILENO, "/dev/null", O_RDONLY, 0);
     }
     if (error == 0) {
