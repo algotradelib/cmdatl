@@ -1627,12 +1627,13 @@ struct SessionFacts {
  * @param pricing The targets limit pricing did not submit.
  * @param session What a session program met; empty for any other.
  * @param reads_data Whether the program has `data {}`: the report then counts the records fed.
+ * @param warning What the reader must know about the run's files, or empty (the report then has no `warning`).
  * @return The JSON text, one field per line.
  */
 template <typename Refusals>
 std::string report_json(
   const atl::backtest::ReplayResult& result, const atl::backtest::Report& r, const Refusals& pricing,
-  const SessionFacts& session = {}, bool reads_data = false
+  const SessionFacts& session = {}, bool reads_data = false, const std::string& warning = {}
 ) {
   std::ostringstream o;
   auto opt = [](const auto& value) {
@@ -1714,6 +1715,9 @@ std::string report_json(
   if (!result.equity_.empty()) {
     o << ",\n  \"first_bar\": " << quoted(iso(result.equity_.front().at_));
     o << ",\n  \"last_bar\": " << quoted(iso(result.equity_.back().at_));
+  }
+  if (!warning.empty()) {
+    o << ",\n  \"warning\": " << quoted(warning);
   }
   o << "\n}\n";
   return o.str();
@@ -1830,8 +1834,19 @@ int main(int argc, char** argv, Fills fills_of) {
     if (const auto path = s.get("output.equity")) {
       write_equity(result, *path);
     }
+    // Two names that became one file only when written (a case variant, a dangling link) pass check_outputs; the
+    // report says so. An error asking means not known: no warning.
+    std::string warning;
+    if (const auto fills = s.get("output.fills"), equity = s.get("output.equity"); fills && equity) {
+      std::error_code error;
+      if (std::filesystem::equivalent(*fills, *equity, error) && !error) {
+        warning =
+          "output.fills and output.equity are one file (a case variant or a link): the equity curve replaced "
+          "the fills";
+      }
+    }
     std::cout << report_json(
-      result, report, engine.strategy().pricing_refusals(), session, reads_data<Strategy>::value
+      result, report, engine.strategy().pricing_refusals(), session, reads_data<Strategy>::value, warning
     );
     std::cout.flush();
     return std::cout ? 0 : 1;

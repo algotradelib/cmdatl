@@ -331,6 +331,7 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 | `pricing_refusal_reasons` | object | each pricing refusal reason with its count, when nonzero: `no_basis_price`, `no_price_grid`, `price_not_representable`, `price_not_positive`, `net_not_representable` |
 | `caveats` | object | `gaps` (bars that did not follow their predecessor), `unfilled` (orders still queued at the end), `expired` (`DAY` orders withdrawn unfilled when their session ended, as they would expire live; on daily bars, after one bar), `unvalued_bars`, `multiple_instruments`, `cost_totals_incomplete`, `volume_ignored` (always true: fills are not capped by volume), `market_price_rule` and `market_fills_by_rule` (the rule named by `replay.fill_function` and the fills it priced, only when one is set), `open_points` (true with `bars.open_point`), `lowest_cash` (the lowest cash a fill left, as a decimal string, when below zero) and `shorts_borrow_nothing` (always true) |
 | `first_bar`, `last_bar` | string | the first and last recorded times, ISO 8601 in UTC; absent when nothing was replayed |
+| `warning` | string | only when `--fills` and `--equity` turned out to be one file, which then holds the equity curve |
 
 A number is printed with ten significant digits; a figure the library leaves undefined (a return on zero equity, a ratio without variance) is null.
 
@@ -339,7 +340,8 @@ A number is printed with ten significant digits; a figure the library leaves und
 `--equity FILE` writes the equity curve the report's figures are computed from, one line per recorded point, after the header `at,equity,period_return`: the time (ISO 8601, UTC), the equity as a decimal, and the return since the previous point as a number printed as the report's.
 The return is empty where the library leaves it undefined: on the first point, after a bar whose equity could not be valued, and after a point whose equity was zero or negative.
 Both are written after the replay's own checks, so a replay those checks fail writes neither; the reply names each file by its absolute path (`fills`, `equity`).
-The two must be different files: naming one file twice, through any spelling or link, is refused before anything runs.
+Give `--fills` and `--equity` different files: the same file by its spelling or an existing link is refused before anything runs.
+Two names that become one file only when created (a case variant on a case-insensitive volume, a dangling link) are not refused: the equity file then replaces the fills file, and the report's `warning` says so.
 
 ## Limit orders
 
