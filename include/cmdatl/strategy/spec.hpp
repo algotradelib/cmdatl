@@ -1166,8 +1166,12 @@ inline std::optional<Error> check(Entry& e) {
     case Kind::LENGTH: {
       const auto v = e.value_.number_;
       const auto least = known(e.key_)->min_;
-      if (e.value_.type_ == Value::Type::NUM && integer_text(e.value_.text_) && v >= least && v <= 1e9) {
-        const bool negative_zero = e.value_.text_.front() == '-';
+      // A length's -0 would reach the driver, which reads only digits.
+      const bool negative_zero = e.value_.text_.front() == '-';
+      if (
+        e.value_.type_ == Value::Type::NUM && integer_text(e.value_.text_) && v >= least && v <= 1e9 &&
+        !(kind == Kind::LENGTH && negative_zero)
+      ) {
         e.value_ = Value::num(negative_zero ? "-0" : std::to_string(static_cast<long long>(v)), v);
         return std::nullopt;
       }

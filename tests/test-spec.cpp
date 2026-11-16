@@ -1881,10 +1881,15 @@ TEST_CASE("windows and bootstrap keys: lengths in periods or spans; each method 
     CHECK(cli_value("windows.length=" + std::string(span)) == span);
   }
   const auto windows = WIDE_SPEC + "[evaluate]\nmethod = \"windows\"\n[windows]\n";
-  for (const auto* bad : {"\"0y\"", "\"252\"", "\"1.5y\"", "\"3Y\"", "\"100000d\"", "1", "1.5", "-2", "1000000001"}) {
+  for (
+    const auto* bad : {"\"0y\"", "\"252\"", "\"1.5y\"", "\"3Y\"", "\"100000d\"", "1", "1.5", "-2", "-0", "1000000001"}
+  ) {
     INFO(bad);
     CHECK(has(one_error(windows + "length = " + std::string(bad) + "\n"), "`windows.length` is a whole number"));
   }
+  // A warm-up of -0 is refused as -1 is, here, not in the driver.
+  CHECK(has(one_error(windows + "length = 5\nwarmup = -0\n"), "`windows.warmup` is a whole number"));
+  CHECK(has(cli_error("windows.warmup=-0"), "`windows.warmup` is a whole number"));
   CHECK(has(grid_error("[evaluate]\nmethod = \"windows\"\n"), "needs windows.length"));
   CHECK(has(grid_error(windows.substr(WIDE_SPEC.size()) + "length = 20\nstep = \"1mo\"\n"), "both as periods or both"));
   CHECK(has(
