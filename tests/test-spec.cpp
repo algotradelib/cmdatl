@@ -1768,11 +1768,13 @@ TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by t
     {"grid.entry.from=1", "grid.entry.to=2", "grid.entry.step=0.5"}
   );
   CHECK(list_over.arg("grid.entry") == std::optional<std::string>("1,1.5,2"));
-  // A value no double holds is the driver's to refuse, never an exception here.
-  CHECK(evaluate(WIDE_SPEC, sp::Purpose::EVALUATE, {"grid.entry=1e-400"}).errors_.empty());
-  CHECK(
-    has(evaluate(WIDE_SPEC, sp::Purpose::EVALUATE, {"grid.entry=1e-400,0"}).errors_.front(), "gives one value twice")
-  );
+  // A value the driver's reading refuses (below a double's range too) is refused here, before any build.
+  for (const auto* word : {"grid.entry=1e-400", "grid.entry=1e-320,2e-320,1e-400"}) {
+    INFO(word);
+    const auto refused = evaluate(WIDE_SPEC, sp::Purpose::EVALUATE, {word}).errors_;
+    REQUIRE(refused.size() == 1);
+    CHECK(has(refused.front(), " is out of the range of the replay's numbers"));
+  }
   CHECK(has(cli_error("grid.entry.step=1,2"), "`grid.entry.step` is a number"));
   CHECK(cli_value("grid.lookback=[ 10 , 20 ]") == "10,20");
 }

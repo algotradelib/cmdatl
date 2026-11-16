@@ -1437,7 +1437,12 @@ inline void read_grid(
     }
     std::vector<double> numbers;
     for (const auto& v : values) {
+      // As the driver reads it (`std::stod`, which refuses what is out of a double's range, below it included).
+      errno = 0;
       numbers.push_back(std::strtod(v.c_str(), nullptr));
+      if (errno == ERANGE && !refused) {
+        refused = "`grid." + name + "`: " + v + " is out of the range of the replay's numbers";
+      }
     }
     std::sort(numbers.begin(), numbers.end());
     if (!refused && std::adjacent_find(numbers.begin(), numbers.end()) != numbers.end()) {
