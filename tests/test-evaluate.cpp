@@ -1552,6 +1552,35 @@ TEST_CASE("loops: walk-forward refuses what fits no fold and lengths past the ca
     json::value("give walk_forward.train and walk_forward.test both as periods or both as spans")
   );
   CHECK(refusal(run("1", "5")).at("message") == json::value("walk_forward.train is 2 periods or more, not 1"));
+  // Anchored on a Sunday before Monday's first bar, a day's training holds none: refused whatever the sets, even when
+  // the bounds refuse every one (no set's warm-up then checks it).
+  const auto weekdays = dir.write("weekdays.csv", days_of(20240108, 30, true));
+  for (const auto* grid : {"grid.k=-1,-2", "grid.k=1,2"}) {
+    INFO(grid);
+    const auto empty = refusal(
+      drive<Holder>(on_pair(
+        weekdays, "walk-forward",
+        {"replay.from=20240107", "walk_forward.train=1d", "walk_forward.test=1w", grid,
+          "evaluate.objective=total_return"}
+      ))
+    );
+    CHECK(empty.at("code") == json::value("evaluate.refused"));
+    CHECK(empty.at("message") == json::value("fold 0: the training window holds 0 bars, fewer than 2"));
+    CHECK(empty.at("next") == json::value("give a longer walk_forward.train"));
+  }
+  // Folds times sets plus the tests past the cap is refused before any replay.
+  std::string many = "grid.k=1";
+  for (int k = 2; k <= 1000; ++k) {
+    many += "," + std::to_string(k);
+  }
+  const auto long_file = dir.write("long.csv", days_of(20240101, 210));
+  const auto capped = refusal(
+    drive<Holder>(on_pair(
+      long_file, "walk-forward",
+      {"walk_forward.train=2", "walk_forward.test=2", many, "evaluate.objective=total_return"}
+    ))
+  );
+  CHECK(capped.at("message") == json::value("the evaluation makes 104104 replays, more than 100000"));
 }
 
 TEST_CASE("loops: bootstrap path 0 is the backtest; a path depends on its number alone; a block is given") {
