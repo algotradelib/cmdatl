@@ -17,21 +17,14 @@ namespace cmdatl {
 
 /** @brief The summary's keys the final reply carries; any other key of the driver's summary is dropped. */
 inline const std::vector<std::string> EVALUATE_SUMMARY{
-  "method",
-  "jobs",
-  "param_sets",
-  "invalid",
-  "tried",
-  "replays",
-  "paths",
-  "failed",
-  "objective",
-  "direction",
-  "best",
+  "method", "jobs", "param_sets", "invalid", "tried", "replays", "paths", "failed", "objective", "direction", "best",
+  // windows and bootstrap
+  "scheme", "length", "step", "warmup", "windows", "uncovered_from", "halted", "summary", "block", "seed", "history",
+  "warnings", "intervals"
 };
 
 /** @brief The codes a driver's stop line may give the reply; any other stop is `replay.failed`. */
-inline const std::vector<std::string> EVALUATE_STOP_CODES{"replay.failed"};
+inline const std::vector<std::string> EVALUATE_STOP_CODES{"replay.failed", "evaluate.refused"};
 
 /** @brief An evaluation's driver output, read a line at a time: replay lines emitted, the summary or stop kept. */
 class EvaluationLines {
@@ -112,8 +105,13 @@ public:
       const auto message = stopped_->contains("message") && stopped_->at("message").is_string() ?
         std::string(stopped_->at("message").as_string()) :
         last_line(ran);
-      reply =
-        atlc_failure(Exit::FAILED, declared ? code : "replay.failed", "the evaluation stopped: " + message, ran, next);
+      // A refusal before any replay is the settings': exit 2, with the driver's next naming the key.
+      const bool refused = declared && code == "evaluate.refused";
+      const auto* asked = stopped_->if_contains("next");
+      reply = atlc_failure(
+        refused ? Exit::USAGE : Exit::FAILED, declared ? code : "replay.failed", "the evaluation stopped: " + message,
+        ran, refused && asked != nullptr && asked->is_string() ? std::string(asked->as_string()) : next
+      );
     } else if (ran.kind_ != ChildResult::Kind::FINISHED || ran.signaled_ || ran.code_ != 0 || !summary_) {
       const auto ending = ran.kind_ == ChildResult::Kind::FINISHED && !ran.signaled_ && ran.code_ == 1 ?
         last_line(ran) :

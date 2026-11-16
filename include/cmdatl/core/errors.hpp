@@ -56,6 +56,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"spec.invalid", Exit::USAGE, false, "fix the run spec or the settings given on the command line"},
     {"build.failed", Exit::FAILED, false, "the strategy could not be built: read the build's messages in stderr"},
     {"replay.failed", Exit::FAILED, false, "the replay failed: check the data and the parameters' bounds"},
+    {"evaluate.refused", Exit::USAGE, false, "change the setting the message names; nothing was replayed"},
     {"strategy.name", Exit::USAGE, false, "a name is a letter, then letters, digits, - or _ (at most 64)"},
     {"strategy.template", Exit::USAGE, false, "cmdatl strategy new --help lists the templates"},
     {"strategy.exists", Exit::FAILED, false, "choose another NAME or --dir, or --force to replace regular files"},

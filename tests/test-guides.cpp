@@ -239,6 +239,8 @@ TEST_CASE("no skill names a command that is not built and every error code the d
   families.erase("mock");
   families.erase("file");
   families.erase("run");
+  // evaluate.refused is a code, and [evaluate] a table of settings (`evaluate.jobs`).
+  families.erase("evaluate");
   const std::set<std::string> extensions{
     "toml", "atls", "csv", "md", "json", "jsonl", "armed", "release", "stop", "lock", "hpp"
   };

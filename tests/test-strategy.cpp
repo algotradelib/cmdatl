@@ -1040,7 +1040,7 @@ TEST_CASE("strategy evaluate: --fields selects in the lines and the reply, --val
 TEST_CASE("strategy evaluate: a broken line protocol, a stop or no report is replay.failed with the lines counted") {
   const Watchdog watchdog("the evaluation's failures", 60);
   const auto failed = replay_line(0, R"("report":null,"failure":{"kind":"params","message":"k is below 0"})");
-  const auto stopped = evaluation({replay_line(0), R"({"stopped":{"code":"evaluate.refused","message":"no fold"}})"}) +
+  const auto stopped = evaluation({replay_line(0), R"({"stopped":{"code":"evaluate.unheard","message":"no fold"}})"}) +
     "driver err error: no fold\ndriver exit 1\n";
   const std::vector<std::tuple<std::string, std::string, std::int64_t>> cases{
     {evaluation({replay_line(1)}), "the evaluation driver broke its line protocol: replay 1 where 0 was next", 0},
@@ -1063,6 +1063,19 @@ TEST_CASE("strategy evaluate: a broken line protocol, a stop or no report is rep
     CHECK(reply.at("error").as_object().at("message").as_string() == message);
     CHECK(reply.at("replays").as_int64() == replays);
   }
+  // A refusal of the settings before any replay is exit 2, with the driver's next.
+  const FakeAtlc refusing(
+    evaluation(
+      {R"({"stopped":{"code":"evaluate.refused","message":"no window fits","next":"give a shorter windows.length"}})"}
+    ) +
+    "driver err error: no window fits\ndriver exit 1\n"
+  );
+  const auto refused = run({"--json", "strategy", "evaluate", "s.toml"});
+  CHECK(refused.exit_ == 2);
+  const auto error = reply_of(lines_of(refused.out_).back()).at("error").as_object();
+  CHECK(error.at("code").as_string() == "evaluate.refused");
+  CHECK(error.at("message").as_string() == "the evaluation stopped: no window fits");
+  CHECK(error.at("next").as_string() == "give a shorter windows.length");
 }
 
 TEST_CASE("strategy evaluate refuses bars.source = stdin on a terminal before the build") {
