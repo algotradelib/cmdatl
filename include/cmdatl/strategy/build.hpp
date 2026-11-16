@@ -431,6 +431,8 @@ struct Request {
   std::string fill_function_{};
   /** @brief The program's own C++ header (`header`), absolute, or empty: included before the generated strategy. */
   std::string header_{};
+  /** @brief A backtest's measures from the run spec (`measures`), in order: functions the header defines. */
+  std::vector<std::string> measures_{};
   /** @brief The broker a run's driver trades (`kis`), or empty for the mock market or a broker folder. */
   std::string broker_{};
   /** @brief A broker folder's files, read once, compiled into the driver as `adapter/`; none for no folder. */
@@ -455,7 +457,8 @@ inline std::string adapter_digest(const auth::AdapterSnapshot& snapshot) {
 
 /**
  * @brief The driver's `program.hpp`: the generated strategy as `Program` (after the program's own header, when it has
- *   one), and `program_fills`, which gives the fill model the run's market-price rule when it has one.
+ *   one), `program_fills`, which gives the fill model the run's market-price rule when it has one, and for a backtest
+ *   `program_measures`, the report's measures, each name checked to be callable as a measure.
  * @param request The program, its header and the rule.
  * @return The header's text.
  */
@@ -471,8 +474,9 @@ inline std::string program_header(const Request& request) {
   if (rule) {
     out += "#include \"" + request.fill_header_ + "\"\n";
   }
-  out += "\n#include <algotradelib/backtest>\n\n#include <optional>\n#include <type_traits>\n\nusing Program = atls::" +
-    request.struct_ + ";\n\n";
+  out += "\n#include <algotradelib/backtest>\n\n#include <optional>\n#include <type_traits>\n" +
+    std::string(backtest ? "#include <utility>\n#include <vector>\n" : "") +
+    "\nusing Program = atls::" + request.struct_ + ";\n\n";
   if (request.adapter_) {
     // The broker folder the driver is built from, each byte escaped: a run's driver refuses an operator file naming
     // another.
@@ -500,6 +504,26 @@ inline std::string program_header(const Request& request) {
     out += "  return model;\n";
   }
   out += "}\n";
+  if (backtest) {
+    // A generic lambda whose return type is the call detects a bad call, so the assertion's one line is the first error.
+    const std::string input = "algotradelib::backtest::MeasureInput";
+    std::string checks;
+    std::string entries;
+    for (std::size_t k = 0; k < request.measures_.size(); ++k) {
+      const auto& name = request.measures_[k];
+      const auto call = "cmdatl_call_" + std::to_string(k);
+      checks += "  constexpr auto " + call + " = [](const auto& cmdatl_input) -> decltype(" + name +
+        "(cmdatl_input)) {\n    return " + name +
+        "(cmdatl_input);\n  };\n  static_assert(\n    std::is_invocable_r_v<double, decltype(" + call + "), const " +
+        input + "&>,\n    \"measures: " + name + " must be callable as double(const " + input + "&)\"\n  );\n";
+      entries += "    {\"" + name + "\", [](const " + input + "& cmdatl_input) -> double {\n      return " + name +
+        "(cmdatl_input);\n    }},\n";
+    }
+    const auto table = "std::vector<std::pair<const char*, double (*)(const " + input + "&)>>";
+    out += "\n// The report's measures: the program's `measures {}`, then the run spec's `measures`.\ninline " + table +
+      " program_measures() {\n" + checks + (entries.empty() ? "  return {};\n" : "  return {\n" + entries + "  };\n") +
+      "}\n";
+  }
   return out;
 }
 
@@ -626,6 +650,14 @@ inline std::optional<Reply> build_driver(
     char digest[17];
     std::snprintf(digest, sizeof(digest), "%016llx", static_cast<unsigned long long>(fnv1a(bytes)));
     extra.push_back("fill=" + request.fill_header_ + ";" + request.fill_function_ + ";" + digest);
+  }
+  // `program.hpp`'s table of measures: the program's names (none yet), `|`, the spec's, each list in the report's order.
+  if (backtest && !request.measures_.empty()) {
+    std::string names = "measures=|";
+    for (std::size_t k = 0; k < request.measures_.size(); ++k) {
+      names += (k == 0 ? "" : ";") + request.measures_[k];
+    }
+    extra.push_back(names);
   }
   // The program's header likewise: its path and its bytes, so an edited header is another shape.
   if (!request.header_.empty()) {
