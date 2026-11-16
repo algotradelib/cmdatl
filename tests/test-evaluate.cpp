@@ -8,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -21,11 +22,14 @@
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #if !defined(_WIN32)
 #include <fcntl.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
@@ -619,3 +623,318 @@ TEST_CASE("evaluate: a measure's exception fails its replay and its bad_alloc st
   CHECK(exhausted.exit_ == 1);
   CHECK(lines_of(exhausted.out_).back() == "{\"stopped\":{\"code\":\"replay.failed\",\"message\":\"std::bad_alloc\"}}");
 }
+
+#if !defined(_WIN32)
+
+namespace {
+
+/**
+ * @brief A pipe holding a text, written whole and closed before the reader's first look (the text fits the pipe).
+ * @param text The text.
+ * @return The read end.
+ */
+int closed_pipe(const std::string& text) {
+  int fds[2];
+  REQUIRE(::pipe(fds) == 0);
+  REQUIRE(::write(fds[1], text.data(), text.size()) == static_cast<ssize_t>(text.size()));
+  ::close(fds[1]);
+  return fds[0];
+}
+
+/**
+ * @brief Runs an evaluation reading a text on a descriptor: a pipe, or a file when the text does not fit one.
+ * @param text The text.
+ * @param more Further arguments.
+ * @return What it gave.
+ */
+Ran on_stdin(const std::string& text, std::vector<std::string> more) {
+  Scratch dir;
+  const int fd = text.size() < 60000 ? closed_pipe(text) : ::open(dir.write("in.csv", text).c_str(), O_RDONLY);
+  std::vector<std::string> args{"bars.source=stdin", "bars.symbol_column=symbol", "instrument.x=AAA"};
+  args.insert(args.end(), more.begin(), more.end());
+  args.push_back("evaluate.method=grid");
+  auto ran = drive(args, fd);
+  ::close(fd);
+  return ran;
+}
+
+/** @brief The header of rows with a path column. */
+const std::string PATHS = HEADER + ",path\n";
+
+} // namespace
+
+TEST_CASE("evaluate: stdin paths end where the path cell changes and a reused cell is a new path") {
+  // Written and closed before the first poll, the last line without its newline.
+  auto text = PATHS + rows_of("AAA", {100, 101, 103}, "a") + rows_of("AAA", {50, 49}, "b") + rows_of("AAA", {7}, "a");
+  text.pop_back();
+  const auto ran = on_stdin(text, {"bars.path_column=path", "grid.k=1,2", "evaluate.objective=total_return"});
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  const auto lines = lines_of(ran.out_);
+  REQUIRE(lines.size() == 7);
+  const char* paths[] = {
+    "0,\"seed\":null,\"id\":\"a\"", "1,\"seed\":null,\"id\":\"b\"", "2,\"seed\":null,\"id\":\"a\""
+  };
+  for (std::size_t i = 0; i < 6; ++i) {
+    INFO(lines[i]);
+    CHECK(
+      lines[i].rfind("{\"index\":" + std::to_string(i) + ",\"params\":{\"k\":" + std::to_string(i % 2 + 1), 0) == 0
+    );
+    CHECK(lines[i].find(std::string("\"path\":{\"number\":") + paths[i / 2] + "}") != std::string::npos);
+  }
+  CHECK(lines[5].find("\"report\":{\"bars\": 1,") != std::string::npos);
+  CHECK(lines[6].find("\"replays\":6,\"paths\":3,") != std::string::npos);
+  CHECK(lines[6].find("\"best\":null") != std::string::npos);
+  // A path's report is the report of the same rows read as a CSV.
+  Scratch dir;
+  const auto csv = drive(on_csv(dir.write("a.csv", HEADER + "\n" + rows_of("AAA", {50, 49})), {"grid.k=1,2"}));
+  REQUIRE(csv.exit_ == 0);
+  const auto report = [](const std::string& line) {
+    return line.substr(line.find("\"report\":"));
+  };
+  CHECK(report(lines[3]) == report(lines_of(csv.out_)[1]));
+  // Without bars.path_column the stream is one path, its id null.
+  auto rows = rows_of("AAA", {100, 101, 102}, "a");
+  rows[rows.size() - 2] = 'b';
+  const auto one = on_stdin(PATHS + rows, {});
+  CHECK(
+    lines_of(one.out_).at(0).find("\"path\":{\"number\":0,\"seed\":null,\"id\":null},\"report\":{\"bars\": 3,") !=
+    std::string::npos
+  );
+  CHECK(lines_of(one.out_).at(1).find("\"paths\":1,") != std::string::npos);
+}
+
+TEST_CASE("evaluate: a stdin path over 1 MiB arrives whole through many reads") {
+  std::vector<int> prices(30000);
+  for (std::size_t i = 0; i < prices.size(); ++i) {
+    prices[i] = 100 + static_cast<int>(i % 50);
+  }
+  const auto text = HEADER + "\n" + rows_of("AAA", prices);
+  REQUIRE(text.size() > replay::STDIN_LINE_MAX);
+  int fds[2];
+  REQUIRE(::pipe(fds) == 0);
+  std::thread writer([&text, fd = fds[1]]() {
+    for (std::size_t at = 0; at < text.size();) {
+      const auto n = ::write(fd, text.data() + at, std::min<std::size_t>(text.size() - at, 1000003));
+      if (n <= 0) {
+        break;
+      }
+      at += static_cast<std::size_t>(n);
+    }
+    ::close(fd);
+  });
+  const auto ran = drive({"bars.source=stdin", "bars.symbol=AAA", "instrument.x=AAA", "evaluate.method=grid"}, fds[0]);
+  writer.join();
+  ::close(fds[0]);
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  CHECK(ran.out_.find("\"report\":{\"bars\": 30000,") != std::string::npos);
+}
+
+TEST_CASE("evaluate: a broken stdin stream prints the stop line naming its line after the lines printed") {
+  const std::string long_cell(replay::STDIN_LINE_MAX + 1, '1');
+  const std::vector<std::tuple<std::string, std::vector<std::string>, std::string>> cases{
+    {PATHS + rows_of("AAA", {1}, "a") + rows_of("BBB", {1}, "b"), {"bars.path_column=path"},
+      "stdin:3: the path from here carries other symbols than the first path"},
+    {PATHS + rows_of("AAA", {1}, " "), {"bars.path_column=path"}, "stdin:2: a path cell is 1 to 64 bytes"},
+    {PATHS + rows_of("AAA", {1}, std::string(65, 'p')), {"bars.path_column=path"}, "a path cell is 1 to 64 bytes"},
+    {PATHS + rows_of("AAA", {1}, "a") + long_cell, {"bars.path_column=path"}, "stdin:3: a line longer than 1 MiB"},
+    {PATHS + "1577836800,AAA,1,1,1\n", {}, "stdin:2: expected 8 cells, found 5"},
+    {PATHS + rows_of("AAA", {1}, "a"), {"bars.path_column=id"}, "stdin: no column 'id' (bars.path_column)"},
+    {PATHS + rows_of("AAA", {1}, "a"), {"bars.path_column=path", "replay.from=2021-01-01"},
+      "stdin:2: the path from here has no bar"},
+    {PATHS, {}, "stdin: no path: standard input holds no row"},
+    {"", {}, "stdin:1: no header: standard input is empty"},
+  };
+  for (const auto& [text, more, message] : cases) {
+    INFO(message);
+    const auto ran = on_stdin(text, more);
+    CHECK(ran.exit_ == 1);
+    const auto lines = lines_of(ran.out_);
+    REQUIRE(!lines.empty());
+    CHECK(lines.back().rfind("{\"stopped\":{\"code\":\"replay.failed\",\"message\":\"", 0) == 0);
+    CHECK(lines.back().find(message) != std::string::npos);
+    CHECK(ran.out_.find("\"summary\"") == std::string::npos);
+  }
+  // The first path's line stands before the stop line.
+  const auto first = on_stdin(std::get<0>(cases[0]), {"bars.path_column=path"});
+  CHECK(lines_of(first.out_).at(0).rfind("{\"index\":0,", 0) == 0);
+  // One backtest does not read standard input.
+  const auto single = drive({"bars.source=stdin", "bars.symbol=AAA", "instrument.x=AAA"});
+  CHECK(single.exit_ == 1);
+  CHECK(single.err_.find("bars.source = stdin is read by an evaluation") != std::string::npos);
+}
+
+TEST_CASE("evaluate: one job and four print the same bytes on stdin paths", "[threads]") {
+  const auto text =
+    PATHS + rows_of("AAA", {100, 101, 103}, "a") + rows_of("AAA", {50, 49, 48}, "b") + rows_of("AAA", {7, 8}, "c");
+  const auto one = on_stdin(text, {"bars.path_column=path", "grid.k=1,2,3"});
+  const auto four = on_stdin(text, {"bars.path_column=path", "grid.k=1,2,3", "evaluate.jobs=4"});
+  REQUIRE(one.exit_ == 0);
+  REQUIRE(four.exit_ == 0);
+  CHECK(lines_of(one.out_).size() == 10);
+  CHECK(one.out_.substr(0, one.out_.rfind("{\"summary\"")) == four.out_.substr(0, four.out_.rfind("{\"summary\"")));
+}
+
+namespace {
+
+/** @brief What a silent producer's evaluation gave, and whether the test had to close the pipe to end it. */
+struct Silent {
+  Ran ran_;
+  bool closed_by_test_{false};
+};
+
+/**
+ * @brief Path A and one row of path B on a pipe held open and silent, two jobs, and A's replay failing with
+ *   `std::bad_alloc` after 100 ms: the reader waits on B while the batch stops. The pipe is closed after 5 s if the
+ *   evaluation has not returned by then, so a reader that ignores the stop fails the test instead of hanging it.
+ * @return What it gave.
+ */
+Silent silent_producer() {
+  const FreshObserved fresh;
+  int fds[2];
+  REQUIRE(::pipe(fds) == 0);
+  const auto text = PATHS + rows_of("AAA", {100, 101, 103}, "a") + rows_of("AAA", {50}, "b");
+  REQUIRE(::write(fds[1], text.data(), text.size()) == static_cast<ssize_t>(text.size()));
+  std::atomic<bool> finished{false};
+  Silent out;
+  std::thread guard([&]() {
+    for (int step = 0; step < 500 && !finished; ++step) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    if (!finished) {
+      out.closed_by_test_ = true;
+      ::close(fds[1]);
+    }
+  });
+  out.ran_ = drive(
+    {"bars.source=stdin", "bars.symbol_column=symbol", "bars.path_column=path", "instrument.x=AAA",
+      "evaluate.method=grid", "evaluate.jobs=2", "param.hold=100", "param.fail=1"},
+    fds[0]
+  );
+  finished = true;
+  guard.join();
+  if (!out.closed_by_test_) {
+    ::close(fds[1]);
+  }
+  ::close(fds[0]);
+  return out;
+}
+
+/**
+ * @brief One short path, then a path of 400,000 rows in a regular file (always ready), two jobs, and the first path's
+ *   replay failing with `std::bad_alloc`.
+ * @param stopped_at Set to how far the reader got into the file.
+ * @param size Set to the file's size.
+ * @return What it gave.
+ */
+Ran ready_file(off_t& stopped_at, off_t& size) {
+  Scratch dir;
+  std::vector<int> prices(400000, 100);
+  const auto path = dir.write("in.csv", PATHS + rows_of("AAA", {100, 101}, "a") + rows_of("AAA", prices, "b"));
+  const int fd = ::open(path.c_str(), O_RDONLY);
+  const auto ran = drive(
+    {"bars.source=stdin", "bars.symbol_column=symbol", "bars.path_column=path", "instrument.x=AAA",
+      "evaluate.method=grid", "evaluate.jobs=2", "param.fail=1"},
+    fd
+  );
+  stopped_at = ::lseek(fd, 0, SEEK_CUR);
+  size = ::lseek(fd, 0, SEEK_END);
+  ::close(fd);
+  return ran;
+}
+
+} // namespace
+
+TEST_CASE(
+  "evaluate: a fatal throw stops a stdin reader waiting on a silent pipe or reading a ready file", "[threads]"
+) {
+  const auto silent = silent_producer();
+  CHECK(!silent.closed_by_test_);
+  CHECK(silent.ran_.exit_ == 1);
+  CHECK(
+    lines_of(silent.ran_.out_).back() == "{\"stopped\":{\"code\":\"replay.failed\",\"message\":\"std::bad_alloc\"}}"
+  );
+  off_t stopped_at = 0;
+  off_t size = 0;
+  const auto ready = ready_file(stopped_at, size);
+  CHECK(ready.exit_ == 1);
+  CHECK(ready.out_.find("\"stopped\"") != std::string::npos);
+  CHECK(stopped_at < size);
+}
+
+TEST_CASE("evaluate: a stdin reader stops within a second of a fatal throw", "[.][local]") {
+  CHECK(silent_producer().ran_.seconds_ < 1.0);
+  off_t stopped_at = 0;
+  off_t size = 0;
+  CHECK(ready_file(stopped_at, size).seconds_ < 1.0);
+}
+
+namespace {
+
+/**
+ * @brief The peak resident memory of an evaluation of one-row stdin paths, run in a child with its output discarded.
+ * @param paths The paths.
+ * @param jobs The jobs.
+ * @return The child's peak, in the system's unit.
+ */
+long peak_of(std::size_t paths, int jobs) {
+  const pid_t pid = ::fork();
+  REQUIRE(pid >= 0);
+  if (pid == 0) {
+    int fds[2];
+    const int null = ::open("/dev/null", O_WRONLY);
+    if (::pipe(fds) != 0 || null < 0 || ::dup2(null, 1) < 0 || ::dup2(null, 2) < 0) {
+      ::_exit(2);
+    }
+    std::thread writer([paths, fd = fds[1]]() {
+      std::string chunk = PATHS;
+      for (std::size_t p = 0; p < paths; ++p) {
+        chunk += rows_of("AAA", {100}, "p" + std::to_string(p));
+        if (chunk.size() > 60000 || p + 1 == paths) {
+          if (::write(fd, chunk.data(), chunk.size()) != static_cast<ssize_t>(chunk.size())) {
+            break;
+          }
+          chunk.clear();
+        }
+      }
+      ::close(fd);
+    });
+    std::vector<std::string> args{
+      "bars.source=stdin", "bars.symbol_column=symbol", "bars.path_column=path", "instrument.x=AAA",
+      "evaluate.method=grid", "evaluate.jobs=" + std::to_string(jobs)
+    };
+    std::vector<char*> argv{const_cast<char*>("driver")};
+    for (auto& arg : args) {
+      argv.push_back(arg.data());
+    }
+    const auto s = replay::Settings::from_args(static_cast<int>(argv.size()), argv.data());
+    auto fills = [](atl::backtest::NextBarFillModel model) {
+      return model;
+    };
+    const int code = replay::evaluate_main<Ticker>(s, fills, Measures{}, fds[0], nullptr);
+    writer.join();
+    std::cout.flush();
+    ::_exit(code);
+  }
+  int status = 0;
+  rusage usage{};
+  REQUIRE(::wait4(pid, &status, 0, &usage) == pid);
+  REQUIRE(WIFEXITED(status));
+  REQUIRE(WEXITSTATUS(status) == 0);
+  return usage.ru_maxrss;
+}
+
+} // namespace
+
+TEST_CASE("evaluate: 100,000 one-row stdin paths peak within 10 % of 1,000", "[.][local]") {
+  for (const int jobs : {1, 4}) {
+    INFO(jobs);
+    const auto few = peak_of(1000, jobs);
+    const auto many = peak_of(100000, jobs);
+    CAPTURE(few, many);
+    CHECK(static_cast<double>(many) <= 1.1 * static_cast<double>(few));
+  }
+}
+
+#endif

@@ -429,6 +429,9 @@ void run_replays(Source& source, std::size_t jobs, Work& work, Sink& sink, const
   }
 }
 
+template <typename Strategy>
+class StdinSource;
+
 /** @brief The best replay of an evaluation by its objective. */
 struct Best {
   /** @brief Its index. */
@@ -483,7 +486,6 @@ inline void choose(
  */
 template <typename Strategy, typename Fills, typename Measures>
 int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, int input, const RunnerHooks* hooks) {
-  (void)input;
   const auto stopped = [](const std::string& message) {
     std::cout << "{\"stopped\":{\"code\":\"replay.failed\",\"message\":" << quoted(message) << "}}\n";
     std::cout.flush();
@@ -519,6 +521,10 @@ int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, 
     std::size_t failed = 0;
     std::vector<bool> refused(sets, false);
     std::optional<Best> best;
+    std::optional<std::size_t> paths;
+    if (s.get_or("bars.source", "") == "stdin") {
+      paths = 0;
+    }
     auto keep = [](const atl::backtest::ReplayResult&, const atl::backtest::NextBarFillModel&) {
       return KeepNothing{};
     };
@@ -534,17 +540,28 @@ int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, 
       } else if (done.failed_) {
         ++failed;
       }
-      if (objective) {
+      // The best over paths is an aggregate this version does not make.
+      if (objective && !paths) {
         choose(best, *objective, direction == "min", done.replay_, done.figures_, done.halted_);
       }
     };
-    GridSource source(std::make_shared<const Prepared>(prepare<Strategy>(s)), std::move(grid));
-    run_replays(source, static_cast<std::size_t>(jobs), work, sink, hooks == nullptr ? RunnerHooks{} : *hooks);
+    const auto run = [&](auto& source) {
+      run_replays(source, static_cast<std::size_t>(jobs), work, sink, hooks == nullptr ? RunnerHooks{} : *hooks);
+    };
+    if (paths) {
+      StdinSource<Strategy> source(s, std::move(grid), input);
+      run(source);
+      paths = source.paths();
+    } else {
+      GridSource source(std::make_shared<const Prepared>(prepare<Strategy>(s)), std::move(grid));
+      run(source);
+    }
     const auto invalid = static_cast<std::size_t>(std::count(refused.begin(), refused.end(), true));
     std::ostringstream o;
     o << "{\"summary\":{\"method\":\"grid\",\"jobs\":" << jobs << ",\"param_sets\":" << sets
       << ",\"invalid\":" << invalid << ",\"tried\":" << sets - invalid << ",\"replays\":" << replays
-      << ",\"paths\":null,\"failed\":" << failed << ",\"objective\":" << (objective ? quoted(*objective) : "null")
+      << ",\"paths\":" << (paths ? std::to_string(*paths) : "null") << ",\"failed\":" << failed
+      << ",\"objective\":" << (objective ? quoted(*objective) : "null")
       << ",\"direction\":" << (objective ? quoted(direction) : "null") << ",\"best\":";
     if (best) {
       o << "{\"index\":" << best->index_ << ",\"params\":" << params_json(best->params_)
@@ -564,3 +581,5 @@ int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, 
 
 } // namespace replay
 } // namespace cmdatl
+
+#include "./stdin.hpp"
