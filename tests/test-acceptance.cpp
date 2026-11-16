@@ -564,6 +564,65 @@ TEST_CASE(
   CHECK(reply_of(one_lines[4]).at("report") == report_of({spec, "params.lookback=20", "params.entry=2"}));
 }
 
+TEST_CASE("strategy evaluate on two stdin paths reports what two backtests of the same rows report", "[acceptance]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const ScratchDir dir;
+  const auto examples = std::filesystem::path(CMDATL_SOURCE_DIR) / "examples";
+  std::vector<std::string> rows;
+  for (const auto& line : lines_of(slurp(examples / "data" / "daily.csv"))) {
+    if (line.find(",AAA,") != std::string::npos) {
+      rows.push_back(line);
+    }
+  }
+  REQUIRE(rows.size() == 250);
+  const std::string header = "date,symbol,open,high,low,close,volume";
+  std::string piped = header + ",path\n";
+  std::vector<std::string> files;
+  for (const auto& [from, id] : std::vector<std::pair<std::size_t, std::string>>{{0, "early"}, {100, "late"}}) {
+    std::string text = header + "\n";
+    for (std::size_t i = from; i < from + 150; ++i) {
+      text += rows[i] + "\n";
+      piped += rows[i] + "," + id + "\n";
+    }
+    files.push_back((dir.path() / (id + ".csv")).string());
+    spit(files.back(), text);
+  }
+  const std::vector<std::string> common{
+    (examples / "mean-reversion.atls").string(), "bars.symbol_column=symbol", "bars.time=date", "bars.time_format=iso",
+    "instruments.stock=AAA", "replay.cash=100000", "replay.commission=0.0005"
+  };
+  // The pipe holds the rows whole, closed, as cmdatl's own stdin, which the driver inherits.
+  int fds[2];
+  REQUIRE(::pipe(fds) == 0);
+  REQUIRE(::write(fds[1], piped.data(), piped.size()) == static_cast<ssize_t>(piped.size()));
+  ::close(fds[1]);
+  const int saved = ::dup(STDIN_FILENO);
+  ::dup2(fds[0], STDIN_FILENO);
+  ::close(fds[0]);
+  std::vector<std::string> args{"--json", "strategy", "evaluate"};
+  args.insert(args.end(), common.begin(), common.end());
+  args.insert(args.end(), {"bars.source=stdin", "bars.path_column=path"});
+  const auto ran = run(args);
+  ::dup2(saved, STDIN_FILENO);
+  ::close(saved);
+  INFO(ran.out_ << ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  const auto lines = lines_of(ran.out_);
+  REQUIRE(lines.size() == 3);
+  CHECK(reply_of(lines[2]).at("paths").as_int64() == 2);
+  for (std::size_t p = 0; p < 2; ++p) {
+    auto backtest_args = common;
+    backtest_args.insert(backtest_args.end(), {"bars.source=csv", "bars.file=" + files[p]});
+    const auto line = reply_of(lines[p]);
+    CHECK(line.at("path").as_object().at("number").as_int64() == static_cast<std::int64_t>(p));
+    CHECK(line.at("report") == report_of(backtest_args));
+  }
+}
+
 TEST_CASE(
   "strategy backtest's settings: limits, parameters, overrides, a program alone, --fills, warnings and failures",
   "[acceptance]"

@@ -4,6 +4,7 @@
 // driver built (a backtest's build serves it), run with `evaluate.method=grid`, and each of its JSON lines emitted as
 // a `replay` event before the final reply, which carries the driver's summary.
 
+#include "../system/terminal.hpp"
 #include "./backtest.hpp"
 
 #include <algorithm>
@@ -180,6 +181,16 @@ inline Reply evaluate_reply(const Invocation& invocation, Output& output) {
   if (auto refused = checked_settings(given, output, spec::Purpose::EVALUATE, atlc, checked)) {
     return std::move(*refused);
   }
+  // The driver reads stdin in its own process group, where a terminal stops it (SIGTTIN): refused before the build.
+  const auto& args = checked.resolved_.args_;
+  const bool from_stdin =
+    std::find(args.begin(), args.end(), std::make_pair(std::string("bars.source"), std::string("stdin"))) != args.end();
+  if (from_stdin && sys::is_terminal(STDIN_FILENO)) {
+    return error_reply(
+      Exit::USAGE, "usage.bad_value", "bars.source = stdin reads a generator's CSV, and stdin is a terminal",
+      "pipe the rows in: GENERATOR | cmdatl strategy evaluate ..."
+    );
+  }
   std::vector<std::string> argv;
   std::optional<ScratchCopy> scratch;
   if (auto failed = driver_argv(given, checked, atlc, std::nullopt, output, scratch, argv)) {
@@ -194,7 +205,8 @@ inline Reply evaluate_reply(const Invocation& invocation, Output& output) {
     nullptr, -1,
     [&lines](const std::string& line) {
       lines.take(line);
-    }
+    },
+    from_stdin ? ChildInput::INHERITED : ChildInput::NUL
   );
   return lines.reply(ran, given, atlc);
 #endif
