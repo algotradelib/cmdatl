@@ -623,6 +623,60 @@ TEST_CASE("strategy evaluate on two stdin paths reports what two backtests of th
   }
 }
 
+TEST_CASE("strategy evaluate walks forward by calendar months alike on one job and four", "[acceptance]") {
+  const auto equip = equipment();
+  if (!equip) {
+    SKIP(UNEQUIPPED);
+  }
+  const Equipped equipped(*equip);
+  const auto spec = (std::filesystem::path(CMDATL_SOURCE_DIR) / "examples" / "mean-reversion.toml").string();
+  const std::vector<std::string> words{
+    "--json", "strategy", "evaluate", spec, "evaluate.method=walk-forward", "walk_forward.train=3mo",
+    "walk_forward.test=1mo", "grid.lookback=10,20", "grid.entry=1,2", "evaluate.objective=total_return"
+  };
+  auto four = words;
+  four.push_back("evaluate.jobs=4");
+  const auto one = run(words);
+  const auto many = run(four);
+  INFO(one.out_ << one.err_);
+  REQUIRE(one.exit_ == 0);
+  REQUIRE(many.exit_ == 0);
+  auto one_lines = lines_of(one.out_);
+  auto many_lines = lines_of(many.out_);
+  const auto reply = reply_of(one_lines.back());
+  // From the first bar, 2024-01-02: tests start on the 2nd of April to November; December's would end in 2025.
+  const auto& folds = reply.at("folds").as_array();
+  REQUIRE(folds.size() == 8);
+  CHECK(reply.at("train") == boost::json::value("3mo"));
+  CHECK(reply.at("tried") == 4);
+  CHECK(reply.at("train_replays") == 32);
+  CHECK(reply.at("uncovered_from") == boost::json::value("2024-12-02"));
+  double product = 1;
+  std::size_t tests = 0;
+  for (std::size_t k = 0; k < folds.size(); ++k) {
+    const auto& fold = folds[k].as_object();
+    INFO(k << " " << boost::json::serialize(fold));
+    const std::string month = k < 6 ? "0" + std::to_string(k + 4) : std::to_string(k + 4);
+    CHECK(std::string(fold.at("test_from").as_string()).substr(0, 7) == "2024-" + month);
+    if (!fold.at("test_index").is_null()) {
+      const auto line = reply_of(one_lines[fold.at("test_index").to_number<std::size_t>()]);
+      CHECK(line.at("window").at("role") == boost::json::value("test"));
+      CHECK(line.at("params") == fold.at("params"));
+      product *= 1 + fold.at("test_total_return").to_number<double>();
+      ++tests;
+    }
+  }
+  REQUIRE(one_lines.size() == 32 + tests + 1);
+  if (reply.at("chained_null_reason").is_null()) {
+    CHECK(std::abs(reply.at("chained").at("total_return").to_number<double>() - (product - 1)) < 1e-8);
+  }
+  CHECK(reply_of(many_lines.back()).at("folds") == reply.at("folds"));
+  CHECK(reply_of(many_lines.back()).at("chained") == reply.at("chained"));
+  one_lines.pop_back();
+  many_lines.pop_back();
+  CHECK(one_lines == many_lines);
+}
+
 TEST_CASE(
   "strategy backtest's settings: limits, parameters, overrides, a program alone, --fills, warnings and failures",
   "[acceptance]"
