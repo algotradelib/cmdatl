@@ -94,7 +94,7 @@ inline double final_level(const algotradelib::backtest::MeasureInput& in) {
 
 - Each is defined in the header (`inline`), callable as `double NAME(const algotradelib::backtest::MeasureInput&)`, and reads the replay, its report and the curve's levels and returns from the library's input; the header includes `<algotradelib/backtest>` itself.
 - Each name is a C++ identifier of at most 64 characters, not starting with `cmdatl_`, at most 64 names, none twice; a namespaced function is named through a `using` in the header.
-- A name that cannot be called so fails the build (`build.failed`), the message starting with the compiler's line `measures: NAME must be callable as double(const algotradelib::backtest::MeasureInput&)`.
+- A name that cannot be called so fails the build (`build.failed`), and the compiler's first error in the message says `measures: NAME must be callable as double(const algotradelib::backtest::MeasureInput&)`.
 - A value that is not finite is null; a measure that throws fails the backtest (`replay.failed`, naming it for a `std::exception`), and no `--fills` or `--equity` file is written.
 - A measure computes from its input and returns: it never writes to stdout or changes process-wide state (the locale, the floating-point environment); if replays ever run on threads, it must also be thread-safe.
 - Only a backtest computes them: `cmdatl run` accepts the key and computes none.
