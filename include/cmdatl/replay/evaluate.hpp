@@ -145,6 +145,48 @@ struct Task {
   Replay replay_;
   /** @brief What its replays share. */
   std::shared_ptr<const Prepared> prepared_;
+  /** @brief The events fed, when not the prepared ones (a bootstrap path's). */
+  std::shared_ptr<const std::vector<atl::strategy::BarEvent>> events_;
+  /** @brief The positions of the events fed, `[first_, last_)`, all of them by default. */
+  std::size_t first_{0}, last_{std::numeric_limits<std::size_t>::max()};
+  /** @brief Where trading starts, for a replay fed history first. */
+  std::optional<std::chrono::system_clock::time_point> trade_from_;
+};
+
+/**
+ * @brief A part of a vector, as a range.
+ * @tparam T The element.
+ */
+template <typename T>
+struct Part {
+  /** @brief The first element and one past the last. */
+  const T *begin_, *end_;
+  /**
+   * @brief The first.
+   * @return It.
+   */
+  const T* begin() const {
+    return begin_;
+  }
+  /**
+   * @brief One past the last.
+   * @return It.
+   */
+  const T* end() const {
+    return end_;
+  }
+};
+
+/** @brief A refusal of an evaluation before any replay (`evaluate.refused`), with the key to change. */
+struct Refused : std::invalid_argument {
+  /**
+   * @brief Takes the message and what to do.
+   * @param message The message.
+   * @param next The key to change.
+   */
+  Refused(const std::string& message, std::string next) : std::invalid_argument(message), next_(std::move(next)) {}
+  /** @brief The key to change. */
+  std::string next_;
 };
 
 /** @brief The replays of a grid on one loaded data set, handed out by an atomic counter. */
@@ -213,6 +255,26 @@ inline std::string params_json(const std::vector<std::pair<std::string, std::str
 }
 
 /**
+ * @brief `report_json`'s text on one line: every newline is structural (`quoted` escapes them in strings), dropped with
+ *   the indent after it.
+ * @param report The text.
+ * @return The line.
+ */
+inline std::string one_line(const std::string& report) {
+  std::string out;
+  for (std::size_t at = 0; at < report.size(); ++at) {
+    if (report[at] != '\n') {
+      out.push_back(report[at]);
+      continue;
+    }
+    while (at + 1 < report.size() && report[at + 1] == ' ') {
+      ++at;
+    }
+  }
+  return out;
+}
+
+/**
  * @brief A replay's JSON line: `index`, `params`, `window`, `path`, then `report` (`report_json`'s text on one line)
  *   or `"report":null` and `failure`.
  * @param replay The replay.
@@ -227,7 +289,8 @@ inline std::string line_of(
   out += ",\"window\":";
   if (const auto& w = replay.window_) {
     out += "{\"fold\":" + std::to_string(w->fold_) + ",\"role\":" + quoted(w->role_) + ",\"warm_from\":" +
-      quoted(iso(w->warm_from_)) + ",\"from\":" + quoted(iso(w->from_)) + ",\"to\":" + quoted(iso(w->to_)) + "}";
+      (w->warm_from_ ? quoted(iso(*w->warm_from_)) : "null") + ",\"from\":" + quoted(iso(w->from_)) +
+      ",\"to\":" + quoted(iso(w->to_)) + ",\"periods\":" + std::to_string(w->periods_) + "}";
   } else {
     out += "null";
   }
@@ -235,7 +298,9 @@ inline std::string line_of(
   if (const auto& p = replay.path_) {
     out += "{\"number\":" + std::to_string(p->number_) +
       ",\"seed\":" + (p->seed_ ? std::to_string(*p->seed_) : std::string("null")) +
-      ",\"id\":" + (p->id_ ? quoted(*p->id_) : std::string("null")) + "}";
+      ",\"id\":" + (p->id_ ? quoted(*p->id_) : std::string("null")) +
+      (p->drawn_ ? ",\"scheme\":" + quoted(p->drawn_->first) + ",\"block\":" + std::to_string(p->drawn_->second) : "") +
+      "}";
   } else {
     out += "null";
   }
@@ -244,17 +309,7 @@ inline std::string line_of(
     return out + "null,\"failure\":{\"kind\":\"" + (failure->first == ReplayStage::PARAMS ? "params" : "replay") +
       "\",\"message\":" + quoted(failure->second) + "}}";
   }
-  // Every newline of the report is structural (`quoted` escapes them in strings): dropped with the indent after it.
-  for (std::size_t at = 0; at < report->size(); ++at) {
-    if ((*report)[at] != '\n') {
-      out.push_back((*report)[at]);
-      continue;
-    }
-    while (at + 1 < report->size() && (*report)[at + 1] == ' ') {
-      ++at;
-    }
-  }
-  return out + "}";
+  return out + one_line(*report) + "}";
 }
 
 /**
@@ -280,11 +335,13 @@ auto finish_one(const Settings& s, Task task, Fills& fills_of, const Measures& m
   std::string message;
   try {
     const auto& prepared = *task.prepared_;
-    outcome.emplace(
-      replay_one<Strategy>(
-        s, prepared, prepared.events_, prepared.config_, done.replay_, fills_of, measures, keep, stage
-      )
-    );
+    const auto& all = task.events_ ? *task.events_ : prepared.events_;
+    const Part<atl::strategy::BarEvent> part{
+      all.data() + std::min(task.first_, all.size()), all.data() + std::min(task.last_, all.size())
+    };
+    auto config = prepared.config_;
+    config.trade_from_ = task.trade_from_;
+    outcome.emplace(replay_one<Strategy>(s, prepared, part, config, done.replay_, fills_of, measures, keep, stage));
   } catch (const std::bad_alloc&) {
     throw;
   } catch (const std::exception& e) {
@@ -470,8 +527,14 @@ inline void choose(
   }
 }
 
+template <typename Strategy, typename Fills, typename Measures>
+int loops_main(
+  const Settings& s, const std::string& method, Fills& fills_of, const Measures& measures, std::size_t jobs,
+  const std::optional<std::string>& objective, const std::string& direction, const RunnerHooks& hooks
+);
+
 /**
- * @brief Evaluates a compiled strategy on many replays (`evaluate.method=grid`): the replays of `grid.NAME` settings
+ * @brief Evaluates a compiled strategy on many replays (`evaluate.method=grid`, or a method of `loops.hpp`): the replays of `grid.NAME` settings
  *   on the data loaded once, run `evaluate.jobs` at once, one JSON line each in index order, then
  *   `{"summary":{...}}`; a failure that ends the batch prints `{"stopped":{"code":...,"message":...}}` and an `error:`
  *   line on standard error instead of the summary.
@@ -486,15 +549,18 @@ inline void choose(
  */
 template <typename Strategy, typename Fills, typename Measures>
 int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, int input, const RunnerHooks* hooks) {
-  const auto stopped = [](const std::string& message) {
-    std::cout << "{\"stopped\":{\"code\":\"replay.failed\",\"message\":" << quoted(message) << "}}\n";
+  const auto stopped = [](const std::string& message, const std::string& next = {}) {
+    std::cout
+      << "{\"stopped\":{\"code\":\"" << (next.empty() ? "replay.failed" : "evaluate.refused")
+      << "\",\"message\":" << quoted(message) << (next.empty() ? "" : ",\"next\":" + quoted(next)) << "}}\n";
     std::cout.flush();
     std::cerr << "error: " << message << '\n';
     return 1;
   };
   try {
-    if (s.get_or("evaluate.method", "") != "grid") {
-      throw std::invalid_argument("evaluate.method is grid, not '" + s.get_or("evaluate.method", "") + "'");
+    const auto method = s.get_or("evaluate.method", "");
+    if (method != "grid" && method != "windows" && method != "bootstrap") {
+      throw std::invalid_argument("evaluate.method is grid, windows or bootstrap, not '" + method + "'");
     }
     const auto jobs = whole_of(s.get_or("evaluate.jobs", "1"), "evaluate.jobs");
     if (jobs < 1 || jobs > 256) {
@@ -513,6 +579,12 @@ int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, 
     }
     if (direction != "max" && direction != "min") {
       throw std::invalid_argument("evaluate.direction is max or min, not '" + direction + "'");
+    }
+    if (method != "grid") {
+      return loops_main<Strategy>(
+        s, method, fills_of, measures, static_cast<std::size_t>(jobs), objective, direction,
+        hooks == nullptr ? RunnerHooks{} : *hooks
+      );
     }
     auto grid = grid_of(s);
     const auto sets = set_count(grid);
@@ -572,6 +644,8 @@ int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, 
     std::cout << o.str() << "}}\n";
     std::cout.flush();
     return std::cout ? 0 : 1;
+  } catch (const Refused& e) {
+    return stopped(e.what(), e.next_);
   } catch (const std::exception& e) {
     return stopped(e.what());
   } catch (...) {
@@ -583,3 +657,6 @@ int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, 
 } // namespace cmdatl
 
 #include "./stdin.hpp"
+
+// The methods `evaluate_main` hands every `evaluate.method` but `grid` to.
+#include "./loops.hpp"
