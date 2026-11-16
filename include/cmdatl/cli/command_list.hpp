@@ -405,30 +405,34 @@ inline std::vector<Command> command_list() {
     .runs([](const Invocation& invocation, const Table&, Output& output) {
       return backtest_reply(invocation, output);
     }));
-  add(make_command({"strategy", "evaluate"}, "Strategy", "replay a program over a grid, windows or bootstrap paths")
+  add(make_command({"strategy", "evaluate"}, "Strategy", "replay a program over a grid, windows, folds or paths")
     .describe(
-      "TARGET and the settings are read as strategy backtest reads them, with [evaluate] and [grid], [windows] or "
-      "[bootstrap] (cmdatl strategy reference run-spec, \"Many replays\"); the backtest's build serves it. Each replay "
-      "is one JSON line, in index order, then the reply; --fields selects in both, --value in the reply only. With "
-      "evaluate.jobs above 1 the program's own C++ must be thread-safe. bars.source = stdin reads the bars from a "
-      "generator's pipe."
+      "TARGET and the settings are read as strategy backtest reads them, with [evaluate] and [grid], [windows], "
+      "[walk_forward] or [bootstrap] (cmdatl strategy reference run-spec, \"Many replays\"); the backtest's build "
+      "serves it. Each replay is one JSON line, in index order, then the reply; --fields selects in both, --value in "
+      "the reply only. With evaluate.jobs above 1 the program's own C++ must be thread-safe. bars.source = stdin reads "
+      "the bars from a generator's pipe."
     )
     .example("cmdatl strategy evaluate dip.toml grid.lookback=10,20,30")
     .example("cmdatl strategy evaluate dip.toml grid.lookback=10,20,30 evaluate.objective=total_return evaluate.jobs=4")
     .example("cmdatl strategy evaluate dip.toml grid.lookback=10,20 --fields index,params,report.total_return,best")
     .example("cmdatl strategy evaluate dip.toml bars.source=stdin bars.path_column=path")
     .example("cmdatl strategy evaluate dip.toml evaluate.method=windows windows.length=1y windows.step=3mo")
+    .example(
+      "cmdatl strategy evaluate dip.toml evaluate.method=walk-forward walk_forward.train=2y walk_forward.test=6mo "
+      "grid.lookback=10,20,30 evaluate.objective=sharpe_annualized"
+    )
     .example("cmdatl strategy evaluate dip.toml evaluate.method=bootstrap bootstrap.block=10 bootstrap.seed=7")
     .arg("TARGET", "a program (.atls), a run spec, or both")
     .arg("SETTING", "KEY=VALUE with a dotted key (grid.lookback=10,20,30), before or after TARGET", false, true)
     .streams("index", "a line's replay, from 0, in the order the grid gives")
     .streams("params", "the grid's values of this replay, by name")
-    .streams("window", "windows: fold, role, warm_from, from, to and periods of the window replayed; else null")
+    .streams("window", "windows, walk-forward: fold, role, warm_from, from, to and periods of the window; else null")
     .streams("path", "stdin: number, seed (null), id (the bars.path_column cell); bootstrap: number (0 the history), "
       "seed, id (null), scheme, block; else null")
     .streams("report", "the replay's report, as strategy backtest gives it, or null")
     .streams("failure", "without a report: kind (params, when the bounds refused the set, or replay) and message")
-    .returns("method", "grid, windows or bootstrap")
+    .returns("method", "grid, windows, walk-forward or bootstrap")
     .returns("jobs", "the replays run at once")
     .returns("param_sets", "the grid's parameter sets")
     .returns("invalid", "the sets the program's bounds refused")
@@ -439,19 +443,35 @@ inline std::vector<Command> command_list() {
     .returns("objective", "evaluate.objective, or null")
     .returns("direction", "max or min with an objective, else null")
     .returns("best", "index, params and value of the best replay by the objective, or null (always with stdin)")
-    .returns("scheme", "windows: rolling or expanding; bootstrap: circular, moving or stationary")
+    .returns("scheme", "windows and walk-forward: rolling or expanding; bootstrap: circular, moving or stationary")
     .returns("length", "windows: windows.length as written")
     .returns("step", "windows: windows.step as written, or the length")
     .returns("warmup", "windows: windows.warmup as written, or the program's warm-up in periods")
     .returns("windows", "windows: the windows replayed")
-    .returns("uncovered_from", "windows: the date of the first period after the last window, or null")
+    .returns("uncovered_from", "windows, walk-forward: the first period's date after the last window or test, or null")
     .returns("halted", "windows and bootstrap: the replays that halted")
     .returns("summary", "windows: defined, null, mean, min, q05, q25, median, q75, q95 and max of each figure")
     .returns("block", "bootstrap: the block length in periods")
     .returns("seed", "bootstrap: the seed, as given or drawn")
     .returns("history", "bootstrap: path 0's figures, or null")
-    .returns("warnings", "bootstrap: block_below_lookback when the block is shorter than the program's warm-up")
+    .returns(
+      "warnings",
+      "bootstrap: block_below_lookback when the block is shorter than the program's warm-up; walk-forward: "
+      "chain_unavailable and its message when the chain could not be made"
+    )
     .returns("intervals", "bootstrap: each metric of bootstrap.intervals: level, lower, median, upper, defined, null")
+    .returns("train", "walk-forward: walk_forward.train as written")
+    .returns("test", "walk-forward: walk_forward.test as written")
+    .returns("train_replays", "walk-forward: folds x tried, the trials a selection-bias correction counts")
+    .returns(
+      "folds",
+      "walk-forward: per fold train_from, train_to, test_from, test_to, train_periods, test_periods, eligible, chosen "
+      "(grid index or null), params, objective_value, test_index, test_total_return, test_max_drawdown, test_halted"
+    )
+    .returns("chained", "walk-forward: the tests chained into one report, measures included, or null")
+    .returns(
+      "chained_null_reason", "walk-forward: unchosen, failed, halted, empty, insolvent or chain_unavailable; else null"
+    )
     .returns("spec", "the run spec, absolute, or null when no spec is given")
     .returns("program", "the program, absolute")
     .returns("settings_given", "the KEY=VALUE settings given")

@@ -20,7 +20,9 @@ inline const std::vector<std::string> EVALUATE_SUMMARY{
   "method", "jobs", "param_sets", "invalid", "tried", "replays", "paths", "failed", "objective", "direction", "best",
   // windows and bootstrap
   "scheme", "length", "step", "warmup", "windows", "uncovered_from", "halted", "summary", "block", "seed", "history",
-  "warnings", "intervals"
+  "warnings", "intervals",
+  // walk-forward
+  "train", "test", "train_replays", "folds", "chained", "chained_null_reason"
 };
 
 /** @brief The codes a driver's stop line may give the reply; any other stop is `replay.failed`. */
