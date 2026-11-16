@@ -1779,6 +1779,62 @@ TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by t
   CHECK(cli_value("grid.lookback=[ 10 , 20 ]") == "10,20");
 }
 
+TEST_CASE("walk-forward's keys: lengths of one kind in periods or spans; a grid of two sets; an objective") {
+  const std::string walk = "[evaluate]\nmethod = \"walk-forward\"\nobjective = \"total_return\"\n";
+  const std::string two = "[grid]\nlookback = [10, 20]\n";
+  const auto ok =
+    evaluate(WIDE_SPEC + walk + two + "[walk_forward]\nscheme = \"expanding\"\ntrain = \"3y\"\ntest = \"6mo\"\n");
+  REQUIRE(ok.errors_.empty());
+  CHECK(ok.arg("evaluate.method") == std::optional<std::string>("walk-forward"));
+  CHECK(ok.arg("walk_forward.scheme") == std::optional<std::string>("expanding"));
+  CHECK(ok.arg("walk_forward.train") == std::optional<std::string>("3y"));
+  CHECK(ok.arg("walk_forward.test") == std::optional<std::string>("6mo"));
+  const auto periods = evaluate(WIDE_SPEC + walk + two + "[walk_forward]\ntrain = 252\ntest = 21\n");
+  REQUIRE(periods.errors_.empty());
+  CHECK(periods.arg("walk_forward.train") == std::optional<std::string>("252"));
+  const auto line = evaluate(
+    WIDE_SPEC + walk, sp::Purpose::EVALUATE, {"walk_forward.train=2w", "walk_forward.test=10d", "grid.lookback=1,2"}
+  );
+  REQUIRE(line.errors_.empty());
+  CHECK(line.arg("walk_forward.test") == std::optional<std::string>("10d"));
+  for (
+    const auto* bad :
+    {"\"0y\"", "\"252\"", "\"1.5y\"", "\"3Y\"", "\"100000d\"", "\"01y\"", "1", "2.5", "-3", "1000000001"}
+  ) {
+    CHECK(has(
+      one_error(WIDE_SPEC + "[walk_forward]\ntrain = " + bad + "\n"),
+      "`walk_forward.train` is a whole number written as an integer, 2 or more, or a span such as \"10d\""
+    ));
+  }
+  CHECK(has(cli_error("walk_forward.test=1.5y"), "`walk_forward.test` is a whole number written as an integer"));
+  CHECK(has(
+    grid_error(walk + two + "[walk_forward]\ntrain = 252\ntest = \"1mo\"\n"),
+    "give walk_forward.train and walk_forward.test both as periods or both as spans"
+  ));
+  CHECK(has(
+    grid_error(walk + two + "[walk_forward]\ntrain = 252\n"),
+    "evaluate.method = \"walk-forward\" needs walk_forward.train and walk_forward.test"
+  ));
+  const std::string lengths = "[walk_forward]\ntrain = 20\ntest = 5\n";
+  CHECK(has(
+    grid_error("[evaluate]\nmethod = \"walk-forward\"\n" + two + lengths), "walk-forward chooses by evaluate.objective"
+  ));
+  CHECK(has(grid_error(walk + lengths), "nothing to choose: give [grid] two parameter sets or more, or use windows"));
+  CHECK(has(grid_error(walk + "[grid]\nlookback = [10]\n" + lengths), "nothing to choose"));
+  // A bad grid is reported as such, not also as one with nothing to choose.
+  CHECK(has(grid_error(walk + "[grid]\nnope = [1, 2]\n" + lengths), "the program has no parameter `nope` for a grid"));
+  // Under another method each key of [walk_forward] is refused.
+  const auto other = evaluate(WIDE_SPEC + lengths);
+  REQUIRE(other.errors_.size() == 2);
+  CHECK(has(other.errors_[0], "`walk_forward.train` is for evaluate.method = \"walk-forward\""));
+  CHECK(has(other.errors_[1], "`walk_forward.test` is for evaluate.method = \"walk-forward\""));
+  for (const auto purpose : {sp::Purpose::BACKTEST, sp::Purpose::RUN}) {
+    const auto refused = evaluate(WIDE_SPEC + "[walk_forward]\ntrain = 20\n", purpose);
+    REQUIRE(refused.errors_.size() == 1);
+    CHECK(has(refused.errors_[0], "`walk_forward.train` is an evaluation's key: use cmdatl strategy evaluate"));
+  }
+}
+
 TEST_CASE("an evaluation's ranges are exact decimals, each value read as the replay reads it, within the caps") {
   CHECK(
     evaluate(WIDE_SPEC + "[grid.entry]\nfrom = 0.1\nto = 0.3\nstep = 0.1\n").arg("grid.entry") ==

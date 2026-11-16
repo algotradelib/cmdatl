@@ -176,7 +176,7 @@ inline const std::vector<Key>& keys() {
     {"orders.offset", Kind::FRACTION, {}, {}},
     {"build.duckdb", Kind::PATH, {}, {}},
     {"build.indicators", Kind::CHOICE, {}, {"incremental", "naive", "exact"}},
-    {"evaluate.method", Kind::CHOICE, {}, {"grid", "windows", "bootstrap"}},
+    {"evaluate.method", Kind::CHOICE, {}, {"grid", "windows", "walk-forward", "bootstrap"}},
     {"evaluate.jobs", Kind::COUNT, {}, {}},
     {"evaluate.objective", Kind::TEXT, {}, {}},
     {"evaluate.direction", Kind::CHOICE, {}, {"max", "min"}},
@@ -184,6 +184,9 @@ inline const std::vector<Key>& keys() {
     {"windows.length", Kind::LENGTH, {}, {}, 2},
     {"windows.step", Kind::LENGTH, {}, {}, 1},
     {"windows.warmup", Kind::LENGTH, {}, {}, 0},
+    {"walk_forward.scheme", Kind::CHOICE, {}, {"rolling", "expanding"}},
+    {"walk_forward.train", Kind::LENGTH, {}, {}, 2},
+    {"walk_forward.test", Kind::LENGTH, {}, {}, 2},
     {"bootstrap.scheme", Kind::CHOICE, {}, {"circular", "moving", "stationary"}},
     {"bootstrap.block", Kind::COUNT, {}, {}, 1},
     {"bootstrap.paths", Kind::COUNT, {}, {}, 1},
@@ -2072,7 +2075,9 @@ inline std::vector<Error> resolve(
   if (purpose != Purpose::EVALUATE) {
     for (const auto& e : merged) {
       const auto table = e.key_.substr(0, e.key_.find('.'));
-      if (table == "evaluate" || table == "grid" || table == "windows" || table == "bootstrap") {
+      if (
+        table == "evaluate" || table == "grid" || table == "windows" || table == "walk_forward" || table == "bootstrap"
+      ) {
         errors.push_back(Error::at(e.origin_, "`" + e.key_ + "` is an evaluation's key: use cmdatl strategy evaluate"));
       }
     }
@@ -2103,20 +2108,23 @@ inline std::vector<Error> resolve(
         )
       );
     }
+    const auto listed = errors.size();
     read_grid(merged, program, grid, errors);
+    const bool grid_read = errors.size() == listed;
     // The method's own table only; then what the method needs of the settings and the program.
     const auto method = text("evaluate.method").value_or("grid");
     for (const auto& e : merged) {
       const auto table = e.key_.substr(0, e.key_.find('.'));
-      if ((table == "windows" || table == "bootstrap") && table != method) {
-        errors.push_back(Error::at(e.origin_, "`" + e.key_ + "` is for evaluate.method = \"" + table + "\""));
+      const auto owner = table == "walk_forward" ? std::string("walk-forward") : table;
+      if ((table == "windows" || table == "walk_forward" || table == "bootstrap") && owner != method) {
+        errors.push_back(Error::at(e.origin_, "`" + e.key_ + "` is for evaluate.method = \"" + owner + "\""));
       }
     }
     const auto span = [&get](const char* key) {
       const auto* e = get(key);
       return e != nullptr && e->value_.type_ == Value::Type::STR;
     };
-    if (method != "grid" && (!grid.empty() || source == "stdin")) {
+    if (method != "grid" && ((method != "walk-forward" && !grid.empty()) || source == "stdin")) {
       errors.push_back(
         Error::nowhere(
           method +
@@ -2135,6 +2143,26 @@ inline std::vector<Error> resolve(
     }
     if (method == "windows" && sub_daily && get("windows.warmup") == nullptr) {
       errors.push_back(Error::nowhere("on intraday bars the warm-up is yours to give: set windows.warmup"));
+    }
+    // Walk-forward: train and test of one kind; two sets or more, and the objective to choose by.
+    std::size_t sets = 1;
+    for (const auto& g : grid) {
+      sets *= static_cast<std::size_t>(std::count(g.second.begin(), g.second.end(), ',')) + 1;
+    }
+    if (method == "walk-forward" && (get("walk_forward.train") == nullptr || get("walk_forward.test") == nullptr)) {
+      errors.push_back(
+        Error::nowhere("evaluate.method = \"walk-forward\" needs walk_forward.train and walk_forward.test")
+      );
+    } else if (method == "walk-forward" && span("walk_forward.train") != span("walk_forward.test")) {
+      errors.push_back(
+        at("walk_forward.test", "give walk_forward.train and walk_forward.test both as periods or both as spans")
+      );
+    }
+    if (method == "walk-forward" && get("evaluate.objective") == nullptr) {
+      errors.push_back(Error::nowhere("walk-forward chooses by evaluate.objective"));
+    }
+    if (method == "walk-forward" && grid_read && sets < 2) {
+      errors.push_back(Error::nowhere("nothing to choose: give [grid] two parameter sets or more, or use windows"));
     }
     if (method == "bootstrap") {
       // A path rebuilds daily closes only: nothing a program could read of a bar's open, high or low, or of data {}.
