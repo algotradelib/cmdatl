@@ -366,11 +366,21 @@ void run_replays(Source& source, std::size_t jobs, Work& work, Sink& sink, const
         task.reset();
         {
           const std::lock_guard<std::mutex> lock(mutex);
+          if (stop) {
+            return;
+          }
           ring[index % window] = std::move(done);
-          for (auto* slot = &ring[next_to_print % window]; slot->has_value(); slot = &ring[next_to_print % window]) {
-            sink(std::move(**slot));
-            slot->reset();
+          // Each value leaves its slot before the sink sees it; a sink that throws stops the batch under the lock.
+          while (ring[next_to_print % window]) {
+            auto current = std::move(*ring[next_to_print % window]);
+            ring[next_to_print % window].reset();
             ++next_to_print;
+            try {
+              sink(std::move(current));
+            } catch (...) {
+              stop = true;
+              throw;
+            }
           }
         }
         wake.notify_all();
