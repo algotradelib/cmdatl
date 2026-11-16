@@ -481,6 +481,7 @@ On each fold, every parameter set of `[grid]` is replayed on the training window
 - `walk_forward.train` and `walk_forward.test` are both periods or both spans.
 - With spans ("Lengths"), fold `k` tests from the anchor plus `train` and `k` times `test` to the anchor plus `train` and `k + 1` times `test`; a rolling training window starts at the anchor plus `k` times `test`.
 - A `[grid]` of two parameter sets or more and `evaluate.objective` are required; `evaluate.direction` is as above.
+- `bars.source = "stdin"` is refused: walk-forward replays loaded bars.
 - There is no step: another step would leave gaps or overlaps between the tests, and the chain would not be one strategy's history.
 - Training: each set on each training window, from its first bar with no history (the program's warm-up spends the window's first bars, as a backtest of those dates would); with `S` sets, replay `k * S + g` is set `g` on fold `k`.
 - The choice: per fold, the set with the best objective among the replays with a report, not halted and with a defined value, a tie going to the lower set; a fold with no such set has `chosen: null` and no test.
