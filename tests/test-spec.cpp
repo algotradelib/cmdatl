@@ -603,6 +603,7 @@ TEST_CASE("command-line values are typed by their key, never read as TOML values
   CHECK(has(cli_error("params.lookback=ten"), "is a number or a boolean, not \"ten\""));
   CHECK(has(cli_error("strategy.x=1"), "unknown setting `strategy.x`"));
   CHECK(has(cli_error("output.fills=/tmp/f.csv"), "unknown setting `output.fills`"));
+  CHECK(has(cli_error("output.equity=/tmp/e.csv"), "unknown setting `output.equity`"));
   CHECK(has(cli_error("run.id=r0123456789ab"), "unknown setting `run.id`"));
   CHECK(has(cli_error("build.algotradelib=/opt"), "cmdatl builds against the algotradelib it was built with"));
   CHECK(cli_error("replay.cash=1e8").empty());
@@ -1266,7 +1267,8 @@ TEST_CASE("the driver's arguments are bounded and only ever settings' keys") {
   const auto too_many = run(many, universe);
   REQUIRE(too_many.errors_.size() == 1);
   CHECK(has(too_many.errors_.front(), "more than 1000"));
-  // Whatever is given, the arguments' keys are settings' keys: never the driver's own run.id or output.fills.
+  // Whatever is given, the arguments' keys are settings' keys: never the driver's own run.id, output.fills or
+  // output.equity.
   const auto every = run(
     WIDE_SPEC +
       "[replay]\nmarket = \"kr\"\ncash = 1\n[orders]\ntype = \"limit\"\noffset = 0.01\n[instruments]\na = \"A\"\n",
@@ -1277,6 +1279,7 @@ TEST_CASE("the driver's arguments are bounded and only ever settings' keys") {
     INFO(k);
     CHECK(k != "run.id");
     CHECK(k != "output.fills");
+    CHECK(k != "output.equity");
     CHECK((sp::known(k) != nullptr || k.rfind("instrument.", 0) == 0 || k.rfind("param.", 0) == 0));
   }
 }

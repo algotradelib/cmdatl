@@ -674,6 +674,28 @@ std::string rising_bars(int days) {
   return text;
 }
 
+TEST_CASE("replay main: output.equity writes every point of the curve with its return") {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", rising_bars(4));
+  // Bought at the third bar's open (120), valued at its close (125) and the fourth's (135); the library divides to eight
+  // decimal places (50 / 1025 is 0.04878048).
+  runtest::script().decisions_[2] = runtest::Decision{5, "1", true};
+  const auto ran = replay_main<runtest::Program>(
+    {"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "replay.cash=1000",
+      "output.equity=" + dir.at("equity.csv")}
+  );
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  CHECK(
+    slurp(dir.at("equity.csv")) ==
+    "at,equity,period_return\n2020-01-01T00:00:00Z,1000,\n2020-01-02T00:00:00Z,1000,0\n"
+    "2020-01-03T00:00:00Z,1025,0.025\n2020-01-04T00:00:00Z,1075,0.04878048\n"
+  );
+  CHECK(field(ran.out_, "first_bar") == "\"2020-01-01T00:00:00Z\"");
+  CHECK(field(ran.out_, "last_bar") == "\"2020-01-04T00:00:00Z\"");
+}
+
 /** @brief The session program, having met both session edges, as one whose on_open and on_close ran. */
 struct EdgeProgram : runtest::SessionProgram {
   using SessionProgram::SessionProgram;
@@ -827,6 +849,8 @@ TEST_CASE("replay main: the pricing refusals by reason and the refusals before a
       "error: this binary was built without DuckDB (cmdatl builds with it when a spec reads a store)\n"},
     {{"output.fills=" + dir.at("no/such/dir/fills.csv")},
       "error: cannot write " + dir.at("no/such/dir/fills.csv") + "\n"},
+    {{"output.equity=" + dir.at("no/such/dir/equity.csv")},
+      "error: cannot write " + dir.at("no/such/dir/equity.csv") + "\n"},
     {{"noequals"}, "error: expected key=value, got 'noequals'\n"},
   };
   for (const auto& [more, says] : refused) {
@@ -844,9 +868,14 @@ TEST_CASE("replay main: the pricing refusals by reason and the refusals before a
   // With open points but no session edge met, the replay fails instead of reporting a run that traded on nothing.
   auto open_points = base;
   open_points.push_back("bars.open_point=true");
+  open_points.push_back("output.fills=" + dir.at("missed-fills.csv"));
+  open_points.push_back("output.equity=" + dir.at("missed-equity.csv"));
   const auto missed = replay_main<runtest::SessionProgram>(open_points);
   CHECK(missed.exit_ == 1);
   CHECK(missed.err_.find("on_open never ran") != std::string::npos);
+  // The session check comes before the files are written: a failed replay leaves neither behind.
+  CHECK(!std::filesystem::exists(dir.at("missed-fills.csv")));
+  CHECK(!std::filesystem::exists(dir.at("missed-equity.csv")));
 }
 
 TEST_CASE("replay sweep: generated settings and files are read or refused with an exception and nothing else") {

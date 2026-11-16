@@ -596,19 +596,29 @@ TEST_CASE(
     const auto copies = std::filesystem::path(*cmdatl::build::cache_root()).parent_path() / "backtests";
     CHECK((!std::filesystem::exists(copies) || std::filesystem::is_empty(copies)));
   }
-  SECTION("--fills, relative to the working directory") {
+  SECTION("--fills and --equity, relative to the working directory") {
     const InDir here(dir.path() / "work");
-    const auto ran = backtest({at("base.toml"), "--fills", "fills.csv"});
+    const auto ran = backtest({at("base.toml"), "--fills", "fills.csv", "--equity", "equity.csv"});
     REQUIRE(ran.exit_ == 0);
     const auto reply = reply_of(ran.out_);
     CHECK(reply.at("fills").as_string() == (dir.path() / "work" / "fills.csv").string());
+    CHECK(reply.at("equity").as_string() == (dir.path() / "work" / "equity.csv").string());
     CHECK(reply.at("report") == report_of({at("base.toml")}));
+    const auto& report = reply.at("report").as_object();
     const auto fills = slurp(dir.path() / "work" / "fills.csv");
     CHECK(fills.rfind("at,symbol,side,quantity,price,commission,tax\n", 0) == 0);
+    CHECK(static_cast<std::int64_t>(lines_of(fills).size()) == report.at("executions").as_int64() + 1);
+    // One instrument on daily bars: a point per bar valued, from the first_bar to the last_bar the report names.
+    const auto equity = lines_of(slurp(dir.path() / "work" / "equity.csv"));
+    REQUIRE(equity.size() > 2);
+    CHECK(equity.front() == "at,equity,period_return");
     CHECK(
-      static_cast<std::int64_t>(lines_of(fills).size()) ==
-      reply.at("report").as_object().at("executions").as_int64() + 1
+      static_cast<std::int64_t>(equity.size()) ==
+      report.at("bars").as_int64() - report.at("caveats").as_object().at("unvalued_bars").as_int64() + 1
     );
+    CHECK(equity[1].substr(0, equity[1].find(',')) == report.at("first_bar").as_string());
+    CHECK(equity.back().substr(0, equity.back().find(',')) == report.at("last_bar").as_string());
+    CHECK(equity[1].back() == ',');
   }
   SECTION("a warning reaches the reader as progress") {
     spit(at("warn.atls"), program_with_a_warning());

@@ -339,24 +339,27 @@ TEST_CASE(
   spit("s.toml", FAKE_SPEC + "[replay]\ncash = 1_000_000\ncommission = 1.5e-4\n[params]\nlookback = 10\n");
   const auto ran = run(
     {"strategy", "backtest", "params.lookback=30", "s.toml", "replay.market=kr", "--fills", "out/fills.csv",
-      "instruments.stock=005930"}
+      "instruments.stock=005930", "--equity", "out/equity.csv"}
   );
   REQUIRE(ran.exit_ == 0);
   const auto dir = fake.dir().string();
   const auto spec = dir + "/s.toml";
   const auto fills = dir + "/out/fills.csv";
+  const auto equity = dir + "/out/equity.csv";
   CHECK(fake.args("check") == std::vector<std::string>{dir + "/dip.atls", "--info"});
   CHECK(
     fake.args("driver") ==
     std::vector<std::string>{
       "bars.source=wide", "bars.file=" + dir + "/bars.csv", "replay.cash=1000000", "replay.commission=0.00015",
-      "replay.market=kr", "instrument.stock=005930", "param.lookback=30", "output.fills=" + fills
+      "replay.market=kr", "instrument.stock=005930", "param.lookback=30", "output.fills=" + fills,
+      "output.equity=" + equity
     }
   );
   const auto reply = reply_of(ran.out_);
   CHECK(reply.at("spec").as_string() == spec);
   CHECK(reply.at("program").as_string() == dir + "/dip.atls");
   CHECK(reply.at("fills").as_string() == fills);
+  CHECK(reply.at("equity").as_string() == equity);
   CHECK(
     reply.at("settings_given") ==
     boost::json::value(boost::json::array{"params.lookback=30", "replay.market=kr", "instruments.stock=005930"})
@@ -366,7 +369,7 @@ TEST_CASE(
   for (const auto& entry : reply) {
     keys.insert(std::string(entry.key()));
   }
-  CHECK(keys == std::set<std::string>{"env", "report", "spec", "program", "settings_given", "atlc", "fills"});
+  CHECK(keys == std::set<std::string>{"env", "report", "spec", "program", "settings_given", "atlc", "fills", "equity"});
   CHECK(reply.at("report") == boost::json::parse(REPORT));
 }
 
