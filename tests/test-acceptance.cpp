@@ -1510,6 +1510,69 @@ TEST_CASE(
   CHECK_FALSE(std::filesystem::exists(equity));
 }
 
+// Hidden until atlc's published package has `measures {}` (acceptance.sh fails on a skipped case); run it with
+// CMDATL_TEST_ATLC_MEASURES naming such an atlc: `test-cli "[atls-measures]"`. Then it becomes an acceptance case.
+TEST_CASE("a program's measures {} come first in the report, before the run spec's", "[.][atls-measures]") {
+  const auto equip = equipment();
+  const auto atlc = cmdatl::variable("CMDATL_TEST_ATLC_MEASURES");
+  if (!equip || !atlc) {
+    SKIP("CMDATL_TEST_ATLC_MEASURES or CMDATL_TEST_PREFIX is not set: the program's measures were not built");
+  }
+  const Equipped equipped(Equipment{*atlc, equip->prefix_});
+  const ScratchDir dir;
+  const auto plain = report_of({measured_spec(dir, "plain", "")});
+  // The fixture's spec, with the program given measures after measured_spec writes the plain one.
+  const auto with_measures = [&dir](const std::string& name, const std::string& line) {
+    const auto spec = measured_spec(dir, name, line);
+    spit(
+      dir.path() / "buy.atls",
+      "on_bar {\n  target(1);\n}\nmeasures {\n  real total = cum_last(equity) / cum_first(equity) - 1;\n"
+      "  real one = 1;\n}\n"
+    );
+    return spec;
+  };
+  auto report = report_of({with_measures("both", "measures = ['total_again']")});
+  const auto measures = report.as_object().at("measures").as_object();
+  std::vector<std::string> keys;
+  for (const auto& entry : measures) {
+    keys.emplace_back(entry.key());
+  }
+  CHECK(keys == std::vector<std::string>{"total", "one", "total_again"});
+  CHECK(measures.at("total").to_number<double>() == measures.at("total_again").to_number<double>());
+  CHECK(measures.at("one").to_number<double>() == 1);
+  report.as_object().erase("measures");
+  CHECK(report == plain);
+  // A spec measure named like the program's is refused before anything is built.
+  const auto clash = backtest({with_measures("clash", "measures = ['one']")});
+  CHECK(clash.exit_ == 2);
+  CHECK(code_of(clash.out_) == "spec.invalid");
+  CHECK(
+    reply_of(clash.out_).at("error").as_object().at("message").as_string() ==
+    "`measures`: \"one\" is the program's own measure"
+  );
+  // A program's measure that throws fails the replay as the spec's does, naming it.
+  const auto fills = dir.path() / "fills.csv";
+  const auto thrower = measured_spec(dir, "thrower", "");
+  spit(
+    dir.path() / "measures.hpp",
+    slurp(dir.path() / "measures.hpp") +
+      "\nnamespace atls::user {\ninline double boom(double) {\n  throw std::runtime_error(\"deliberately\");\n}\n}\n"
+  );
+  spit(
+    dir.path() / "buy.atls",
+    "functions {\n  extern real boom(real x);\n}\non_bar {\n  target(1);\n}\n"
+    "measures {\n  real b = cum_mean(boom(ret));\n}\n"
+  );
+  const auto threw = backtest({thrower, "--fills", fills.string()});
+  CHECK(threw.exit_ == 1);
+  CHECK(code_of(threw.out_) == "replay.failed");
+  CHECK(
+    std::string(reply_of(threw.out_).at("error").as_object().at("message").as_string())
+      .find("the measure b threw: deliberately") != std::string::npos
+  );
+  CHECK_FALSE(std::filesystem::exists(fills));
+}
+
 TEST_CASE("a program's extern function and indicator come from the run spec's header", "[acceptance]") {
   const auto equip = equipment();
   if (!equip) {

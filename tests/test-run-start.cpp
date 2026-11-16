@@ -202,6 +202,38 @@ TEST_CASE("a backtest's program header checks each measure in one line and lists
   CHECK(run.find("#include <vector>") == std::string::npos);
 }
 
+TEST_CASE("a backtest's program header lists the program's measures first, called on Program; a run's none") {
+  build::Request request;
+  request.struct_ = "Dip";
+  request.kind_ = build::DriverKind::BACKTEST;
+  request.program_measures_ = {"total", "cmdatl_x"};
+  request.measures_ = {"calmar"};
+  const auto text = build::program_header(request);
+  const auto total = text.find(
+    "    {\"total\", [](const algotradelib::backtest::MeasureInput& cmdatl_input) -> double {\n"
+    "      return Program::measure_total(cmdatl_input);\n    }},\n"
+  );
+  REQUIRE(total != std::string::npos);
+  const auto other = text.find("    {\"cmdatl_x\", [](", total);
+  REQUIRE(other != std::string::npos);
+  CHECK(text.find("    {\"calmar\", [](", other) != std::string::npos);
+  // Only the spec's measure is checked: atlc writes the program's signature.
+  CHECK(
+    text.find("cmdatl_call_0 = [](const auto& cmdatl_input) -> decltype(calmar(cmdatl_input))") != std::string::npos
+  );
+  CHECK(text.find("cmdatl_call_1") == std::string::npos);
+  CHECK(text.find("measures: total") == std::string::npos);
+  // The program's alone make a table without checks.
+  request.measures_.clear();
+  const auto alone = build::program_header(request);
+  CHECK(alone.find("static_assert") == std::string::npos);
+  CHECK(alone.find("Program::measure_cmdatl_x(cmdatl_input)") != std::string::npos);
+  request.kind_ = build::DriverKind::RUN;
+  const auto run = build::program_header(request);
+  request.program_measures_.clear();
+  CHECK(run == build::program_header(request));
+}
+
 TEST_CASE("the program's header is in the shape's key by its path and bytes, and nothing else changes without it") {
   const ScratchDir dir;
   const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
@@ -305,6 +337,17 @@ TEST_CASE("a backtest's measures are in the shape's key by name and order, and a
   CHECK(shapes().size() == 5);
   request.measures_ = {"a", "b"};
   CHECK(shapes().size() == 5);
+  // The program's names before the `|`: alone, with the spec's, and never in a run's key.
+  request.program_measures_ = {"p"};
+  request.measures_.clear();
+  CHECK(shapes().count(name({"backtest", "measures=p|"})) == 1);
+  request.measures_ = {"a", "b"};
+  CHECK(shapes().count(name({"backtest", "measures=p|a;b"})) == 1);
+  request.program_measures_ = {"p", "q"};
+  CHECK(shapes().count(name({"backtest", "measures=p;q|a;b"})) == 1);
+  CHECK(shapes().size() == 8);
+  request.kind_ = build::DriverKind::RUN;
+  CHECK(shapes().size() == 8);
 }
 
 TEST_CASE("a failed driver build's message leads with its first error, colored or not, then the tail as it was") {

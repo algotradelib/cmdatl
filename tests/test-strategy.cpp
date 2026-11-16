@@ -379,6 +379,27 @@ TEST_CASE(
   CHECK(reply.at("report") == boost::json::parse(REPORT));
 }
 
+TEST_CASE("the backtest takes the program's measures from atlc and refuses a spec measure of the same name") {
+  const Watchdog watchdog("the program's measures", 60);
+  auto info = INFO_OK;
+  const std::string params = R"("params":[{"name":"lookback","type":"int"}])";
+  info.replace(info.find(params), params.size(), params + R"(,"measures":[{"name":"total","type":"real"}])");
+  const FakeAtlc fake("check out " + info + "\ndriver args\ndriver out " + REPORT + "\n");
+  spit("other.toml", "strategy = 'dip.atls'\nmeasures = ['calmar']\n[bars]\nfile = 'bars.csv'\n");
+  CHECK(run({"strategy", "backtest", "other.toml"}).exit_ == 0);
+  CHECK(!fake.args("driver").empty());
+  std::filesystem::remove(fake.dir() / "script.driver.args");
+  spit("clash.toml", "strategy = 'dip.atls'\nmeasures = ['calmar', 'total']\n[bars]\nfile = 'bars.csv'\n");
+  const auto clash = run({"strategy", "backtest", "clash.toml"});
+  CHECK(clash.exit_ == 2);
+  CHECK(code_of(clash.out_) == "spec.invalid");
+  const auto reply = reply_of(clash.out_);
+  const auto& error = reply.at("errors").as_array().at(0).as_object();
+  CHECK(error.at("line").as_int64() == 2);
+  CHECK(error.at("message").as_string() == "`measures`: \"total\" is the program's own measure");
+  CHECK(fake.args("driver").empty());
+}
+
 TEST_CASE("the backtest refuses --fills and --equity naming one file before anything runs") {
   const Watchdog watchdog("one output file", 60);
   const FakeAtlc fake("check out " + INFO_OK + "\ndriver out " + REPORT + "\n");

@@ -101,6 +101,7 @@ inline double final_level(const algotradelib::backtest::MeasureInput& in) {
 - A value that is not finite is null; a measure that throws fails the backtest (`replay.failed`, naming it for a `std::exception`), and no `--fills` or `--equity` file is written.
 - A measure computes from its input and returns: it never writes to stdout or changes process-wide state (the locale, the floating-point environment); if replays ever run on threads, it must also be thread-safe.
 - Only a backtest computes them: `cmdatl run` accepts the key and computes none.
+- A program's own `measures {}` (atls) come first in the report, in its order, then these; a name the program's block holds cannot be named here too (`spec.invalid`, at the key's line).
 
 ### `[bars]`: what is loaded
 
@@ -340,7 +341,7 @@ A store backtest also links DuckDB's prebuilt C library (`duckdb.h` and the shar
 Builds are cached under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`), and CMake decides what to rebuild.
 Parameters, data and replay settings are arguments of the executable, so changing them never rebuilds.
 The program's `header` is compiled with it: its path and its bytes are part of the build's key, so an edited header is built again, and CMake tracks the headers it includes.
-A backtest's `measures` are part of the key too, by name and order, so a changed list builds once.
+A backtest's `measures`, and the names in the program's `measures {}`, are part of the key too, by name and order, so a changed list builds once.
 Two backtests of one program at once share one build and do not wait on each other's replays.
 Each backtest runs a copy of the build from `$XDG_CACHE_HOME/cmdatl/backtests/` and removes it; a killed backtest leaves its copy there, and the directory is safe to delete while no backtest runs.
 
@@ -368,7 +369,7 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 | `pricing_refusal_reasons` | object | each pricing refusal reason with its count, when nonzero: `no_basis_price`, `no_price_grid`, `price_not_representable`, `price_not_positive`, `net_not_representable` |
 | `caveats` | object | `gaps` (bars that did not follow their predecessor), `unfilled` (orders still queued at the end), `expired` (`DAY` orders withdrawn unfilled when their session ended, as they would expire live; on daily bars, after one bar), `unvalued_bars`, `multiple_instruments`, `cost_totals_incomplete`, `volume_ignored` (always true: fills are not capped by volume), `market_price_rule` and `market_fills_by_rule` (the rule named by `replay.fill_function` and the fills it priced, only when one is set), `open_points` (true with `bars.open_point`), `lowest_cash` (the lowest cash a fill left, as a decimal string, when below zero) and `shorts_borrow_nothing` (always true) |
 | `first_bar`, `last_bar` | string | the first and last recorded times, ISO 8601 in UTC; absent when nothing was replayed |
-| `measures` | object | each of the run spec's `measures` with its value, a number or null, in order; only when it names any |
+| `measures` | object | each of the program's `measures {}`, then each of the run spec's `measures`, with its value, a number or null, in order; only when there is any |
 | `warning` | string | only when `--fills` and `--equity` turned out to be one file, which then holds the equity curve |
 
 A number is printed with ten significant digits; a figure the library leaves undefined (a return on zero equity, a ratio without variance) is null.

@@ -431,6 +431,8 @@ struct Request {
   std::string fill_function_{};
   /** @brief The program's own C++ header (`header`), absolute, or empty: included before the generated strategy. */
   std::string header_{};
+  /** @brief A backtest's measures from the program's `measures {}`, in order: `Program::measure_NAME`. */
+  std::vector<std::string> program_measures_{};
   /** @brief A backtest's measures from the run spec (`measures`), in order: functions the header defines. */
   std::vector<std::string> measures_{};
   /** @brief The broker a run's driver trades (`kis`), or empty for the mock market or a broker folder. */
@@ -509,6 +511,11 @@ inline std::string program_header(const Request& request) {
     const std::string input = "algotradelib::backtest::MeasureInput";
     std::string checks;
     std::string entries;
+    // atlc generates the program's with the exact signature: a mismatch is a compiler error naming the member.
+    for (const auto& name : request.program_measures_) {
+      entries += "    {\"" + name + "\", [](const " + input +
+        "& cmdatl_input) -> double {\n      return Program::measure_" + name + "(cmdatl_input);\n    }},\n";
+    }
     for (std::size_t k = 0; k < request.measures_.size(); ++k) {
       const auto& name = request.measures_[k];
       const auto call = "cmdatl_call_" + std::to_string(k);
@@ -651,9 +658,13 @@ inline std::optional<Reply> build_driver(
     std::snprintf(digest, sizeof(digest), "%016llx", static_cast<unsigned long long>(fnv1a(bytes)));
     extra.push_back("fill=" + request.fill_header_ + ";" + request.fill_function_ + ";" + digest);
   }
-  // `program.hpp`'s table of measures: the program's names (none yet), `|`, the spec's, each list in the report's order.
-  if (backtest && !request.measures_.empty()) {
-    std::string names = "measures=|";
+  // `program.hpp`'s table of measures: the program's names, `|`, the spec's, each list in the report's order.
+  if (backtest && !(request.program_measures_.empty() && request.measures_.empty())) {
+    std::string names = "measures=";
+    for (std::size_t k = 0; k < request.program_measures_.size(); ++k) {
+      names += (k == 0 ? "" : ";") + request.program_measures_[k];
+    }
+    names += "|";
     for (std::size_t k = 0; k < request.measures_.size(); ++k) {
       names += (k == 0 ? "" : ";") + request.measures_[k];
     }
