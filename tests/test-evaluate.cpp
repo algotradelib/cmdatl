@@ -181,6 +181,30 @@ std::string rows_of(const std::string& symbol, const std::vector<int>& prices, c
 /** @brief The header `rows_of` writes under. */
 const std::string HEADER = "ts,symbol,open,high,low,close,volume";
 
+/** @brief A table of measures, as the driver's `program_measures()` gives it. */
+using Measures = std::vector<std::pair<const char*, double (*)(const atl::backtest::MeasureInput&)>>;
+
+/** @brief A measure: the replay's executions. */
+double executions(const atl::backtest::MeasureInput& in) {
+  return static_cast<double>(in.report_.executions_);
+}
+
+/** @brief A measure that throws on a replay without executions. */
+double picky(const atl::backtest::MeasureInput& in) {
+  if (in.report_.executions_ == 0) {
+    throw std::runtime_error("no executions");
+  }
+  return 1;
+}
+
+/** @brief A measure that runs out of memory on a replay without executions. */
+double exhausting(const atl::backtest::MeasureInput& in) {
+  if (in.report_.executions_ == 0) {
+    throw std::bad_alloc();
+  }
+  return 1;
+}
+
 /** @brief What a driver's main gave. */
 struct Ran {
   int exit_{-1};
@@ -194,10 +218,13 @@ struct Ran {
  * @param args The arguments.
  * @param input The descriptor stdin bars are read from.
  * @param hooks The runner's hooks.
+ * @param measures The report's measures.
  * @return What it gave.
  */
 template <typename Strategy = Ticker>
-Ran drive(std::vector<std::string> args, int input = -1, const replay::RunnerHooks& hooks = {}) {
+Ran drive(
+  std::vector<std::string> args, int input = -1, const replay::RunnerHooks& hooks = {}, const Measures& measures = {}
+) {
   std::vector<char*> argv{const_cast<char*>("driver")};
   for (auto& arg : args) {
     argv.push_back(arg.data());
@@ -213,8 +240,10 @@ Ran drive(std::vector<std::string> args, int input = -1, const replay::RunnerHoo
   Ran ran;
   const auto start = std::chrono::steady_clock::now();
   ran.exit_ = s.get("evaluate.method") ?
-    replay::evaluate_main<Strategy>(s, fills, input, &hooks) :
-    replay::main<Strategy>(static_cast<int>(argv.size()), argv.data(), fills);
+    replay::evaluate_main<Strategy>(s, fills, measures, input, &hooks) :
+    replay::main<Strategy>(static_cast<int>(argv.size()), argv.data(), fills, [&measures]() {
+      return measures;
+    });
   ran.seconds_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   std::cout.rdbuf(saved_out);
   std::cerr.rdbuf(saved_err);
@@ -428,7 +457,7 @@ TEST_CASE("evaluate: one job and four print the same bytes and keep values in in
       return result.executions_.empty() ? std::string() : result.executions_.front().fill_.quantity_.str();
     };
     auto work = [&](replay::Task task) {
-      return replay::finish_one<Ticker>(s, std::move(task), fills, keep);
+      return replay::finish_one<Ticker>(s, std::move(task), fills, Measures{}, keep);
     };
     std::vector<std::pair<std::size_t, std::string>> seen;
     auto sink = [&seen](replay::Finished<std::string>&& done) {
@@ -539,7 +568,7 @@ TEST_CASE("evaluate: a sink that throws stops the batch and is never called agai
     return std::string("kept");
   };
   auto work = [&](replay::Task task) {
-    return replay::finish_one<Ticker>(s, std::move(task), fills, keep);
+    return replay::finish_one<Ticker>(s, std::move(task), fills, Measures{}, keep);
   };
   std::vector<std::string> seen;
   auto sink = [&seen](replay::Finished<std::string>&& done) {
@@ -548,4 +577,45 @@ TEST_CASE("evaluate: a sink that throws stops the batch and is never called agai
   };
   CHECK_THROWS_AS(replay::run_replays(source, 2, work, sink), std::runtime_error);
   CHECK(seen == std::vector<std::string>{"kept"});
+}
+
+TEST_CASE("evaluate: each line's report carries the measures, which an objective may name") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", HEADER + "\n" + rows_of("AAA", {100, 101, 103}));
+  const auto ran = drive(
+    on_csv(file, {"grid.k=0,1,2", "evaluate.objective=measures.executions", "evaluate.jobs=2"}), -1, {},
+    {{"executions", executions}}
+  );
+  INFO(ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  const auto lines = lines_of(ran.out_);
+  REQUIRE(lines.size() == 4);
+  CHECK(
+    lines[0].find("\"last_bar\": \"2020-01-03T00:00:00Z\",\"measures\": {\"executions\": 0}}") != std::string::npos
+  );
+  CHECK(lines[1].find("\"measures\": {\"executions\": 1}") != std::string::npos);
+  CHECK(
+    lines[3].find("\"objective\":\"measures.executions\",\"direction\":\"max\",\"best\":{\"index\":1,") !=
+    std::string::npos
+  );
+}
+
+TEST_CASE("evaluate: a measure's exception fails its replay and its bad_alloc stops the batch", "[threads]") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", HEADER + "\n" + rows_of("AAA", {100, 101, 103}));
+  const auto args = on_csv(file, {"grid.k=0,1,2,3", "evaluate.jobs=2"});
+  const auto picked = drive(args, -1, {}, {{"picky", picky}});
+  REQUIRE(picked.exit_ == 0);
+  const auto lines = lines_of(picked.out_);
+  REQUIRE(lines.size() == 5);
+  CHECK(
+    lines[0].find(
+      "\"report\":null,\"failure\":{\"kind\":\"replay\",\"message\":\"the measure picky threw: no executions\"}"
+    ) != std::string::npos
+  );
+  CHECK(lines[1].find("\"measures\": {\"picky\": 1}") != std::string::npos);
+  CHECK(lines[4].find("\"failed\":1,") != std::string::npos);
+  const auto exhausted = drive(args, -1, {}, {{"exhausting", exhausting}});
+  CHECK(exhausted.exit_ == 1);
+  CHECK(lines_of(exhausted.out_).back() == "{\"stopped\":{\"code\":\"replay.failed\",\"message\":\"std::bad_alloc\"}}");
 }
