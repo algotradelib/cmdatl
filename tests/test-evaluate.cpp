@@ -685,6 +685,11 @@ TEST_CASE("evaluate: stdin paths end where the path cell changes and a reused ce
   CHECK(lines[5].find("\"report\":{\"bars\": 1,") != std::string::npos);
   CHECK(lines[6].find("\"replays\":6,\"paths\":3,") != std::string::npos);
   CHECK(lines[6].find("\"best\":null") != std::string::npos);
+  // A refused bound counts once per set, whatever the paths.
+  const auto refused = on_stdin(text, {"bars.path_column=path", "grid.k=-1,1"});
+  CHECK(
+    lines_of(refused.out_).back().find("\"invalid\":1,\"tried\":1,\"replays\":6,\"paths\":3,") != std::string::npos
+  );
   // A path's report is the report of the same rows read as a CSV.
   Scratch dir;
   const auto csv = drive(on_csv(dir.write("a.csv", HEADER + "\n" + rows_of("AAA", {50, 49})), {"grid.k=1,2"}));
