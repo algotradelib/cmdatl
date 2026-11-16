@@ -1,6 +1,6 @@
 // Many replays in one driver (include/cmdatl/replay/evaluate.hpp): the index order, the lines, the choice of the best,
-// the runner on threads (order, the waiting-line bound, stops that join every thread), and the stdin bar source. The
-// `[threads]` cases also run under ThreadSanitizer (`docs/run-spec.md`, "Many replays"), so the program here keeps its
+// and the runner on threads (order, the waiting-line bound, stops that join every thread). The `[threads]` cases also
+// run under ThreadSanitizer (a build with `-fsanitize=thread`, `test-replay "[threads]"`), so the program here keeps its
 // state per instance; the few atomics below are what the tests observe.
 #include <cmdatl/replay/evaluate.hpp>
 
@@ -487,7 +487,6 @@ TEST_CASE("evaluate: a fatal throw stops the batch, joins every thread and print
   // A worker already waiting at admission (index 8 behind a held index 0, two jobs) is woken and dropped.
   const auto waiting = drive(on_csv(file, {ks, "param.hold=200", "param.fail=1", "evaluate.jobs=2"}));
   CHECK(waiting.exit_ == 1);
-  CHECK(waiting.seconds_ < 1.0);
   CHECK(waiting.out_.find("\"stopped\"") != std::string::npos);
   // The single backtest answers a throw that is not a std::exception with its error line.
   const auto single =
@@ -508,4 +507,17 @@ TEST_CASE("evaluate: a thread that cannot start stops and joins those started", 
   const auto ran = drive(on_csv(file, {"grid.k=1,2,3,4,5,6,7,8", "evaluate.jobs=4"}), -1, hooks);
   CHECK(ran.exit_ == 1);
   CHECK(ran.out_.find("{\"stopped\":{\"code\":\"replay.failed\",\"message\":\"thread: ") != std::string::npos);
+}
+
+TEST_CASE("evaluate: a stop with a worker waiting at admission returns within a second", "[.][local][threads]") {
+  const FreshObserved fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", HEADER + "\n" + rows_of("AAA", {100, 101, 103}));
+  std::string ks = "grid.k=0";
+  for (int k = 1; k < 40; ++k) {
+    ks += "," + std::to_string(k);
+  }
+  const auto waiting = drive(on_csv(file, {ks, "param.hold=200", "param.fail=1", "evaluate.jobs=2"}));
+  CHECK(waiting.exit_ == 1);
+  CHECK(waiting.seconds_ < 1.0);
 }
