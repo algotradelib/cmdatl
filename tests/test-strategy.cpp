@@ -373,6 +373,38 @@ TEST_CASE(
   CHECK(reply.at("report") == boost::json::parse(REPORT));
 }
 
+TEST_CASE("the backtest refuses --fills and --equity naming one file before anything runs") {
+  const Watchdog watchdog("one output file", 60);
+  const FakeAtlc fake("check out " + INFO_OK + "\ndriver out " + REPORT + "\n");
+  spit("s.toml", FAKE_SPEC);
+  spit("kept.csv", "kept\n");
+  std::filesystem::create_symlink("kept.csv", "link.csv");
+  std::filesystem::create_hard_link("kept.csv", "hard.csv");
+  for (
+    const auto& [fills, equity] : std::vector<std::pair<std::string, std::string>>{
+      {"kept.csv", "kept.csv"},
+      {"./kept.csv", "kept.csv"},
+      {"no/../kept.csv", "kept.csv"},
+      {"link.csv", "kept.csv"},
+      {"hard.csv", "kept.csv"},
+      {"new.csv", "./new.csv"},
+    }
+  ) {
+    INFO(fills << " " << equity);
+    const auto ran = run({"strategy", "backtest", "s.toml", "--fills", fills, "--equity", equity});
+    CHECK(ran.exit_ == 2);
+    CHECK(code_of(ran.out_) == "usage.bad_value");
+    CHECK(
+      reply_of(ran.out_).at("error").as_object().at("message").as_string() ==
+      "--fills and --equity name the same file: " + fills
+    );
+  }
+  // Nothing ran and nothing was written.
+  CHECK(fake.args("check").empty());
+  CHECK(slurp("kept.csv") == "kept\n");
+  CHECK(!std::filesystem::exists("new.csv"));
+}
+
 TEST_CASE("a program as the target: settings only, the spec null, paths against the working directory") {
   const Watchdog watchdog("a program target", 60);
   const FakeAtlc fake("check args\ncheck out " + INFO_OK + "\ndriver args\ndriver out " + REPORT + "\n");

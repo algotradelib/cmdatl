@@ -696,6 +696,31 @@ TEST_CASE("replay main: output.equity writes every point of the curve with its r
   CHECK(field(ran.out_, "last_bar") == "\"2020-01-04T00:00:00Z\"");
 }
 
+TEST_CASE(
+  "replay main: output.fills and output.equity naming one file are refused and a failed equity keeps the fills"
+) {
+  const FreshScript fresh;
+  Scratch dir;
+  const auto file = dir.write("bars.csv", flat_bars({100, 101, 102}));
+  const auto kept = dir.write("kept.csv", "kept\n");
+  const std::vector<std::string> base{"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA"};
+  auto same = base;
+  same.push_back("output.fills=" + kept);
+  same.push_back("output.equity=" + dir.at("no/../kept.csv"));
+  const auto refused = replay_main<runtest::Program>(same);
+  CHECK(refused.exit_ == 1);
+  CHECK(refused.err_ == "error: output.fills and output.equity name the same file: " + kept + "\n");
+  CHECK(slurp(kept) == "kept\n");
+  // Written one after the other: an equity file that cannot be written fails the replay after the fills are written.
+  auto partial = base;
+  partial.push_back("output.fills=" + dir.at("fills.csv"));
+  partial.push_back("output.equity=" + dir.at("no/such/equity.csv"));
+  const auto failed = replay_main<runtest::Program>(partial);
+  CHECK(failed.exit_ == 1);
+  CHECK(failed.err_ == "error: cannot write " + dir.at("no/such/equity.csv") + "\n");
+  CHECK(slurp(dir.at("fills.csv")) == "at,symbol,side,quantity,price,commission,tax\n");
+}
+
 /** @brief The session program, having met both session edges, as one whose on_open and on_close ran. */
 struct EdgeProgram : runtest::SessionProgram {
   using SessionProgram::SessionProgram;
