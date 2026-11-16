@@ -645,6 +645,126 @@ inline std::vector<std::string> list_of(const std::string& text) {
   return out;
 }
 
+/** @brief Where a long CSV's columns are (from its header) and how its times read. */
+struct LongColumns {
+  /** @brief The time, price and volume columns. */
+  std::size_t time_{0}, open_{0}, high_{0}, low_{0}, close_{0}, volume_{0};
+  /** @brief The stamp column and the symbol column, when there are. */
+  std::optional<std::size_t> stamp_, symbol_;
+  /** @brief The stamp without a stamp column. */
+  atl::BarStamp fixed_stamp_{atl::BarStamp::CLOSE};
+  /** @brief The cells of a row. */
+  std::size_t width_{0};
+  /** @brief `bars.time_format`. */
+  std::string format_;
+  /** @brief Seconds east of UTC (`bars.timezone`). */
+  long offset_{0};
+};
+
+/**
+ * @brief The columns of a CSV from its header: the time and stamp, then for a long one the prices, volume and symbol.
+ * @param s The settings.
+ * @param header The header's cells.
+ * @param name The file's name, for errors.
+ * @param wide Whether the CSV is wide (a time column, then closes): no price columns.
+ * @return The columns.
+ */
+inline LongColumns columns_of(
+  const Settings& s, const std::vector<std::string>& header, const std::string& name, bool wide
+) {
+  auto col = [&header, &name](const std::string& column) -> std::size_t {
+    const auto it = std::find(header.begin(), header.end(), column);
+    if (it == header.end()) {
+      throw std::invalid_argument(name + ": no column '" + column + "' (bars.columns.* or bars.time name the columns)");
+    }
+    return static_cast<std::size_t>(it - header.begin());
+  };
+  LongColumns out;
+  out.width_ = header.size();
+  out.format_ = s.get_or("bars.time_format", "unix");
+  out.offset_ = offset_of(s.get_or("bars.timezone", "UTC"));
+  out.time_ = col(s.get_or("bars.time", "ts"));
+  const auto stamp_setting = s.get("bars.stamp");
+  if (stamp_setting && (*stamp_setting == "open" || *stamp_setting == "close")) {
+    out.fixed_stamp_ = *stamp_setting == "open" ? atl::BarStamp::OPEN : atl::BarStamp::CLOSE;
+  } else if (stamp_setting) {
+    out.stamp_ = col(*stamp_setting);
+  } else if (std::find(header.begin(), header.end(), "stamp") != header.end()) {
+    out.stamp_ = col("stamp");
+  }
+  if (wide) {
+    return out;
+  }
+  out.open_ = col(s.get_or("bars.columns.open", "open"));
+  out.high_ = col(s.get_or("bars.columns.high", "high"));
+  out.low_ = col(s.get_or("bars.columns.low", "low"));
+  out.close_ = col(s.get_or("bars.columns.close", "close"));
+  out.volume_ = col(s.get_or("bars.columns.volume", "volume"));
+  if (const auto symbol_col = s.get("bars.symbol_column")) {
+    out.symbol_ = col(*symbol_col);
+  }
+  return out;
+}
+
+/**
+ * @brief A CSV line's cells, as many as the header's.
+ * @param line The line, trimmed.
+ * @param width The header's cells.
+ * @param where The file and line, for errors.
+ * @return The cells.
+ */
+inline std::vector<std::string> cells_of(const std::string& line, std::size_t width, const std::string& where) {
+  auto cells = split_line(line);
+  if (cells.size() != width) {
+    throw std::invalid_argument(
+      where + ": expected " + std::to_string(width) + " cells, found " + std::to_string(cells.size())
+    );
+  }
+  return cells;
+}
+
+/**
+ * @brief The bar of a long CSV row and its stamp, or none for a row without a close or outside the replay.
+ * @param s The settings.
+ * @param cols The columns.
+ * @param cells The row's cells (`cells_of`).
+ * @param where The file and line, for errors.
+ * @return The bar and its stamp.
+ */
+inline std::optional<std::pair<atl::Bar, atl::BarStamp>> long_row(
+  const Settings& s, const LongColumns& cols, const std::vector<std::string>& cells, const std::string& where
+) {
+  if (cells[cols.close_].empty() || cells[cols.close_] == "NaN" || cells[cols.close_] == "nan") {
+    return std::nullopt;
+  }
+  const auto at = time_of(cells[cols.time_], cols.format_, cols.offset_, where);
+  if (!in_range(s, at)) {
+    return std::nullopt;
+  }
+  atl::Bar bar;
+  bar.timestamp_ = at;
+  bar.open_ = price_of(cells[cols.open_], where);
+  bar.high_ = price_of(cells[cols.high_], where);
+  bar.low_ = price_of(cells[cols.low_], where);
+  bar.close_ = price_of(cells[cols.close_], where);
+  bar.volume_ = decimal_of(cells[cols.volume_].empty() ? "0" : cells[cols.volume_], where);
+  return std::make_pair(bar, cols.stamp_ ? stamp_of(cells[*cols.stamp_], where) : cols.fixed_stamp_);
+}
+
+/**
+ * @brief Adds a long CSV row's bar to its symbol's series: one stamp per symbol, times increasing.
+ * @param series The series.
+ * @param row The bar and its stamp (`long_row`).
+ * @param where The file and line, for errors.
+ */
+inline void append_bar(BarSeries& series, const std::pair<atl::Bar, atl::BarStamp>& row, const std::string& where) {
+  set_stamp(series, row.second, where);
+  if (!series.bars_.empty() && !(series.bars_.back().timestamp_ < row.first.timestamp_)) {
+    throw std::invalid_argument(where + ": times must increase within a symbol");
+  }
+  series.bars_.push_back(row.first);
+}
+
 /**
  * @brief `bars.source = "csv"`: one file per symbol (`bars.file` with `bars.symbol`, or `bars.files` with
  *   `bars.symbols`), one long file with a symbol column (`bars.symbol_column`), or a wide file of closes
@@ -654,11 +774,9 @@ inline std::vector<std::string> list_of(const std::string& text) {
  */
 inline std::vector<BarSeries> load_csv_source(const Settings& s) {
   const auto layout = s.get_or("bars.layout", "long");
-  const auto time_col = s.get_or("bars.time", "ts");
   const auto format = s.get_or("bars.time_format", "unix");
   const long offset = offset_of(s.get_or("bars.timezone", "UTC"));
   const auto interval = interval_of(s.get_or("bars.interval", "1d"));
-  const auto stamp_setting = s.get("bars.stamp");
   std::vector<std::string> files;
   std::vector<std::string> file_symbols;
   if (const auto list = s.get("bars.files")) {
@@ -698,25 +816,10 @@ inline std::vector<BarSeries> load_csv_source(const Settings& s) {
     std::getline(file, line);
     trim(line);
     const auto header = split_line(line);
-    auto col = [&header, &files, f](const std::string& name) -> std::size_t {
-      const auto it = std::find(header.begin(), header.end(), name);
-      if (it == header.end()) {
-        throw std::invalid_argument(
-          files[f] + ": no column '" + name + "' (bars.columns.* or bars.time name the columns)"
-        );
-      }
-      return static_cast<std::size_t>(it - header.begin());
-    };
-    const std::size_t t = col(time_col);
-    std::optional<std::size_t> stamp_col;
-    atl::BarStamp fixed_stamp = atl::BarStamp::CLOSE;
-    if (stamp_setting && (*stamp_setting == "open" || *stamp_setting == "close")) {
-      fixed_stamp = *stamp_setting == "open" ? atl::BarStamp::OPEN : atl::BarStamp::CLOSE;
-    } else if (stamp_setting) {
-      stamp_col = col(*stamp_setting);
-    } else if (std::find(header.begin(), header.end(), "stamp") != header.end()) {
-      stamp_col = col("stamp");
-    }
+    const auto cols = columns_of(s, header, files[f], layout == "wide");
+    const std::size_t t = cols.time_;
+    const auto stamp_col = cols.stamp_;
+    const auto fixed_stamp = cols.fixed_stamp_;
     std::size_t number = 1;
     if (layout == "wide") {
       // A time column, then one column of closes per symbol.
@@ -759,45 +862,17 @@ inline std::vector<BarSeries> load_csv_source(const Settings& s) {
       }
       continue;
     }
-    const std::size_t o = col(s.get_or("bars.columns.open", "open"));
-    const std::size_t h = col(s.get_or("bars.columns.high", "high"));
-    const std::size_t l = col(s.get_or("bars.columns.low", "low"));
-    const std::size_t c = col(s.get_or("bars.columns.close", "close"));
-    const std::size_t v = col(s.get_or("bars.columns.volume", "volume"));
-    const std::optional<std::size_t> sym = symbol_col ? std::optional<std::size_t>(col(*symbol_col)) : std::nullopt;
     while (std::getline(file, line)) {
       ++number;
       trim(line);
       if (line.empty()) {
         continue;
       }
-      const auto cells = split_line(line);
       const auto where = files[f] + ":" + std::to_string(number);
-      if (cells.size() != header.size()) {
-        throw std::invalid_argument(
-          where + ": expected " + std::to_string(header.size()) + " cells, found " + std::to_string(cells.size())
-        );
+      const auto cells = cells_of(line, cols.width_, where);
+      if (const auto row = long_row(s, cols, cells, where)) {
+        append_bar(series_for(cols.symbol_ ? cells[*cols.symbol_] : file_symbols[f]), *row, where);
       }
-      if (cells[c].empty() || cells[c] == "NaN" || cells[c] == "nan") {
-        continue;
-      }
-      const auto at = time_of(cells[t], format, offset, where);
-      if (!in_range(s, at)) {
-        continue;
-      }
-      atl::Bar bar;
-      bar.timestamp_ = at;
-      bar.open_ = price_of(cells[o], where);
-      bar.high_ = price_of(cells[h], where);
-      bar.low_ = price_of(cells[l], where);
-      bar.close_ = price_of(cells[c], where);
-      bar.volume_ = decimal_of(cells[v].empty() ? "0" : cells[v], where);
-      auto& series = series_for(sym ? cells[*sym] : file_symbols[f]);
-      set_stamp(series, stamp_col ? stamp_of(cells[*stamp_col], where) : fixed_stamp, where);
-      if (!series.bars_.empty() && !(series.bars_.back().timestamp_ < bar.timestamp_)) {
-        throw std::invalid_argument(where + ": times must increase within a symbol");
-      }
-      series.bars_.push_back(bar);
     }
   }
   return out;
@@ -1115,6 +1190,33 @@ inline std::vector<atl::strategy::BarEvent> bar_events(const Data& data, const s
 }
 
 /**
+ * @brief The data of OHLCV series: the symbols asked for, in their order, or every series.
+ * @param all The series.
+ * @param symbols The symbols to trade, in order; empty for every series.
+ * @return The data.
+ */
+inline Data data_of(std::vector<BarSeries> all, const std::vector<std::string>& symbols) {
+  Data data;
+  if (symbols.empty()) {
+    data.series_ = std::move(all);
+  } else {
+    for (const auto& symbol : symbols) {
+      const auto it = std::find_if(all.begin(), all.end(), [&symbol](const BarSeries& x) {
+        return x.symbol_ == symbol;
+      });
+      if (it == all.end()) {
+        throw std::invalid_argument("the data has no symbol '" + symbol + "'");
+      }
+      data.series_.push_back(*it);
+    }
+  }
+  for (const auto& series : data.series_) {
+    data.symbols_.push_back(series.symbol_);
+  }
+  return data;
+}
+
+/**
  * @brief Reads the data settings.
  * @param s The settings.
  * @param symbols The symbols to trade, in order; empty for every symbol of the data.
@@ -1124,24 +1226,10 @@ inline Data load(const Settings& s, const std::vector<std::string>& symbols) {
   Data data;
   const auto source = s.get_or("bars.source", s.get("bars.store") ? "store" : "wide");
   if (source == "csv" || source == "store") {
-    auto all = source == "csv" ? load_csv_source(s) : load_store_source(s);
-    if (symbols.empty()) {
-      data.series_ = std::move(all);
-    } else {
-      for (const auto& symbol : symbols) {
-        const auto it = std::find_if(all.begin(), all.end(), [&symbol](const BarSeries& x) {
-          return x.symbol_ == symbol;
-        });
-        if (it == all.end()) {
-          throw std::invalid_argument("the data has no symbol '" + symbol + "'");
-        }
-        data.series_.push_back(*it);
-      }
-    }
-    for (const auto& series : data.series_) {
-      data.symbols_.push_back(series.symbol_);
-    }
-    return data;
+    return data_of(source == "csv" ? load_csv_source(s) : load_store_source(s), symbols);
+  }
+  if (source == "stdin") {
+    throw std::invalid_argument("bars.source = stdin is read by an evaluation (evaluate.method), not one backtest");
   }
   if (source != "wide") {
     throw std::invalid_argument("bars.source is wide, csv or store, not '" + source + "'");
