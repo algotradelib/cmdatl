@@ -321,7 +321,7 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       );
     }
     CheckedSettings checked;
-    if (auto refused = check_given(given, atlc.path_, output, true, checked, broker)) {
+    if (auto refused = check_given(given, atlc.path_, output, spec::Purpose::RUN, checked, broker)) {
       return std::move(*refused);
     }
     const auto& resolved = checked.resolved_;

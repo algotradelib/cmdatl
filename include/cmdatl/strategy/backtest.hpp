@@ -242,7 +242,7 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   }
   const auto& atlc = located.atlc_;
   CheckedSettings checked;
-  if (auto refused = check_given(given, atlc.path_, output, false, checked)) {
+  if (auto refused = check_given(given, atlc.path_, output, spec::Purpose::BACKTEST, checked)) {
     return std::move(*refused);
   }
   // A broker folder's history: the folder found and its files read once, its options checked against its
