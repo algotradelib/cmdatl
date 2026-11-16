@@ -391,6 +391,7 @@ cmdatl strategy evaluate dip.toml grid.lookback.from=10 grid.lookback.to=60 grid
 `cmdatl strategy evaluate` reads its target and settings as `strategy backtest` does, builds the same driver (a backtest's build serves it), loads the bars once, and replays them once per parameter set of `[grid]`.
 It takes no `--fills` or `--equity`, and does not fetch: a spec whose `bars.source` names an adapter folder is refused (fetch with `strategy backtest`, then evaluate on `bars.source = "store"`).
 `strategy backtest` and `cmdatl run` refuse the keys below.
+With `bars.source = "stdin"` it replays the paths a generator pipes in (`GENERATOR | cmdatl strategy evaluate spec.toml bars.source=stdin bars.path_column=path`; `[bars]` describes the stream); stdin may not be a terminal.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -416,9 +417,10 @@ Each replay is one JSON line, in index order, whatever `evaluate.jobs` is, with 
 
 - `report` is exactly the report `strategy backtest` gives for these settings and parameters ("The report"), its `measures` included; a measure that throws fails that replay only, and one that runs out of memory stops the evaluation.
 - A replay without a report has `"report":null` and `failure`: `{"kind":"params","message":...}` when the program's bounds refused the set, `{"kind":"replay",...}` for any other error of that replay; the others go on.
-- `window` and `path` are null: they are for the evaluation methods to come.
+- `window` is null: it is for the evaluation methods to come.
+- `path` is null, or with `bars.source = "stdin"` (`[bars]`) the path's `number` (from 0, in the order read), `seed` (null) and `id` (its `bars.path_column` cell, or null): each path is replayed once per parameter set, replay `p * G + g` being set `g` of `G` on path `p`.
 
-The final reply gives `method`, `jobs`, `param_sets`, `invalid` (sets the bounds refused), `tried` (`param_sets - invalid`), `replays` (the lines printed), `paths` (null), `failed` (replays that failed otherwise), `objective`, `direction`, and `best`: the index, parameters and value of the best replay with a report, not halted and with a defined figure, a tie going to the lower index.
+The final reply gives `method`, `jobs`, `param_sets`, `invalid` (sets the bounds refused), `tried` (`param_sets - invalid`), `replays` (the lines printed), `paths` (the paths read from stdin, else null), `failed` (replays that failed otherwise), `objective`, `direction`, and `best`: the index, parameters and value of the best replay with a report, not halted and with a defined figure, a tie going to the lower index (null with stdin paths, an aggregate this version does not make).
 It exits 0 when at least one replay has a report; 1 (`replay.failed`) when every replay failed or was refused, or when the driver stopped (it ran out of memory, or the program threw something that is not a `std::exception`): the lines already printed stand, and the reply's `replays` counts them.
 
 With `evaluate.jobs` above 1 the program's own C++ (its `header` and a market-price rule) runs on several threads at once and must be thread-safe; a race in it gives wrong numbers, not an error.

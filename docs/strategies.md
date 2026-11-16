@@ -9,6 +9,7 @@
   The build's progress and atlc's warnings arrive as they happen: on stderr, or as `progress` events with `--format jsonl`.
 - `cmdatl strategy evaluate TARGET [KEY=VALUE]...` replays the same program once per parameter set of a grid (`grid.lookback=10,20,30`) on bars loaded once, `evaluate.jobs` at a time: one JSON line per replay with its report, then a reply with the best set by `evaluate.objective` (`cmdatl strategy reference run-spec`, "Many replays").
   With `evaluate.jobs` above 1, the program's own C++ must be thread-safe.
+  With `bars.source=stdin` it replays the paths a generator pipes in, `bars.path_column` naming each row's path.
 - `atlc check NAME.atls` checks a program alone; the language is atlc's: `cmdatl strategy reference` prints its reference's index and `cmdatl strategy reference builtins` (or another chapter) a chapter, from the atlc cmdatl runs ([online](https://github.com/algotradelib/atlc/tree/main/docs/reference)).
 
 ## C++ of your own

@@ -50,6 +50,7 @@ The reply's `report` is the replay's, unchanged: `total_return`, `sharpe_annuali
 `--equity FILE` writes the equity curve as CSV (`at,equity,period_return`), and `--fills FILE` every fill.
 Build progress goes to stderr.
 `cmdatl strategy evaluate NAME.toml grid.lookback=10,20,30 evaluate.objective=total_return --fields index,params,report.total_return,best` replays each value: one JSON line per replay, then the `best`.
+Piped paths (`GENERATOR | cmdatl strategy evaluate NAME.toml bars.source=stdin bars.path_column=path`) are each replayed once per set.
 Exit 5 is a program error (`program.invalid`, with atlc's diagnostics in `errors`), 2 a settings error (`spec.invalid`, each with its file and line or the command line in `errors`), 1 a failed build or replay (`build.failed`; `replay.failed`, a parameter outside its bounds included).
 
 ## Runs
