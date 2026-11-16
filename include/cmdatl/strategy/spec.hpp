@@ -1403,7 +1403,9 @@ inline void read_grid(
     }
   }
   std::size_t sets = 1;
-  for (const auto& [name, parts] : named) {
+  for (const auto& entry : named) {
+    const auto& name = entry.first;
+    const auto& parts = entry.second;
     const auto& origin = parts.begin()->second->origin_;
     const auto found = std::find_if(program.params_.begin(), program.params_.end(), [&name](const auto& p) {
       return p.first == name;
