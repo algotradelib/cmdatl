@@ -1422,7 +1422,7 @@ inline void read_grid(
     }
     std::vector<double> numbers;
     for (const auto& v : values) {
-      numbers.push_back(std::stod(v));
+      numbers.push_back(std::strtod(v.c_str(), nullptr));
     }
     std::sort(numbers.begin(), numbers.end());
     if (!refused && std::adjacent_find(numbers.begin(), numbers.end()) != numbers.end()) {

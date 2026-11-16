@@ -1751,6 +1751,11 @@ TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by t
   CHECK(has(cli_error("grid.lookback=10,,30"), "`grid.lookback` is a list of numbers"));
   CHECK(has(cli_error("grid.lookback=ten"), "`grid.lookback` is a list of numbers"));
   CHECK(cli_value("grid.entry.step=1e-3") == "1e-3");
+  // A value no double holds is the driver's to refuse, never an exception here.
+  CHECK(evaluate(WIDE_SPEC, sp::Purpose::EVALUATE, {"grid.entry=1e-400"}).errors_.empty());
+  CHECK(
+    has(evaluate(WIDE_SPEC, sp::Purpose::EVALUATE, {"grid.entry=1e-400,0"}).errors_.front(), "gives one value twice")
+  );
   CHECK(has(cli_error("grid.entry.step=1,2"), "`grid.entry.step` is a number"));
 }
 
