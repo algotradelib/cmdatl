@@ -1823,6 +1823,11 @@ TEST_CASE("walk-forward's keys: lengths of one kind in periods or spans; a grid 
   CHECK(has(grid_error(walk + "[grid]\nlookback = [10]\n" + lengths), "nothing to choose"));
   // A bad grid is reported as such, not also as one with nothing to choose.
   CHECK(has(grid_error(walk + "[grid]\nnope = [1, 2]\n" + lengths), "the program has no parameter `nope` for a grid"));
+  CHECK(has(
+    evaluate("strategy = \"m.atls\"\n[bars]\nsource = \"stdin\"\nsymbol = \"AAA\"\n" + walk + two + lengths)
+      .errors_.at(0),
+    "stdin paths are evaluate.method = \"grid\"'s"
+  ));
   // Under another method each key of [walk_forward] is refused.
   const auto other = evaluate(WIDE_SPEC + lengths);
   REQUIRE(other.errors_.size() == 2);
