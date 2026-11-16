@@ -1327,9 +1327,9 @@ inline std::string whole_text(const Value& v) {
 }
 
 /**
- * @brief A grid range's values, `from`, `from + step`, ... up to `to`, added as exact decimals (the library's
- *   `Decimal64`, at most 18 digits), never as doubles; refused at the first value past what `MAX_VALUE` bytes hold
- *   (each value takes two bytes with its comma), so a huge count is never made.
+ * @brief A grid range's values, `from`, `from + step`, ... up to `to`, in exact decimals, never doubles: the three
+ *   numbers at their common scale (at most 18 places) as 64-bit integers, and the count checked before any value is
+ *   made.
  * @param range `from`, `to` and `step`.
  * @param whole Whether the parameter is an int.
  * @param values Set to the values.
@@ -1350,21 +1350,35 @@ inline std::optional<std::string> grid_range(
     }
     d.push_back(algotradelib::Decimal64::parse(*plain));
   }
-  if (!algotradelib::decimal_less(algotradelib::Decimal64(), d[2]) || algotradelib::decimal_less(d[1], d[0])) {
-    return std::string(
-      algotradelib::decimal_less(d[1], d[0]) ? "a range's from is after its to" : "a range's step is above 0"
-    );
+  // All three at their common scale, as 64-bit integers: every comparison and step is exact there.
+  std::uint8_t scale = 0;
+  for (const auto& x : d) {
+    scale = std::max(scale, x.scale());
   }
-  for (auto v = d[0]; !algotradelib::decimal_less(d[1], v);) {
-    if (values.size() == (MAX_VALUE + 1) / 2) {
-      return "the range makes more values than " + std::to_string(MAX_VALUE) + " bytes hold";
+  bool fits = scale <= 18;
+  std::vector<long long> u;
+  for (const auto& x : d) {
+    long long v = x.coefficient();
+    for (auto k = x.scale(); fits && k < scale; ++k) {
+      fits = std::abs(v) <= std::numeric_limits<long long>::max() / 10;
+      v *= fits ? 10 : 1;
     }
-    values.push_back(v.str());
-    const auto next = algotradelib::decimal_add(v, d[2]);
-    if (!next) {
-      return std::string("the range's numbers do not fit 18 digits at its decimal places");
-    }
-    v = *next;
+    u.push_back(v);
+  }
+  if (!fits || (u[0] < 0 && u[1] > std::numeric_limits<long long>::max() + u[0])) {
+    return std::string("a range takes at most 18 decimal places and 18 digits at them");
+  }
+  if (u[2] <= 0 || u[0] > u[1]) {
+    return std::string(u[2] <= 0 ? "a range's step is above 0" : "a range's from is after its to");
+  }
+  // Each value takes at least two bytes with its comma: refused before any is made.
+  const auto count = static_cast<unsigned long long>((u[1] - u[0]) / u[2]) + 1;
+  if (count > (MAX_VALUE + 1) / 2) {
+    return "the range makes more values than " + std::to_string(MAX_VALUE) + " bytes hold";
+  }
+  for (unsigned long long k = 0; k < count; ++k) {
+    const auto value = algotradelib::Decimal64(u[0] + static_cast<long long>(k) * u[2], scale);
+    values.push_back(algotradelib::decimal_normalized(value).str());
   }
   return std::nullopt;
 }
