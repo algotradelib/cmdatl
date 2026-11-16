@@ -604,6 +604,13 @@ TEST_CASE("evaluate: each line's report carries the measures, which an objective
     lines[3].find("\"objective\":\"measures.executions\",\"direction\":\"max\",\"best\":{\"index\":1,") !=
     std::string::npos
   );
+  // The report's own count, as bootstrap.intervals names it, chooses the same.
+  const auto counted = drive(on_csv(file, {"grid.k=0,1,2", "evaluate.objective=executions"}));
+  REQUIRE(counted.exit_ == 0);
+  CHECK(
+    lines_of(counted.out_)[3].find("\"objective\":\"executions\",\"direction\":\"max\",\"best\":{\"index\":1,") !=
+    std::string::npos
+  );
 }
 
 TEST_CASE("evaluate: a measure's exception fails its replay and its bad_alloc stops the batch", "[threads]") {

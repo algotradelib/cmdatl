@@ -821,13 +821,7 @@ int loops_main(
       throw std::invalid_argument("bootstrap.level is between 0 and 1, not " + s.get_or("bootstrap.level", ""));
     }
     const auto wanted = list_of(s.get_or("bootstrap.intervals", ""));
-    std::vector<std::string> metrics{
-      "total_return", "sharpe_per_period", "sharpe_annualized", "sortino_per_period", "max_drawdown", "turnover",
-      "executions"
-    };
-    for (const auto& name : names) {
-      metrics.push_back("measures." + name);
-    }
+    const auto metrics = metric_names(measures);
     for (const auto& name : wanted) {
       const bool known = std::find(metrics.begin(), metrics.end(), name) != metrics.end();
       if (!known) {

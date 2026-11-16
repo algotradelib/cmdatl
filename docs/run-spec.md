@@ -398,7 +398,7 @@ With `bars.source = "stdin"` it replays the paths a generator pipes in (`GENERAT
 | --- | --- | --- | --- |
 | `evaluate.method` | `"grid"`, `"windows"`, `"walk-forward"` or `"bootstrap"` | `"grid"` | how the replays are chosen: a grid of parameter sets, one set over windows of the history ("Windows"), a set chosen on each training window and tested on the next ("Walk-forward"), or one set over bootstrap paths of the history ("Bootstrap paths") |
 | `evaluate.jobs` | whole number, 1 to 256 | 1 | replays run at once, each on its own thread |
-| `evaluate.objective` | `"total_return"`, `"sharpe_per_period"`, `"sharpe_annualized"`, `"sortino_per_period"`, `"max_drawdown"`, or `"measures.NAME"` for one of the program's `measures {}` or the spec's `measures` | none | the report figure the reply's `best` compares; without it `best` is null |
+| `evaluate.objective` | `"total_return"`, `"sharpe_per_period"`, `"sharpe_annualized"`, `"sortino_per_period"`, `"max_drawdown"`, `"turnover"`, `"executions"`, or `"measures.NAME"` for one of the program's `measures {}` or the spec's `measures` | none | the report figure the reply's `best` compares; without it `best` is null |
 | `evaluate.direction` | `"max"` or `"min"` | `"max"` | which end is best (`max_drawdown` is a positive fraction: use `min`) |
 | `grid.NAME` | a list of numbers | none | the values of parameter NAME, in the order written |
 | `grid.NAME.from`, `.to`, `.step` | numbers | none | the same as a range: `from`, `from + step`, ... up to `to` inclusive |
@@ -512,7 +512,7 @@ One parameter set, replayed on the history (path 0) and on `paths` block-bootstr
 | `bootstrap.block` | whole number, 1 or more | required | the block length in periods (the mean length when stationary); at most the history's returns for circular and moving |
 | `bootstrap.paths` | whole number, 1 to 10000 | 100 | the paths drawn |
 | `bootstrap.seed` | whole number, 0 to 2^53 - 1 | drawn, and echoed | the seed |
-| `bootstrap.intervals` | a list of figures or `"measures.NAME"` | none | the metrics given an interval over the paths |
+| `bootstrap.intervals` | a list of the names `evaluate.objective` takes | none | the metrics given an interval over the paths |
 | `bootstrap.level` | a number above 0 and below 1 | 0.95 | the intervals' coverage |
 
 - A path redraws the history's close-to-close returns in blocks, the same days for every symbol, and rebuilds each symbol's closes from them on its price grid; every path has the history's dates. Path 0 is the history itself, so its report is `strategy backtest`'s.

@@ -1242,7 +1242,7 @@ TEST_CASE(
   CHECK(sp::read_info(base + ",\"measures\":" + longest + "}}", "/p/m.atls"));
 }
 
-TEST_CASE("an evaluation's objective may name one of the program's measures, listed before the spec's") {
+TEST_CASE("an evaluation names the program's measures before the spec's: an objective, walk-forward's, intervals") {
   auto program = single();
   program.measures_ = {"total"};
   const auto resolved = [&program](const std::string& src) {
@@ -1260,7 +1260,25 @@ TEST_CASE("an evaluation's objective may name one of the program's measures, lis
     "measures = [\"calmar\"]\n" + WIDE_SPEC + "[evaluate]\nobjective = \"measures.nope\"\n[grid]\nlookback = [1, 2]\n"
   );
   REQUIRE(other.errors_.size() == 1);
-  CHECK(has(other.errors_.front(), "max_drawdown, measures.total, measures.calmar, not \"measures.nope\""));
+  CHECK(has(
+    other.errors_.front(),
+    "is one of total_return, sharpe_per_period, sharpe_annualized, sortino_per_period, max_drawdown, turnover, "
+    "executions, measures.total, measures.calmar, not \"measures.nope\""
+  ));
+  CHECK(resolved(WIDE_SPEC + "[evaluate]\nobjective = \"turnover\"\n").errors_.empty());
+  // Walk-forward chooses by a program's measure; bootstrap passes one to the driver, which checks the same list.
+  const auto walk = resolved(
+    WIDE_SPEC +
+    "[evaluate]\nmethod = \"walk-forward\"\nobjective = \"measures.total\"\n[grid]\nlookback = [1, 2]\n"
+    "[walk_forward]\ntrain = 252\ntest = 21\n"
+  );
+  CHECK(walk.errors_.empty());
+  CHECK(walk.arg("evaluate.objective") == std::optional<std::string>("measures.total"));
+  const auto boot = resolved(
+    WIDE_SPEC + "[evaluate]\nmethod = \"bootstrap\"\n[bootstrap]\nblock = 5\nintervals = [\"measures.total\"]\n"
+  );
+  CHECK(boot.errors_.empty());
+  CHECK(boot.arg("bootstrap.intervals") == std::optional<std::string>("measures.total"));
 }
 
 TEST_CASE("a run spec's measure named like one of the program's is refused at the key's line") {

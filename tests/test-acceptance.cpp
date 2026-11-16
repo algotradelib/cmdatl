@@ -1574,6 +1574,50 @@ TEST_CASE("a program's measures {} come first in the report, before the run spec
       .find("the measure b threw: deliberately") != std::string::npos
   );
   CHECK_FALSE(std::filesystem::exists(fills));
+  // On the loops' wide closes, the example with a measure of its total return: bootstrap gives it an interval, and
+  // walk-forward chooses by it as by total_return.
+  const auto source = std::filesystem::path(CMDATL_SOURCE_DIR);
+  std::filesystem::copy(source / "tests" / "fixtures" / "loops" / "closes.csv", dir.path() / "closes.csv");
+  spit(
+    dir.path() / "mr.atls",
+    slurp(source / "examples" / "mean-reversion.atls") +
+      "measures {\n  real total = cum_last(equity) / cum_first(equity) - 1;\n}\n"
+  );
+  auto loops = slurp(source / "tests" / "fixtures" / "loops" / "closes.toml");
+  loops.replace(loops.find("../../../examples/mean-reversion.atls"), 37, "mr.atls");
+  spit(dir.path() / "mr.toml", loops);
+  const auto evaluate = [&dir](std::vector<std::string> more) {
+    std::vector<std::string> args{"--json", "strategy", "evaluate", (dir.path() / "mr.toml").string()};
+    args.insert(args.end(), more.begin(), more.end());
+    const auto ran = run(args);
+    INFO(ran.out_ << ran.err_);
+    REQUIRE(ran.exit_ == 0);
+    return reply_of(lines_of(ran.out_).back());
+  };
+  const auto boot = evaluate(
+    {"evaluate.method=bootstrap", "bootstrap.seed=7", "bootstrap.block=5", "bootstrap.paths=5",
+      "bootstrap.intervals=[\"measures.total\", \"total_return\"]"}
+  );
+  const auto& intervals = boot.at("intervals").as_object();
+  REQUIRE(intervals.contains("measures.total"));
+  for (const auto* part : {"lower", "median", "upper"}) {
+    CHECK(
+      intervals.at("measures.total").at(part).to_number<double>() ==
+      intervals.at("total_return").at(part).to_number<double>()
+    );
+  }
+  const std::vector<std::string> walk{
+    "evaluate.method=walk-forward", "walk_forward.train=30", "walk_forward.test=15", "grid.lookback=5,10"
+  };
+  auto by_measure = walk;
+  by_measure.push_back("evaluate.objective=measures.total");
+  auto by_figure = walk;
+  by_figure.push_back("evaluate.objective=total_return");
+  const auto measured = evaluate(by_measure);
+  const auto figured = evaluate(by_figure);
+  CHECK(measured.at("objective") == boost::json::value("measures.total"));
+  REQUIRE(!measured.at("folds").as_array().empty());
+  CHECK(measured.at("folds") == figured.at("folds"));
 }
 
 TEST_CASE("a program's extern function and indicator come from the run spec's header", "[acceptance]") {

@@ -1522,6 +1522,31 @@ inline void read_grid(
 }
 
 /**
+ * @brief The metrics `evaluate.objective` may name, which walk-forward chooses by (the driver checks
+ *   `bootstrap.intervals` against the same list): the report's figures, then `measures.NAME` for each of the program's
+ *   measures, then each of the run spec's.
+ * @param program The program's facts.
+ * @param measures The run spec's `measures`, or null.
+ * @return The names.
+ */
+inline std::vector<std::string> metric_names(const Program& program, const Entry* measures) {
+  std::vector<std::string> out{
+    "total_return", "sharpe_per_period", "sharpe_annualized", "sortino_per_period", "max_drawdown", "turnover",
+    "executions"
+  };
+  for (const auto& name : program.measures_) {
+    out.push_back("measures." + name);
+  }
+  if (measures != nullptr) {
+    const auto& v = measures->value_;
+    for (const auto& item : v.type_ == Value::Type::LIST ? v.items_ : std::vector<Value>{v}) {
+      out.push_back("measures." + item.text());
+    }
+  }
+  return out;
+}
+
+/**
  * @brief Merges the layers (later winning: the file, then the command line) and checks them together against the
  *   program; every error found.
  * @param layers The layers, each checked key by key.
@@ -2093,18 +2118,7 @@ inline std::vector<Error> resolve(
     if (const auto* e = get("evaluate.jobs"); e != nullptr && !(e->value_.number_ >= 1 && e->value_.number_ <= 256)) {
       errors.push_back(Error::at(e->origin_, "`evaluate.jobs` is 1 to 256"));
     }
-    // A figure of the report, or one of its measures: the program's, then the spec's.
-    std::vector<std::string> figures{
-      "total_return", "sharpe_per_period", "sharpe_annualized", "sortino_per_period", "max_drawdown"
-    };
-    for (const auto& name : program.measures_) {
-      figures.push_back("measures." + name);
-    }
-    if (const auto* e = get("measures")) {
-      for (const auto& item : e->value_.type_ == Value::Type::LIST ? e->value_.items_ : std::vector<Value>{e->value_}) {
-        figures.push_back("measures." + item.text());
-      }
-    }
+    const auto figures = metric_names(program, get("measures"));
     if (
       const auto* e = get("evaluate.objective");
       e != nullptr && std::find(figures.begin(), figures.end(), e->value_.text()) == figures.end()

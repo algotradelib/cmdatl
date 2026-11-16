@@ -542,6 +542,24 @@ int loops_main(
 );
 
 /**
+ * @brief The metrics an objective or an interval may name: the report's figures, then `measures.NAME` for each measure.
+ * @tparam Measures A table of pairs whose first member is the measure's name.
+ * @param measures The report's measures, the program's first, as the driver's table lists them.
+ * @return The names.
+ */
+template <typename Measures>
+std::vector<std::string> metric_names(const Measures& measures) {
+  std::vector<std::string> out{
+    "total_return", "sharpe_per_period", "sharpe_annualized", "sortino_per_period", "max_drawdown", "turnover",
+    "executions"
+  };
+  for (const auto& measure : measures) {
+    out.push_back(std::string("measures.") + measure.first);
+  }
+  return out;
+}
+
+/**
  * @brief Evaluates a compiled strategy on many replays (`evaluate.method=grid`, or a method of `loops.hpp`): the replays of `grid.NAME` settings
  *   on the data loaded once, run `evaluate.jobs` at once, one JSON line each in index order, then
  *   `{"summary":{...}}`; a failure that ends the batch prints `{"stopped":{"code":...,"message":...}}` and an `error:`
@@ -576,12 +594,7 @@ int evaluate_main(const Settings& s, Fills& fills_of, const Measures& measures, 
     }
     const auto objective = s.get("evaluate.objective");
     const auto direction = s.get_or("evaluate.direction", "max");
-    std::vector<std::string> figures{
-      "total_return", "sharpe_per_period", "sharpe_annualized", "sortino_per_period", "max_drawdown"
-    };
-    for (const auto& measure : measures) {
-      figures.push_back(std::string("measures.") + measure.first);
-    }
+    const auto figures = metric_names(measures);
     if (objective && std::find(figures.begin(), figures.end(), *objective) == figures.end()) {
       throw std::invalid_argument("evaluate.objective names no figure of the report: '" + *objective + "'");
     }
