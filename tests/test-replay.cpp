@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -1083,9 +1084,9 @@ TEST_CASE("replay sweep: generated settings and files are read or refused with a
   std::size_t data_read = 0;
   std::size_t refused = 0;
   std::size_t replayed = 0;
-  // CMDATL_TEST_SWEEP names a longer sweep, as the sanitizer runs take.
+  // CMDATL_TEST_SWEEP names a longer sweep, as the sanitizer runs take; never a shorter one.
   const char* const asked = std::getenv("CMDATL_TEST_SWEEP");
-  const int count = asked ? std::atoi(asked) : 3000;
+  const int count = std::max(asked ? std::atoi(asked) : 0, 3000);
   for (int k = 0; k < count; ++k) {
     // A third each: a long CSV, a wide table, or columns at random; then cells and settings changed at random.
     const auto shape = k % 3;

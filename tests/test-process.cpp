@@ -201,8 +201,8 @@ TEST_CASE("run_child hands stdout on by lines when asked: written in parts, unte
   }
   const int before = open_fds();
   const auto long_line = cmdatl::run_child(
-    {"/bin/sh", "-c", "head -c 1100000 /dev/zero | tr '\\000' a; sleep 30"}, ignore_lines, nullptr, -1,
-    [](const std::string&) {}
+    {"/bin/sh", "-c", "/usr/bin/head -c 1100000 /dev/zero | /usr/bin/tr '\\000' a; /bin/sleep 30"}, ignore_lines,
+    nullptr, -1, [](const std::string&) {}
   );
   CHECK(long_line.kind_ == cmdatl::ChildResult::Kind::IO_FAILED);
   CHECK(long_line.error_ == "a line of the child's output is longer than 1048576 bytes");

@@ -705,7 +705,7 @@ TEST_CASE("strategy reference maps atlc's refusals: a wrong chapter and an old a
     CHECK(code_of(ran.out_) == "atlc.failed");
   }
   {
-    const ScopedVariable atlc("CMDATL_ATLC", std::string("cmdatl-no-such-atlc"));
+    const ScopedVariable atlc("CMDATL_ATLC", std::string("/nonexistent/cmdatl-no-such-atlc"));
     const auto ran = run({"--json", "strategy", "reference"});
     CHECK(ran.exit_ == 1);
     CHECK(code_of(ran.out_) == "atlc.missing");

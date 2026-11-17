@@ -655,9 +655,6 @@ TEST_CASE("the journal's bytes from the library's writer are the fixture's") {
   entry.scope_ = SCOPE;
   const auto text = runner::journal_header_line(SCOPE) + "\n" + runner::journal_entry_to_line(entry) + "\n";
   const auto fixture_path = std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "fixtures" / "journal.jsonl";
-  if (std::getenv("CMDATL_TEST_RECORD") != nullptr) {
-    spit(fixture_path, text);
-  }
   CHECK(slurp(fixture_path) == text);
 }
 
