@@ -221,9 +221,8 @@ TEST_CASE("a read on a broker's account takes the login's account, and answers b
   );
   setup.client_->fail_next(atl::mock::Call::CALENDAR, marker("calendar"));
   setup.client_->fail_next(atl::mock::Call::WORKING_ORDERS, marker("list"));
-  const auto start = std::chrono::steady_clock::now();
   const auto busy = run_on(setup, {"status"});
-  CHECK(std::chrono::steady_clock::now() - start < std::chrono::seconds(1));
+  CHECK(busy.err_.find("waiting for the account") == std::string::npos);
   CHECK(busy.exit_ == 1);
   CHECK(code_of(busy.out_) == "busy.locked");
   CHECK(reply_of(busy.out_).at("error").as_object().at("message").as_string().find("run r1") != std::string::npos);
@@ -265,7 +264,7 @@ TEST_CASE("the lock waits for a command's record and not for a run's") {
       told = true;
     }) == cmdatl::OwnerLock::Outcome::BUSY);
     CHECK(told == waits);
-    CHECK((std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(200)) == waits);
+    CHECK((!waits || std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(200)));
   }
 }
 

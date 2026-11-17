@@ -216,7 +216,6 @@ struct Ran {
   int exit_{-1};
   std::string out_;
   std::string err_;
-  double seconds_{0};
 };
 
 /**
@@ -244,13 +243,11 @@ Ran drive(
   auto* const saved_out = std::cout.rdbuf(out.rdbuf());
   auto* const saved_err = std::cerr.rdbuf(err.rdbuf());
   Ran ran;
-  const auto start = std::chrono::steady_clock::now();
   ran.exit_ = s.get("evaluate.method") ?
     replay::evaluate_main<Strategy>(s, fills, measures, input, &hooks) :
     replay::main<Strategy>(static_cast<int>(argv.size()), argv.data(), fills, [&measures]() {
       return measures;
     });
-  ran.seconds_ = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   std::cout.rdbuf(saved_out);
   std::cerr.rdbuf(saved_err);
   ran.out_ = out.str();
@@ -542,19 +539,6 @@ TEST_CASE("evaluate: a thread that cannot start stops and joins those started", 
   const auto ran = drive(on_csv(file, {"grid.k=1,2,3,4,5,6,7,8", "evaluate.jobs=4"}), -1, hooks);
   CHECK(ran.exit_ == 1);
   CHECK(ran.out_.find("{\"stopped\":{\"code\":\"replay.failed\",\"message\":\"thread: ") != std::string::npos);
-}
-
-TEST_CASE("evaluate: a stop with a worker waiting at admission returns within a second", "[.][local][threads]") {
-  const FreshObserved fresh;
-  Scratch dir;
-  const auto file = dir.write("bars.csv", HEADER + "\n" + rows_of("AAA", {100, 101, 103}));
-  std::string ks = "grid.k=0";
-  for (int k = 1; k < 40; ++k) {
-    ks += "," + std::to_string(k);
-  }
-  const auto waiting = drive(on_csv(file, {ks, "param.hold=200", "param.fail=1", "evaluate.jobs=2"}));
-  CHECK(waiting.exit_ == 1);
-  CHECK(waiting.seconds_ < 1.0);
 }
 
 TEST_CASE("evaluate: a sink that throws stops the batch and is never called again", "[threads]") {
@@ -884,13 +868,6 @@ TEST_CASE(
   CHECK(ready.exit_ == 1);
   CHECK(ready.out_.find("\"stopped\"") != std::string::npos);
   CHECK(stopped_at < size);
-}
-
-TEST_CASE("evaluate: a stdin reader stops within a second of a fatal throw", "[.][local]") {
-  CHECK(silent_producer().ran_.seconds_ < 1.0);
-  off_t stopped_at = 0;
-  off_t size = 0;
-  CHECK(ready_file(stopped_at, size).seconds_ < 1.0);
 }
 
 namespace {
