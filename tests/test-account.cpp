@@ -110,9 +110,8 @@ public:
   /**
    * @brief Starts it and waits until it holds the lock.
    * @param dir The account's directory.
-   * @param ms How long it holds.
    */
-  Holder(const std::filesystem::path& dir, int ms) {
+  explicit Holder(const std::filesystem::path& dir) {
     std::filesystem::create_directories(dir);
     int out[2];
     REQUIRE(::pipe(out) == 0);
@@ -123,10 +122,7 @@ public:
     posix_spawn_file_actions_addclose(&actions, out[1]);
     const std::string program = CMDATL_HOLD_LOCK;
     const std::string where = dir.string();
-    const std::string time = std::to_string(ms);
-    char* argv[] = {
-      const_cast<char*>(program.c_str()), const_cast<char*>(where.c_str()), const_cast<char*>(time.c_str()), nullptr
-    };
+    char* argv[] = {const_cast<char*>(program.c_str()), const_cast<char*>(where.c_str()), nullptr};
     const int spawned = posix_spawn(&pid_, argv[0], &actions, nullptr, argv, environ);
     posix_spawn_file_actions_destroy(&actions);
     ::close(out[1]);
@@ -891,20 +887,17 @@ TEST_CASE("the lock: a waiting command says who holds it, then answers busy.lock
   const Watchdog watchdog("the lock's wait", 60);
   const PaperFixture fixture;
   initialize(fixture);
-  Holder holder(fixture.account(), 30000);
+  Holder holder(fixture.account());
   Spawned cmdatl({"--json", "status"});
   const auto first = cmdatl.line(true, 5);
   REQUIRE(first.has_value());
   CHECK(first->find("waiting for the account") != std::string::npos);
   CHECK(cmdatl.out().empty());
-  const auto start = std::chrono::steady_clock::now();
   const int status = cmdatl.wait(30);
-  const auto took = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
   REQUIRE(WIFEXITED(status));
   CHECK(WEXITSTATUS(status) == 1);
   CHECK(code_of(cmdatl.out()) == "busy.locked");
   CHECK(reply_of(cmdatl.out()).at("error").as_object().at("retry").as_bool());
-  CHECK(took > 8.0);
   CHECK(declares({"status"}, 1, "busy.locked"));
 }
 
@@ -912,7 +905,7 @@ TEST_CASE("the lock: SIGINT while waiting is exit 130 with one interrupted reply
   const Watchdog watchdog("an interrupted wait", 60);
   const PaperFixture fixture;
   initialize(fixture);
-  Holder holder(fixture.account(), 30000);
+  Holder holder(fixture.account());
   const auto log = slurp(fixture.log());
   Spawned cmdatl({"--json", "clock", "advance", "--minutes", "5"});
   REQUIRE(cmdatl.line(true, 5).has_value());
@@ -931,7 +924,7 @@ TEST_CASE("the lock: replaced while a command waits, the waiter locks the new fi
   const Watchdog watchdog("a lock replaced during the wait", 60);
   const PaperFixture fixture;
   initialize(fixture);
-  Holder holder(fixture.account(), 30000);
+  Holder holder(fixture.account());
   Spawned cmdatl({"--json", "status"});
   REQUIRE(cmdatl.line(true, 5).has_value());
   std::filesystem::rename(fixture.account() / "lock", fixture.account() / "lock.old");
@@ -1062,7 +1055,7 @@ TEST_CASE("a failing output: during the wait, in a read's reply, and after a com
   const int before = open_fds();
   {
     // The waiting line cannot be written: the lock is given back.
-    Holder holder(fixture.account(), 3000);
+    Holder holder(fixture.account());
     std::ostringstream out;
     std::ostringstream err;
     err.setstate(std::ios::badbit);

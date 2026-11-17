@@ -590,14 +590,14 @@ TEST_CASE("an account run signalled while it waits for the account ends 130 with
   const auto dir = kis_account_dir(fixture);
   std::filesystem::create_directories(dir);
   spit(dir / "owner.json", "{\"role\":\"agent\",\"pid\":1,\"what\":\"order plan 005930\"}\n");
-  // Another process holds the lock far longer than the test runs.
+  // Another process holds the lock until the test kills it.
   int out[2];
   REQUIRE(::pipe(out) == 0);
   const pid_t holder = ::fork();
   REQUIRE(holder >= 0);
   if (holder == 0) {
     ::dup2(out[1], STDOUT_FILENO);
-    ::execl(CMDATL_HOLD_LOCK, CMDATL_HOLD_LOCK, dir.c_str(), "20000", static_cast<char*>(nullptr));
+    ::execl(CMDATL_HOLD_LOCK, CMDATL_HOLD_LOCK, dir.c_str(), static_cast<char*>(nullptr));
     ::_exit(127);
   }
   ::close(out[1]);
