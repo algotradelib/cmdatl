@@ -1081,29 +1081,51 @@ TEST_CASE("a placement after a signal is refused before sending, counted apart, 
   CHECK(ran.reply_.at("stopped").as_string() == "signal");
 }
 
-TEST_CASE("a closed output withdraws the run: the resting order is cancelled and confirmed although nobody reads") {
-  const PaperFixture fixture(run_parts());
-  fixture.arm();
-  const HeldOnOrder held(fixture);
-  set_script({{4, {10, "0.97"}}});
-  // Once the order rests, the reader goes away, as when the caller's pipe closes: the next event (the heartbeat) fails.
-  const auto ran = run_child_piped<runtest::Program>(
-    fixture, spec_args(), [&held](pid_t, int read_end, int write_end, std::string& text) {
-      read_until(read_end, text, "\"event\":\"placed\"");
-      ::close(write_end);
-      ::close(read_end);
-      // Past the heartbeat's second, so the step after the hold writes one, which fails while the order rests.
-      std::this_thread::sleep_for(std::chrono::milliseconds(1100));
-      held.release();
+TEST_CASE(
+  "a closed or full output withdraws the run: the resting order is cancelled and confirmed though nobody reads"
+) {
+  for (const bool full : {false, true}) {
+    INFO((full ? "a full pipe, then SIGTERM" : "a closed pipe"));
+    const PaperFixture fixture(run_parts());
+    fixture.arm();
+    const HeldOnOrder held(fixture);
+    set_script({{4, {10, "0.97"}}});
+    const auto ran = run_child_piped<runtest::Program>(
+      fixture, spec_args(), [&held, full](pid_t pid, int read_end, int write_end, std::string& text) {
+        read_until(read_end, text, "\"event\":\"placed\"");
+        if (full) {
+          // While the run is held, the pipe is filled and never read again, as by a caller waiting on the process
+          // without reading its output; then SIGTERM. Every write after the stop must give up, not block.
+          const int flags = ::fcntl(write_end, F_GETFL);
+          ::fcntl(write_end, F_SETFL, flags | O_NONBLOCK);
+          const std::string filler(4096, ' ');
+          while (::write(write_end, filler.data(), filler.size()) > 0) {
+          }
+          while (::write(write_end, filler.data(), 1) > 0) {
+          }
+          ::fcntl(write_end, F_SETFL, flags);
+          ::kill(pid, SIGTERM);
+        } else {
+          // The reader goes away, as when the caller's pipe closes: the next event (the heartbeat) fails.
+          ::close(write_end);
+          ::close(read_end);
+          // Past the heartbeat's second, so the step after the hold writes one, which fails while the order rests.
+          std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+        }
+        held.release();
+      }
+    );
+    // It ended by itself, though nobody read (a hang would end in the child's alarm, not an exit), after withdrawing.
+    CHECK(ran.exit_ == 0);
+    if (!full) {
+      CHECK(ran.reply_.empty());
     }
-  );
-  CHECK(ran.exit_ == 0);
-  CHECK(ran.reply_.empty());
-  CHECK(count_of(ran, "placed") == 1);
-  const auto journal = slurp(ran.dir_ / "journal.jsonl");
-  CHECK(journal.find("\"action\":\"cancel\"") != std::string::npos);
-  CHECK(journal.find("\"outcome\":\"confirmed\"") != std::string::npos);
-  CHECK(ran.stderr_.find(", 0 owed") != std::string::npos);
+    CHECK(count_of(ran, "placed") == 1);
+    const auto journal = slurp(ran.dir_ / "journal.jsonl");
+    CHECK(journal.find("\"action\":\"cancel\"") != std::string::npos);
+    CHECK(journal.find("\"outcome\":\"confirmed\"") != std::string::npos);
+    CHECK(ran.stderr_.find(", 0 owed") != std::string::npos);
+  }
 }
 
 #endif
