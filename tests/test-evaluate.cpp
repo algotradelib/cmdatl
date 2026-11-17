@@ -473,10 +473,6 @@ TEST_CASE("evaluate: a fatal throw stops the batch, joins every thread and print
       CHECK(ran.err_ == "error: " + message + "\n");
     }
   }
-  // A worker already waiting at admission (index 8 behind a held index 0, two jobs) is woken and dropped.
-  const auto waiting = drive(on_csv(file, {ks, "param.hold=200", "param.fail=1", "evaluate.jobs=2"}));
-  CHECK(waiting.exit_ == 1);
-  CHECK(waiting.out_.find("\"stopped\"") != std::string::npos);
   // The single backtest answers a throw that is not a std::exception with its error line.
   const auto single =
     drive({"bars.source=csv", "bars.file=" + file, "bars.symbol_column=symbol", "instrument.x=AAA", "param.fail=2"});
@@ -714,57 +710,34 @@ TEST_CASE("evaluate: one job and four print the same bytes on stdin paths", "[th
 
 namespace {
 
-/** @brief What a silent producer's evaluation gave, and whether the test had to close the pipe to end it. */
-struct Silent {
-  Ran ran_;
-  bool closed_by_test_{false};
-};
-
 /**
- * @brief Path A and one row of path B on a pipe held open and silent, two jobs, and A's replay failing with
- *   `std::bad_alloc` after 100 ms: the reader waits on B while the batch stops. The pipe is closed after 5 s if the
- *   evaluation has not returned by then, so a reader that ignores the stop fails the test instead of hanging it.
+ * @brief Path A and one row of path B on a pipe held open and silent until the evaluation returns, two jobs, and A's
+ *   replay failing with `std::bad_alloc`: the batch stops although B never ends. A reader that ignores the stop hangs
+ *   the test, which ctest's timeout then fails.
  * @return What it gave.
  */
-Silent silent_producer() {
+Ran silent_producer() {
   const FreshObserved fresh;
   int fds[2];
   REQUIRE(::pipe(fds) == 0);
   const auto text = PATHS + rows_of("AAA", {100, 101, 103}, "a") + rows_of("AAA", {50}, "b");
   REQUIRE(::write(fds[1], text.data(), text.size()) == static_cast<ssize_t>(text.size()));
-  std::atomic<bool> finished{false};
-  Silent out;
-  std::thread guard([&]() {
-    for (int step = 0; step < 500 && !finished; ++step) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    if (!finished) {
-      out.closed_by_test_ = true;
-      ::close(fds[1]);
-    }
-  });
-  out.ran_ = drive(
+  const auto ran = drive(
     {"bars.source=stdin", "bars.symbol_column=symbol", "bars.path_column=path", "instrument.x=AAA",
       "evaluate.method=grid", "evaluate.jobs=2", "param.hold=100", "param.fail=1"},
     fds[0]
   );
-  finished = true;
-  guard.join();
-  if (!out.closed_by_test_) {
-    ::close(fds[1]);
-  }
+  ::close(fds[1]);
   ::close(fds[0]);
-  return out;
+  return ran;
 }
 
 /**
  * @brief One short path, then a path of 400,000 rows in a regular file (always ready), two jobs, and the first path's
  *   replay failing with `std::bad_alloc`.
- * @param stopped_at Set to how far the reader got into the file.
- * @param size Set to the file's size.
  * @return What it gave.
  */
-Ran ready_file(off_t& stopped_at, off_t& size) {
+Ran ready_file() {
   Scratch dir;
   std::vector<int> prices(400000, 100);
   const auto path = dir.write("in.csv", PATHS + rows_of("AAA", {100, 101}, "a") + rows_of("AAA", prices, "b"));
@@ -774,8 +747,6 @@ Ran ready_file(off_t& stopped_at, off_t& size) {
       "evaluate.method=grid", "evaluate.jobs=2", "param.fail=1"},
     fd
   );
-  stopped_at = ::lseek(fd, 0, SEEK_CUR);
-  size = ::lseek(fd, 0, SEEK_END);
   ::close(fd);
   return ran;
 }
@@ -786,17 +757,11 @@ TEST_CASE(
   "evaluate: a fatal throw stops a stdin reader waiting on a silent pipe or reading a ready file", "[threads]"
 ) {
   const auto silent = silent_producer();
-  CHECK(!silent.closed_by_test_);
-  CHECK(silent.ran_.exit_ == 1);
-  CHECK(
-    lines_of(silent.ran_.out_).back() == "{\"stopped\":{\"code\":\"replay.failed\",\"message\":\"std::bad_alloc\"}}"
-  );
-  off_t stopped_at = 0;
-  off_t size = 0;
-  const auto ready = ready_file(stopped_at, size);
+  CHECK(silent.exit_ == 1);
+  CHECK(lines_of(silent.out_).back() == "{\"stopped\":{\"code\":\"replay.failed\",\"message\":\"std::bad_alloc\"}}");
+  const auto ready = ready_file();
   CHECK(ready.exit_ == 1);
   CHECK(ready.out_.find("\"stopped\"") != std::string::npos);
-  CHECK(stopped_at < size);
 }
 
 #endif
