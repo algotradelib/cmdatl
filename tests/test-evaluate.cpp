@@ -1773,7 +1773,7 @@ TEST_CASE("loops: one job and four print the same bytes for every method", "[thr
   const auto wide = dir.write("closes.csv", table);
   for (
     const auto& args : std::vector<std::vector<std::string>>{
-      on_pair(file, "windows", {"windows.length=8", "windows.step=3"}),
+      on_pair(file, "windows", {"windows.length=8", "windows.step=3", "windows.summary=mean,q05,median,max"}),
       on_pair(
         file, "walk-forward",
         {"walk_forward.train=8", "walk_forward.test=4", "grid.k=1,2,3", "evaluate.objective=sharpe_annualized"}
@@ -1788,6 +1788,8 @@ TEST_CASE("loops: one job and four print the same bytes for every method", "[thr
     const auto many = drive<Holder>(four);
     INFO(args.back() << one.out_ << one.err_);
     REQUIRE(one.exit_ == 0);
+    // The windows' summary is compared too.
+    CHECK((args.back().rfind("windows.summary=", 0) != 0 || one.out_.find("\"q05\":") != std::string::npos));
     auto expected = one.out_;
     expected.replace(expected.find("\"jobs\":1,"), 9, "\"jobs\":4,");
     CHECK(many.out_ == expected);
