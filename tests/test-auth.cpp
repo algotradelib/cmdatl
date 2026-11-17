@@ -685,6 +685,8 @@ public:
     pid_ = ::forkpty(&master_, nullptr, nullptr, nullptr);
     REQUIRE(pid_ >= 0);
     if (pid_ == 0) {
+      // A SIGHUP the test runner ignores (nohup) would stay ignored, and the hangup scenario expects it to stop.
+      ::signal(SIGHUP, SIG_DFL);
       cmdatl::handle_signals();
       // No token folder: a replaced or removed login has no saved token to remove.
       ::setenv("XDG_CACHE_HOME", (dir / "absent").c_str(), 1);

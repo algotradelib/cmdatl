@@ -121,6 +121,8 @@ RunResult run_child(
   REQUIRE(pid >= 0);
   if (pid == 0) {
     ::alarm(120);
+    // A SIGHUP the test runner ignores (nohup) would stay ignored, and the SIGHUP scenario expects it to stop the run.
+    ::signal(SIGHUP, SIG_DFL);
     const int fd = ::open(reply_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
     ::dup2(fd, STDOUT_FILENO);
     ::close(fd);
