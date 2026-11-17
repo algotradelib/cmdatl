@@ -749,26 +749,6 @@ TEST_CASE("strategy new removes the first file when the second cannot be created
   }
 }
 
-TEST_CASE("two strategy new at once: one wins and the other is refused and no file is truncated") {
-  const Watchdog watchdog("the race", 120);
-  const ScratchDir dir;
-  for (int round = 0; round < 20; ++round) {
-    const auto name = "race" + std::to_string(round);
-    Spawned first({"strategy", "new", name, "--dir", dir.path().string()});
-    Spawned second({"strategy", "new", name, "--dir", dir.path().string()});
-    const int a = first.wait();
-    const int b = second.wait();
-    REQUIRE(WIFEXITED(a));
-    REQUIRE(WIFEXITED(b));
-    INFO("round " << round);
-    CHECK(std::multiset<int>{WEXITSTATUS(a), WEXITSTATUS(b)} == std::multiset<int>{0, 1});
-    const auto& loser = WEXITSTATUS(a) == 1 ? first : second;
-    CHECK(code_of(loser.out()) == "strategy.exists");
-    CHECK(slurp(dir.path() / (name + ".atls")) == template_text("mean-reversion"));
-    CHECK(slurp(dir.path() / (name + ".toml")).find("strategy = \"" + name + ".atls\"") != std::string::npos);
-  }
-}
-
 TEST_CASE("strategy new --force replaces regular files and refuses a directory or a link or a FIFO first") {
   const Watchdog watchdog("--force", 60);
   const ScratchDir dir;

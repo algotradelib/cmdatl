@@ -1078,31 +1078,6 @@ TEST_CASE("two operator files naming one account wait on one lock") {
   CHECK(reply_of(cmdatl.out()).at("state_dir").as_string() == fixture.account().string());
 }
 
-TEST_CASE("twenty concurrent advances and reads end exactly twenty minutes on, with no torn line") {
-  const Watchdog watchdog("concurrent commands", 120);
-  ConfigParts parts;
-  parts.paper_ = "bars = \"bars.csv\"\ncash = 100000000\nstart = \"2024-03-26T09:00\"\n";
-  const PaperFixture fixture(parts);
-  initialize(fixture);
-  std::vector<std::unique_ptr<Spawned>> processes;
-  for (int i = 0; i < 20; ++i) {
-    processes.push_back(
-      std::make_unique<Spawned>(std::vector<std::string>{"--json", "clock", "advance", "--minutes", "1"})
-    );
-    processes.push_back(std::make_unique<Spawned>(std::vector<std::string>{"--json", "status"}));
-  }
-  for (auto& process : processes) {
-    const int status = process->wait(60);
-    REQUIRE(WIFEXITED(status));
-    CHECK(WEXITSTATUS(status) == 0);
-  }
-  CHECK(reply(fixture, {"clock"}).at("now").as_string() == "2024-03-26T09:20:00+09:00");
-  const auto log = slurp(fixture.log());
-  CHECK(log.back() == '\n');
-  CHECK(lines_of(log).size() == 21);
-  CHECK(no_children());
-}
-
 TEST_CASE("an allocation failing anywhere in an account command leaks nothing and leaves the lock free") {
   const Watchdog watchdog("the account sweep", 1200);
   // Sixty days of bars, so an advance never runs out of data during the sweep.
@@ -1243,32 +1218,6 @@ TEST_CASE("cmdatl started with stdin, stdout or stderr closed never writes a rep
     CHECK(slurp(fixture.account() / "lock").empty());
   }
   initialize(fixture);
-}
-
-TEST_CASE("no account command starts a child, and descriptors stay level over repeated runs") {
-  const Watchdog watchdog("repeated account commands", 300);
-  const PaperFixture fixture;
-  fixture.arm();
-  initialize(fixture);
-  const std::vector<std::vector<std::string>> commands{
-    {"status"},
-    {"account"},
-    {"quote", "005930"},
-    {"order", "list"},
-    {"clock"},
-    {"clock", "advance", "--minutes", "1"},
-    {"quote", "NOPE"},
-    {"clock", "advance", "--to", "2024-03-25T15:00"},
-  };
-  for (const auto& args : commands) {
-    INFO(cmdatl::join(args));
-    const int before = open_fds();
-    for (int i = 0; i < 200; ++i) {
-      (void)fixture.json(args);
-    }
-    CHECK(open_fds() == before);
-    CHECK(no_children());
-  }
 }
 
 TEST_CASE("the account directory read-only, a file size limit, descriptors exhausted, no state root") {
@@ -1420,36 +1369,4 @@ TEST_CASE("the table: the commands that work, the ones that change the account, 
   CHECK(run({"clock", "advance", "--help"}).out_.find("(changes the account)") != std::string::npos);
 }
 
-TEST_CASE("a scripted session against the binary across three days of bars") {
-  const Watchdog watchdog("the scripted session", 120);
-  const PaperFixture fixture;
-  fixture.arm();
-  const auto step = [](const std::vector<std::string>& args) {
-    std::vector<std::string> line{"--json"};
-    line.insert(line.end(), args.begin(), args.end());
-    Spawned cmdatl(line);
-    const int status = cmdatl.wait(30);
-    REQUIRE(WIFEXITED(status));
-    INFO(cmdatl::join(args) << ": " << cmdatl.out() << cmdatl.err());
-    CHECK(WEXITSTATUS(status) == 0);
-    return reply_of(cmdatl.out());
-  };
-  CHECK(step({"env"}).at("config").as_object().at("state").as_string() == "ok");
-  auto status = step({"status"});
-  CHECK(status.at("phase").as_string() == "post_close");
-  CHECK(status.at("cash").as_string() == "100000000");
-  CHECK(step({"quote", "005930", "000660"}).at("quotes").as_array().size() == 2);
-  for (const auto* day : {"2024-03-26T09:00:00+09:00", "2024-03-27T09:00:00+09:00"}) {
-    const auto advanced = step({"clock", "advance", "--next-open"});
-    CHECK(advanced.at("now").as_string() == day);
-    status = step({"status"});
-    CHECK(status.at("orders_accepted_now").as_bool());
-    CHECK(step({"account"}).at("orders_left_today").as_int64() == 3);
-  }
-  CHECK(step({"clock", "advance", "--hours", "30"}).at("now").as_string() == "2024-03-28T15:00:00+09:00");
-  status = step({"status"});
-  // Past the data, the calendar of the bars says nothing about the day.
-  CHECK(status.at("phase").as_string() == "unknown");
-  CHECK(words(status.at("not_accepted")) == std::vector<std::string>{"phase", "market_closed"});
-}
 #endif

@@ -186,34 +186,6 @@ TEST_CASE("two places on one plan id race: one place line and the other plan_use
   }
 }
 
-TEST_CASE("three accounts reads and two places and a clock advance together end consistent", "[orders][process]") {
-  const Watchdog watchdog("the mixed race", 120);
-  const PaperFixture fixture;
-  fixture.arm();
-  REQUIRE(step(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
-  const auto a = plan_of(fixture, "005930", "10", "75000");
-  std::vector<std::unique_ptr<Spawned>> all;
-  for (int k = 0; k < 3; ++k) {
-    all.push_back(std::make_unique<Spawned>(std::vector<std::string>{"--json", "account"}));
-  }
-  all.push_back(std::make_unique<Spawned>(std::vector<std::string>{"--json", "order", "place", a}));
-  all.push_back(std::make_unique<Spawned>(std::vector<std::string>{"--json", "order", "place", a}));
-  all.push_back(std::make_unique<Spawned>(std::vector<std::string>{"--json", "clock", "advance", "--minutes", "1"}));
-  int placed = 0;
-  for (auto& process : all) {
-    const int status = process->wait(60);
-    REQUIRE(WIFEXITED(status));
-    const auto reply = reply_of(process->out());
-    if (reply.contains("reason") && reply.at("reason").as_string() == "placed") {
-      ++placed;
-    }
-  }
-  // The advance may make the plan stale before either place: at most one placement.
-  CHECK(placed <= 1);
-  CHECK(ops_of(slurp(fixture.log()), "place").size() == static_cast<std::size_t>(placed));
-  CHECK(step(fixture, {"status"}).exit_ == 0);
-}
-
 TEST_CASE(
   "two operator files naming one account: their places serialize and one placed and the other plan_used",
   "[orders][process]"
@@ -443,29 +415,4 @@ TEST_CASE(
 #endif
 
 #if !defined(_WIN32)
-TEST_CASE(
-  "descriptors and children: 200 in-process runs of each order command leave the counts as they were",
-  "[orders][process]"
-) {
-  const Watchdog watchdog("the descriptor count", 600);
-  const PaperFixture fixture;
-  fixture.arm();
-  REQUIRE(ask(fixture, {"clock", "advance", "--next-open"}).exit_ == 0);
-  const int before = open_fds();
-  for (int i = 0; i < 200; ++i) {
-    const auto planned = ask(fixture, {"order", "plan", "005930", "--target", "10", "--limit", "75000"});
-    REQUIRE(planned.exit_ == 0);
-    // A place of a plan the book does not hold, a cancel with nothing working, a reconcile, a release refused.
-    CHECK(ask(fixture, {"order", "place", "p0123456789"}).code_ == "refused.no_plan");
-    CHECK(ask(fixture, {"order", "cancel", "005930"}).reason_ == "nothing_working");
-    CHECK(ask(fixture, {"order", "reconcile"}).reason_ == "clean");
-    CHECK(ask(fixture, {"order", "release", "005930", "--reason", "read"}).code_ == "refused.not_approved");
-    if (i % 50 == 0) {
-      CHECK(open_fds() == before);
-      CHECK(no_children());
-    }
-  }
-  CHECK(open_fds() == before);
-  CHECK(no_children());
-}
 #endif

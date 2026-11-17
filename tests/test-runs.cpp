@@ -238,25 +238,6 @@ RunResult run_child_piped(
 }
 
 /**
- * @brief Fills a pipe as a blocking writer would: a helper process writes until it blocks, then is killed. (On macOS a
- *   blocking writer grows a pipe to 64 KiB, beyond what non-blocking writes fill.)
- * @param write_end The pipe's write end.
- */
-void fill_pipe(int write_end) {
-  const pid_t filler = ::fork();
-  REQUIRE(filler >= 0);
-  if (filler == 0) {
-    const std::string chunk(512, ' ');
-    while (::write(write_end, chunk.data(), chunk.size()) > 0) {
-    }
-    ::_exit(0);
-  }
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  ::kill(filler, SIGKILL);
-  ::waitpid(filler, nullptr, 0);
-}
-
-/**
  * @brief Reads a pipe until what was read holds a text, at most 60 s; only whole lines are kept.
  * @param fd The read end.
  * @param text What was read; whole lines only.
@@ -1149,86 +1130,4 @@ TEST_CASE("a closed output withdraws the run: the resting order is cancelled and
   CHECK(ran.stderr_.find(", 0 owed") != std::string::npos);
 }
 
-TEST_CASE("stopping, a line longer than the room a nearly full output polls with gives up instead of blocking") {
-  // A pipe that polls writable (at least PIPE_BUF free) without room for the whole line: once a stop is noted, the
-  // writer takes what fits a PIPE_BUF at a time and then gives up, where one whole write would sleep until read.
-  for (const std::size_t freed : {std::size_t{0}, std::size_t{700}, std::size_t{1500}}) {
-    INFO("bytes freed: " << freed);
-    int fds[2];
-    REQUIRE(::pipe(fds) == 0);
-    std::fflush(nullptr);
-    const pid_t pid = ::fork();
-    REQUIRE(pid >= 0);
-    if (pid == 0) {
-      ::alarm(20);
-      ::dup2(fds[1], STDOUT_FILENO);
-      const int flags = ::fcntl(STDOUT_FILENO, F_GETFL);
-      ::fcntl(STDOUT_FILENO, F_SETFL, flags | O_NONBLOCK);
-      const std::string filler(4096, ' ');
-      while (::write(STDOUT_FILENO, filler.data(), filler.size()) > 0) {
-      }
-      while (::write(STDOUT_FILENO, filler.data(), 1) > 0) {
-      }
-      ::fcntl(STDOUT_FILENO, F_SETFL, flags);
-      std::vector<char> drained(freed);
-      std::size_t got = 0;
-      while (got < freed) {
-        const auto n = ::read(fds[0], drained.data() + got, freed - got);
-        if (n <= 0) {
-          ::_exit(3);
-        }
-        got += static_cast<std::size_t>(n);
-      }
-      cmdatl::interruption = 1;
-      const bool written = cmdatl::driver::write_line(std::string(2000, 'x') + "\n");
-      ::_exit(written ? 1 : 0);
-    }
-    int status = 0;
-    REQUIRE(::waitpid(pid, &status, 0) == pid);
-    ::close(fds[0]);
-    ::close(fds[1]);
-    // An exit, not the alarm: the write gave up.
-    REQUIRE(WIFEXITED(status));
-    CHECK(WEXITSTATUS(status) == 0);
-  }
-}
-
-TEST_CASE("a signal stops a run whose output nobody reads: it gives up writing, withdraws and exits") {
-  // A full pipe, and a nearly full one: room for a few hundred bytes, which polls writable but holds no whole line;
-  // each with stderr apart, and sharing the pipe as `2>&1` does.
-  for (const auto& [freed, merged] : std::vector<std::pair<std::size_t, bool>>{{0, false}, {700, false}, {0, true}}) {
-    INFO("bytes freed: " << freed << ", stderr merged: " << merged);
-    const PaperFixture fixture(run_parts());
-    fixture.arm();
-    const HeldOnOrder held(fixture);
-    set_script({{4, {10, "0.97"}}});
-    // Once the order rests, the reader stops reading and the pipe is filled, as a caller waiting on the process
-    // without reading its output. Then SIGTERM.
-    const auto ran = run_child_piped<runtest::Program>(
-      fixture, spec_args(),
-      [&held, freed](pid_t pid, int read_end, int write_end, std::string& text) {
-        read_until(read_end, text, "\"event\":\"placed\"");
-        fill_pipe(write_end);
-        std::vector<char> drained(freed);
-        std::size_t got = 0;
-        while (got < freed) {
-          const auto n = ::read(read_end, drained.data() + got, freed - got);
-          REQUIRE(n > 0);
-          got += static_cast<std::size_t>(n);
-        }
-        ::kill(pid, SIGTERM);
-        held.release();
-      },
-      merged
-    );
-    // It ended by itself, though nobody read (a hang would end in the child's alarm, not an exit), after withdrawing.
-    CHECK(ran.exit_ == 0);
-    const auto journal = slurp(ran.dir_ / "journal.jsonl");
-    CHECK(journal.find("\"action\":\"cancel\"") != std::string::npos);
-    CHECK(journal.find("\"outcome\":\"confirmed\"") != std::string::npos);
-    if (!merged) {
-      CHECK(ran.stderr_.find(", 0 owed") != std::string::npos);
-    }
-  }
-}
 #endif

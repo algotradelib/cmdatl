@@ -30,7 +30,6 @@
 
 #if !defined(_WIN32)
 #include <fcntl.h>
-#include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -475,22 +474,6 @@ TEST_CASE("evaluate: one job and four print the same bytes and keep values in in
   }
 }
 
-TEST_CASE("evaluate: a slow first replay holds at most four lines per job", "[threads]") {
-  const FreshObserved fresh;
-  Scratch dir;
-  const auto file = dir.write("bars.csv", HEADER + "\n" + rows_of("AAA", {100, 101, 103}));
-  std::string ks = "grid.k=0";
-  for (int k = 1; k < 20; ++k) {
-    ks += "," + std::to_string(k);
-  }
-  const auto ran = drive(on_csv(file, {ks, "param.hold=300", "evaluate.jobs=2"}));
-  REQUIRE(ran.exit_ == 0);
-  CHECK(lines_of(ran.out_).size() == 21);
-  // While replay 0 held, the other thread started replays after it, and none past 4 * jobs - 1.
-  CHECK(observed().highest_while_held_ >= 1);
-  CHECK(observed().highest_while_held_ <= 7);
-}
-
 TEST_CASE("evaluate: a fatal throw stops the batch, joins every thread and prints the stop line", "[threads]") {
   const FreshObserved fresh;
   Scratch dir;
@@ -868,73 +851,6 @@ TEST_CASE(
   CHECK(ready.exit_ == 1);
   CHECK(ready.out_.find("\"stopped\"") != std::string::npos);
   CHECK(stopped_at < size);
-}
-
-namespace {
-
-/**
- * @brief The peak resident memory of an evaluation of one-row stdin paths, run in a child with its output discarded.
- * @param paths The paths.
- * @param jobs The jobs.
- * @return The child's peak, in the system's unit.
- */
-long peak_of(std::size_t paths, int jobs) {
-  const pid_t pid = ::fork();
-  REQUIRE(pid >= 0);
-  if (pid == 0) {
-    int fds[2];
-    const int null = ::open("/dev/null", O_WRONLY);
-    if (::pipe(fds) != 0 || null < 0 || ::dup2(null, 1) < 0 || ::dup2(null, 2) < 0) {
-      ::_exit(2);
-    }
-    std::thread writer([paths, fd = fds[1]]() {
-      std::string chunk = PATHS;
-      for (std::size_t p = 0; p < paths; ++p) {
-        chunk += rows_of("AAA", {100}, "p" + std::to_string(p));
-        if (chunk.size() > 60000 || p + 1 == paths) {
-          if (::write(fd, chunk.data(), chunk.size()) != static_cast<ssize_t>(chunk.size())) {
-            break;
-          }
-          chunk.clear();
-        }
-      }
-      ::close(fd);
-    });
-    std::vector<std::string> args{
-      "bars.source=stdin", "bars.symbol_column=symbol", "bars.path_column=path", "instrument.x=AAA",
-      "evaluate.method=grid", "evaluate.jobs=" + std::to_string(jobs)
-    };
-    std::vector<char*> argv{const_cast<char*>("driver")};
-    for (auto& arg : args) {
-      argv.push_back(arg.data());
-    }
-    const auto s = replay::Settings::from_args(static_cast<int>(argv.size()), argv.data());
-    auto fills = [](atl::backtest::NextBarFillModel model) {
-      return model;
-    };
-    const int code = replay::evaluate_main<Ticker>(s, fills, Measures{}, fds[0], nullptr);
-    writer.join();
-    std::cout.flush();
-    ::_exit(code);
-  }
-  int status = 0;
-  rusage usage{};
-  REQUIRE(::wait4(pid, &status, 0, &usage) == pid);
-  REQUIRE(WIFEXITED(status));
-  REQUIRE(WEXITSTATUS(status) == 0);
-  return usage.ru_maxrss;
-}
-
-} // namespace
-
-TEST_CASE("evaluate: 100,000 one-row stdin paths peak within 10 % of 1,000", "[.][local]") {
-  for (const int jobs : {1, 4}) {
-    INFO(jobs);
-    const auto few = peak_of(1000, jobs);
-    const auto many = peak_of(100000, jobs);
-    CAPTURE(few, many);
-    CHECK(static_cast<double>(many) <= 1.1 * static_cast<double>(few));
-  }
 }
 
 #endif

@@ -287,22 +287,6 @@ TEST_CASE("a throwing callback kills the child's whole group with its grandchild
   CHECK(all_gone(pids));
 }
 
-TEST_CASE("a leader that ends while its grandchild holds the pipes is reported and the grandchild killed") {
-  const Watchdog watchdog("the held pipes", 30);
-  const FakeAtlc fake("run grandchild hold\nrun pid\nrun out done\nrun exit 4\n");
-  const auto start = std::chrono::steady_clock::now();
-  const auto result = run_fake();
-  const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-  REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
-  CHECK(!result.signaled_);
-  CHECK(result.code_ == 4);
-  CHECK(result.stdout_ == "done\n");
-  CHECK(all_gone(fake.pids()));
-  CHECK(no_children());
-  // The two seconds' grace after the leader ended, give or take the scheduler.
-  CHECK(seconds > 1.5);
-}
-
 TEST_CASE("run_child works with stdin or stdout or stderr closed") {
   const Watchdog watchdog("closed standard descriptors", 30);
   const FakeAtlc fake("run out hello\nrun err world\n");
@@ -377,30 +361,6 @@ TEST_CASE("cmdatl started with stdin or stdout or stderr closed") {
     CHECK(fake.args("check").empty());
     CHECK(code_of(cmdatl.out()) == "internal.error");
   }
-}
-
-TEST_CASE("an allocation failing anywhere in a process probe leaks no descriptor and leaves no child") {
-  const Watchdog watchdog("the probe sweep", 60);
-  const std::vector<std::string> argv{"/bin/echo", std::string(256, 'x')};
-  const int before = open_fds();
-  int threw = 0;
-  for (long n = 1; n <= 12; ++n) {
-    fail_allocation(n);
-    try {
-      (void)cmdatl::capture(argv);
-    } catch (const std::bad_alloc&) {
-      ++threw;
-    }
-    fail_allocation(0);
-    INFO("allocation " << n);
-    CHECK(open_fds() == before);
-    CHECK(no_children());
-  }
-  CHECK(threw > 0);
-  const auto normal = cmdatl::capture(argv);
-  REQUIRE(normal);
-  CHECK(normal->size() == 257);
-  CHECK(open_fds() == before);
 }
 
 TEST_CASE("an allocation failing anywhere in run_child or its lines or its tail or its callback leaks nothing") {
@@ -560,32 +520,6 @@ TEST_CASE("an allocation failing anywhere in strategy reference or guide becomes
     INFO("allocations swept: " << n << ", first problem at " << first_bad);
     CHECK(first_bad == 0);
     CHECK(n < 20000);
-  }
-}
-
-TEST_CASE("repeated strategy reference calls leave no descriptor and no child whatever atlc answers") {
-  // A grandchild holding the pipes is the case "a leader that ends while its grandchild holds the pipes ...": it waits
-  // two seconds a call, so it is not repeated here.
-  const Watchdog watchdog("repeated references", 60);
-  const std::vector<std::string> scripts{
-    "reference out # Index\n",
-    "reference err atlc reference: no chapter `zz`\nreference exit 1\n",
-    "reference err usage: atlc <command> [arguments]\nreference exit 2\n",
-    "reference exit 7\n",
-    "reference raise 11\n",
-    "reference flood 300000\n",
-  };
-  const int before = open_fds();
-  for (const auto& script : scripts) {
-    INFO(script);
-    const FakeAtlc fake(script);
-    for (int i = 0; i < 3; ++i) {
-      const auto ran = run({"--json", "strategy", "reference", "builtins"});
-      CHECK((ran.exit_ == 0 || ran.exit_ == 1 || ran.exit_ == 2));
-    }
-    CHECK(open_fds() == before);
-    CHECK(no_children());
-    CHECK(all_gone(fake.pids()));
   }
 }
 

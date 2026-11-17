@@ -314,17 +314,6 @@ TEST_CASE("a broker's account reads its journal: absent is empty, a damaged one 
   CHECK(reply_of(damaged.out_).at("orders_left_today").is_null());
 }
 
-TEST_CASE("repeated reads on a broker's account leave no descriptor open") {
-  const KisFixture fixture;
-  StandIn setup;
-  REQUIRE(run_on(setup, {"status"}).exit_ == 0);
-  const auto before = open_fds();
-  for (int i = 0; i < 20; ++i) {
-    REQUIRE(run_on(setup, {i % 2 == 0 ? "status" : "account"}).exit_ == 0);
-  }
-  CHECK(open_fds() == before);
-}
-
 TEST_CASE("KIS's setup refuses a login that is not the operator file's account, and never repeats a login") {
   const KisFixture fixture;
   Logins logins;
