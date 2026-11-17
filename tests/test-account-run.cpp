@@ -45,6 +45,8 @@
 
 #if !defined(_WIN32)
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -613,12 +615,16 @@ TEST_CASE("an account run signalled while it waits for the account ends 130 with
       error.broker_code_ = "read-made";
       client.fail_next(call, error, 5);
     }
-    // The signal once the run says it waits for the account.
-    std::thread([err] {
+    // SIGINT to the thread that waits (this one, which runs the command, SIGINT unblocked), once it says it waits.
+    sigset_t interrupt;
+    sigemptyset(&interrupt);
+    sigaddset(&interrupt, SIGINT);
+    ::pthread_sigmask(SIG_UNBLOCK, &interrupt, nullptr);
+    std::thread([err, command = ::pthread_self()] {
       while (slurp(err).find("waiting for the account") == std::string::npos) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
-      ::raise(SIGINT);
+      ::pthread_kill(command, SIGINT);
     }).detach();
   });
   ::kill(holder, SIGKILL);
