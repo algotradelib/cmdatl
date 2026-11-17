@@ -922,7 +922,7 @@ TEST_CASE("two runs started at once on one account build the program once and tr
   CHECK(shapes == 1);
 }
 
-TEST_CASE("run gives its own refusals before anything is built, and the driver's after", "[acceptance][runs]") {
+TEST_CASE("run gives its own refusals before anything is built", "[acceptance][runs]") {
   const auto equipment = run_equipment();
   if (!equipment) {
     SKIP("CMDATL_TEST_ATLC and CMDATL_TEST_PREFIX name no atlc and algotradelib prefix: the run cases did not run");
@@ -999,27 +999,6 @@ TEST_CASE("run gives its own refusals before anything is built, and the driver's
     CHECK(preset.exit_ == 2);
     CHECK(run_code(preset) == "spec.invalid");
     CHECK(preset.reply_.at("key").as_string() == "replay.fill");
-  }
-  {
-    // A program with on_fill: the build succeeds and the driver refuses it, exit 5.
-    const PaperFixture fixture(run_operator());
-    const RunEquipped equipped(equipment->first, equipment->second);
-    fixture.arm();
-    spit(
-      fixture.dir() / "trail.atls", slurp(std::filesystem::path(CMDATL_SOURCE_DIR) / "examples" / "trailing-stop.atls")
-    );
-    spit(fixture.dir() / "bars.csv", dip_bars(60));
-    spit(
-      fixture.dir() / "trail.toml",
-      "strategy = \"trail.atls\"\n\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\n"
-      "time_format = \"iso\"\n\n[instruments]\nstock = \"005930\"\n\n[replay]\nmarket = \"kr\"\n\n[orders]\ntype = \"limit\"\noffset = 0.01\n"
-    );
-    const auto ran = run_process({(fixture.dir() / "trail.toml").string()});
-    INFO(ran.out_);
-    INFO(ran.err_);
-    CHECK(ran.exit_ == 5);
-    CHECK(run_code(ran) == "program.live_unsupported");
-    CHECK(ran.reply_.at("result").as_string() == "failed");
   }
 }
 

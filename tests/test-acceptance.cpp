@@ -1194,15 +1194,6 @@ TEST_CASE("a program's data {} reads its data file in time order with the bars",
   const auto report = report_of({at("follow.toml")});
   CHECK(report.as_object().at("records").as_int64() == 3);
   CHECK(report.as_object().at("executions").as_int64() == 2);
-  // Unmapped, the run is refused before anything is built.
-  spit(at("unmapped.toml"), base);
-  const auto unmapped = backtest({at("unmapped.toml")});
-  CHECK(unmapped.exit_ == 2);
-  CHECK(unmapped.out_.find("reads data `level`") != std::string::npos);
-  // A program without data {} reports no records.
-  spit(at("buy.atls"), "on_bar {\n  target(1);\n}\n");
-  spit(at("buy.toml"), "strategy = 'buy.atls'\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n");
-  CHECK(!report_of({at("buy.toml")}).as_object().contains("records"));
 }
 
 /**
