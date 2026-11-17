@@ -884,21 +884,43 @@ TEST_CASE("an interruption while strategy evaluate streams stops its driver, kee
   const Watchdog watchdog("interrupted evaluation", 60);
   const FakeAtlc fake(evaluation({replay_line(0)}) + "driver pid\ndriver touch streaming\ndriver block\n");
   // A real SIGINT to this thread, noted by cmdatl's handler, once the driver has printed its line (the stand-in
-  // driver is a test build's hook, so the command runs in this process).
-  struct sigaction noted{};
-  struct sigaction saved{};
-  noted.sa_handler = cmdatl::note_interruption;
-  sigemptyset(&noted.sa_mask);
-  REQUIRE(::sigaction(SIGINT, &noted, &saved) == 0);
-  std::thread signal([&fake, command = ::pthread_self()]() {
+  // driver is a test build's hook, so the command runs in this process). For the case's length SIGINT is unblocked
+  // here and noted; on every way out the helper is joined, then the disposition, the mask and the note restored.
+  struct Interrupting {
+    struct sigaction saved_{};
+    sigset_t mask_{};
+    std::thread helper_;
+
+    Interrupting() {
+      struct sigaction noted{};
+      noted.sa_handler = cmdatl::note_interruption;
+      sigemptyset(&noted.sa_mask);
+      REQUIRE(::sigaction(SIGINT, &noted, &saved_) == 0);
+      sigset_t interrupt;
+      sigemptyset(&interrupt);
+      sigaddset(&interrupt, SIGINT);
+      ::pthread_sigmask(SIG_UNBLOCK, &interrupt, &mask_);
+    }
+
+    Interrupting(const Interrupting&) = delete;
+    Interrupting& operator=(const Interrupting&) = delete;
+
+    ~Interrupting() {
+      if (helper_.joinable()) {
+        helper_.join();
+      }
+      ::pthread_sigmask(SIG_SETMASK, &mask_, nullptr);
+      ::sigaction(SIGINT, &saved_, nullptr);
+      cmdatl::interruption = 0;
+    }
+  };
+  Interrupting interrupting;
+  interrupting.helper_ = std::thread([&fake, command = ::pthread_self()]() {
     if (fake.wait_for("streaming")) {
       ::pthread_kill(command, SIGINT);
     }
   });
   const auto ran = run({"--json", "strategy", "evaluate", "s.toml"});
-  signal.join();
-  ::sigaction(SIGINT, &saved, nullptr);
-  cmdatl::interruption = 0;
   CHECK(ran.exit_ == 130);
   const auto lines = lines_of(ran.out_);
   REQUIRE(lines.size() == 2);
