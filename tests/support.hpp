@@ -33,17 +33,35 @@ namespace support {
 
 #if !defined(_WIN32)
 /**
- * @brief Points the state root at a scratch directory and forgets any operator's file before the first test, so no
- *   test reads the operator's real file or writes under the real home.
+ * @brief Points the state root and the build cache at scratch directories and forgets any operator's file before the
+ *   first test, so no test reads the operator's real file, writes under the real home or reuses another process's
+ *   drivers; the scratch directory is removed when the test executable ends.
  */
 struct Isolated {
   /** @brief Sets the variables. */
   Isolated() {
-    const auto root = std::filesystem::temp_directory_path() / ("cmdatl-test-state-" + std::to_string(::getpid()));
-    std::filesystem::create_directories(root);
-    ::setenv("XDG_STATE_HOME", root.c_str(), 1);
+    std::filesystem::create_directories(root_ / "cache");
+    ::setenv("XDG_STATE_HOME", root_.c_str(), 1);
+    ::setenv("XDG_CACHE_HOME", (root_ / "cache").c_str(), 1);
     ::unsetenv("CMDATL_CONFIG");
   }
+
+  Isolated(const Isolated&) = delete;
+  Isolated& operator=(const Isolated&) = delete;
+
+  /** @brief Removes the scratch directory, in the process that made it only (a forked child may exit normally). */
+  ~Isolated() {
+    if (::getpid() == owner_) {
+      std::error_code ec;
+      std::filesystem::remove_all(root_, ec);
+    }
+  }
+
+private:
+  pid_t owner_{::getpid()};
+  std::filesystem::path root_{
+    std::filesystem::temp_directory_path() / ("cmdatl-test-state-" + std::to_string(::getpid()))
+  };
 };
 
 /** @brief The isolation, set up before main, once per test executable. */

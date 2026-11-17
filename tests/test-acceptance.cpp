@@ -155,46 +155,18 @@ boost::json::value report_of(const std::vector<std::string>& args) {
 }
 
 /**
- * @brief The struct atlc names a program, from `atlc check FILE --info`.
- * @param atlc atlc's path.
- * @param program The program.
- * @return The struct, or empty.
- */
-std::string struct_of(const std::string& atlc, const std::string& program) {
-  const auto result = cmdatl::run_child({atlc, "check", program, "--info"}, [](const std::string&) {});
-  const auto info = cmdatl::spec::read_info(result.stdout_, program);
-  return info && info->ok_ ? info->program_.struct_ : std::string();
-}
-
-/**
- * @brief The backtest driver cmdatl built for a struct, in the cache.
- * @param structure The struct.
- * @param rule The market-price rule its program header names, or empty for a driver without one.
+ * @brief The driver a backtest built or reused: the shape its progress names, so never another build's.
+ * @param err What the backtest wrote on stderr.
  * @return The executable, or empty.
  */
-std::filesystem::path backtest_driver(const std::string& structure, const std::string& rule = "") {
-  const auto root = cmdatl::build::cache_root();
-  if (!root || !std::filesystem::exists(*root)) {
+std::filesystem::path driver_of(const std::string& err) {
+  const std::string said = "cmdatl: building the backtest's driver for ";
+  const auto at = err.find(said);
+  if (at == std::string::npos) {
     return {};
   }
-  std::filesystem::path found;
-  std::filesystem::file_time_type newest{};
-  for (const auto& entry : std::filesystem::directory_iterator(*root)) {
-    const auto exe = entry.path() / "build" / "driver";
-    const auto header = slurp(entry.path() / "src" / "program.hpp");
-    const bool ruled = rule.empty() ?
-      header.find("with_market_price") == std::string::npos :
-      header.find("with_market_price(\"" + rule + "\"") != std::string::npos;
-    if (
-      entry.path().filename().string().rfind(structure + "-", 0) == 0 && std::filesystem::exists(exe) &&
-      header.find("cmdatl strategy backtest") != std::string::npos && ruled &&
-      (found.empty() || std::filesystem::last_write_time(exe) > newest)
-    ) {
-      found = exe;
-      newest = std::filesystem::last_write_time(exe);
-    }
-  }
-  return found;
+  const auto in = err.find(" in ", at + said.size());
+  return std::filesystem::path(err.substr(in + 4, err.find('\n', in) - in - 4)) / "build" / "driver";
 }
 
 /**
@@ -402,12 +374,11 @@ TEST_CASE(
     const auto spec = (examples / (std::string(name) + ".toml")).string();
     const auto expected = slurp(fixtures / (std::string(name) + ".json"));
     REQUIRE(!expected.empty());
-    CHECK(report_of({spec}) == boost::json::parse(expected));
+    const auto built = backtest({spec});
+    REQUIRE(built.exit_ == 0);
+    CHECK(reply_of(built.out_).at("report") == boost::json::parse(expected));
     // The driver's own bytes and arguments: a stand-in records both, then runs the driver cmdatl built.
-    const auto structure = struct_of(equip->atlc_, (examples / (std::string(name) + ".atls")).string());
-    REQUIRE(!structure.empty());
-    // The universe example's decision-close rule is the library's, named by an argument: no driver of its own.
-    const auto driver = backtest_driver(structure);
+    const auto driver = driver_of(built.err_);
     REQUIRE(!driver.empty());
     const auto stand_in = dir.path() / (std::string(name) + ".sh");
     spit(
@@ -997,7 +968,9 @@ TEST_CASE("the replay fixtures recorded from atlc run are strategy backtest's by
     return with_dir(slurp(replay_fixtures() / file), dir.path().string());
   };
   // The wide tables at the decision close (`replay.fill`), and limits on the KRX grid with their fills.
-  REQUIRE(report_of({at("wide.toml")}) == boost::json::parse(fixture("wide.json")));
+  const auto wide = backtest({at("wide.toml")});
+  REQUIRE(wide.exit_ == 0);
+  REQUIRE(reply_of(wide.out_).at("report") == boost::json::parse(fixture("wide.json")));
   // The same price by a header rule of one's own: the same report but for the rule's name, the header's function.
   auto by_header = slurp(at("wide.toml"));
   const std::string preset = "fill = \"decision-close\"\n";
@@ -1008,18 +981,18 @@ TEST_CASE("the replay fixtures recorded from atlc run are strategy backtest's by
   spit(dir.path() / "wide-header.toml", by_header);
   auto header_report = boost::json::parse(fixture("wide.json"));
   header_report.as_object()["caveats"].as_object()["market_price_rule"] = "decision_close";
-  REQUIRE(report_of({at("wide-header.toml")}) == header_report);
+  const auto ruled_run = backtest({at("wide-header.toml")});
+  REQUIRE(ruled_run.exit_ == 0);
+  REQUIRE(reply_of(ruled_run.out_).at("report") == header_report);
   REQUIRE(
     report_of({at("limit.toml"), "--fills", at("limit-cmdatl.csv")}) == boost::json::parse(fixture("limit.json"))
   );
   CHECK(slurp(at("limit-cmdatl.csv")) == fixture("limit.fills.csv"));
-  const auto structure = struct_of(equip->atlc_, at("dip.atls"));
-  REQUIRE(!structure.empty());
-  const auto driver = backtest_driver(structure);
+  const auto driver = driver_of(wide.err_);
   REQUIRE(!driver.empty());
   check_replay_includes(driver);
   // A header rule makes a shape of its own; `replay.fill` does not.
-  const auto ruled = backtest_driver(structure, "decision_close");
+  const auto ruled = driver_of(ruled_run.err_);
   REQUIRE(!ruled.empty());
   CHECK(ruled != driver);
   for (const auto* name : {"wide", "limit"}) {
@@ -1061,8 +1034,10 @@ TEST_CASE("the store fixture recorded from atlc run is strategy backtest's byte 
   const auto fixture = [&dir](const std::string& file) {
     return with_dir(slurp(replay_fixtures() / file), dir.path().string());
   };
-  REQUIRE(report_of({at("store.toml"), duckdb}) == boost::json::parse(fixture("store.json")));
-  const auto driver = backtest_driver(struct_of(equip->atlc_, at("dip.atls")));
+  const auto built = backtest({at("store.toml"), duckdb});
+  REQUIRE(built.exit_ == 0);
+  REQUIRE(reply_of(built.out_).at("report") == boost::json::parse(fixture("store.json")));
+  const auto driver = driver_of(built.err_);
   REQUIRE(!driver.empty());
   check_replay_includes(driver);
   const auto recorded = through_stand_in(dir.path(), "store", driver, {at("store.toml"), duckdb});

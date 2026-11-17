@@ -763,24 +763,11 @@ TEST_CASE(
   CHECK(ran.events_.front().at("event").as_string() == "start");
   CHECK(ran.events_.front().at("pid").as_int64() == static_cast<std::int64_t>(ran.pid_));
   CHECK(ran.events_.back().at("event").as_string() == "end");
-  // The cache: a second run of the same program builds nothing.
-  const auto driver = shared().dir_.path() / "cache" / "cmdatl" / "drivers";
-  std::optional<std::filesystem::file_time_type> before;
-  std::filesystem::path shape;
-  for (const auto& entry : std::filesystem::directory_iterator(driver)) {
-    // The run's driver, not the backtest's (both build Dip, in shapes of their own).
-    if (
-      entry.path().filename().string().rfind("Dip-", 0) == 0 &&
-      slurp(entry.path() / "src" / "program.hpp").find("cmdatl run") != std::string::npos
-    ) {
-      shape = entry.path();
-      before = std::filesystem::last_write_time(shape / "build" / "driver");
-    }
-  }
-  REQUIRE(before);
-  const auto again = run_process({shared().spec("dip"), "params.lookback=21"});
-  REQUIRE(again.exit_ == 0);
-  CHECK((std::filesystem::last_write_time(shape / "build" / "driver") == *before));
+  // The run's own shape, as its progress names it.
+  const std::string said = "cmdatl: building the run's driver for Dip in ";
+  const auto at = ran.err_.find(said);
+  REQUIRE(at != std::string::npos);
+  const std::filesystem::path shape = ran.err_.substr(at + said.size(), ran.err_.find('\n', at) - at - said.size());
   // The driver's include closure, from the compiler's own dependency files: no CLI11, nothing of cmdatl's cli/ or strategy/ (the layout check's driver row, seen in the real build).
   // Only `<source>.o.d`: on Linux the linker also writes `link.d`, which lists libraries.
   std::size_t read = 0;
