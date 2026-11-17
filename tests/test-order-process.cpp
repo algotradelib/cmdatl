@@ -181,7 +181,11 @@ TEST_CASE("two places on one plan id race: one place line and the other plan_use
       );
     }
     std::sort(outcomes.begin(), outcomes.end());
-    CHECK(outcomes == std::vector<std::string>{"placed", "refused.plan_used"});
+    // The loser finds the plan used, or the account still held when its wait for the lock ends.
+    CHECK((
+      outcomes == std::vector<std::string>{"placed", "refused.plan_used"} ||
+      outcomes == std::vector<std::string>{"busy.locked", "placed"}
+    ));
     CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
   }
 }
@@ -213,7 +217,11 @@ TEST_CASE(
     );
   }
   std::sort(outcomes.begin(), outcomes.end());
-  CHECK(outcomes == std::vector<std::string>{"placed", "refused.plan_used"});
+  CHECK((
+    outcomes == std::vector<std::string>{"placed", "refused.plan_used"} ||
+    outcomes == std::vector<std::string>{"busy.locked", "placed"}
+  ));
+  CHECK(ops_of(slurp(fixture.log()), "place").size() == 1);
 }
 
 namespace {
