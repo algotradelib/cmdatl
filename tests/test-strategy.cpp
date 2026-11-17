@@ -13,6 +13,7 @@
 
 #if !defined(_WIN32)
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -872,14 +873,21 @@ TEST_CASE("strategy evaluate: a broken line protocol, a stop or no report is rep
 TEST_CASE("an interruption while strategy evaluate streams stops its driver, keeps the lines and answers 130") {
   const Watchdog watchdog("interrupted evaluation", 60);
   const FakeAtlc fake(evaluation({replay_line(0)}) + "driver pid\ndriver touch streaming\ndriver block\n");
-  // As SIGINT's handler would: the note, once the driver has printed its line.
-  std::thread signal([&fake]() {
+  // A real SIGINT to this thread, noted by cmdatl's handler, once the driver has printed its line (the stand-in
+  // driver is a test build's hook, so the command runs in this process).
+  struct sigaction noted{};
+  struct sigaction saved{};
+  noted.sa_handler = cmdatl::note_interruption;
+  sigemptyset(&noted.sa_mask);
+  REQUIRE(::sigaction(SIGINT, &noted, &saved) == 0);
+  std::thread signal([&fake, command = ::pthread_self()]() {
     if (fake.wait_for("streaming")) {
-      cmdatl::interruption = 1;
+      ::pthread_kill(command, SIGINT);
     }
   });
   const auto ran = run({"--json", "strategy", "evaluate", "s.toml"});
   signal.join();
+  ::sigaction(SIGINT, &saved, nullptr);
   cmdatl::interruption = 0;
   CHECK(ran.exit_ == 130);
   const auto lines = lines_of(ran.out_);

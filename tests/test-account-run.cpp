@@ -604,7 +604,8 @@ TEST_CASE("an account run signalled while it waits for the account ends 130 with
   char held[64] = {};
   REQUIRE(::read(out[0], held, sizeof(held)) > 0);
   ::close(out[0]);
-  const auto ran = run_account_child(fixture, [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
+  const auto err = fixture.dir() / "account.stderr";
+  const auto ran = run_account_child(fixture, [err](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
     // Any read would answer this fault, and end the run otherwise than interrupted.
     for (const auto call : {atl::mock::Call::WORKING_ORDERS, atl::mock::Call::HOLDINGS}) {
       atl::BrokerError error;
@@ -612,8 +613,11 @@ TEST_CASE("an account run signalled while it waits for the account ends 130 with
       error.broker_code_ = "read-made";
       client.fail_next(call, error, 5);
     }
-    std::thread([] {
-      std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    // The signal once the run says it waits for the account.
+    std::thread([err] {
+      while (slurp(err).find("waiting for the account") == std::string::npos) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
       ::raise(SIGINT);
     }).detach();
   });
@@ -622,9 +626,9 @@ TEST_CASE("an account run signalled while it waits for the account ends 130 with
   CHECK(ran.exit_ == 130);
   CHECK(code_of(ran) == "interrupted");
   CHECK(events_of(ran, "start").empty());
-  const auto err = slurp(fixture.dir() / "account.stderr");
-  CHECK(err.find("waiting for the account") != std::string::npos);
-  CHECK(err.find("read-made") == std::string::npos);
+  const auto text = slurp(err);
+  CHECK(text.find("waiting for the account") != std::string::npos);
+  CHECK(text.find("read-made") == std::string::npos);
   CHECK(!std::filesystem::exists(dir / "journal.jsonl"));
 }
 
@@ -1289,6 +1293,10 @@ TEST_CASE("a broker folder's refused placement shows neither the adapter's text 
   fixture.write_config(kis_config());
   fixture.arm();
   one_decision();
+  // Nothing comes to rest, so the run is stopped by a signal of its own on the bar after its decision.
+  runtest::script().actions_[3] = [] {
+    ::raise(SIGINT);
+  };
   const auto ran = run_account_child(
     fixture,
     [](atl::mock::Market&, atl::mock::MockClient& client, auto&) {
@@ -1298,11 +1306,6 @@ TEST_CASE("a broker folder's refused placement shows neither the adapter's text 
       error.broker_code_ = "https://vendor/error?api_token=SECRET-TOKEN-456";
       error.message_ = "refused for token SECRET-TOKEN-456";
       client.fail_next(atl::mock::Call::PLACE, error, 5);
-      // Nothing comes to rest, so the run is stopped after its first decision by a signal of its own.
-      std::thread([] {
-        std::this_thread::sleep_for(std::chrono::seconds(3));
-        ::kill(::getpid(), SIGINT);
-      }).detach();
     },
     true
   );
