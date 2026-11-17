@@ -1,5 +1,5 @@
-# Line and branch coverage of cmdatl's headers and sources on Linux (GCC, gcovr), the real-atlc acceptance cases included.
-# Codecov gets the report.
+# Line and branch coverage of cmdatl on Linux (GCC), the real-atlc acceptance cases included.
+# Codecov's action runs gcov on the build's coverage files itself, as the library's workflow does.
 on:
   workflow_dispatch:
   push:
@@ -44,9 +44,6 @@ jobs:
       - id: atlc
         uses: algotradelib/.github/actions/setup-atlc@main
 
-      - name: gcovr
-        run: pipx install gcovr
-
       # DuckDB's prebuilt C library, so the replay's store loader is covered.
       - name: DuckDB
         run: |
@@ -79,13 +76,10 @@ jobs:
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
         run: .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
 
-      - name: Coverage
-        run: gcovr --root . --filter 'include/cmdatl/' --filter 'src/' --merge-lines --xml coverage.xml build
-
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
         with:
           # A fork has no Codecov token, so a failed upload fails only this repository's runs.
           fail_ci_if_error: ${{ !github.event.repository.fork }}
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: coverage.xml
+          codecov_yml_path: codecov.yml
