@@ -99,7 +99,7 @@ inline double final_level(const algotradelib::backtest::MeasureInput& in) {
 - Each name is a C++ identifier of at most 64 characters, not starting with `cmdatl_`, at most 64 names, none twice; a namespaced function is named through a `using` in the header.
 - A name that cannot be called so fails the build (`build.failed`), and the compiler's first error in the message usually says `measures: NAME must be callable as double(const algotradelib::backtest::MeasureInput&)`; for a C++ keyword or a namespace in scope (`std`, `algotradelib`, `atls`) it is the compiler's own.
 - A value that is not finite is null; a measure that throws fails the backtest (`replay.failed`, naming it for a `std::exception`), and no `--fills` or `--equity` file is written.
-- A measure computes from its input and returns: it never writes to stdout or changes process-wide state (the locale, the floating-point environment); if replays ever run on threads, it must also be thread-safe.
+- A measure computes from its input and returns: it never writes to stdout or changes process-wide state (the locale, the floating-point environment); when `evaluate.jobs` is above 1 ("Many replays"), measures run on several threads at once and must also be thread-safe.
 - Only a backtest computes them: `cmdatl run` accepts the key and computes none.
 - A program's own `measures {}` (atls) come first in the report, in its order, then these; a name the program's block holds cannot be named here too (`spec.invalid`, at the key's line).
 

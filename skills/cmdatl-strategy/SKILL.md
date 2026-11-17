@@ -53,7 +53,7 @@ Build progress goes to stderr.
 Piped paths (`GENERATOR | cmdatl strategy evaluate NAME.toml bars.source=stdin bars.path_column=path`) are each replayed once per set.
 `evaluate.method=windows windows.length=1y windows.step=3mo` replays one set on rolling windows; `evaluate.method=bootstrap bootstrap.block=10 bootstrap.intervals=total_return` on resampled paths.
 `evaluate.method=walk-forward walk_forward.train=2y walk_forward.test=6mo` chooses a grid set per training window by `evaluate.objective` and chains the tests.
-Exit 5 is a program error (`program.invalid`, with atlc's diagnostics in `errors`), 2 a settings error (`spec.invalid`, each with its file and line or the command line in `errors`), 1 a failed build or replay (`build.failed`; `replay.failed`, a parameter outside its bounds included).
+Exit 5 is a program error (`program.invalid`, with atlc's diagnostics in `errors`), 2 a settings error (`spec.invalid`, each with its file and line or the command line in `errors`; `evaluate.refused` when the data cannot take an evaluation's settings), 1 a failed build or replay (`build.failed`; `replay.failed`, a parameter outside its bounds included).
 
 ## Runs
 
