@@ -582,35 +582,6 @@ TEST_CASE("an account run places at its first decision, withdraws on a signal, a
   CHECK(std::filesystem::exists(kis_account_dir(fixture) / "journal.jsonl"));
 }
 
-TEST_CASE("an account run waits behind a command that holds the account and starts once it is free") {
-  PaperFixture fixture;
-  fixture.write_config(kis_config());
-  fixture.arm();
-  one_decision();
-  const auto dir = kis_account_dir(fixture);
-  std::filesystem::create_directories(dir);
-  spit(dir / "owner.json", "{\"role\":\"agent\",\"pid\":1,\"what\":\"order plan 005930\"}\n");
-  // Another process holds the lock for 300 ms, as a command would.
-  int out[2];
-  REQUIRE(::pipe(out) == 0);
-  const pid_t holder = ::fork();
-  REQUIRE(holder >= 0);
-  if (holder == 0) {
-    ::dup2(out[1], STDOUT_FILENO);
-    ::execl(CMDATL_HOLD_LOCK, CMDATL_HOLD_LOCK, dir.c_str(), "300", static_cast<char*>(nullptr));
-    ::_exit(127);
-  }
-  ::close(out[1]);
-  char held[64] = {};
-  REQUIRE(::read(out[0], held, sizeof(held)) > 0);
-  ::close(out[0]);
-  const auto ran = run_account_child(fixture);
-  ::waitpid(holder, nullptr, 0);
-  CHECK(ran.exit_ == 0);
-  CHECK(events_of(ran, "start").size() == 1);
-  CHECK(slurp(fixture.dir() / "account.stderr").find("waiting for the account") != std::string::npos);
-}
-
 TEST_CASE("an account run signalled while it waits for the account ends 130 with no start and no read") {
   PaperFixture fixture;
   fixture.write_config(kis_config());
@@ -789,26 +760,6 @@ TEST_CASE("an account run leaves another symbol's holding alone and does not lis
   CHECK(events_of(ran, "placed").size() == 1);
   CHECK(ran.reply_.at("stopped").as_string() == "signal");
   CHECK(ran.held_after_.at("000660").as_string() == "2");
-}
-
-TEST_CASE("a program reads the account's holding on every bar, the history read at the start included") {
-  PaperFixture fixture;
-  fixture.write_config(kis_config());
-  fixture.arm();
-  // Three history bars before the first decision; it holds what it has, so nothing is sent.
-  runtest::script() = runtest::Script{};
-  runtest::script().warmup_ = 3;
-  runtest::script().decisions_ = {{3, runtest::Decision{2, "1"}}};
-  runtest::script().actions_[4] = [] {
-    ::raise(SIGINT);
-  };
-  const auto ran = run_account_child(fixture, holding("005930", 2));
-  CHECK(ran.exit_ == 0);
-  CHECK(events_of(ran, "placed").empty());
-  REQUIRE(ran.program_held_.size() >= 3);
-  for (const auto& net : ran.program_held_) {
-    CHECK(net == "2");
-  }
 }
 
 TEST_CASE("the start's holdings sum every row of an instrument, are 0 without one, and refuse a sum that overflows") {

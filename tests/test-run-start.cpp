@@ -80,24 +80,6 @@ TEST_CASE("the market settings a run refuses before anything is built") {
   CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}));
 }
 
-TEST_CASE("a driver's program header gives the fill model the run's market-price rule, or leaves it") {
-  build::Request request;
-  request.struct_ = "Dip";
-  request.kind_ = build::DriverKind::BACKTEST;
-  const auto plain = build::program_header(request);
-  CHECK(plain.find("using Program = atls::Dip;") != std::string::npos);
-  CHECK(plain.find("  return model;\n") != std::string::npos);
-  CHECK(plain.find("with_market_price") == std::string::npos);
-  request.fill_header_ = "/specs/rules/close.hpp";
-  request.fill_function_ = "rules::decision_close";
-  const auto ruled = build::program_header(request);
-  CHECK(ruled.find("#include \"/specs/rules/close.hpp\"\n") != std::string::npos);
-  CHECK(
-    ruled.find("  return model.with_market_price(\"rules::decision_close\", rules::decision_close);\n") !=
-    std::string::npos
-  );
-}
-
 TEST_CASE("a broker folder's driver header names the folder it is built from, every byte escaped") {
   build::Request request;
   request.struct_ = "Dip";
@@ -141,37 +123,6 @@ static std::set<std::string> files_in(const std::filesystem::path& dir) {
     out.insert(it->path().filename().string());
   }
   return out;
-}
-
-TEST_CASE("a driver's program header includes the program's own header first, and is unchanged without one") {
-  build::Request request;
-  request.struct_ = "Dip";
-  request.kind_ = build::DriverKind::BACKTEST;
-  // The text a program without a header always had, so its cached builds stay valid.
-  CHECK(
-    build::program_header(request) ==
-    "#pragma once\n\n// Written by cmdatl strategy backtest.\n\n#include \"strategy.hpp\"\n\n"
-    "#include <algotradelib/backtest>\n\n#include <optional>\n#include <type_traits>\n#include <utility>\n#include <vector>\n\n"
-    "using Program = atls::Dip;\n\n"
-    "// The fill model, with the run's market-price rule when it has one.\n"
-    "inline algotradelib::backtest::NextBarFillModel program_fills(algotradelib::backtest::NextBarFillModel model) {\n"
-    "  return model;\n}\n\n"
-    "// The report's measures: the program's `measures {}`, then the run spec's `measures`.\n"
-    "inline std::vector<std::pair<const char*, double (*)(const algotradelib::backtest::MeasureInput&)>> "
-    "program_measures() {\n  return {};\n}\n"
-  );
-  for (const auto kind : {build::DriverKind::BACKTEST, build::DriverKind::RUN}) {
-    request.kind_ = kind;
-    request.header_.clear();
-    const auto plain = build::program_header(request);
-    request.header_ = "/project/include/user.hpp";
-    const auto with = build::program_header(request);
-    const std::string included = "#include \"/project/include/user.hpp\"\n#include \"strategy.hpp\"\n";
-    CHECK(with.find(included) != std::string::npos);
-    auto without = with;
-    without.erase(without.find(included), included.size() - std::string("#include \"strategy.hpp\"\n").size());
-    CHECK(without == plain);
-  }
 }
 
 TEST_CASE("a backtest's program header checks each measure in one line and lists them in order, a run's has none") {

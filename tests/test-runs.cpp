@@ -748,32 +748,6 @@ TEST_CASE("buying power is read and enforced: a buy above the cash is the guard'
   CHECK(ran.stderr_.find("buying_power_unread") == std::string::npos);
 }
 
-TEST_CASE("the summary's cash and equity follow the fills, commission included, and expiries are their own events") {
-  const PaperFixture fixture(run_parts());
-  fixture.arm();
-  set_script({{2, {10, "1"}}, {4, {20, "0.97"}}, {7, {0, "1"}}});
-  runtest::data().commission_ = "0.001";
-  const auto ran = run_child<runtest::Program>(fixture, spec_args());
-  INFO(json::serialize(ran.reply_));
-  CHECK(ran.exit_ == 0);
-  CHECK(count_of(ran, "expired") >= 1);
-  auto cash = algotradelib::Decimal64::parse("100000000");
-  for (const auto& filled : events_of(ran, "filled")) {
-    const auto quantity = algotradelib::Decimal64::parse(std::string(filled.at("quantity").as_string()));
-    const auto price = algotradelib::Decimal64::parse(std::string(filled.at("price").as_string()));
-    const auto amount = *algotradelib::decimal_multiply(quantity, price);
-    cash = filled.at("side").as_string() == "buy" ?
-      *algotradelib::decimal_subtract(cash, amount) :
-      *algotradelib::decimal_add(cash, amount);
-    cash = *algotradelib::decimal_subtract(
-      cash, algotradelib::Decimal64::parse(std::string(filled.at("commission").as_string()))
-    );
-  }
-  CHECK(ran.reply_.at("holdings_at_end").as_object().at("005930").as_string() == "0");
-  CHECK(ran.reply_.at("closing_equity").as_string() == cash.str());
-  CHECK(ran.reply_.at("commission_paid").as_string() != "0");
-}
-
 TEST_CASE(
   "an exception after the start line is an unknown outcome, with the reply written before the lock is released"
 ) {

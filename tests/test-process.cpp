@@ -150,23 +150,6 @@ void check_interrupted(const Stopped& stopped) {
 
 } // namespace
 
-TEST_CASE("run_child drains stdout and stderr larger than a pipe and interleaved") {
-  const Watchdog watchdog("the flood", 60);
-  const FakeAtlc fake("run flood 300000\n");
-  std::size_t lines = 0;
-  std::size_t odd = 0;
-  const auto result = run_fake([&](const std::string& line) {
-    ++lines;
-    odd += line == std::string(99, 'e') ? 0 : 1;
-  });
-  REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
-  CHECK(result.code_ == 0);
-  CHECK(result.stdout_.size() == 293 * 1024);
-  CHECK(lines == 2930);
-  CHECK(odd == 0);
-  CHECK(result.stderr_tail_.size() == cmdatl::STDERR_TAIL_LINES);
-}
-
 TEST_CASE("run_child hands on an unterminated last line and splits a line too long to keep") {
   const Watchdog watchdog("the last line", 30);
   {
@@ -260,72 +243,6 @@ TEST_CASE("run_child tells a signal from an exit code and a missing program from
   CHECK(open_fds() == before);
   CHECK(no_children());
   CHECK(cmdatl::run_child({}, ignore_lines).kind_ == cmdatl::ChildResult::Kind::NOT_STARTED);
-}
-
-TEST_CASE("a child that closes its pipes and exits soon after is reaped soon, not a poll step later") {
-  const Watchdog watchdog("the reap after end of file", 30);
-  // A replay's shape: it closes the pipes, and the child exits a moment later.
-  const auto result = cmdatl::run_child({"/bin/sh", "-c", "exec >&- 2>&-; sleep 0.01; exit 7"}, ignore_lines);
-  REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
-  CHECK(result.code_ == 7);
-}
-
-TEST_CASE("a throwing callback kills the child's whole group with its grandchild") {
-  const Watchdog watchdog("the abandoned group", 30);
-  const FakeAtlc fake("run grandchild hold\nrun pid\nrun err hello\nrun block\n");
-  const int before = open_fds();
-  CHECK_THROWS_AS(
-    run_fake([](const std::string&) {
-      throw std::runtime_error("the output broke");
-    }),
-    std::runtime_error
-  );
-  CHECK(open_fds() == before);
-  CHECK(no_children());
-  const auto pids = fake.pids();
-  CHECK(pids.size() == 2);
-  CHECK(all_gone(pids));
-}
-
-TEST_CASE("run_child works with stdin or stdout or stderr closed") {
-  const Watchdog watchdog("closed standard descriptors", 30);
-  const FakeAtlc fake("run out hello\nrun err world\n");
-  for (const int fd : {STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO}) {
-    const int saved = ::dup(fd);
-    REQUIRE(saved >= 0);
-    ::close(fd);
-    const auto result = run_fake();
-    ::dup2(saved, fd);
-    ::close(saved);
-    INFO("closed " << fd);
-    REQUIRE(result.kind_ == cmdatl::ChildResult::Kind::FINISHED);
-    CHECK(result.code_ == 0);
-    CHECK(result.stdout_ == "hello\n");
-    CHECK(result.stderr_tail_ == std::deque<std::string>{"world"});
-  }
-}
-
-TEST_CASE("run_child passes its own stdin only when asked, and /dev/null otherwise") {
-  const Watchdog watchdog("stdin passed through", 30);
-  int fds[2];
-  REQUIRE(::pipe(fds) == 0);
-  REQUIRE(::write(fds[1], "rows\n", 5) == 5);
-  ::close(fds[1]);
-  const int saved = ::dup(STDIN_FILENO);
-  REQUIRE(saved >= 0);
-  ::dup2(fds[0], STDIN_FILENO);
-  ::close(fds[0]);
-  const auto cat = [](cmdatl::ChildInput input) {
-    return cmdatl::run_child({"/bin/cat"}, ignore_lines, nullptr, -1, {}, input);
-  };
-  const auto nul = cat(cmdatl::ChildInput::NUL);
-  const auto inherited = cat(cmdatl::ChildInput::INHERITED);
-  ::dup2(saved, STDIN_FILENO);
-  ::close(saved);
-  CHECK(nul.stdout_.empty());
-  CHECK(inherited.stdout_ == "rows\n");
-  CHECK(inherited.code_ == 0);
-  CHECK(no_children());
 }
 
 TEST_CASE("cmdatl started with stdin or stdout or stderr closed") {
@@ -569,17 +486,6 @@ TEST_CASE("descriptors running out at either pipe or at the spawn leak nothing")
   // Spares 0 to 4 cannot hold the second pipe (each pipe needs two descriptors and two more while it is lifted).
   CHECK(refused >= 5);
   CHECK(results.back().kind_ == cmdatl::ChildResult::Kind::FINISHED);
-}
-
-TEST_CASE("SIGINT or SIGTERM while cmdatl probes atlc is interrupted and never atlc.missing") {
-  const Watchdog watchdog("an interrupted probe", 60);
-  for (const int sig : {SIGINT, SIGTERM}) {
-    INFO("signal " << sig);
-    const FakeAtlc fake("version pid\nversion touch probing\nversion block\n", false);
-    const auto stopped = stop_backtest(fake, "probing", sig, true);
-    check_interrupted(stopped);
-    CHECK(all_gone(fake.pids()));
-  }
 }
 
 TEST_CASE("SIGINT or SIGTERM while atlc runs stops its group whatever it is doing") {

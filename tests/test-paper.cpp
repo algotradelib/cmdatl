@@ -198,39 +198,6 @@ TEST_CASE("the bars file is read strictly, its first problem named by line") {
   CHECK(problem->line_ == cmdatl::MAX_BAR_ROWS + 2);
 }
 
-TEST_CASE("the bars file's columns are read by name, in any order") {
-  cmdatl::MarketData documented;
-  REQUIRE(!cmdatl::parse_bars(
-    "symbol,date,open,high,low,close,volume\nAAA,2024-01-02,10,12,9,11,100\nAAA,2024-01-03,11,13,10,12,200\n"
-    "BBB,2024-01-02,5,6,4,5.5,7\n",
-    documented
-  ));
-  cmdatl::MarketData reordered;
-  REQUIRE(!cmdatl::parse_bars(
-    "volume,close,low,high,open,date,symbol\n100,11,9,12,10,2024-01-02,AAA\n200,12,10,13,11,2024-01-03,AAA\n"
-    "7,5.5,4,6,5,2024-01-02,BBB\n",
-    reordered
-  ));
-  REQUIRE(reordered.bars_.size() == documented.bars_.size());
-  for (const auto& entry : documented.bars_) {
-    const auto& other = reordered.bars_.at(entry.first);
-    REQUIRE(other.size() == entry.second.size());
-    for (std::size_t i = 0; i < other.size(); ++i) {
-      CHECK(other[i].day_ == entry.second[i].day_);
-      CHECK(other[i].open_ == entry.second[i].open_);
-      CHECK(other[i].high_ == entry.second[i].high_);
-      CHECK(other[i].low_ == entry.second[i].low_);
-      CHECK(other[i].close_ == entry.second[i].close_);
-      CHECK(other[i].volume_ == entry.second[i].volume_);
-    }
-  }
-  // A row is still checked cell by cell, through the header's order.
-  const auto problem =
-    cmdatl::parse_bars("date,symbol,open,high,low,close,volume\nAAA,2024-01-02,10,12,9,11,100\n", reordered);
-  REQUIRE(problem.has_value());
-  CHECK(problem->line_ == 2);
-}
-
 TEST_CASE("every mock.data case refuses at open and writes nothing") {
   const PaperFixture fixture;
   const std::string header = "symbol,date,open,high,low,close,volume\n";

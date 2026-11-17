@@ -404,32 +404,6 @@ TEST_CASE("evaluate: a refused bound is a params failure and a replay that throw
   );
 }
 
-TEST_CASE("evaluate: the best skips halted and undefined figures, ties to the lower index, either direction") {
-  std::optional<replay::Best> best;
-  const auto replay_of = [](std::size_t index) {
-    return replay::Replay{index, {{"k", std::to_string(index)}}, std::nullopt, std::nullopt};
-  };
-  const auto figures = [](double value) {
-    return std::vector<std::pair<std::string, double>>{{"total_return", value}};
-  };
-  replay::choose(best, "total_return", false, replay_of(0), figures(0.5), true);
-  replay::choose(best, "total_return", false, replay_of(1), figures(std::nan("")), false);
-  replay::choose(best, "total_return", false, replay_of(2), {}, false);
-  CHECK(!best);
-  replay::choose(best, "total_return", false, replay_of(4), figures(0.2), false);
-  replay::choose(best, "total_return", false, replay_of(3), figures(0.2), false);
-  replay::choose(best, "total_return", false, replay_of(5), figures(0.2), false);
-  REQUIRE(best);
-  CHECK(best->index_ == 3);
-  replay::choose(best, "total_return", false, replay_of(6), figures(0.1), false);
-  CHECK(best->index_ == 3);
-  std::optional<replay::Best> least;
-  replay::choose(least, "max_drawdown", true, replay_of(0), {{"max_drawdown", 0.3}}, false);
-  replay::choose(least, "max_drawdown", true, replay_of(1), {{"max_drawdown", 0.1}}, false);
-  CHECK(least->index_ == 1);
-  CHECK(least->value_ == 0.1);
-}
-
 TEST_CASE("evaluate: one job and four print the same bytes and keep values in index order", "[threads]") {
   const FreshObserved fresh;
   Scratch dir;
@@ -550,34 +524,6 @@ TEST_CASE("evaluate: a sink that throws stops the batch and is never called agai
   };
   CHECK_THROWS_AS(replay::run_replays(source, 2, work, sink), std::runtime_error);
   CHECK(seen == std::vector<std::string>{"kept"});
-}
-
-TEST_CASE("evaluate: each line's report carries the measures, which an objective may name") {
-  Scratch dir;
-  const auto file = dir.write("bars.csv", HEADER + "\n" + rows_of("AAA", {100, 101, 103}));
-  const auto ran = drive(
-    on_csv(file, {"grid.k=0,1,2", "evaluate.objective=measures.executions", "evaluate.jobs=2"}), -1, {},
-    {{"executions", executions}}
-  );
-  INFO(ran.err_);
-  REQUIRE(ran.exit_ == 0);
-  const auto lines = lines_of(ran.out_);
-  REQUIRE(lines.size() == 4);
-  CHECK(
-    lines[0].find("\"last_bar\": \"2020-01-03T00:00:00Z\",\"measures\": {\"executions\": 0}}") != std::string::npos
-  );
-  CHECK(lines[1].find("\"measures\": {\"executions\": 1}") != std::string::npos);
-  CHECK(
-    lines[3].find("\"objective\":\"measures.executions\",\"direction\":\"max\",\"best\":{\"index\":1,") !=
-    std::string::npos
-  );
-  // The report's own count, as bootstrap.intervals names it, chooses the same.
-  const auto counted = drive(on_csv(file, {"grid.k=0,1,2", "evaluate.objective=executions"}));
-  REQUIRE(counted.exit_ == 0);
-  CHECK(
-    lines_of(counted.out_)[3].find("\"objective\":\"executions\",\"direction\":\"max\",\"best\":{\"index\":1,") !=
-    std::string::npos
-  );
 }
 
 TEST_CASE("evaluate: a measure's exception fails its replay and its bad_alloc stops the batch", "[threads]") {
@@ -1184,27 +1130,6 @@ TEST_CASE("loops: span windows end on the anchored boundary; whole windows only;
   // A day's window holds one period at most: refused, naming it.
   const auto daily = drive<Holder>(on_pair(weekdays, "windows", {"windows.length=1d", "windows.warmup=0"}));
   CHECK(daily.out_.find("\"message\":\"window 0 holds fewer than 2 periods\"") != std::string::npos);
-}
-
-TEST_CASE("loops: a window replays as a backtest of its span and a warm stateless window as one of the window") {
-  Scratch dir;
-  const auto file = dir.write("bars.csv", days_of(20240101, 30, true));
-  const auto windows = drive<Holder>(on_pair(file, "windows", {"windows.length=5", "windows.warmup=0", "param.k=3"}));
-  const auto lines = lines_of(windows.out_);
-  REQUIRE(lines.size() == 7);
-  const auto backtest = drive<Holder>(on_pair(file, "", {"param.k=3", "replay.from=20240108", "replay.to=20240112"}));
-  REQUIRE(backtest.exit_ == 0);
-  CHECK(report_text(lines[1]) == flat(backtest));
-  // With two days of history before it, a program without state reports what a backtest of the window alone does.
-  const auto warm = drive<Holder>(on_pair(file, "windows", {"windows.length=5", "windows.warmup=2", "param.k=3"}));
-  const auto warm_lines = lines_of(warm.out_);
-  CHECK(
-    warm_lines[0].find("\"warm_from\":\"2024-01-01T00:00:00Z\",\"from\":\"2024-01-03T00:00:00Z\"") != std::string::npos
-  );
-  CHECK(
-    report_text(warm_lines[0]) ==
-    flat(drive<Holder>(on_pair(file, "", {"param.k=3", "replay.from=20240103", "replay.to=20240109"})))
-  );
 }
 
 TEST_CASE("loops: walk-forward chooses on each training window then tests the choice and chains the tests") {

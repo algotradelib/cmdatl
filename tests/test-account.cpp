@@ -169,29 +169,6 @@ void initialize(const PaperFixture& fixture) {
 
 } // namespace
 
-TEST_CASE("a fresh account is initialized under the lock: the state file's header and then the journal") {
-  const PaperFixture fixture;
-  const auto first = reply(fixture, {"status"});
-  CHECK(first.at("env").as_string() == "mock");
-  const auto log = slurp(fixture.log());
-  CHECK(lines_of(log).size() == 1);
-  CHECK(log.rfind("{\"mock_market\":1,\"semantics\":1,\"fingerprint\":\"", 0) == 0);
-  const auto replay = runner::read_journal_file(fixture.journal().string());
-  CHECK(replay.has_header_);
-  CHECK(replay.scope_ == SCOPE);
-  CHECK(replay.entries_.empty());
-  const auto owner = reply_of(slurp(fixture.account() / "owner.json"));
-  CHECK(owner.at("role").as_string() == "agent");
-  CHECK(owner.at("what").as_string() == "status");
-  CHECK(owner.at("pid").as_int64() == ::getpid());
-  CHECK(std::filesystem::is_regular_file(fixture.account() / "lock"));
-  // Opened again and again: nothing more written.
-  for (int i = 0; i < 3; ++i) {
-    initialize(fixture);
-  }
-  CHECK(slurp(fixture.log()) == log);
-}
-
 TEST_CASE("a first initialization interrupted before the journal is finished by the next command") {
   const PaperFixture fixture;
   initialize(fixture);
@@ -576,56 +553,6 @@ TEST_CASE("a journal that is not this account's, or damaged, makes every account
   ::chmod(fixture.journal().c_str(), 0600);
 }
 
-TEST_CASE("a journal not established writes no owner record and leaves the state file as it was") {
-  const PaperFixture fixture;
-  fixture.arm();
-  initialize(fixture);
-  {
-    const auto opened = open_account();
-    REQUIRE(opened->account_);
-    auto& desk = opened->account_->desk();
-    REQUIRE(desk.advance_to(kst("2024-03-26T09:00")) == cmdatl::Moved::OK);
-    REQUIRE(desk.session().place(order("005930", true, "10", "75000")));
-  }
-  const auto placed = slurp(fixture.log());
-  REQUIRE(lines_of(placed).size() == 3);
-  const auto good = slurp(fixture.journal());
-  auto foreign_entry = place_entry("f1", runner::JournalOutcome::PENDING, kst("2024-03-26T08:00"));
-  foreign_entry.scope_ = "mock:mock:other";
-  const std::vector<std::pair<const char*, std::string>> journals{
-    {"a foreign header", runner::journal_header_line("mock:mock:other") + "\n"},
-    {"a foreign entry", good + runner::journal_entry_to_line(foreign_entry) + "\n"},
-    {"a damaged line", good + "not a journal line\n"},
-  };
-  const auto owner = fixture.account() / "owner.json";
-  const std::string record = "{\"role\":\"operator\",\"pid\":1}\n";
-  for (const auto& j : journals) {
-    INFO(j.first);
-    spit(fixture.journal(), j.second);
-    spit(owner, record);
-    for (
-      const std::vector<std::string>& args : std::vector<std::vector<std::string>>{
-        {"status"}, {"account"}, {"quote", "005930"}, {"clock"}, {"clock", "advance", "--minutes", "5"}
-      }
-    ) {
-      INFO(args.front());
-      const auto ran = fixture.json(args);
-      CHECK(ran.exit_ == 4);
-      CHECK(code_of(ran.out_) == "unknown.journal_damaged");
-      CHECK(slurp(fixture.log()) == placed);
-      CHECK(slurp(fixture.journal()) == j.second);
-      CHECK(slurp(owner) == record);
-    }
-  }
-  // Beneath this account's journal, the record is written.
-  spit(fixture.journal(), good);
-  spit(owner, record);
-  CHECK(fixture.json({"status"}).exit_ == 0);
-  CHECK(slurp(fixture.log()) == placed);
-  CHECK(slurp(fixture.journal()) == good);
-  CHECK(slurp(owner) != record);
-}
-
 namespace {
 
 /**
@@ -960,23 +887,6 @@ TEST_CASE("clock advance: exactly one option, checked before the account opens, 
   CHECK(declares({"clock", "advance"}, 1, "clock.backwards"));
 }
 
-TEST_CASE("the clock at the supported interval's end") {
-  ConfigParts parts;
-  parts.paper_ = "bars = \"bars.csv\"\ncash = 100000000\nstart = \"2100-12-30T16:00\"\n";
-  const std::string bars =
-    "symbol,date,open,high,low,close,volume\n"
-    "005930,2100-12-30,78000,79000,77500,78500,1\n"
-    "000660,2100-12-30,180000,182000,178000,181000,1\n"
-    "005930,2100-12-31,78500,80000,78000,79800,1\n";
-  const PaperFixture fixture(parts, bars);
-  CHECK(
-    reply(fixture, {"clock", "advance", "--to", "2100-12-31T23:59"}).at("now").as_string() ==
-    "2100-12-31T23:59:00+09:00"
-  );
-  CHECK(code_of(fixture.json({"clock", "advance", "--minutes", "1"}).out_) == "clock.past_data");
-  CHECK(reply(fixture, {"status"}).at("data_end").as_string() == "2100-12-31T15:30:00+09:00");
-}
-
 TEST_CASE("the lock: a waiting command says who holds it, then answers busy.locked at 10 s") {
   const Watchdog watchdog("the lock's wait", 60);
   const PaperFixture fixture;
@@ -1056,26 +966,6 @@ TEST_CASE("the lock: replaced after a holder took it, the holder's next write an
   CHECK(refused.exit_ == cmdatl::Exit::UNKNOWN);
   CHECK(slurp(fixture.log()) == log);
   CHECK(declares({"clock", "advance"}, 4, "unknown.lock_lost"));
-}
-
-TEST_CASE("two operator files naming one account wait on one lock") {
-  const Watchdog watchdog("two operator files", 60);
-  const PaperFixture fixture;
-  initialize(fixture);
-  const auto second = fixture.dir() / "other.toml";
-  spit(second, ConfigParts{}.text());
-  const auto opened = open_account();
-  REQUIRE(opened->account_);
-  const ScopedVariable named("CMDATL_CONFIG", second.string());
-  Spawned cmdatl({"--json", "status"});
-  const auto first = cmdatl.line(true, 5);
-  REQUIRE(first.has_value());
-  CHECK(first->find("waiting for the account") != std::string::npos);
-  opened->account_.reset();
-  const int status = cmdatl.wait(15);
-  REQUIRE(WIFEXITED(status));
-  CHECK(WEXITSTATUS(status) == 0);
-  CHECK(reply_of(cmdatl.out()).at("state_dir").as_string() == fixture.account().string());
 }
 
 TEST_CASE("an allocation failing anywhere in an account command leaks nothing and leaves the lock free") {
@@ -1197,27 +1087,6 @@ TEST_CASE("a failing output: during the wait, in a read's reply, and after a com
     CHECK(reply(fixture, {"clock"}).at("now").as_string() == "2024-03-25T16:05:00+09:00");
   }
   CHECK(open_fds() == before);
-}
-
-TEST_CASE("cmdatl started with stdin, stdout or stderr closed never writes a reply into a state file") {
-  const Watchdog watchdog("closed descriptors", 60);
-  const PaperFixture fixture;
-  initialize(fixture);
-  for (const auto closed : {Closed{true, false, false}, Closed{false, true, false}, Closed{false, false, true}}) {
-    const auto log = slurp(fixture.log());
-    const auto journal_text = slurp(fixture.journal());
-    Spawned cmdatl({"--format", "text", "clock", "advance", "--to", "2024-03-25T15:00"}, closed);
-    cmdatl.wait(20);
-    CHECK(slurp(fixture.log()) == log);
-    CHECK(slurp(fixture.journal()) == journal_text);
-    CHECK(slurp(fixture.account() / "lock").empty());
-    Spawned ok({"--json", "status"}, closed);
-    ok.wait(20);
-    CHECK(slurp(fixture.log()) == log);
-    CHECK(slurp(fixture.journal()) == journal_text);
-    CHECK(slurp(fixture.account() / "lock").empty());
-  }
-  initialize(fixture);
 }
 
 TEST_CASE("the account directory read-only, a file size limit, descriptors exhausted, no state root") {

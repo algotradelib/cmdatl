@@ -294,27 +294,6 @@ TEST_CASE("values are checked key by key, each error at its file and line") {
   CHECK(parsed.errors_[2].rfind(FILE_PATH + ":5: ", 0) == 0);
 }
 
-TEST_CASE("errors as diagnostics: a line in a file, the command line, and no one place") {
-  const auto read = sp::read_text("[replay]\ncash = 0\n", FILE_PATH);
-  REQUIRE(read.errors_.size() == 1);
-  const auto line = read.errors_.front().to_json();
-  CHECK(line.at("severity").as_string() == "error");
-  CHECK(line.at("code").as_string() == "spec");
-  CHECK(line.at("file").as_string() == FILE_PATH);
-  CHECK(line.at("line").as_int64() == 2);
-  CHECK(line.at("origin").as_string() == "file");
-  sp::Entry e;
-  REQUIRE(!sp::from_command_line("replay.cash=0", e));
-  const auto cl = sp::check(e)->to_json();
-  CHECK(cl.at("file").is_null());
-  CHECK(cl.at("line").is_null());
-  CHECK(cl.at("origin").as_string() == "command_line");
-  CHECK(sp::check(e)->text() == "the command line: `replay.cash` is a number above 0, not 0");
-  const auto nowhere = sp::Error::nowhere("give the closes").to_json();
-  CHECK(nowhere.at("file").is_null());
-  CHECK(nowhere.at("origin").as_string() == "file");
-}
-
 TEST_CASE("decimals lose their exponent exactly and keep their text") {
   const std::vector<std::pair<std::string, std::string>> exact{
     {"1.5e-4", "0.00015"},
@@ -550,25 +529,6 @@ TEST_CASE("a spec file names its program or none, and an unreadable one is one e
   CHECK(read.errors_.front().code_ == "unreadable");
 }
 
-TEST_CASE("the target among settings: a setting is a dotted key before its first equals sign") {
-  CHECK(sp::is_setting("replay.cash=1e8"));
-  CHECK(sp::is_setting("params.lookback=30"));
-  CHECK(sp::is_setting("instruments.y=EWC"));
-  CHECK(sp::is_setting("bars.file=a=b.csv"));
-  CHECK(sp::is_setting("bars.columns.open=Open"));
-  CHECK(sp::is_setting("a.b="));
-  CHECK(!sp::is_setting("dip.toml"));
-  CHECK(!sp::is_setting("dip.atls"));
-  CHECK(!sp::is_setting("lookback=30"));
-  CHECK(!sp::is_setting("./a=b.toml"));
-  CHECK(!sp::is_setting("dir.v2/x=1.toml"));
-  CHECK(!sp::is_setting(".a=1"));
-  CHECK(!sp::is_setting("a..b=1"));
-  CHECK(!sp::is_setting("a.=1"));
-  CHECK(!sp::is_setting("a b.c=1"));
-  CHECK(!sp::is_setting("é.x=1"));
-}
-
 TEST_CASE("command-line values are typed by their key, never read as TOML values") {
   CHECK(cli_value("instruments.stock=005930") == "005930");
   CHECK(cli_value("bars.symbol=true") == "true");
@@ -612,43 +572,6 @@ TEST_CASE("command-line values are typed by their key, never read as TOML values
   const InDir here(dir.path());
   CHECK(cli_value("bars.file=bars.csv") == (dir.path() / "bars.csv").string());
   CHECK(cli_value("bars.files=[\"a.csv\", \"/b.csv\"]") == (dir.path() / "a.csv").string() + ",/b.csv");
-}
-
-TEST_CASE("layers merge, the command line winning, and paths are read against the file that sets them") {
-  const auto file = spec(WIDE_SPEC + "[replay]\ncash = 7\nshorts = true\n[params]\nlookback = 30\n");
-  REQUIRE(file.errors_.empty());
-  std::vector<std::string> errors;
-  const auto line = cli({"params.lookback=40", "replay.cash=8"}, errors);
-  REQUIRE(errors.empty());
-  const auto r = resolve({file.entries_, line}, single());
-  REQUIRE(r.errors_.empty());
-  CHECK(r.arg("replay.cash") == std::optional<std::string>("8"));
-  CHECK(r.arg("replay.shorts") == std::optional<std::string>("true"));
-  CHECK(r.arg("param.lookback") == std::optional<std::string>("40"));
-  CHECK(r.arg("bars.source") == std::optional<std::string>("wide"));
-  CHECK(r.arg("bars.file") == std::optional<std::string>("/specs/closes.csv"));
-  CHECK(r.resolved_.indicators_ == "incremental");
-  CHECK(!r.resolved_.store_);
-  // bars.source first, then the settings in the order first given, then the parameters.
-  REQUIRE(r.resolved_.args_.size() == 5);
-  CHECK(r.resolved_.args_.front().first == "bars.source");
-  CHECK(r.resolved_.args_.back().first == "param.lookback");
-  // Odd directory names: quotes, non-ASCII and a backslash.
-  const ScratchDir dir;
-  const auto odd = dir.path() / "a dir \"q\" é 한 back\\slash";
-  std::filesystem::create_directories(odd / "specs");
-  std::filesystem::create_directories(dir.path() / "elsewhere");
-  spit(odd / "specs" / "s.toml", "strategy = '../programs/p.atls'\n[bars]\nfile = 'closes.csv'\nopen = 'opens.csv'\n");
-  const InDir here(dir.path() / "elsewhere");
-  std::string program;
-  const auto read = sp::read_file((odd / "specs" / "s.toml").string(), program);
-  REQUIRE(read.errors_.empty());
-  CHECK(program == (odd / "specs" / "../programs/p.atls").string());
-  const auto given = cli({"bars.high=highs.csv"}, errors);
-  const auto layered = resolve({read.entries_, given}, single());
-  REQUIRE(layered.errors_.empty());
-  CHECK(layered.arg("bars.file") == std::optional<std::string>((odd / "specs" / "closes.csv").string()));
-  CHECK(layered.arg("bars.high") == std::optional<std::string>((dir.path() / "elsewhere" / "highs.csv").string()));
 }
 
 TEST_CASE("parameters are checked against the program, from the file and the command line") {

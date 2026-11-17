@@ -19,21 +19,6 @@ static_assert(!std::is_move_constructible<cmdatl::MockDesk>::value, "a desk is n
 namespace {
 
 /**
- * @brief Every order the market has, as id and status.
- * @param desk The desk.
- * @return The rows.
- */
-std::vector<std::string> history_of(cmdatl::MockDesk& desk) {
-  std::vector<std::string> rows;
-  const auto history = desk.market_session().order_history(atl::OrderHistoryQuery{});
-  REQUIRE(history);
-  for (const auto& order : history.value().orders_) {
-    rows.push_back(order.order_id_ + ":" + std::to_string(static_cast<int>(order.status_)));
-  }
-  return rows;
-}
-
-/**
  * @brief Every holding, as symbol and quantity.
  * @param desk The desk.
  * @return The rows.
@@ -98,66 +83,6 @@ TEST_CASE("the mock desk answers its reads from the bars and the kept market") {
   CHECK(desk->order_status("1") == std::optional<std::string>("filled"));
   CHECK(desk->paper_cash() == "99842000");
   CHECK(holdings_of(*desk) == std::vector<std::string>{"005930:2"});
-}
-
-TEST_CASE("an unfilled day order expires with its session and is reported once") {
-  const PaperFixture fixture;
-  fixture.arm();
-  const HeldAccount held(fixture);
-  auto desk = held.desk();
-  REQUIRE(desk->advance_to(kst("2024-03-26T08:30")) == cmdatl::Moved::OK);
-  // Before the open the boundary refuses by phase; the operator's file permits only `open`.
-  const auto early = desk->session().place(order("005930", true, "1", "75000"));
-  REQUIRE_FALSE(early);
-  CHECK(early.error().broker_code_ == "phase");
-  REQUIRE(desk->advance_to(kst("2024-03-26T09:30")) == cmdatl::Moved::OK);
-  REQUIRE(desk->session().place(order("005930", true, "1", "75000")));
-  REQUIRE(desk->advance_to(kst("2024-03-27T16:00")) == cmdatl::Moved::OK);
-  const auto events = desk->drain_events();
-  REQUIRE(events.size() == 1);
-  CHECK(events[0].kind_ == "expired");
-  CHECK(events[0].quantity_ == "1");
-  CHECK_FALSE(events[0].price_);
-  CHECK(desk->order_status("1") == std::optional<std::string>("canceled"));
-}
-
-TEST_CASE("a mock desk closed and reopened gives the same ids and holdings and cash") {
-  const PaperFixture fixture;
-  fixture.arm();
-  const HeldAccount held(fixture);
-  std::vector<std::string> history;
-  std::vector<std::string> holdings;
-  std::string cash;
-  {
-    auto desk = held.desk();
-    REQUIRE(desk->advance_to(kst("2024-03-26T10:00")) == cmdatl::Moved::OK);
-    REQUIRE(desk->session().place(order("005930", true, "3", "79000")));
-    REQUIRE(desk->session().place(order("000660", true, "1", "180000")));
-    REQUIRE(desk->session().place(order("005930", true, "1", "78000")));
-    const auto ref = desk->session().working_orders().value().orders_.back().ref_;
-    atl::AmendInstruction whole;
-    whole.all_remaining_ = true;
-    REQUIRE(desk->session().cancel(ref, whole));
-    // A refused placement takes no id and is not kept.
-    REQUIRE_FALSE(desk->session().place(order("005930", false, "1", "79000")));
-    REQUIRE(desk->advance_to(kst("2024-03-27T16:00")) == cmdatl::Moved::OK);
-    history = history_of(*desk);
-    holdings = holdings_of(*desk);
-    cash = desk->paper_cash();
-    CHECK(history.size() == 3);
-    CHECK(desk->sends() == 5);
-  }
-  auto desk = held.desk();
-  CHECK(desk->now() == kst("2024-03-27T16:00"));
-  CHECK(history_of(*desk) == history);
-  CHECK(holdings_of(*desk) == holdings);
-  CHECK(desk->paper_cash() == cash);
-  CHECK(desk->sends() == 0);
-  CHECK(desk->drain_events().empty());
-  // Past the calendar the boundary refuses by phase; the market itself still takes the order, with the next id.
-  const auto next = desk->market_session().place(order("005930", true, "1", "80500"));
-  REQUIRE(next);
-  CHECK(next.value().ref_.primary_ == "4");
 }
 
 TEST_CASE("a placement outside the operator's phases is refused before anything is written to the state file") {

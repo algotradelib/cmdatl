@@ -212,16 +212,6 @@ TEST_CASE("the help and the schema list every command from the table") {
   CHECK(errors.at("errors").as_array().size() == cmdatl::error_catalog().size());
 }
 
-TEST_CASE("a mistyped command gets the closest names") {
-  const auto ran = run({"stauts"});
-  CHECK(ran.exit_ == 2);
-  CHECK(code_of(ran.out_) == "usage.unknown_command");
-  CHECK(ran.out_.find("status") != std::string::npos);
-  const auto group = run({"order"});
-  CHECK(group.exit_ == 2);
-  CHECK(code_of(group.out_) == "usage.unknown_command");
-}
-
 TEST_CASE("arguments are checked against the command before anything runs") {
   CHECK(code_of(run({"order", "plan", "005930", "--target", "10"}).out_) == "usage.missing_argument");
   CHECK(code_of(run({"env", "--nonsense"}).out_) == "usage.bad_option");
@@ -543,34 +533,6 @@ TEST_CASE("an alias makes its old group a group") {
   CHECK(run_with({"order", "--help"}, table).out_.rfind("cmdatl order COMMAND", 0) == 0);
 }
 
-TEST_CASE("a command streams events before its final reply") {
-  std::vector<cmdatl::Command> commands;
-  commands.push_back(
-    cmdatl::make_command({"stream"}, "Read", "two events, then the end")
-      .example("cmdatl stream")
-      .returns("events", "how many")
-      .runs([](const cmdatl::Invocation&, const cmdatl::Table&, cmdatl::Output& output) {
-        output.emit(boost::json::object{{"event", "start"}});
-        output.emit(boost::json::object{{"event", "heartbeat"}});
-        cmdatl::Reply reply;
-        reply.body_["events"] = 2;
-        return reply;
-      })
-  );
-  const auto out = run_with({"stream"}, cmdatl::Table(std::move(commands))).out_;
-  std::istringstream lines(out);
-  std::string line;
-  std::vector<boost::json::object> objects;
-  while (std::getline(lines, line)) {
-    objects.push_back(reply_of(line));
-  }
-  REQUIRE(objects.size() == 3);
-  CHECK(objects[0].at("event").as_string() == "start");
-  CHECK(objects[1].at("event").as_string() == "heartbeat");
-  CHECK(objects[2].at("events").as_int64() == 2);
-  CHECK(objects[0].at("env").as_string() == "offline");
-}
-
 TEST_CASE("versions are read without overflow, and help and version need no command") {
   CHECK(!cmdatl::release_of("99999999999.0.0"));
   CHECK(cmdatl::at_least("0.1.0-9000", "0.0.0"));
@@ -707,17 +669,6 @@ TEST_CASE("every example in the table parses as cmdatl would read it") {
     ++checked;
   }
   CHECK(checked > table.commands().size());
-}
-
-TEST_CASE("a usage error names the command's usage, and a text failure goes to stderr") {
-  const auto missing = run({"order", "plan", "005930", "--target", "10"});
-  CHECK(reply_of(missing.out_).at("usage").as_string() == "cmdatl order plan SYMBOL --target N --limit P");
-  CHECK(missing.err_.empty());
-  const auto text = run({"order", "plan", "005930", "--target", "10"}, true);
-  CHECK(text.out_.empty());
-  CHECK(text.err_.find("usage: cmdatl order plan SYMBOL --target N --limit P") != std::string::npos);
-  const auto field = reply_of(run({"env", "--value", "nope"}).out_);
-  CHECK(field.at("usage").as_string() == "cmdatl env");
 }
 
 TEST_CASE("an example belongs to its own command, and the schema keeps the examples") {

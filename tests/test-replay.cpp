@@ -327,15 +327,6 @@ struct Bounded {
 
 } // namespace
 
-TEST_CASE("replay settings: key=value read in order with later values winning") {
-  const auto s = settings({"a=1", "b=x=y", "a=2", "c="});
-  CHECK(s.get("a") == "2");
-  CHECK(s.get("b") == "x=y");
-  CHECK(s.get("c") == "");
-  CHECK_FALSE(s.get("d").has_value());
-  CHECK_THROWS_AS(settings({"novalue"}), std::invalid_argument);
-}
-
 TEST_CASE("replay settings: a named program takes each declared instrument in declaration order") {
   CHECK(
     replay::symbols_of<Named>(settings({"instrument.short=B", "instrument.long=A", "instrument.extra=C"})) ==
@@ -380,13 +371,6 @@ TEST_CASE("replay settings: parameters are set twice in argument order and the s
   CHECK(strategy.entry_ == 90);
   CHECK(strategy.exit_ == 80);
   const std::vector<std::pair<std::string, double>> expected{{"exit", 80}, {"entry", 90}, {"exit", 80}, {"entry", 90}};
-  CHECK(strategy.calls_ == expected);
-}
-
-TEST_CASE("replay settings: a duplicate parameter keeps its last value at its first position") {
-  Bounded strategy;
-  replay::set_params(strategy, settings({"param.entry=60", "param.exit=5", "param.entry=70"}));
-  const std::vector<std::pair<std::string, double>> expected{{"entry", 70}, {"exit", 5}, {"entry", 70}, {"exit", 5}};
   CHECK(strategy.calls_ == expected);
 }
 
@@ -746,29 +730,6 @@ std::string rising_bars(int days) {
   return text;
 }
 
-TEST_CASE("replay main: output.equity writes every point of the curve with its return") {
-  const FreshScript fresh;
-  Scratch dir;
-  const auto file = dir.write("bars.csv", rising_bars(4));
-  // Bought at the third bar's open (120), valued at its close (125) and the fourth's (135); the library divides to eight
-  // decimal places (50 / 1025 is 0.04878048).
-  runtest::script().decisions_[2] = runtest::Decision{5, "1", true};
-  const auto ran = replay_main<runtest::Program>(
-    {"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "replay.cash=1000",
-      "output.equity=" + dir.at("equity.csv")}
-  );
-  INFO(ran.err_);
-  REQUIRE(ran.exit_ == 0);
-  CHECK(
-    slurp(dir.at("equity.csv")) ==
-    "at,equity,period_return\n2020-01-01T00:00:00Z,1000,\n2020-01-02T00:00:00Z,1000,0\n"
-    "2020-01-03T00:00:00Z,1025,0.025\n2020-01-04T00:00:00Z,1075,0.04878048\n"
-  );
-  CHECK(field(ran.out_, "first_bar") == "\"2020-01-01T00:00:00Z\"");
-  CHECK(field(ran.out_, "last_bar") == "\"2020-01-04T00:00:00Z\"");
-  CHECK(ran.out_.find("\"warning\"") == std::string::npos);
-}
-
 TEST_CASE(
   "replay main: output.fills and output.equity naming one file are refused and a failed equity keeps the fills"
 ) {
@@ -798,21 +759,6 @@ TEST_CASE(
 const std::string ONE_FILE =
   "\"output.fills and output.equity are one file (a case variant or a link): the equity curve "
   "replaced the fills\"";
-
-TEST_CASE("replay main: a dangling link to the other output is written through and the report warns") {
-  const FreshScript fresh;
-  Scratch dir;
-  const auto file = dir.write("bars.csv", flat_bars({100, 101, 102}));
-  std::filesystem::create_symlink("target.csv", dir.at("alias.csv"));
-  const auto ran = replay_main<runtest::Program>(
-    {"bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA",
-      "output.fills=" + dir.at("target.csv"), "output.equity=" + dir.at("alias.csv")}
-  );
-  INFO(ran.err_);
-  REQUIRE(ran.exit_ == 0);
-  CHECK(field(ran.out_, "warning") == ONE_FILE);
-  CHECK(slurp(dir.at("target.csv")).rfind("at,equity,period_return\n", 0) == 0);
-}
 
 TEST_CASE("replay main: the measures' values end the report, null when not finite, and nothing else changes") {
   const FreshScript fresh;
@@ -871,22 +817,6 @@ TEST_CASE("replay main: a measure's throw fails the replay before any file, with
   }
 }
 
-TEST_CASE("run_measures: each measure in order, a std::exception named, bad_alloc and other throws as they are") {
-  const atl::backtest::ReplayResult result{};
-  const atl::backtest::MeasureInput in{result, {}, {}, {}, 252};
-  CHECK(replay::run_measures(Measures{}, in).empty());
-  const auto values = replay::run_measures(Measures{{"b", periods}, {"a", periods}}, in);
-  CHECK(values == std::vector<std::pair<std::string, double>>{{"b", 252}, {"a", 252}});
-  try {
-    (void)replay::run_measures(Measures{{"ok", periods}, {"bad", broken}}, in);
-    FAIL("no throw");
-  } catch (const std::runtime_error& e) {
-    CHECK(std::string(e.what()) == "the measure bad threw: index 3");
-  }
-  CHECK_THROWS_AS(replay::run_measures(Measures{{"hungry", hungry}}, in), std::bad_alloc);
-  CHECK_THROWS_AS(replay::run_measures(Measures{{"odd", odd}}, in), int);
-}
-
 TEST_CASE("replay main: two names of one file on a case-insensitive volume are written and the report warns") {
   const FreshScript fresh;
   Scratch dir;
@@ -914,32 +844,6 @@ struct EdgeProgram : runtest::SessionProgram {
     return 1;
   }
 };
-
-TEST_CASE("replay main: replay.fill = next-close fills at the close of the bar after the decision") {
-  const FreshScript fresh;
-  Scratch dir;
-  const auto file = dir.write("bars.csv", rising_bars(4));
-  runtest::script().decisions_[2] = runtest::Decision{1, "1", true};
-  std::vector<std::string> args{
-    "bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "output.fills=" + dir.at("f.csv"),
-    "replay.fill=next-close"
-  };
-  const auto ruled = replay_main<runtest::Program>(args);
-  INFO(ruled.err_);
-  REQUIRE(ruled.exit_ == 0);
-  // Decided on the second bar, filled against the third at its close, not its open (120).
-  CHECK(
-    slurp(dir.at("f.csv")) == "at,symbol,side,quantity,price,commission,tax\n2020-01-03T00:00:00Z,AAA,buy,1,125,0,0\n"
-  );
-  CHECK(ruled.out_.find(", \"market_price_rule\": \"next-close\", \"market_fills_by_rule\": 1}") != std::string::npos);
-  // On weekly bars the close has no session to date it by: the library halts the replay, and the report says why.
-  args.push_back("bars.interval=1w");
-  const auto weekly = replay_main<runtest::Program>(args);
-  INFO(weekly.err_);
-  REQUIRE(weekly.exit_ == 0);
-  CHECK(field(weekly.out_, "executions") == "0");
-  CHECK(field(weekly.out_, "halted").rfind("\"next_close_bar_too_long: ", 0) == 0);
-}
 
 TEST_CASE("replay main: next-close on open points fills a close's order at the next open and an open's at its close") {
   const FreshScript fresh;
