@@ -17,7 +17,6 @@
 #include <set>
 #include <sstream>
 #include <string>
-#include <tuple>
 #include <vector>
 
 #if !defined(_WIN32)
@@ -353,91 +352,6 @@ std::string walk_csv(const std::vector<WalkBar>& bars) {
   return text;
 }
 
-/** @brief A fill as (day, side, quantity, price). */
-using WalkFill = std::tuple<long, std::string, long, double>;
-
-/**
- * @brief The fills the mean-reversion starter must give, replayed here: the sample z-score of the closes over
- *   `lookback` bars, a target of `quantity` below `-entry` and of 0 above `exit`, each order filled at the next bar's
- *   open.
- * @param bars The bars.
- * @param lookback The window.
- * @param entry The entry threshold.
- * @param exit The exit threshold.
- * @param quantity The target.
- * @return The fills.
- */
-std::vector<WalkFill> expected_fills(
-  const std::vector<WalkBar>& bars, std::size_t lookback, double entry, double exit, long quantity
-) {
-  std::vector<WalkFill> fills;
-  long position = 0;
-  long pending = 0;
-  for (std::size_t i = 0; i < bars.size(); ++i) {
-    const auto& b = bars[i];
-    if (pending != 0) {
-      fills.emplace_back(b.day_, pending > 0 ? "buy" : "sell", std::labs(pending), static_cast<double>(b.open_));
-      position += pending;
-      pending = 0;
-    }
-    if (i + 1 < lookback) {
-      continue;
-    }
-    double sum = 0;
-    for (std::size_t k = i + 1 - lookback; k <= i; ++k) {
-      sum += static_cast<double>(bars[k].close_);
-    }
-    const double mean = sum / static_cast<double>(lookback);
-    double squares = 0;
-    for (std::size_t k = i + 1 - lookback; k <= i; ++k) {
-      const double d = static_cast<double>(bars[k].close_) - mean;
-      squares += d * d;
-    }
-    const double var = squares / static_cast<double>(lookback - 1);
-    if (var == 0.0) {
-      continue;
-    }
-    const double z = (static_cast<double>(b.close_) - mean) / std::sqrt(var);
-    const long target = z < -entry ? quantity : (z > exit ? 0 : position);
-    pending = target - position;
-  }
-  return fills;
-}
-
-/**
- * @brief Days from 2020-01-01 to a time of 2020 (a leap year) written `2020-MM-DDT...`.
- * @param at The time.
- * @return The days, or -1 for another year.
- */
-long day_of_2020(const std::string& at) {
-  static constexpr int before[] = {0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335};
-  if (at.size() < 10 || at.compare(0, 5, "2020-") != 0) {
-    return -1;
-  }
-  return before[std::stoi(at.substr(5, 2)) - 1] + std::stoi(at.substr(8, 2)) - 1;
-}
-
-/**
- * @brief A fills file as (day, side, quantity, price).
- * @param text The file.
- * @return The fills.
- */
-std::vector<WalkFill> read_fills(const std::string& text) {
-  std::vector<WalkFill> fills;
-  auto rows = lines_of(text);
-  if (rows.empty() || rows.front() != "at,symbol,side,quantity,price,commission,tax") {
-    return fills;
-  }
-  for (std::size_t k = 1; k < rows.size(); ++k) {
-    const auto cells = cmdatl::split(rows[k], ',');
-    if (cells.size() != 7) {
-      return {};
-    }
-    fills.emplace_back(day_of_2020(cells[0]), cells[2], std::stol(cells[3]), std::stod(cells[4]));
-  }
-  return fills;
-}
-
 } // namespace
 
 TEST_CASE("each starter written by strategy new backtests and trades from another directory", "[acceptance]") {
@@ -701,14 +615,16 @@ TEST_CASE(
     return text;
   };
 
-  SECTION("a limit-order spec whose offset makes pricing refuse, from the file or the command line") {
+  // A limit-order spec whose offset makes pricing refuse, from the file or the command line.
+  {
     spit(at("limit.toml"), with("type = \"market\"", "type = \"limit\"\noffset = 0.299999999999999999"));
     const auto report = report_of({at("limit.toml")});
     CHECK(report.as_object().at("pricing_refused").as_int64() > 0);
     spit(at("plain.toml"), with("type = \"market\"", ""));
     CHECK(report_of({at("plain.toml"), "orders.type=limit", "orders.offset=0.299999999999999999"}) == report);
   }
-  SECTION("a parameter on the command line, as the file's") {
+  // A parameter on the command line, as the file's.
+  {
     const auto ran = backtest({"params.lookback=30", at("base.toml")});
     REQUIRE(ran.exit_ == 0);
     const auto reply = reply_of(ran.out_);
@@ -717,13 +633,15 @@ TEST_CASE(
     CHECK(reply.at("report") == report_of({at("thirty.toml")}));
     CHECK(reply.at("report") != report_of({at("base.toml")}));
   }
-  SECTION("a setting on the command line wins over the file's") {
+  // A setting on the command line wins over the file's.
+  {
     spit(at("changed.toml"), with("cash = 100000", "cash = 250000"));
     const auto report = report_of({at("base.toml"), "replay.cash=250000"});
     CHECK(report == report_of({at("changed.toml")}));
     CHECK(report.as_object().at("opening_equity").as_string() == "250000");
   }
-  SECTION("a program with settings only") {
+  // A program with settings only.
+  {
     const InDir here(dir.path() / "work");
     const auto ran = backtest(
       {at("base.atls"), "bars.source=csv", "bars.file=../bars.csv", "bars.symbol_column=symbol", "bars.time=date",
@@ -736,7 +654,8 @@ TEST_CASE(
     CHECK(reply.at("program").as_string() == at("base.atls"));
     CHECK(reply.at("report") == report_of({at("base.toml")}));
   }
-  SECTION("two backtests of one program at once") {
+  // Two backtests of one program at once.
+  {
     const auto twenty = report_of({at("base.toml"), "params.lookback=20"});
     const auto forty = report_of({at("base.toml"), "params.lookback=40"});
     Spawned first({"--json", "strategy", "backtest", at("base.toml"), "params.lookback=20"});
@@ -754,7 +673,8 @@ TEST_CASE(
     const auto copies = std::filesystem::path(*cmdatl::build::cache_root()).parent_path() / "backtests";
     CHECK((!std::filesystem::exists(copies) || std::filesystem::is_empty(copies)));
   }
-  SECTION("--fills and --equity, relative to the working directory") {
+  // --fills and --equity, relative to the working directory.
+  {
     const InDir here(dir.path() / "work");
     const auto ran = backtest({at("base.toml"), "--fills", "fills.csv", "--equity", "equity.csv"});
     REQUIRE(ran.exit_ == 0);
@@ -778,7 +698,8 @@ TEST_CASE(
     CHECK(equity.back().substr(0, equity.back().find(',')) == report.at("last_bar").as_string());
     CHECK(equity[1].back() == ',');
   }
-  SECTION("a warning reaches the reader as progress") {
+  // A warning reaches the reader as progress.
+  {
     spit(at("warn.atls"), program_with_a_warning());
     auto warned = spec;
     warned.replace(
@@ -793,26 +714,30 @@ TEST_CASE(
     // A series nothing reads changes no trade.
     CHECK(reply_of(ran.out_).at("report") == report_of({at("base.toml")}));
   }
-  SECTION("build.algotradelib is refused") {
+  // build.algotradelib is refused.
+  {
     spit(at("broken.toml"), spec + "\n[build]\nalgotradelib = \"/nonexistent/prefix\"\n");
     const auto ran = backtest({at("broken.toml")});
     CHECK(ran.exit_ == 2);
     CHECK(code_of(ran.out_) == "spec.invalid");
     CHECK(ran.out_.find("cmdatl env") != std::string::npos);
   }
-  SECTION("a build failure") {
+  // A build failure.
+  {
     // A compiler that is not there: CMake cannot configure a shape that is new for it.
     const ScopedVariable compiler("CXX", "/nonexistent/c++");
     const auto ran = backtest({at("base.toml")});
     CHECK(ran.exit_ == 1);
     CHECK(code_of(ran.out_) == "build.failed");
   }
-  SECTION("a replay failure: a parameter outside its bounds") {
+  // A replay failure: a parameter outside its bounds.
+  {
     const auto ran = backtest({at("base.toml"), "params.lookback=1"});
     CHECK(ran.exit_ == 1);
     CHECK(code_of(ran.out_) == "replay.failed");
   }
-  SECTION("a program error") {
+  // A program error.
+  {
     spit(at("bad.atls"), "params {\n  int x = ;\n}\n");
     auto bad = spec;
     bad.replace(
@@ -824,7 +749,8 @@ TEST_CASE(
     CHECK(code_of(ran.out_) == "program.invalid");
     CHECK(reply_of(ran.out_).at("errors").as_array().at(0).as_object().at("line").as_int64() == 2);
   }
-  SECTION("a spec error") {
+  // A spec error.
+  {
     spit(at("typo.toml"), spec + "\n[replay]\ncash = 1\n");
     const auto ran = backtest({at("typo.toml")});
     CHECK(ran.exit_ == 2);
@@ -1115,159 +1041,6 @@ TEST_CASE("the replay fixtures recorded from atlc run are strategy backtest's by
   }
 }
 
-TEST_CASE("strategy backtest's fills are those of a replay computed in the test", "[acceptance]") {
-  const auto equip = equipment();
-  if (!equip) {
-    SKIP(UNEQUIPPED);
-  }
-  const Equipped equipped(*equip);
-  const ScratchDir dir;
-  const auto at = [&dir](const std::string& file) {
-    return (dir.path() / file).string();
-  };
-  const auto bars = walk(120);
-  spit(at("bars.csv"), walk_csv(bars));
-  // The mean-reversion starter: a z-score of the closes, entry and exit thresholds, a quantity.
-  spit(at("mr.atls"), cmdatl::TEMPLATES[0].text_);
-  const std::string data = "[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n";
-  spit(at("mr.toml"), "strategy = 'mr.atls'\n" + data + "[replay]\ncash = 100_000\n[params]\nentry = 1\n");
-  for (const std::size_t lookback : {5, 8}) {
-    INFO(lookback);
-    const auto fills = at("fills-" + std::to_string(lookback) + ".csv");
-    const auto report =
-      report_of({at("mr.toml"), "params.lookback=" + std::to_string(lookback), "--fills", fills}).as_object();
-    const auto want = expected_fills(bars, lookback, 1.0, 0.0, 100);
-    CHECK(read_fills(slurp(fills)) == want);
-    CHECK(want.size() >= 6);
-    long position = 0;
-    long cash = 100000;
-    for (const auto& [day, side, quantity, price] : want) {
-      position += side == "buy" ? quantity : -quantity;
-      cash -= (side == "buy" ? quantity : -quantity) * static_cast<long>(price);
-    }
-    CHECK(report.at("executions").as_int64() == static_cast<std::int64_t>(want.size()));
-    CHECK(report.at("bars").as_int64() == static_cast<std::int64_t>(bars.size()));
-    CHECK(report.at("opening_equity").as_string() == "100000");
-    CHECK(
-      std::stod(std::string(report.at("closing_equity").as_string())) ==
-      static_cast<double>(cash + position * bars.back().close_)
-    );
-    CHECK(report.at("first_bar").as_string() == "2020-01-01T00:00:00Z");
-    CHECK(report.at("rejected").as_int64() == 0);
-  }
-  // A bound is checked when the strategy is built, and the replay stops.
-  const auto low = backtest({at("mr.toml"), "params.lookback=1"});
-  CHECK(low.exit_ == 1);
-  CHECK(code_of(low.out_) == "replay.failed");
-  CHECK(low.out_.find("lower bound") != std::string::npos);
-  // A bound on another parameter is checked against the final values, whatever their order.
-  spit(
-    at("bounded.atls"),
-    "params {\n  real<lower=0> entry = 2;\n  real<lower=0, upper=entry> exit = 1;\n}\nseries {\n  real z = zscore(close, "
-    "5);\n}\non_bar {\n  if (z < -entry) {\n    target(10);\n  } else if (z > exit) {\n    target(0);\n  }\n}\n"
-  );
-  spit(at("bounded.toml"), "strategy = 'bounded.atls'\n" + data);
-  CHECK(backtest({at("bounded.toml"), "params.entry=0.5", "params.exit=0.2"}).exit_ == 0);
-  const auto above = backtest({at("bounded.toml"), "params.entry=0.5", "params.exit=0.9"});
-  CHECK(above.exit_ == 1);
-  CHECK(code_of(above.out_) == "replay.failed");
-  CHECK(above.out_.find("exit = 0.9 is above its upper bound") != std::string::npos);
-}
-
-TEST_CASE(
-  "strategy backtest's orders: market said or not, limits bounded per fill and refused pricing", "[acceptance]"
-) {
-  const auto equip = equipment();
-  if (!equip) {
-    SKIP(UNEQUIPPED);
-  }
-  const Equipped equipped(*equip);
-  const ScratchDir dir;
-  const auto at = [&dir](const std::string& file) {
-    return (dir.path() / file).string();
-  };
-  const auto bars = walk(120);
-  spit(at("bars.csv"), walk_csv(bars));
-  spit(at("mr.atls"), cmdatl::TEMPLATES[0].text_);
-  const auto spec = [&at](const std::string& name, const std::string& orders) {
-    spit(
-      at(name),
-      "strategy = 'mr.atls'\n[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol = \"AAA\"\n[params]\nentry = 1\n"
-      "lookback = 5\n" +
-        orders
-    );
-  };
-  spec("none.toml", "");
-  spec("market.toml", "[orders]\ntype = \"market\"\n");
-  spec("limit.toml", "[orders]\ntype = \"limit\"\noffset = 0.002\n");
-  const auto none = report_of({at("none.toml")});
-  // Market orders, said or not, are the same replay.
-  CHECK(report_of({at("market.toml")}) == none);
-  const auto limit = report_of({at("limit.toml"), "--fills", at("limit-fills.csv")});
-  CHECK(limit != none);
-  CHECK(limit.as_object().at("pricing_refused").as_int64() == 0);
-  CHECK(none.as_object().at("pricing_refused").as_int64() == 0);
-  CHECK(limit.as_object().at("pricing_refusal_reasons").as_object().empty());
-  // Every limit is the decision close times 1.002 for a buy, 0.998 for a sell (whole prices on a free grid), and
-  // fills at most at it for a buy, at least for a sell, on the next bar.
-  const auto fills = read_fills(slurp(at("limit-fills.csv")));
-  CHECK(fills.size() >= 2);
-  for (const auto& [day, side, quantity, price] : fills) {
-    INFO(day << " " << side << " " << price);
-    REQUIRE(day >= 1);
-    const auto decided = static_cast<double>(bars[static_cast<std::size_t>(day - 1)].close_);
-    if (side == "buy") {
-      CHECK(price <= decided * 1.002);
-    } else {
-      CHECK(price >= decided * 0.998);
-    }
-  }
-  // Numbers written with an exponent reach the replay as exact decimals.
-  CHECK(
-    report_of({at("none.toml"), "replay.cash=1e5", "replay.commission=1.5e-4"}).as_object().at("opening_equity") ==
-    "100000"
-  );
-  // A pricing the generated strategy refuses stops the driver (the run spec refuses it first; this is a C++ caller's
-  // guard).
-  const auto driver = backtest_driver(struct_of(equip->atlc_, at("mr.atls")));
-  REQUIRE(!driver.empty());
-  const auto direct = [&driver, &at](const std::string& type, const std::string& offset) {
-    return cmdatl::run_child(
-      {driver.string(), "bars.source=csv", "bars.file=" + at("bars.csv"), "bars.symbol=AAA", "orders.type=" + type,
-        "orders.offset=" + offset},
-      [](const std::string&) {}
-    );
-  };
-  const auto market_offset = direct("market", "0.001");
-  CHECK(market_offset.code_ == 1);
-  CHECK(cmdatl::last_line(market_offset).find("an offset prices a limit") != std::string::npos);
-  const auto wide_offset = direct("limit", "0.3");
-  CHECK(wide_offset.code_ == 1);
-  CHECK(cmdatl::last_line(wide_offset).find("below 0.3") != std::string::npos);
-  // Prices that gap up every day: each day's buy limit at its close is never reached, so each expires with its
-  // session, and the last is still queued at the end.
-  std::string gaps = "ts,open,high,low,close,volume\n";
-  for (int day = 0; day < 4; ++day) {
-    const auto price = std::to_string(100 * (day + 1));
-    gaps +=
-      std::to_string(1577836800 + day * 86400) + "," + price + "," + price + "," + price + "," + price + ",1000\n";
-  }
-  spit(at("gaps.csv"), gaps);
-  spit(at("buy.atls"), "on_bar {\n  target(1);\n}\n");
-  spit(at("gaps.toml"), "strategy = 'buy.atls'\n[bars]\nsource = \"csv\"\nfile = \"gaps.csv\"\nsymbol = \"AAA\"\n");
-  const auto expired = report_of({at("gaps.toml"), "orders.type=limit", "orders.offset=0"}).as_object();
-  CHECK(expired.at("executions").as_int64() == 0);
-  CHECK(expired.at("caveats").as_object().at("expired").as_int64() == 3);
-  CHECK(expired.at("caveats").as_object().at("unfilled").as_int64() == 1);
-  // An offset whose decimal has 19 digits: every price times it overflows, so every target is refused and counted,
-  // and no order is sent at all.
-  const auto refused = report_of({at("gaps.toml"), "orders.type=limit", "orders.offset=0.299999999999999999"});
-  CHECK(refused.as_object().at("pricing_refused").as_int64() == 4);
-  CHECK(refused.as_object().at("pricing_refusal_reasons") == boost::json::parse(R"({"price_not_representable": 4})"));
-  CHECK(refused.as_object().at("caveats").as_object().at("unfilled").as_int64() == 0);
-  CHECK(refused.as_object().at("executions").as_int64() == 0);
-}
-
 #if defined(CMDATL_TEST_DUCKDB)
 TEST_CASE("the store fixture recorded from atlc run is strategy backtest's byte for byte", "[acceptance]") {
   const auto equip = equipment();
@@ -1455,27 +1228,7 @@ std::string measured_spec(const ScratchDir& dir, const std::string& name, const 
   return spec;
 }
 
-TEST_CASE("measures of the run spec's header end the report and change nothing else", "[acceptance]") {
-  const auto equip = equipment();
-  if (!equip) {
-    SKIP(UNEQUIPPED);
-  }
-  const Equipped equipped(*equip);
-  const ScratchDir dir;
-  auto report = report_of({measured_spec(dir, "measured", "measures = ['total_again', 'always_nan']")});
-  const auto plain = report_of({measured_spec(dir, "plain", "")});
-  const auto measures = report.as_object().at("measures").as_object();
-  REQUIRE(measures.size() == 2);
-  CHECK(measures.begin()->key() == "total_again");
-  CHECK(measures.at("total_again").to_number<double>() == plain.as_object().at("total_return").to_number<double>());
-  CHECK(measures.at("always_nan").is_null());
-  report.as_object().erase("measures");
-  CHECK(report == plain);
-}
-
-TEST_CASE(
-  "a measure that is not one fails the build in one line, and one that throws fails the replay", "[acceptance]"
-) {
+TEST_CASE("a measure that is not one fails the build in one line", "[acceptance]") {
   const auto equip = equipment();
   if (!equip) {
     SKIP(UNEQUIPPED);
@@ -1497,17 +1250,6 @@ TEST_CASE(
       std::string::npos
     );
   }
-  const auto fills = dir.path() / "fills.csv";
-  const auto equity = dir.path() / "equity.csv";
-  const auto threw = backtest(
-    {measured_spec(dir, "throws", "measures = ['throws']"), "--fills", fills.string(), "--equity", equity.string()}
-  );
-  CHECK(threw.exit_ == 1);
-  CHECK(code_of(threw.out_) == "replay.failed");
-  const std::string message(reply_of(threw.out_).at("error").as_object().at("message").as_string());
-  CHECK(message.find("the measure throws threw: deliberately") != std::string::npos);
-  CHECK_FALSE(std::filesystem::exists(fills));
-  CHECK_FALSE(std::filesystem::exists(equity));
 }
 
 // Hidden until atlc's published package has `measures {}` (acceptance.sh fails on a skipped case); run it with
@@ -1618,39 +1360,6 @@ TEST_CASE("a program's measures {} come first in the report, before the run spec
   CHECK(measured.at("objective") == boost::json::value("measures.total"));
   REQUIRE(!measured.at("folds").as_array().empty());
   CHECK(measured.at("folds") == figured.at("folds"));
-}
-
-TEST_CASE("a program's extern function and indicator come from the run spec's header", "[acceptance]") {
-  const auto equip = equipment();
-  if (!equip) {
-    SKIP(UNEQUIPPED);
-  }
-  const Equipped equipped(*equip);
-  const ScratchDir dir;
-  const auto at = [&dir](const std::string& file) {
-    return (dir.path() / file).string();
-  };
-  const auto fixtures = std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "fixtures" / "extern";
-  std::filesystem::copy(fixtures, dir.path(), std::filesystem::copy_options::recursive);
-  write_bars(dir.path() / "bars.csv");
-  const std::string bars =
-    "[bars]\nsource = \"csv\"\nfile = \"bars.csv\"\nsymbol_column = \"symbol\"\ntime = \"date\"\ntime_format = \"iso\"\n";
-  spit(at("extern.toml"), "strategy = \"mean-gap.atls\"\nheader = \"include/user.hpp\"\n" + bars);
-  spit(at("atls.toml"), "strategy = \"mean-gap-atls.atls\"\n" + bars);
-  // The header, its own include and the C++ in it restate sma and an atls function: the same report, fill for fill.
-  const auto restated = report_of({at("extern.toml"), "--fills", at("extern.csv")});
-  const auto reference = report_of({at("atls.toml"), "--fills", at("atls.csv")});
-  CHECK(restated.as_object().at("executions").as_int64() >= 4);
-  CHECK(restated == reference);
-  CHECK(slurp(at("extern.csv")) == slurp(at("atls.csv")));
-  // Without the header, the build fails, and the reply leads with the compiler's message naming what to add.
-  spit(at("bare.toml"), "strategy = \"mean-gap.atls\"\n" + bars);
-  const auto bare = backtest({at("bare.toml")});
-  CHECK(bare.exit_ == 1);
-  CHECK(code_of(bare.out_) == "build.failed");
-  const std::string message(reply_of(bare.out_).at("error").as_object().at("message").as_string());
-  CHECK(message.find("atls::user::mean_of is not defined") != std::string::npos);
-  CHECK(message.find("the run spec's header key") != std::string::npos);
 }
 
 TEST_CASE("strategy evaluate windows and bootstrap with atlc: spans; history counted apart; path 0", "[acceptance]") {

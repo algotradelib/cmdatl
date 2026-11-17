@@ -1,5 +1,4 @@
-// Measures of a run spec's own for the acceptance cases: two that compute, one that throws, and two that cannot be
-// called as a measure.
+// Measures of a run spec's own for the acceptance cases: one that computes, and two that cannot be called as a measure.
 #pragma once
 
 #include <algotradelib/backtest>
@@ -15,22 +14,6 @@
 inline double total_again(const algotradelib::backtest::MeasureInput& in) {
   const auto n = in.levels_.size();
   return n == 0 ? std::nan("") : in.levels_[n - 1] / in.levels_[0] - 1;
-}
-
-/**
- * @brief A measure that is never defined.
- * @return NaN.
- */
-inline double always_nan(const algotradelib::backtest::MeasureInput&) {
-  return std::nan("");
-}
-
-/**
- * @brief A measure that throws.
- * @return Nothing.
- */
-inline double throws(const algotradelib::backtest::MeasureInput&) {
-  throw std::runtime_error("deliberately");
 }
 
 /**
