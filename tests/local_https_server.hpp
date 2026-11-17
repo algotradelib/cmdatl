@@ -19,6 +19,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -117,8 +118,8 @@ struct Recorded {
   std::string body_;
   /** @brief Where it stood on its connection: 1 for the connection's first request. */
   std::size_t position_{0};
-  /** @brief When it was read whole. */
-  std::chrono::steady_clock::time_point at_{};
+  /** @brief Its place among every server's requests in this process, in the order they were read whole. */
+  std::uint64_t at_{0};
 
   /**
    * @brief A header's value.
@@ -476,7 +477,8 @@ private:
     }
     recorded.body_ = request.body();
     recorded.position_ = position;
-    recorded.at_ = std::chrono::steady_clock::now();
+    static std::atomic<std::uint64_t> read{0};
+    recorded.at_ = ++read;
     Responder responder;
     std::size_t occurrence = 0;
     {
