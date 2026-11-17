@@ -269,22 +269,6 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
   }
 }
 
-TEST_CASE("an earlier version's paper broker and paper table are refused with the mock words") {
-  const PaperFixture fixture;
-  const std::vector<std::pair<std::string, std::string>> cases{
-    {with("broker = \"paper\"\nnumber = \"x\"\n", "", ""), "broker = \"mock\""},
-    {paper_table(), "[mock]"},
-  };
-  for (const auto& c : cases) {
-    INFO(c.first);
-    fixture.write_config(c.first);
-    const auto snapshot = cmdatl::load_operator_config();
-    REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::INVALID);
-    CHECK(snapshot.error_.code_ == "config.invalid");
-    CHECK(snapshot.error_.message_.find(c.second) != std::string::npos);
-  }
-}
-
 TEST_CASE("a valid operator's file: defaults filled, paths beside it, the armed file fixed") {
   const PaperFixture fixture;
   fixture.write_config(

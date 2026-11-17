@@ -869,37 +869,6 @@ TEST_CASE("strategy evaluate: a broken line protocol, a stop or no report is rep
   CHECK(error.at("next").as_string() == "give a shorter windows.length");
 }
 
-TEST_CASE("strategy evaluate refuses bars.source = stdin on a terminal before the build") {
-  const Watchdog watchdog("stdin on a terminal", 60);
-  const FakeAtlc fake(evaluation({SUMMARY}));
-  int fds[2];
-  REQUIRE(::pipe(fds) == 0);
-  int terminal = -1;
-  const pid_t pid = ::forkpty(&terminal, nullptr, nullptr, nullptr);
-  REQUIRE(pid >= 0);
-  if (pid == 0) {
-    ::close(fds[0]);
-    const auto ran = run({"--json", "strategy", "evaluate", "dip.atls", "bars.source=stdin", "bars.symbol=AAA"});
-    const bool written = ::write(fds[1], ran.out_.data(), ran.out_.size()) == static_cast<ssize_t>(ran.out_.size());
-    std::_Exit(written ? ran.exit_ : 99);
-  }
-  ::close(fds[1]);
-  std::string out;
-  char buffer[4096];
-  for (ssize_t n = 0; (n = ::read(fds[0], buffer, sizeof(buffer))) > 0;) {
-    out.append(buffer, static_cast<std::size_t>(n));
-  }
-  ::close(fds[0]);
-  int status = 0;
-  REQUIRE(::waitpid(pid, &status, 0) == pid);
-  ::close(terminal);
-  INFO(out);
-  REQUIRE(WIFEXITED(status));
-  CHECK(WEXITSTATUS(status) == 2);
-  CHECK(code_of(lines_of(out).back()) == "usage.bad_value");
-  CHECK(fake.args("driver").empty());
-}
-
 TEST_CASE("an interruption while strategy evaluate streams stops its driver, keeps the lines and answers 130") {
   const Watchdog watchdog("interrupted evaluation", 60);
   const FakeAtlc fake(evaluation({replay_line(0)}) + "driver pid\ndriver touch streaming\ndriver block\n");

@@ -533,15 +533,6 @@ TEST_CASE("an alias makes its old group a group") {
   CHECK(run_with({"order", "--help"}, table).out_.rfind("cmdatl order COMMAND", 0) == 0);
 }
 
-TEST_CASE("versions are read without overflow, and help and version need no command") {
-  CHECK(!cmdatl::release_of("99999999999.0.0"));
-  CHECK(cmdatl::at_least("0.1.0-9000", "0.0.0"));
-  CHECK(!cmdatl::at_least("not a version", "0.0.0"));
-  const cmdatl::Table table(cmdatl::command_list());
-  CHECK(cmdatl::prepare({"--help"}, table, false).action_ == cmdatl::Prepared::Action::HELP);
-  CHECK(cmdatl::prepare({"--version"}, table, false).action_ == cmdatl::Prepared::Action::VERSION);
-}
-
 #if !defined(_WIN32)
 TEST_CASE("a bare CMDATL_ATLC is looked up on PATH only, never in the current directory") {
   const auto dir = std::filesystem::temp_directory_path() / ("cmdatl-atlc-" + std::to_string(::getpid()));

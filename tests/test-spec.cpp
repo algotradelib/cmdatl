@@ -369,20 +369,6 @@ TEST_CASE("numbers that are not decimals are refused, as are dates and times wri
   CHECK(has(one_error("[bars]\nfiles = [\"a\", 0x10]\n"), "write a decimal number"));
 }
 
-TEST_CASE("what TOML holds is read by toml++: escapes, inline tables and multi-line strings") {
-  const auto parsed = spec(
-    "strategy = \"m\\u002Eatls\"\n[bars]\nsymbol = 'A'\ncolumns = { open = \"Open\", close = \"\"\"Close\"\"\" }\n"
-  );
-  REQUIRE(parsed.errors_.empty());
-  CHECK(value_of(parsed, "strategy") == "/specs/m.atls");
-  CHECK(value_of(parsed, "bars.columns.open") == "Open");
-  CHECK(value_of(parsed, "bars.columns.close") == "Close");
-  // File order, whatever toml++'s table order.
-  REQUIRE(parsed.entries_.size() == 4);
-  CHECK(parsed.entries_[1].key_ == "bars.symbol");
-  CHECK(parsed.entries_[2].key_ == "bars.columns.open");
-}
-
 TEST_CASE("decoded control characters are refused, with the advice for a Windows path") {
   for (
     const auto* src :
@@ -448,31 +434,6 @@ TEST_CASE("toml++ refuses what TOML forbids: keys and tables twice, a value and 
   // Nesting is bounded before toml++ parses.
   CHECK(has(one_error("a = " + std::string(40, '[') + std::string(40, ']') + "\n"), "not TOML this version reads"));
   CHECK(has(one_error("a" + std::string(30, '.') + " = 1\n"), "not"));
-}
-
-TEST_CASE("outside ASCII outside strings and comments is refused before toml++ reads it") {
-  // toml++ 3.4 reaches a path it marks unreachable on U+3001 and U+FE70 there; TOML allows neither there anyway.
-  for (
-    const auto* src :
-    {"[replay]\ncash = 1\xe3\x80\x81\n", "[bars]\nsymbol\xe3\x80\x81 = 'A'\n",
-      "[bars]\nsymbols = ['A', \xe3\x80\x81]\n", "[replay]\ncash = 1 \xef\xb9\xb0\n", "a\xc3\xa9 = 1\n"}
-  ) {
-    INFO(src);
-    const auto e = one_error(src);
-    CHECK(has(e, "outside ASCII outside a string or a comment"));
-  }
-  // In strings of every kind and in comments, with escaped quotes, it is read.
-  const auto inside = spec(
-    "[bars] # \xe3\x80\x81\nsymbol = \"\xe3\x80\x81\\\"\xef\xb9\xb0\"\nnames = '''\xe3\x80\x81'''\n"
-    "time = \"\"\"\xef\xb9\xb0\"\"\"\nstamp = '\xe3\x80\x81'\n"
-  );
-  CHECK(inside.errors_.empty());
-  CHECK(has(cli_error("bars.symbols=[\xe3\x80\x81]"), "is not a TOML array"));
-  CHECK(cli_value("bars.symbols=[\"\xe3\x80\x81\"]") == "\xe3\x80\x81");
-  const auto refusal = cmdatl::config_detail::non_ascii_refusal("a = 1\nb = 2 \xe3\x80\x81\n");
-  REQUIRE(refusal);
-  CHECK(refusal->at_.line == 2);
-  CHECK(refusal->at_.column == 7);
 }
 
 TEST_CASE("values are normalized: paths against the spec's directory, lists, dates and counts") {

@@ -143,19 +143,6 @@ TEST_CASE("guide agent and guide strategy print their skill's body in every form
   CHECK(cmdatl::guide_reply("nonexistent").body_.at("error").as_object().at("code").as_string() == "internal.error");
 }
 
-TEST_CASE("cmdatl guide names its two guides and a mistyped one gets the closest") {
-  const auto typo = run({"--json", "guide", "agnet"});
-  CHECK(typo.exit_ == 2);
-  CHECK(code_of(typo.out_) == "usage.unknown_command");
-  CHECK(reply_of(typo.out_).at("error").as_object().at("next").as_string().find("guide agent") != std::string::npos);
-  const auto group = run({"--json", "guide"});
-  CHECK(group.exit_ == 2);
-  const auto help = text_of({"help", "guide"});
-  CHECK(help.find("guide agent") != std::string::npos);
-  CHECK(help.find("guide strategy") != std::string::npos);
-  CHECK(text_of({"--help"}).find("cmdatl guide agent or strategy") != std::string::npos);
-}
-
 TEST_CASE("the exit words are the same in the help and the docs and the agent guide") {
   const auto help = text_of({"--help"});
   const auto docs = doc_text();

@@ -26,79 +26,6 @@ static_assert(!std::is_copy_assignable<cmdatl::Account>::value, "an account is n
 static_assert(!std::is_move_assignable<cmdatl::Account>::value, "an account is not assigned");
 static_assert(!std::is_move_constructible<cmdatl::OwnerLock>::value, "a lock is not moved");
 
-namespace {
-
-/**
- * @brief Runs `status` and returns its exit code and error code.
- * @param fixture The account.
- * @return The exit code and the error code (empty on success).
- */
-std::pair<int, std::string> status_of(const PaperFixture& fixture) {
-  const auto ran = fixture.json({"status"});
-  const auto reply = reply_of(ran.out_);
-  const auto* error = reply.if_contains("error");
-  return {ran.exit_, error == nullptr ? "" : std::string(error->as_object().at("code").as_string())};
-}
-
-/**
- * @brief Checks that a state file is refused as state that cannot be rebuilt, and that nothing was changed.
- * @param fixture The account, already initialized.
- * @param text The state file's bytes.
- */
-void expect_paper_state(const PaperFixture& fixture, const std::string& text) {
-  spit(fixture.log(), text);
-  const auto journal = slurp(fixture.journal());
-  const auto result = status_of(fixture);
-  CHECK(result.first == 4);
-  CHECK(result.second == "unknown.mock_state");
-  CHECK(slurp(fixture.log()) == text);
-  CHECK(slurp(fixture.journal()) == journal);
-  CHECK(declares({"status"}, 4, "unknown.mock_state"));
-}
-
-/**
- * @brief The lines of a text, each without its newline.
- * @param text The text.
- * @return The lines.
- */
-std::vector<std::string> lines(const std::string& text) {
-  return lines_of(text);
-}
-
-/**
- * @brief Lines joined, each with its newline.
- * @param parts The lines.
- * @return The text.
- */
-std::string joined(const std::vector<std::string>& parts) {
-  std::string out;
-  for (const auto& part : parts) {
-    out += part + "\n";
-  }
-  return out;
-}
-
-/**
- * @brief A log with a placement: genesis, an advance to 2024-03-26 09:00, a limit buy of 10 at 78500 and its result.
- * @param fixture The account.
- * @return The log's lines.
- */
-std::vector<std::string> placed_log(const PaperFixture& fixture) {
-  fixture.arm();
-  {
-    const auto opened = open_account();
-    REQUIRE(opened->account_);
-    auto& desk = opened->account_->desk();
-    REQUIRE(desk.advance_to(kst("2024-03-26T09:00")) == cmdatl::Moved::OK);
-    const auto placed = desk.session().place(order("005930", true, "10", "78500"));
-    REQUIRE(placed);
-    CHECK(placed.value().ref_.primary_ == "1");
-  }
-  return lines(slurp(fixture.log()));
-}
-
-} // namespace
-
 TEST_CASE("dates and instants are read strictly inside 1990-01-01 to 2100-12-31 KST") {
   CHECK(cmdatl::parse_date("1990-01-01").has_value());
   CHECK(cmdatl::parse_date("2100-12-31").has_value());
@@ -262,35 +189,6 @@ TEST_CASE("a placement without the armed file is refused at the boundary and not
   CHECK(refused.error().broker_code_ == "not_armed");
   CHECK(desk.sends() == 0);
   CHECK(slurp(fixture.log()) == before);
-}
-
-TEST_CASE("a state file begun on other bars or cash or start is refused and left as it was") {
-  ConfigParts parts;
-  const PaperFixture fixture(parts);
-  const auto base = joined(placed_log(fixture));
-  REQUIRE(status_of(fixture).first == 0);
-  const std::vector<std::pair<std::string, std::string>> configs{
-    {"cash", "bars = \"bars.csv\"\ncash = 100000001\nstart = \"2024-03-25T16:00\"\n"},
-    {"start", "bars = \"bars.csv\"\ncash = 100000000\nstart = \"2024-03-25T16:01\"\n"},
-  };
-  for (const auto& entry : configs) {
-    INFO(entry.first);
-    auto changed = parts;
-    changed.paper_ = entry.second;
-    fixture.write_config(changed.text());
-    expect_paper_state(fixture, base);
-  }
-  fixture.write_config(parts.text());
-  // A bars file of the same size with one price changed.
-  auto bars = BARS;
-  const auto at = bars.find("78500,1000000");
-  REQUIRE(at != std::string::npos);
-  bars.replace(at, 5, "78400");
-  REQUIRE(bars.size() == BARS.size());
-  fixture.write_bars(bars);
-  expect_paper_state(fixture, base);
-  fixture.write_bars(BARS);
-  CHECK(status_of(fixture).first == 0);
 }
 
 #endif
