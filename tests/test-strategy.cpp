@@ -275,7 +275,17 @@ TEST_CASE("the backtest takes the program's measures from atlc and refuses a spe
   info.replace(info.find(params), params.size(), params + R"(,"measures":[{"name":"total","type":"real"}])");
   const FakeAtlc fake("check out " + info + "\ndriver args\ndriver out " + REPORT + "\n");
   spit("other.toml", "strategy = 'dip.atls'\nmeasures = ['calmar']\n[bars]\nfile = 'bars.csv'\n");
-  CHECK(run({"strategy", "backtest", "other.toml"}).exit_ == 0);
+  const auto ran =
+    run({"strategy", "backtest", "other.toml", "params.lookback=3", "--fills", "f.csv", "--equity", "e.csv"});
+  REQUIRE(ran.exit_ == 0);
+  // The success reply's fields, and the atlc that built it.
+  const auto done = reply_of(ran.out_);
+  CHECK(done.at("atlc").as_string() == "0.0.0-9000");
+  std::set<std::string> keys;
+  for (const auto& entry : done) {
+    keys.insert(std::string(entry.key()));
+  }
+  CHECK(keys == std::set<std::string>{"env", "report", "spec", "program", "settings_given", "atlc", "fills", "equity"});
   CHECK(!fake.args("driver").empty());
   std::filesystem::remove(fake.dir() / "script.driver.args");
   spit("clash.toml", "strategy = 'dip.atls'\nmeasures = ['calmar', 'total']\n[bars]\nfile = 'bars.csv'\n");

@@ -818,6 +818,15 @@ TEST_CASE("run builds a program with its run spec's header and trades as its bac
   const auto backtest = fixture.json({"strategy", "backtest", spec, "--fills", fills.string()});
   REQUIRE(backtest.exit_ == 0);
   CHECK(reply_of(backtest.out_).at("report").at("measures").at("one").to_number<double>() == 1);
+  // Without the header, the build fails, and the reply leads with the compiler's message naming what to add.
+  auto bare = slurp(spec);
+  bare.erase(bare.find("header = "), bare.find("\n\n[bars]") - bare.find("header = ") + 1);
+  spit(dir / "bare.toml", bare);
+  const auto failed = fixture.json({"strategy", "backtest", (dir / "bare.toml").string()});
+  CHECK(code_of(failed.out_) == "build.failed");
+  const std::string message(reply_of(failed.out_).at("error").as_object().at("message").as_string());
+  CHECK(message.find("atls::user::mean_of is not defined") != std::string::npos);
+  CHECK(message.find("the run spec's header key") != std::string::npos);
   const auto expected = backtest_fills(fills);
   REQUIRE(expected.size() >= 2);
   const auto ran = run_process({spec});

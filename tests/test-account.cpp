@@ -261,6 +261,24 @@ TEST_CASE("a state file cut inside its first line beside a journal is exit 4 and
   INFO(boost::json::serialize(held));
   CHECK(held.at("now").as_string() != "2024-03-25T16:00:00+09:00");
   CHECK(held.at("cash").as_string() == "99210000");
+  // Begun on other cash, at another start, or on a bar's price changed in place: refused, and both files stay.
+  const auto kept = slurp(fixture.log());
+  const auto journal_kept = slurp(fixture.journal());
+  ConfigParts parts;
+  for (
+    const std::string paper :
+    {"cash = 100000001\nstart = \"2024-03-25T16:00\"\n", "cash = 100000000\nstart = \"2024-03-25T16:01\"\n"}
+  ) {
+    parts.paper_ = "bars = \"bars.csv\"\n" + paper;
+    fixture.write_config(parts.text());
+    CHECK(code_of(fixture.json({"status"}).out_) == "unknown.mock_state");
+  }
+  fixture.write_config(ConfigParts{}.text());
+  auto bars = BARS;
+  fixture.write_bars(bars.replace(bars.find("78500,1000000"), 5, "78400"));
+  CHECK(code_of(fixture.json({"status"}).out_) == "unknown.mock_state");
+  CHECK(slurp(fixture.log()) == kept);
+  CHECK(slurp(fixture.journal()) == journal_kept);
 }
 
 TEST_CASE("a folder of an earlier version's paper account is refused: create the account again") {

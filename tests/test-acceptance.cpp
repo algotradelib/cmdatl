@@ -591,6 +591,12 @@ TEST_CASE(
     spit(at("limit.toml"), with("type = \"market\"", "type = \"limit\"\noffset = 0.299999999999999999"));
     const auto report = report_of({at("limit.toml")});
     CHECK(report.as_object().at("pricing_refused").as_int64() > 0);
+    // Every price times the offset overflows: each target refused for that reason, and nothing sent.
+    CHECK(report.as_object().at("executions").as_int64() == 0);
+    CHECK(
+      report.as_object().at("pricing_refusal_reasons") ==
+      boost::json::object{{"price_not_representable", report.as_object().at("pricing_refused")}}
+    );
     spit(at("plain.toml"), with("type = \"market\"", ""));
     CHECK(report_of({at("plain.toml"), "orders.type=limit", "orders.offset=0.299999999999999999"}) == report);
   }
@@ -995,6 +1001,20 @@ TEST_CASE("the replay fixtures recorded from atlc run are strategy backtest's by
   const auto ruled = driver_of(ruled_run.err_);
   REQUIRE(!ruled.empty());
   CHECK(ruled != driver);
+  // A pricing the generated strategy refuses stops the driver before it replays (the run spec refuses it first; this
+  // is a C++ caller's guard).
+  const auto direct = [&driver, &fixture](const std::string& type, const std::string& offset) {
+    auto args = lines_of(fixture("limit.args"));
+    args.insert(args.begin(), driver.string());
+    args.insert(args.end(), {"orders.type=" + type, "orders.offset=" + offset});
+    return cmdatl::run_child(args, [](const std::string&) {});
+  };
+  const auto market_offset = direct("market", "0.001");
+  CHECK(market_offset.code_ == 1);
+  CHECK(cmdatl::last_line(market_offset).find("an offset prices a limit") != std::string::npos);
+  const auto wide_offset = direct("limit", "0.3");
+  CHECK(wide_offset.code_ == 1);
+  CHECK(cmdatl::last_line(wide_offset).find("below 0.3") != std::string::npos);
   for (const auto* name : {"wide", "limit"}) {
     INFO(name);
     const auto recorded = through_stand_in(dir.path(), name, driver, {at(std::string(name) + ".toml")});
