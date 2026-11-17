@@ -1687,11 +1687,26 @@ TEST_CASE("strategy evaluate windows and bootstrap with atlc: spans; history cou
   const auto& w = window.at("window").as_object();
   CHECK(window.at("report") == backtest(spec, {"replay.from=" + date(w.at("from")), "replay.to=" + date(w.at("to"))}));
   // Months from the first date, 2024-01-02: three whole windows; the fourth would end after the history.
-  const auto months = evaluate(spec, {"evaluate.method=windows", "windows.length=1mo", "windows.warmup=0"});
+  CHECK(!reply_of(windows.back()).contains("summary"));
+  const auto months = evaluate(
+    spec, {"evaluate.method=windows", "windows.length=1mo", "windows.warmup=0", "windows.summary=[\"max\", \"q00\"]"}
+  );
   REQUIRE(months.size() == 4);
   CHECK(date(reply_of(months[1]).at("window").at("from")) == "2024-02-02");
   const auto months_reply = reply_of(months.back());
   CHECK(months_reply.at("windows").as_int64() == 3);
+  // The statistics named, in order, of the three windows' figures.
+  std::vector<std::int64_t> executions;
+  for (std::size_t k = 0; k < 3; ++k) {
+    executions.push_back(reply_of(months[k]).at("report").at("executions").as_int64());
+  }
+  CHECK(
+    months.back().find(
+      "\"executions\":{\"defined\":3,\"null\":0,\"max\":" +
+      std::to_string(*std::max_element(executions.begin(), executions.end())) +
+      ",\"q00\":" + std::to_string(*std::min_element(executions.begin(), executions.end())) + "}"
+    ) != std::string::npos
+  );
   CHECK(months_reply.at("uncovered_from") == boost::json::value("2024-04-02"));
   // A universe with open points: two history days, then two traded days that open and close two sessions.
   const auto universe = evaluate(

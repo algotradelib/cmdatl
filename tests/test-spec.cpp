@@ -2075,6 +2075,22 @@ TEST_CASE("windows and bootstrap keys: lengths in periods or spans; each method 
       .errors_.at(0),
     "stdin paths are evaluate.method = \"grid\"'s"
   ));
+  // The summary's statistics, passed in the order written; each a known form, named once.
+  const auto summary = evaluate(windows + "length = 5\nsummary = [\"q95\", \"mean\", \"q00\", \"median\", \"q100\"]\n");
+  REQUIRE(summary.errors_.empty());
+  CHECK(summary.arg("windows.summary") == std::optional<std::string>("q95,mean,q00,median,q100"));
+  CHECK(cli_value("windows.summary=[\"min\", \"max\", \"q05\"]") == "min,max,q05");
+  CHECK(!evaluate(windows + "length = 5\n").arg("windows.summary"));
+  for (const auto* bad : {"average", "q5", "q101", "q050", "Q05", "q-5", "q", "q1000", "mean "}) {
+    INFO(bad);
+    CHECK(has(
+      one_error(windows + "length = 5\nsummary = [\"" + std::string(bad) + "\"]\n"),
+      "`windows.summary`: \"" + std::string(bad) + "\" is not mean, min, max, median or q00 to q100"
+    ));
+  }
+  CHECK(has(cli_error("windows.summary=q5"), "is not mean, min, max, median or q00 to q100"));
+  CHECK(has(cli_error("windows.summary=[\"mean\", \"q25\", \"mean\"]"), "`windows.summary`: \"mean\" is named twice"));
+  CHECK(has(grid_error("[windows]\nsummary = \"mean\"\n"), "`windows.summary` is for evaluate.method = \"windows\""));
   for (const auto purpose : {sp::Purpose::BACKTEST, sp::Purpose::RUN}) {
     const auto refused = evaluate(WIDE_SPEC + "[windows]\nlength = 2\n[bootstrap]\nblock = 3\n", purpose);
     REQUIRE(refused.errors_.size() == 2);

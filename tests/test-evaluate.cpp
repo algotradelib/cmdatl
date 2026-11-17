@@ -1168,7 +1168,9 @@ TEST_CASE("loops: windows in periods are the library's folds rolling and expandi
   CHECK(summary.at("uncovered_from") == json::value("2024-02-07"));
   CHECK(summary.at("length").as_int64() == 10);
   CHECK(summary.at("warmup").as_int64() == 2);
-  CHECK(summary.at("summary").at("total_return").at("defined").as_int64() == 4);
+  // Without windows.summary the lines are the output: no summary of them.
+  CHECK(!summary.contains("summary"));
+  CHECK(summary.at("halted").as_int64() == 0);
   const auto expanding = drive<Holder>(
     on_pair(file, "windows", {"windows.scheme=expanding", "windows.length=10", "windows.step=5", "windows.warmup=0"})
   );
@@ -1197,6 +1199,60 @@ TEST_CASE("loops: windows in periods are the library's folds rolling and expandi
     none.out_.find("\"code\":\"evaluate.refused\",\"message\":\"no window fits the history's 30 periods\"") !=
     std::string::npos
   );
+}
+
+/** @brief A measure: the points of the replay's curve. */
+double points(const atl::backtest::MeasureInput& in) {
+  return static_cast<double>(in.levels_.size());
+}
+
+TEST_CASE("loops: windows.summary gives the statistics named of each figure and measure, in order; others refused") {
+  Scratch dir;
+  const auto file = dir.write("bars.csv", days_of(20240101, 30, true));
+  const auto run = [&](const std::string& names) {
+    return drive<Holder>(
+      on_pair(
+        file, "windows",
+        {"windows.scheme=expanding", "windows.length=10", "windows.step=5", "windows.warmup=0",
+          "windows.summary=" + names}
+      ),
+      -1, {}, {{"points", points}}
+    );
+  };
+  const auto ran = run("max,q25,mean,q05,median");
+  const auto lines = lines_of(ran.out_);
+  REQUIRE(lines.size() == 6);
+  // The expanding windows trade 10, 15, 20, 25 and 30 periods, a curve point each.
+  for (std::size_t k = 0; k < 5; ++k) {
+    CHECK(line_of(ran, k).at("report").at("measures").at("points").to_number<double>() == 10.0 + 5.0 * k);
+  }
+  // Of 10, 15, 20, 25, 30: h = 4p, so q25 = 15 and q05 = 10 + 0.2 * 5.
+  CHECK(
+    lines.back().find("\"halted\":0,\"summary\":{\"total_return\":{\"defined\":5,\"null\":0,\"max\":") !=
+    std::string::npos
+  );
+  CHECK(
+    lines.back().find(
+      ",\"measures\":{\"points\":{\"defined\":5,\"null\":0,\"max\":30,\"q25\":15,\"mean\":20,\"q05\":11,\"median\":20}}}"
+    ) != std::string::npos
+  );
+  // An unknown or malformed name, or one named twice, is refused before any replay.
+  for (
+    const auto& [names, message] :
+    {std::pair<std::string, std::string>{"mean,q5", "windows.summary names no statistic: 'q5'"},
+      {"q101", "windows.summary names no statistic: 'q101'"},
+      {"average", "windows.summary names no statistic: 'average'"},
+      {"mean,median,mean", "windows.summary names 'mean' twice"}}
+  ) {
+    INFO(names);
+    const auto refused = run(names);
+    CHECK(refused.exit_ == 1);
+    CHECK(
+      refused.out_ ==
+      "{\"stopped\":{\"code\":\"evaluate.refused\",\"message\":\"" + message +
+        "\",\"next\":\"name each of mean, min, max, median, q00 to q100 at most once\"}}\n"
+    );
+  }
 }
 
 TEST_CASE("loops: span windows end on the anchored boundary; whole windows only; no warm-up before the anchor") {
@@ -1678,25 +1734,32 @@ TEST_CASE("loops: bootstrap refusals come before any line with the key to give")
   );
 }
 
-TEST_CASE("loops: the summary's quantiles are type 7 with nulls counted apart") {
+TEST_CASE("loops: the summary's statistics are the ones named, in order; quantiles type 7 with nulls counted apart") {
+  const std::vector<std::string> all{"mean", "min", "q05", "q25", "median", "q75", "q95", "max"};
   CHECK(
-    replay::spread_json({}, 2) ==
+    replay::spread_json({}, 2, all) ==
     "{\"defined\":0,\"null\":2,\"mean\":null,\"min\":null,\"q05\":null,\"q25\":null,\"median\":null,\"q75\":null,\"q95\":null,\"max\":null}"
   );
   CHECK(
-    replay::spread_json({3}, 0) ==
+    replay::spread_json({3}, 0, all) ==
     "{\"defined\":1,\"null\":0,\"mean\":3,\"min\":3,\"q05\":3,\"q25\":3,\"median\":3,\"q75\":3,\"q95\":3,\"max\":3}"
   );
   // Two values: h = p, so q05 = 1 + 0.05 * 2.
   CHECK(
-    replay::spread_json({3, 1}, 1) ==
+    replay::spread_json({3, 1}, 1, all) ==
     "{\"defined\":2,\"null\":1,\"mean\":2,\"min\":1,\"q05\":1.1,\"q25\":1.5,\"median\":2,\"q75\":2.5,\"q95\":2.9,\"max\":3}"
   );
   // Five values 1, 2, 4, 8, 16: h = 4p; q05 = 1 + 0.2 * 1, q25 = 2, q75 = 8, q95 = 8 + 0.8 * 8.
   CHECK(
-    replay::spread_json({16, 1, 8, 2, 4}, 0) ==
+    replay::spread_json({16, 1, 8, 2, 4}, 0, all) ==
     "{\"defined\":5,\"null\":0,\"mean\":6.2,\"min\":1,\"q05\":1.2,\"q25\":2,\"median\":4,\"q75\":8,\"q95\":14.4,\"max\":16}"
   );
+  // In the order named; q00, q50 and q100 are min, median and max; q90: h = 3.6, 8 + 0.6 * 8.
+  CHECK(
+    replay::spread_json({16, 1, 8, 2, 4}, 0, {"q100", "q90", "median", "q50", "q00", "min"}) ==
+    "{\"defined\":5,\"null\":0,\"q100\":16,\"q90\":12.8,\"median\":4,\"q50\":4,\"q00\":1,\"min\":1}"
+  );
+  CHECK(replay::spread_json({1}, 3, {}) == "{\"defined\":1,\"null\":3}");
 }
 
 TEST_CASE("loops: one job and four print the same bytes for every method", "[threads]") {

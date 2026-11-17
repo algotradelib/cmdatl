@@ -281,22 +281,23 @@ inline double quantile(const std::vector<double>& sorted, double p) {
 }
 
 /**
- * @brief Five quantiles (`quantile`), the bounds and the mean of a figure.
+ * @brief The statistics `windows.summary` names of a figure: `mean`, and quantiles (`quantile`), `min`, `median` and
+ *   `max` being `q00`, `q50` and `q100`.
  * @param values The finite values.
  * @param nulls How many were not.
- * @return `{"defined", "null", "mean", "min", "q05", "q25", "median", "q75", "q95", "max"}`, null without a value.
+ * @param statistics The statistics, checked: `mean`, `min`, `max`, `median`, or `q` and a percent in two digits or 100.
+ * @return `{"defined", "null"}`, then each statistic in order, null without a value.
  */
-inline std::string spread_json(std::vector<double> values, std::size_t nulls) {
+inline std::string spread_json(
+  std::vector<double> values, std::size_t nulls, const std::vector<std::string>& statistics
+) {
   std::sort(values.begin(), values.end());
   const auto m = values.size();
-  std::string out = "{\"defined\":" + std::to_string(m) + ",\"null\":" + std::to_string(nulls) + ",\"mean\":" +
-    number(m == 0 ? std::nan("") : std::accumulate(values.begin(), values.end(), 0.0) / static_cast<double>(m));
-  for (
-    const auto& [name, p] :
-    {std::pair<const char*, double>{"min", 0}, {"q05", 0.05}, {"q25", 0.25}, {"median", 0.5}, {"q75", 0.75},
-      {"q95", 0.95}, {"max", 1}}
-  ) {
-    out += ",\"" + std::string(name) + "\":" + number(quantile(values, p));
+  const auto mean = m == 0 ? std::nan("") : std::accumulate(values.begin(), values.end(), 0.0) / static_cast<double>(m);
+  std::string out = "{\"defined\":" + std::to_string(m) + ",\"null\":" + std::to_string(nulls);
+  for (const auto& name : statistics) {
+    const auto percent = name == "min" ? "00" : name == "median" ? "50" : name == "max" ? "100" : name.substr(1);
+    out += "," + quoted(name) + ":" + number(name == "mean" ? mean : quantile(values, std::stod(percent) / 100));
   }
   return out + "}";
 }
@@ -492,7 +493,19 @@ int loops_main(
   };
   Tally tally;
   std::ostringstream o;
+  const auto statistics = list_of(s.get_or("windows.summary", ""));
   if (method == "windows") {
+    for (auto item = statistics.begin(); item != statistics.end(); ++item) {
+      const auto& t = *item;
+      const bool known = t == "mean" || t == "min" || t == "max" || t == "median" || t == "q100" ||
+        (t.size() == 3 && t[0] == 'q' && t.find_first_not_of("0123456789", 1) == std::string::npos);
+      if (!known || std::find(statistics.begin(), item, t) != item) {
+        throw Refused(
+          known ? "windows.summary names '" + t + "' twice" : "windows.summary names no statistic: '" + t + "'",
+          "name each of mean, min, max, median, q00 to q100 at most once"
+        );
+      }
+    }
     const bool rolling = s.get_or("windows.scheme", "rolling") == "rolling";
     const auto length = length_of("windows.length", s.need("windows.length"), 2);
     const auto step = length_of("windows.step", s.get_or("windows.step", length.text_), 1);
@@ -901,14 +914,17 @@ int loops_main(
     o << "}";
   }
   if (method == "windows") {
-    o << ",\"halted\":" << tally.halted_ << ",\"summary\":" << by_figure(names, [&tally](const std::string& name) {
+    o << ",\"halted\":" << tally.halted_;
+  }
+  if (method == "windows" && !statistics.empty()) {
+    o << ",\"summary\":" << by_figure(names, [&](const std::string& name) {
       std::vector<double> values;
       std::size_t nulls = 0;
       for (const auto& row : tally.spread_) {
         const auto x = figure(row, name);
         std::isfinite(x) ? values.push_back(x) : (void)++nulls;
       }
-      return spread_json(values, nulls);
+      return spread_json(values, nulls, statistics);
     });
   }
   std::cout << "{\"summary\":{" << o.str() << "}}\n";

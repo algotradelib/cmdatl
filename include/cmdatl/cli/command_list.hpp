@@ -450,7 +450,7 @@ inline std::vector<Command> command_list() {
     .returns("windows", "windows: the windows replayed")
     .returns("uncovered_from", "windows, walk-forward: the first period's date after the last window or test, or null")
     .returns("halted", "windows and bootstrap: the replays that halted")
-    .returns("summary", "windows: defined, null, mean, min, q05, q25, median, q75, q95 and max of each figure")
+    .returns("summary", "windows with windows.summary: defined, null and the statistics named of each figure")
     .returns("block", "bootstrap: the block length in periods")
     .returns("seed", "bootstrap: the seed, as given or drawn")
     .returns("history", "bootstrap: path 0's figures, or null")

@@ -453,6 +453,7 @@ One parameter set, replayed on each window of the history.
 | `windows.length` | periods (2 or more) or a span | required | the length traded (the first window's when expanding) |
 | `windows.step` | periods (1 or more) or a span | `length` | between window starts (rolling) or ends (expanding) |
 | `windows.warmup` | periods (0 or more) or a span | on daily or coarser bars the program's warm-up in periods; on intraday bars required | the history fed before each window without trading |
+| `windows.summary` | a list of statistic names: `mean`, `min`, `max`, `median`, `q00` to `q100` | none | the statistics the reply gives of each figure over the windows |
 
 - `windows.length` and `windows.step` are both periods or both spans; a span warm-up goes with span lengths only. A warm-up in periods with span lengths starts the first window at the date of that period.
 - The warm-up is history: every handler runs and series and states warm up, but what the program asks for is dropped (not counted as rejected), nothing fills and no equity point is recorded; a target stated during the warm-up is not held at the window's start, and the program trades on its next statement, with the `state` the warm-up left. Session and pricing counts in the report are the window's own.
@@ -460,7 +461,11 @@ One parameter set, replayed on each window of the history.
 - `[data.NAME]` values known before a window's trading start are fed as history; values after its last bar are not fed.
 - A `[grid]`, and `bars.source = "stdin"`, are refused: windows replay one set on loaded bars.
 - Each line's `window` is `{"fold": k, "role": "window", "warm_from": ..., "from": ..., "to": ..., "periods": N}` (instants of the first and last bars, `warm_from` null without a warm-up); replay `k` is window `k`.
-- The reply adds `scheme`, `length`, `step`, `warmup` (as written, or the default used), `windows`, `uncovered_from` (the date of the first period after the last window, or null), `halted`, and `summary`: for `total_return`, `sharpe_annualized`, `sortino_per_period`, `max_drawdown`, `turnover`, `executions` and each measure (under `measures`), the replays with a report that did not halt give `defined`, `null` (undefined values, not used), `mean`, `min`, `q05`, `q25`, `median`, `q75`, `q95` and `max`.
+- The reply adds `scheme`, `length`, `step`, `warmup` (as written, or the default used), `windows`, `uncovered_from` (the date of the first period after the last window, or null) and `halted`.
+- With `windows.summary`, it adds `summary`: for `total_return`, `sharpe_annualized`, `sortino_per_period`, `max_drawdown`, `turnover`, `executions` and each measure (under `measures`), the replays with a report that did not halt give `defined`, `null` (undefined values, not used), then the statistics named, in their order.
+  `qNN` is the NN percent quantile, written in two digits (`q05`, `q95`) or `q100`; `min`, `median` and `max` are `q00`, `q50` and `q100`.
+  A name of another form, or one named twice, is refused (`spec.invalid`).
+- Without it there is no `summary`: the lines, one per window in order, are the series of every figure and measure, for analyses of your own.
 - Quantiles are Hyndman and Fan's type 7 (numpy's default): of `m` sorted values, `h = (m - 1) p`, `j = floor(h)`, then `x[j] + (h - j)(x[j + 1] - x[j])`, or `x[j]` at the last; with no value every statistic is null.
 - Windows overlap or grow, so they are not chained into one curve.
 

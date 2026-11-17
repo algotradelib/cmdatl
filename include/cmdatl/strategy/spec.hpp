@@ -184,6 +184,7 @@ inline const std::vector<Key>& keys() {
     {"windows.length", Kind::LENGTH, {}, {}, 2},
     {"windows.step", Kind::LENGTH, {}, {}, 1},
     {"windows.warmup", Kind::LENGTH, {}, {}, 0},
+    {"windows.summary", Kind::TEXTS, {}, {}},
     {"walk_forward.scheme", Kind::CHOICE, {}, {"rolling", "expanding"}, 0, false},
     {"walk_forward.train", Kind::LENGTH, {}, {}, 2, false},
     {"walk_forward.test", Kind::LENGTH, {}, {}, 2, false},
@@ -1104,6 +1105,19 @@ inline std::optional<Error> check(Entry& e) {
       if (e.key_ == "measures") {
         if (const auto refused = measures_refusal(items)) {
           return Error::at(at, "`measures`: " + *refused);
+        }
+      }
+      // A statistic of the windows' figures: mean, min, max, median, or q and a percent, q00 to q99 or q100.
+      for (auto item = items.begin(); e.key_ == "windows.summary" && item != items.end(); ++item) {
+        const auto& t = *item;
+        const bool known = t == "mean" || t == "min" || t == "max" || t == "median" || t == "q100" ||
+          (t.size() == 3 && t[0] == 'q' && t.find_first_not_of("0123456789", 1) == std::string::npos);
+        if (!known || std::find(items.begin(), item, t) != item) {
+          return Error::at(
+            at,
+            "`windows.summary`: \"" + t +
+              (known ? "\" is named twice" : "\" is not mean, min, max, median or q00 to q100")
+          );
         }
       }
       for (const auto& item : items) {
