@@ -713,7 +713,7 @@ namespace {
 /**
  * @brief Path A and one row of path B on a pipe held open and silent until the evaluation returns, two jobs, and A's
  *   replay failing with `std::bad_alloc`: the batch stops although B never ends. A reader that ignores the stop hangs
- *   the test, which ctest's timeout then fails.
+ *   the test until test-replay's ctest TIMEOUT (CMakeLists.txt) fails it.
  * @return What it gave.
  */
 Ran silent_producer() {

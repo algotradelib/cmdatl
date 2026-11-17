@@ -270,6 +270,8 @@ if(CMDATL_BUILD_TESTS)
   target_link_libraries(test-replay PRIVATE cmdatl_core Catch2::Catch2WithMain Threads::Threads)
   target_compile_options(test-replay PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off>)
   add_test(NAME test-replay COMMAND test-replay)
+  # An outer bound for a stdin reader that ignores a stop: its case keeps the pipe open and would wait forever.
+  set_tests_properties(test-replay PROPERTIES TIMEOUT 600)
   # The fault tests: their own executable, whose one translation unit defines CMDATL_FAULT_HOOKS and gives the
   # system calls of the account's state files their stand-ins, so no inline definition is mixed with them.
   add_executable(test-faults tests/test-faults.cpp)
