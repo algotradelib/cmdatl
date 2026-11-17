@@ -361,11 +361,12 @@ TEST_CASE("state files that are links or special files are refused before anythi
 TEST_CASE("a stray owner temporary is never truncated, and the record is skipped") {
   const PaperFixture fixture;
   initialize(fixture);
-  const auto owner = slurp(fixture.account() / "owner.json");
+  // A record of known bytes, which a rewrite would replace.
+  const std::string owner = "{\"role\":\"agent\",\"pid\":1,\"what\":\"sentinel\"}\n";
+  spit(fixture.account() / "owner.json", owner);
   const auto temporary = fixture.account() / ("owner." + std::to_string(::getpid()) + ".tmp");
   // A stray temporary with this process's id: the record is skipped, the account opens.
   spit(temporary, "stray");
-  std::this_thread::sleep_for(std::chrono::milliseconds(1100));
   initialize(fixture);
   CHECK(slurp(temporary) == "stray");
   CHECK(slurp(fixture.account() / "owner.json") == owner);

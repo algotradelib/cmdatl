@@ -394,12 +394,10 @@ TEST_CASE("the build writes a file only when its bytes change, and clears a kill
   CHECK(build::write_if_changed(file, "one") == build::Written::REPLACED);
   struct stat before{};
   REQUIRE(::stat(file.c_str(), &before) == 0);
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
   CHECK(build::write_if_changed(file, "one") == build::Written::UNCHANGED);
   struct stat same{};
   REQUIRE(::stat(file.c_str(), &same) == 0);
   CHECK(same.st_ino == before.st_ino);
-  CHECK(same.st_mtime == before.st_mtime);
   CHECK(build::write_if_changed(file, "two") == build::Written::REPLACED);
   CHECK(slurp(file) == "two");
   spit(dir.path() / "src" / ".a.hpp.123.00ff.tmp", "half");

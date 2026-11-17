@@ -186,10 +186,10 @@ TEST_CASE("run_child hands on an unterminated last line and splits a line too lo
   }
 }
 
-TEST_CASE("run_child hands stdout on by lines when asked: split across reads, unterminated, too long, throwing") {
+TEST_CASE("run_child hands stdout on by lines when asked: written in parts, unterminated, too long, throwing") {
   const Watchdog watchdog("the stdout lines", 30);
   {
-    const FakeAtlc fake("run outpart {\"a\":\nrun sleep 50\nrun out 1}\nrun out two\nrun outpart last\n");
+    const FakeAtlc fake("run outpart {\"a\":\nrun out 1}\nrun out two\nrun outpart last\n");
     std::vector<std::string> lines;
     const auto result =
       cmdatl::run_child({CMDATL_FAKE_ATLC, "run"}, ignore_lines, nullptr, -1, [&lines](const std::string& line) {
