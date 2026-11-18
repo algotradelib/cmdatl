@@ -831,7 +831,7 @@ int loops_main(
           throw Refused(
             prepared->symbols_[j] + (seen[j] < per ? " has no bar on " : " has two bars on ") +
               std::to_string(p.dates_[k]),
-            "give every symbol a close on every date, or narrow replay.from and replay.to"
+            "give every symbol a bar on every date, or narrow replay.from and replay.to"
           );
         }
         bars[j].push_back(events[at[j][k]].bar_);
