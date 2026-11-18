@@ -527,13 +527,13 @@ One parameter set, replayed on the history (path 0) and on `paths` block-bootstr
 - Each path bar takes the drawn day's volume, which the replay never caps fills by; a table of closes, and wide tables with `bars.open`, `bars.high` and `bars.low` but no `bars.open_point` (which load as flat bars, as their backtest replays them), still replay flat bars (open, high and low are the close).
 - On whole bars `next-open` fills at the path's open, so the drawn day's overnight gap enters fills; on flat bars both next-bar rules fill at the next close.
 - `levels` suits a series that is already stationary: on trending prices each block boundary is a jump.
-- A path whose rebuilt prices reach zero or below, lows included, fails its line before it is replayed (counted in `failed` and in each interval's `null`), whatever the join (a falling path under `differences` can reach it), so the intervals describe the paths whose every price stayed above zero.
+- A history with a price at or below zero is refused before any replay. A path whose rebuilt prices reach zero or below, lows included, fails its line before it is replayed (counted in `failed` and in each interval's `null`), whatever the join (a falling path under `differences` can reach it), so the intervals describe the paths whose every price stayed above zero.
 - A path bar carries its slot's timestamp and stamp (the history's date at that place), the drawn day's rebuilt open, high, low and close, the drawn day's volume, and no traded value. A market-price rule of your own (`replay.fill_function`) reads these bars as they are.
 - `warnings` holds `{"code": "block_below_lookback", "block": b, "lookback": w}` when the block is shorter than the program's warm-up: an indicator longer than a block reads joined, unrelated days; and `{"code": "fill_rule_on_paths"}` when a market-price rule of your own prices the paths' market orders. Neither refuses.
 - Each line's `path` is `{"number": p, "seed": S, "id": null, "scheme": ..., "block": b, "join": ...}`; replay `p` is path `p`.
 - The reply adds `paths` (the paths replayed, path 0 included), `scheme`, `block`, `join`, `seed`, `history` (path 0's `total_return`, `sharpe_annualized`, `sortino_per_period`, `max_drawdown`, `turnover`, `executions` and measures), `warnings`, `halted`, and `intervals`: for each name of `bootstrap.intervals`, over paths 1 to N, `{"level", "lower", "median", "upper", "defined", "null"}`, the type-7 quantiles at `(1 - level) / 2`, 0.5 and `(1 + level) / 2` of the paths where the metric is defined; a failed, halted or undefined path counts as null, so `defined + null` is N.
 
-A refusal of the settings before any replay (no window or fold fits, a warm-up too short, a missing bar, a block above the returns) is exit 2, `evaluate.refused`, with a `next` naming the key to change.
+A refusal of the settings before any replay (no window or fold fits, a warm-up too short, a missing bar, a price at or below zero on a bootstrap, a block above the returns) is exit 2, `evaluate.refused`, with a `next` naming the key to change.
 
 ## Limit orders
 

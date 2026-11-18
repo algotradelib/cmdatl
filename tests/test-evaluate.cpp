@@ -1527,6 +1527,10 @@ TEST_CASE("loops: bootstrap refusals come before any line with the key to give")
     boot(wide("ragged.csv", "20240102,100,50\n20240103,101,\n20240104,102,51\n"), {"bootstrap.block=1"})
       .find("\"message\":\"BBB has no bar on 20240103\"") != std::string::npos
   );
+  CHECK(
+    boot(wide("zero.csv", "20240102,100,50\n20240103,0,51\n20240104,102,51\n"), {"bootstrap.block=1"})
+      .find("\"message\":\"AAA has a price at or below zero on 20240103\"") != std::string::npos
+  );
 }
 
 /** @brief The script's program with session handlers, as one that met both session edges. */
