@@ -889,7 +889,14 @@ int loops_main(
       for (std::size_t j = 0; j < symbols; ++j) {
         const auto rebuilt = rebuild(bars[j], prepared->config_.instruments_[j].price_rule_, draw);
         for (std::size_t k = 0; k < n; ++k) {
-          path[at[j][k]].bar_ = rebuilt[k];
+          // A price at or below zero is never replayed: the next bar's open would fill a market order at it.
+          const auto& b = rebuilt[k];
+          for (const auto* x : {b.open_ ? &*b.open_ : &b.close_, &b.high_, &b.low_, &b.close_}) {
+            if (!atl::decimal_less(atl::Decimal64(0, 0), *x)) {
+              throw std::invalid_argument("a bootstrap path's price is at or below zero");
+            }
+          }
+          path[at[j][k]].bar_ = b;
         }
       }
       task.events_ = std::make_shared<const std::vector<atl::strategy::BarEvent>>(std::move(path));

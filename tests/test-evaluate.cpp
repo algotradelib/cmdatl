@@ -1599,6 +1599,16 @@ TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
   CHECK(value(levels, 1, "commission_paid") == 15);
   CHECK(equity(levels, 1) == 100035);
   runtest::script() = runtest::Script{};
+  // Chained changes that fall below zero fail the path before it is replayed, counted as failed and null.
+  const auto falls = drive<runtest::Program>(on_csv(
+    dir.write("falls.csv", HEADER + "\n" + rows_of("AAA", {100, 40, 100})),
+    {"evaluate.method=bootstrap", "bootstrap.seed=9", "bootstrap.block=1", "bootstrap.paths=1",
+      "bootstrap.join=differences", "bootstrap.intervals=total_return"}
+  ));
+  const auto failed = summary_of(falls);
+  CHECK(line_of(falls, 1).at("failure").at("message") == json::value("a bootstrap path's price is at or below zero"));
+  CHECK(failed.at("failed") == 1);
+  CHECK(failed.at("intervals").at("total_return").at("null") == 1);
 }
 
 TEST_CASE("loops: the summary's statistics are the ones named, in order; quantiles type 7 with nulls counted apart") {
