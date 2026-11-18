@@ -20,3 +20,6 @@ file byte for byte,
 
   sed 's/,"join":"returns"//g' tests/fixtures/loops/bootstrap-seed7.jsonl | \
     cmp - <(git show daff1da:tests/fixtures/loops/bootstrap-seed7.jsonl)
+
+The same file then passed the byte comparison unchanged with whole-bar paths against algotradelib ea4e34f
+(ai/bootstrap-paths), the library head this branch merges with (2026-11-18).
