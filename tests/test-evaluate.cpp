@@ -1461,6 +1461,10 @@ TEST_CASE("loops: bootstrap path 0 is the backtest; a path depends on its number
     ) != std::string::npos
   );
   CHECK(summary.at("join") == json::value("returns"));
+  CHECK(
+    boot({"bootstrap.seed=7", "bootstrap.block=5", "bootstrap.paths=2", "param.k=10", "bootstrap.join=returns"}).out_ ==
+    ran.out_
+  );
   CHECK(summary.at("paths") == 3);
   CHECK(summary.at("intervals").as_object().empty());
   CHECK(!summary.contains("summary"));
