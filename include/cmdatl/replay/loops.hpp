@@ -856,11 +856,16 @@ int loops_main(
         );
       }
     }
-    std::string warnings = "[]";
+    std::string warnings;
     if (const auto lookback = warmup_of<Strategy>(s, *prepared, {}); lookback && block < *lookback) {
-      warnings = "[{\"code\":\"block_below_lookback\",\"block\":" + std::to_string(block) +
-        ",\"lookback\":" + std::to_string(*lookback) + "}]";
+      warnings = "{\"code\":\"block_below_lookback\",\"block\":" + std::to_string(block) +
+        ",\"lookback\":" + std::to_string(*lookback) + "}";
     }
+    // A market-price rule of one's own reads path bars as they are made (docs/run-spec.md): said, not refused.
+    if (!fills_of(prepared->fills_).library_market_price()) {
+      warnings += std::string(warnings.empty() ? "" : ",") + "{\"code\":\"fill_rule_on_paths\"}";
+    }
+    warnings = "[" + warnings + "]";
     std::vector<Task> tasks;
     for (std::size_t k = 0; k <= paths; ++k) {
       tasks.push_back(

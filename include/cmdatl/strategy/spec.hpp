@@ -2208,9 +2208,6 @@ inline std::vector<Error> resolve(
       if (program.session_ || !program.data_.empty()) {
         errors.push_back(Error::nowhere("a bootstrap path cannot carry what on_open, on_close or data {} read"));
       }
-      if (fill_header != nullptr) {
-        errors.push_back(Error::nowhere("a market-price rule of your own is not replayed on bootstrap paths"));
-      }
       if (get("bootstrap.block") == nullptr) {
         errors.push_back(Error::nowhere("bootstrap draws blocks of bootstrap.block periods: give bootstrap.block = N"));
       }

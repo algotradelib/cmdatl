@@ -223,19 +223,21 @@ struct Ran {
  * @param input The descriptor stdin bars are read from.
  * @param hooks The runner's hooks.
  * @param measures The report's measures.
+ * @param rule A market-price rule of one's own, or none.
  * @return What it gave.
  */
 template <typename Strategy = Ticker>
 Ran drive(
-  std::vector<std::string> args, int input = -1, const replay::RunnerHooks& hooks = {}, const Measures& measures = {}
+  std::vector<std::string> args, int input = -1, const replay::RunnerHooks& hooks = {}, const Measures& measures = {},
+  const atl::backtest::MarketPriceFunction& rule = {}
 ) {
   std::vector<char*> argv{const_cast<char*>("driver")};
   for (auto& arg : args) {
     argv.push_back(arg.data());
   }
   const auto s = replay::Settings::from_args(static_cast<int>(argv.size()), argv.data());
-  auto fills = [](atl::backtest::NextBarFillModel model) {
-    return model;
+  auto fills = [&rule](atl::backtest::NextBarFillModel model) {
+    return rule ? model.with_market_price("mine", rule) : model;
   };
   std::ostringstream out;
   std::ostringstream err;
@@ -1604,6 +1606,21 @@ TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
   const auto limited = bought({"orders.type=limit"});
   CHECK(line_of(limited, 1).at("report").at("executions") == 1);
   CHECK(equity(limited, 1) == 100000 - 300 - 30 + 400);
+  // A market-price rule of one's own runs on the paths, said in warnings: here the market buy fills at bar 2's
+  // rebuilt close, 400, with a commission of 40.
+  runtest::script().decisions_[2] = runtest::Decision{1, "1", true};
+  const auto ruled = drive<runtest::Program>(
+    on_csv(
+      bars,
+      {"evaluate.method=bootstrap", "bootstrap.seed=9", "bootstrap.block=1", "bootstrap.paths=1",
+        "replay.commission=0.1"}
+    ),
+    -1, {}, {}, [](const atl::backtest::MarketPriceInput& in) {
+      return std::optional<atl::Decimal64>(in.next_.bar_.close_);
+    }
+  );
+  CHECK(summary_of(ruled).at("warnings") == json::parse("[{\"code\":\"fill_rule_on_paths\"}]"));
+  CHECK(equity(ruled, 1) == 100000 - 400 - 40 + 400);
   runtest::script() = runtest::Script{};
   // Chained changes that fall below zero fail the path before it is replayed, counted as failed and null.
   const auto falls = drive<runtest::Program>(on_csv(

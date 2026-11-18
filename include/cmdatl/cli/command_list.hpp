@@ -457,8 +457,9 @@ inline std::vector<Command> command_list() {
     .returns("history", "bootstrap: path 0's figures, or null")
     .returns(
       "warnings",
-      "bootstrap: block_below_lookback when the block is shorter than the program's warm-up; walk-forward: "
-      "chain_unavailable and its message when the chain could not be made"
+      "bootstrap: block_below_lookback when the block is shorter than the program's warm-up, fill_rule_on_paths when "
+      "replay.fill_function prices market orders on the paths; walk-forward: chain_unavailable and its message when "
+      "the chain could not be made"
     )
     .returns("intervals", "bootstrap: each metric of bootstrap.intervals: level, lower, median, upper, defined, null")
     .returns("train", "walk-forward: walk_forward.train as written")
