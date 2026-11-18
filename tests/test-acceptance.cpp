@@ -1435,4 +1435,16 @@ TEST_CASE("strategy evaluate windows and bootstrap with atlc: spans; history cou
       reply.at("intervals").at("total_return").at("null").as_int64() ==
     3
   );
+  // Whole bars of a long OHLC CSV, joined by changes: a drawn path is replayed.
+  const auto changes = evaluate(
+    (source / "examples" / "mean-reversion.toml").string(),
+    {"evaluate.method=bootstrap", "bootstrap.join=differences", "bootstrap.seed=7", "bootstrap.block=5",
+      "bootstrap.paths=3"}
+  );
+  REQUIRE(changes.size() == 5);
+  CHECK(reply_of(changes.back()).at("join") == boost::json::value("differences"));
+  CHECK(std::any_of(changes.begin() + 1, changes.end() - 1, [](const std::string& line) {
+    const auto drawn = reply_of(line);
+    return !drawn.at("report").is_null() && !drawn.contains("failure");
+  }));
 }
