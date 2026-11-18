@@ -1097,6 +1097,23 @@ inline std::chrono::system_clock::time_point market_noon(
 }
 
 /**
+ * @brief The open point of a daily bar (`bars.open_point`): its open, or its close when it has none, as all four
+ *   prices, with no volume; the caller stamps it.
+ * @param bar The daily bar.
+ * @return The point.
+ */
+inline atl::Bar open_point_of(const atl::Bar& bar) {
+  const auto open = bar.open_ ? *bar.open_ : bar.close_;
+  atl::Bar point;
+  point.open_ = open;
+  point.high_ = open;
+  point.low_ = open;
+  point.close_ = open;
+  point.volume_ = atl::Decimal64::parse("0");
+  return point;
+}
+
+/**
  * @brief A daily bar as two bars (`bars.open_point`): a point at the session's open, its open alone, and the day's
  *   bar stamped at the session's close; both daily and close-stamped, so the first is an empty period.
  * @param id The instrument.
@@ -1109,14 +1126,8 @@ inline void split_day(
   std::vector<atl::strategy::BarEvent>& out
 ) {
   const auto noon = market_noon(bar.timestamp_, session);
-  const auto open = bar.open_ ? *bar.open_ : bar.close_;
-  atl::Bar point;
+  auto point = open_point_of(bar);
   point.timestamp_ = session.opens_at(noon);
-  point.open_ = open;
-  point.high_ = open;
-  point.low_ = open;
-  point.close_ = open;
-  point.volume_ = atl::Decimal64::parse("0");
   out.push_back(atl::strategy::make_bar_event(id, atl::BarInterval::ONE_DAY, atl::BarStamp::CLOSE, point));
   atl::Bar day = bar;
   day.timestamp_ = session.closes_at(noon);

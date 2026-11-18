@@ -792,31 +792,34 @@ int loops_main(
     const bool days = std::all_of(events.begin(), events.end(), [](const atl::strategy::BarEvent& e) {
       return e.interval_ == atl::BarInterval::ONE_DAY;
     });
-    if (!days || Strategy::atls_session || reads_data<Strategy>::value) {
+    if (!days || reads_data<Strategy>::value) {
       throw Refused(
-        "a bootstrap path rebuilds daily bars: no intraday bar, no on_open, on_close or data {}",
-        "give daily bars, and no on_open, on_close or data {}"
+        "a bootstrap path rebuilds daily bars: no intraday bar and no data {}", "give daily bars, and no data {}"
       );
     }
     // Each symbol's bar on each period, found by its id (a long source orders a date's bars by time, then symbol):
-    // every symbol one bar on every period.
+    // every symbol one bar on every period, after its open point with `bars.open_point` (every point comes first).
     const auto symbols = prepared->symbols_.size();
     const auto& ids = prepared->ids_;
+    const std::size_t per = prepared->open_point_ ? 2 : 1;
     std::vector<std::vector<std::size_t>> at(symbols, std::vector<std::size_t>(n));
+    auto point = at;
     std::vector<std::vector<atl::Bar>> bars(symbols);
     for (std::size_t k = 0; k < n; ++k) {
       std::vector<std::size_t> seen(symbols, 0);
       for (auto i = p.first_[k]; i < p.first_[k + 1]; ++i) {
         const auto j = static_cast<std::size_t>(std::find(ids.begin(), ids.end(), events[i].instrument_) - ids.begin());
         if (j < symbols) {
+          if (seen[j]++ == 0) {
+            point[j][k] = i;
+          }
           at[j][k] = i;
-          ++seen[j];
         }
       }
       for (std::size_t j = 0; j < symbols; ++j) {
-        if (seen[j] != 1) {
+        if (seen[j] != per) {
           throw Refused(
-            prepared->symbols_[j] + (seen[j] == 0 ? " has no bar on " : " has two bars on ") +
+            prepared->symbols_[j] + (seen[j] < per ? " has no bar on " : " has two bars on ") +
               std::to_string(p.dates_[k]),
             "give every symbol a close on every date, or narrow replay.from and replay.to"
           );
@@ -902,6 +905,12 @@ int loops_main(
             }
           }
           path[at[j][k]].bar_ = b;
+          if (prepared->open_point_) {
+            auto& open = path[point[j][k]].bar_;
+            const auto stamp = open.timestamp_;
+            open = open_point_of(b);
+            open.timestamp_ = stamp;
+          }
         }
       }
       task.events_ = std::make_shared<const std::vector<atl::strategy::BarEvent>>(std::move(path));

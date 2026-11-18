@@ -2205,8 +2205,8 @@ inline std::vector<Error> resolve(
       if (!daily) {
         errors.push_back(at("bars.source", "a bootstrap path rebuilds daily bars: give daily bars"));
       }
-      if (program.session_ || !program.data_.empty()) {
-        errors.push_back(Error::nowhere("a bootstrap path cannot carry what on_open, on_close or data {} read"));
+      if (!program.data_.empty()) {
+        errors.push_back(Error::nowhere("a bootstrap path cannot carry what data {} reads"));
       }
       if (get("bootstrap.block") == nullptr) {
         errors.push_back(Error::nowhere("bootstrap draws blocks of bootstrap.block periods: give bootstrap.block = N"));

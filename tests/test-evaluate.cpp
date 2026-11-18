@@ -1525,6 +1525,17 @@ TEST_CASE("loops: bootstrap refusals come before any line with the key to give")
   );
 }
 
+/** @brief The script's program with session handlers, as one that met both session edges. */
+struct Sessions : runtest::SessionProgram {
+  using SessionProgram::SessionProgram;
+  std::size_t session_opens() const {
+    return 1;
+  }
+  std::size_t session_closes() const {
+    return 1;
+  }
+};
+
 TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
   Scratch dir;
   // Seed 9 draws path 1 of three dates as {0, 0} (circular blocks of 1): bar 1 as it is, then bar 1 joined to it.
@@ -1621,6 +1632,23 @@ TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
   );
   CHECK(summary_of(ruled).at("warnings") == json::parse("[{\"code\":\"fill_rule_on_paths\"}]"));
   CHECK(equity(ruled, 1) == 100000 - 400 - 40 + 400);
+  // Open points: a limit buy at bar 2's opening price (the program's fifth bar) fills at the path's rebuilt open, 300;
+  // the history's open there, 180, lies below that bar's rebuilt low and would not fill.
+  runtest::script().decisions_ = {{5, runtest::Decision{1, "1"}}};
+  std::vector<std::string> session{
+    "bars.source=csv", "bars.file=" + bars, "bars.symbol_column=symbol", "instrument.x=AAA", "bars.open_point=true",
+    "replay.commission=0.1"
+  };
+  const auto opened = drive<Sessions>(session);
+  session.insert(
+    session.end(), {"evaluate.method=bootstrap", "bootstrap.seed=9", "bootstrap.block=1", "bootstrap.paths=1"}
+  );
+  const auto points = drive<Sessions>(session);
+  INFO(points.out_ << points.err_);
+  REQUIRE(points.exit_ == 0);
+  CHECK(report_text(lines_of(points.out_)[0]) == flat(opened));
+  CHECK(equity(points, 0) == 100000 - 180 - 18 + 100);
+  CHECK(equity(points, 1) == 100000 - 300 - 30 + 400);
   runtest::script() = runtest::Script{};
   // Chained changes that fall below zero fail the path before it is replayed, counted as failed and null.
   const auto falls = drive<runtest::Program>(on_csv(

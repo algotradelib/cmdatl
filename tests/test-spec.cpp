@@ -2011,4 +2011,19 @@ TEST_CASE("windows and bootstrap keys: lengths in periods or spans; each method 
     "rebuilds daily bars"
   ));
   CHECK(evaluate(boot + "block = 5\n[orders]\ntype = \"limit\"\n").errors_.empty());
+  // A session program on open points is replayed on paths; one with data {} is not.
+  const auto method = boot.substr(boot.find("[evaluate]")) + "block = 5\n";
+  auto session = single();
+  session.session_ = true;
+  sp::Resolved resolved;
+  const auto on = [&](const std::string& src, const sp::Program& program) {
+    return texts(sp::resolve({spec(src).entries_}, program, resolved, false, sp::Purpose::EVALUATE));
+  };
+  CHECK(on(csv + "open_point = true\n" + method, session).empty());
+  auto reads = single();
+  reads.data_ = {"level"};
+  const auto data = on(WIDE_SPEC + method, reads);
+  CHECK(std::any_of(data.begin(), data.end(), [](const std::string& e) {
+    return has(e, "a bootstrap path cannot carry what data {} reads");
+  }));
 }
