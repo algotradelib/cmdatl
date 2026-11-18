@@ -792,10 +792,10 @@ int loops_main(
     const bool days = std::all_of(events.begin(), events.end(), [](const atl::strategy::BarEvent& e) {
       return e.interval_ == atl::BarInterval::ONE_DAY;
     });
-    if (!days || Strategy::atls_session || reads_data<Strategy>::value || s.get_or("orders.type", "") == "limit") {
+    if (!days || Strategy::atls_session || reads_data<Strategy>::value) {
       throw Refused(
-        "a bootstrap path rebuilds daily bars: no intraday bar, no on_open, on_close or data {}, no limit orders",
-        "give daily bars, no data {} and no limit orders"
+        "a bootstrap path rebuilds daily bars: no intraday bar, no on_open, on_close or data {}",
+        "give daily bars, and no on_open, on_close or data {}"
       );
     }
     // Each symbol's bar on each period, found by its id (a long source orders a date's bars by time, then symbol):

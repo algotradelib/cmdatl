@@ -2201,23 +2201,15 @@ inline std::vector<Error> resolve(
       errors.push_back(Error::nowhere("nothing to choose: give [grid] two parameter sets or more, or use windows"));
     }
     if (method == "bootstrap") {
-      // A path rebuilds daily bars, whole.
-      const bool wide_bars = source == "wide" && (get("bars.open") || get("bars.high") || get("bars.low"));
-      if (wide_bars || !daily) {
-        errors.push_back(at(
-          "bars.source",
-          "a bootstrap path rebuilds daily bars: give daily bars, and no bars.open, bars.high or bars.low on wide tables"
-        ));
+      // A path rebuilds daily bars, whole, as the backtest loads them.
+      if (!daily) {
+        errors.push_back(at("bars.source", "a bootstrap path rebuilds daily bars: give daily bars"));
       }
       if (program.session_ || !program.data_.empty()) {
         errors.push_back(Error::nowhere("a bootstrap path cannot carry what on_open, on_close or data {} read"));
       }
-      if (text("orders.type").value_or("market") == "limit" || fill_header != nullptr) {
-        errors.push_back(
-          Error::nowhere(
-            "limit orders and a market-price rule of your own are not replayed on bootstrap paths in this version"
-          )
-        );
+      if (fill_header != nullptr) {
+        errors.push_back(Error::nowhere("a market-price rule of your own is not replayed on bootstrap paths"));
       }
       if (get("bootstrap.block") == nullptr) {
         errors.push_back(Error::nowhere("bootstrap draws blocks of bootstrap.block periods: give bootstrap.block = N"));

@@ -1598,6 +1598,12 @@ TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
   const auto levels = bought({"bootstrap.join=levels"});
   CHECK(value(levels, 1, "commission_paid") == 15);
   CHECK(equity(levels, 1) == 100035);
+  // A limit buy at 1.5 times bar 1's close, 300, fills at the limit against bar 2's rebuilt low, 280; a flat bar at
+  // 400 would not fill it.
+  runtest::script().decisions_[2] = runtest::Decision{1, "1.5"};
+  const auto limited = bought({"orders.type=limit"});
+  CHECK(line_of(limited, 1).at("report").at("executions") == 1);
+  CHECK(equity(limited, 1) == 100000 - 300 - 30 + 400);
   runtest::script() = runtest::Script{};
   // Chained changes that fall below zero fail the path before it is replayed, counted as failed and null.
   const auto falls = drive<runtest::Program>(on_csv(
