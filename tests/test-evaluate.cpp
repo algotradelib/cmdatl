@@ -1658,9 +1658,15 @@ TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
   CHECK(equity(points, 0) == 100000 - 180 - 18 + 100);
   CHECK(equity(points, 1) == 100000 - 300 - 30 + 400);
   runtest::script() = runtest::Script{};
-  // Chained changes that fall below zero fail the path before it is replayed, counted as failed and null.
+  // Chained changes whose low alone falls below zero fail the path before it is replayed, counted as failed and null:
+  // bar 1 (90, 95, 5, 90) drawn again from the path's close 90, 90 + x - 100, gives (80, 85, -5, 80).
   const auto falls = drive<runtest::Program>(on_csv(
-    dir.write("falls.csv", HEADER + "\n" + rows_of("AAA", {100, 40, 100})),
+    dir.write(
+      "falls.csv",
+      HEADER +
+        "\n1577836800,AAA,100,100,100,100,1000\n1577923200,AAA,90,95,5,90,1000\n"
+        "1578009600,AAA,100,100,100,100,1000\n"
+    ),
     {"evaluate.method=bootstrap", "bootstrap.seed=9", "bootstrap.block=1", "bootstrap.paths=1",
       "bootstrap.join=differences", "bootstrap.intervals=total_return"}
   ));

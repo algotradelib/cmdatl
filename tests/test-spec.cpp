@@ -2011,6 +2011,7 @@ TEST_CASE("windows and bootstrap keys: lengths in periods or spans; each method 
     "rebuilds daily bars"
   ));
   CHECK(evaluate(boot + "block = 5\n[orders]\ntype = \"limit\"\n").errors_.empty());
+  CHECK(evaluate(boot + "block = 5\n[replay]\nfill_header = \"r.hpp\"\nfill_function = \"f\"\n").errors_.empty());
   // A session program on open points is replayed on paths; one with data {} is not.
   const auto method = boot.substr(boot.find("[evaluate]")) + "block = 5\n";
   auto session = single();
