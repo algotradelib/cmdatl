@@ -770,8 +770,8 @@ namespace {
 namespace json = boost::json;
 
 /**
- * @brief A program without state: on every bar it holds `k` shares of the bar's instrument; it states `w` bars of
- *   warm-up; `k` below 0 is a refused bound.
+ * @brief A program without state: on every bar it holds `k` shares of the bar's instrument (`k * m` of `y`'s); it
+ *   states `w` bars of warm-up; `k` below 0 is a refused bound.
  */
 struct Holder {
   static constexpr const char* atls_mode = "named";
@@ -791,6 +791,8 @@ struct Holder {
       k_ = value;
     } else if (name == "w") {
       w_ = value;
+    } else if (name == "m") {
+      m_ = value;
     } else {
       throw std::invalid_argument("the program has no parameter '" + std::string(name) + "'");
     }
@@ -809,7 +811,8 @@ struct Holder {
   void on_bar(Ctx& ctx, const atl::strategy::BarEvent& event) {
     atl::strategy::TargetPosition target;
     target.instrument_ = event.instrument_;
-    target.target_quantity_ = atl::Decimal64(static_cast<std::int64_t>(k_), 0);
+    const bool y = ids_.size() > 1 && event.instrument_ == ids_[1];
+    target.target_quantity_ = atl::Decimal64(static_cast<std::int64_t>(y ? k_ * m_ : k_), 0);
     target.tag_ = "hold";
     ctx.submit(target);
   }
@@ -818,6 +821,7 @@ struct Holder {
   runtest::Refusals refusals_;
   double k_{1};
   double w_{1};
+  double m_{1};
 };
 
 /**
@@ -1450,9 +1454,11 @@ TEST_CASE("loops: bootstrap path 0 is the backtest; a path depends on its number
   const auto lines = lines_of(ran.out_);
   REQUIRE(lines.size() == 4);
   CHECK(
-    lines[1].find("\"path\":{\"number\":1,\"seed\":7,\"id\":null,\"scheme\":\"circular\",\"block\":5}") !=
-    std::string::npos
+    lines[1].find(
+      "\"path\":{\"number\":1,\"seed\":7,\"id\":null,\"scheme\":\"circular\",\"block\":5,\"join\":\"returns\"}"
+    ) != std::string::npos
   );
+  CHECK(summary.at("join") == json::value("returns"));
   CHECK(summary.at("paths") == 3);
   CHECK(summary.at("intervals").as_object().empty());
   CHECK(!summary.contains("summary"));
@@ -1513,8 +1519,36 @@ TEST_CASE("loops: bootstrap refusals come before any line with the key to give")
   );
   CHECK(
     boot(wide("ragged.csv", "20240102,100,50\n20240103,101,\n20240104,102,51\n"), {"bootstrap.block=1"})
-      .find("\"message\":\"BBB has no close on 20240103\"") != std::string::npos
+      .find("\"message\":\"BBB has no bar on 20240103\"") != std::string::npos
   );
+}
+
+TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
+  Scratch dir;
+  // Seed 9 draws path 1 of three dates as {0, 0} (circular blocks of 1): bar 1 as it is, then bar 1 joined to it.
+  // Two symbols, BBB's bars stamped at 00:00 UTC and AAA's at 21:00, so each date's bars are BBB's first.
+  std::string pair = HEADER + "\n";
+  const std::vector<std::pair<std::string, std::string>> prices{{"100", "50"}, {"200", "60"}, {"100", "45"}};
+  for (std::size_t day = 0; day < prices.size(); ++day) {
+    const auto at = 1577836800 + 86400 * static_cast<long long>(day);
+    const auto& [a, b] = prices[day];
+    pair += std::to_string(at) + ",BBB," + b + "," + b + "," + b + "," + b + ",1000\n" + std::to_string(at + 75600) +
+      ",AAA," + a + "," + a + "," + a + "," + a + ",1000\n";
+  }
+  const auto pairs = dir.write("pair.csv", pair);
+  const auto equity = [](const Ran& ran, std::size_t k) {
+    return std::stod(std::string(line_of(ran, k).at("report").at("closing_equity").as_string()));
+  };
+  const auto held = [&](std::vector<std::string> more) {
+    more.insert(more.end(), {"bootstrap.seed=9", "bootstrap.block=1", "bootstrap.paths=1", "param.m=10"});
+    return drive<Holder>(on_pair(pairs, "bootstrap", more));
+  };
+  // 1 AAA and 10 BBB bought at bar 1's opens, 200 and 60; path 1 ends at AAA 200 * 200 / 100 and BBB 60 * 60 / 50.
+  const auto returns = held({});
+  INFO(returns.out_ << returns.err_);
+  REQUIRE(returns.exit_ == 0);
+  CHECK(equity(returns, 1) == 100000 - 200 - 600 + 400 + 720);
+  CHECK(report_text(lines_of(returns.out_)[0]) == flat(drive<Holder>(on_pair(pairs, "", {"param.m=10"}))));
 }
 
 TEST_CASE("loops: the summary's statistics are the ones named, in order; quantiles type 7 with nulls counted apart") {

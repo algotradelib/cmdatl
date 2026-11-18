@@ -514,6 +514,7 @@ One parameter set, replayed on the history (path 0) and on `paths` block-bootstr
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `bootstrap.scheme` | `"circular"`, `"moving"` or `"stationary"` | `"circular"` | circular blocks wrap from the history's end to its start; moving blocks stay inside it; stationary blocks have geometric lengths of mean `block` and wrap |
+| `bootstrap.join` | `"returns"`, `"differences"` or `"levels"` | `"returns"` | how drawn blocks are joined: chained ratios; chained changes; the drawn prices as they are (for a stationary series: trending prices jump at each block boundary) |
 | `bootstrap.block` | whole number, 1 or more | required | the block length in periods (the mean length when stationary); at most the history's returns for circular and moving |
 | `bootstrap.paths` | whole number, 1 to 10000 | 100 | the paths drawn |
 | `bootstrap.seed` | whole number, 0 to 2^53 - 1 | drawn, and echoed | the seed |
@@ -525,8 +526,8 @@ One parameter set, replayed on the history (path 0) and on `paths` block-bootstr
 - Closes only: wide tables of closes (no `bars.open`, `bars.high` or `bars.low`) or a CSV with `bars.layout = "wide"`, daily bars, every symbol a close on every date. Refused: other sources, a program with `on_open`, `on_close` or `data {}`, limit orders, `replay.fill_header`, and a `[grid]`. Allowed: `replay.fill` (on a flat bar both next-bar rules fill at the next close), shorts, costs, `replay.from` and `replay.to` (the history drawn from), measures.
 - Bars are flat (open, high and low are the close) with a fixed volume, which the replay never caps fills by.
 - `warnings` holds `{"code": "block_below_lookback", "block": b, "lookback": w}` when the block is shorter than the program's warm-up: an indicator longer than a block reads joined, unrelated days. It does not refuse.
-- Each line's `path` is `{"number": p, "seed": S, "id": null, "scheme": ..., "block": b}`; replay `p` is path `p`.
-- The reply adds `paths` (the paths replayed, path 0 included), `scheme`, `block`, `seed`, `history` (path 0's `total_return`, `sharpe_annualized`, `sortino_per_period`, `max_drawdown`, `turnover`, `executions` and measures), `warnings`, `halted`, and `intervals`: for each name of `bootstrap.intervals`, over paths 1 to N, `{"level", "lower", "median", "upper", "defined", "null"}`, the type-7 quantiles at `(1 - level) / 2`, 0.5 and `(1 + level) / 2` of the paths where the metric is defined; a failed, halted or undefined path counts as null, so `defined + null` is N.
+- Each line's `path` is `{"number": p, "seed": S, "id": null, "scheme": ..., "block": b, "join": ...}`; replay `p` is path `p`.
+- The reply adds `paths` (the paths replayed, path 0 included), `scheme`, `block`, `join`, `seed`, `history` (path 0's `total_return`, `sharpe_annualized`, `sortino_per_period`, `max_drawdown`, `turnover`, `executions` and measures), `warnings`, `halted`, and `intervals`: for each name of `bootstrap.intervals`, over paths 1 to N, `{"level", "lower", "median", "upper", "defined", "null"}`, the type-7 quantiles at `(1 - level) / 2`, 0.5 and `(1 + level) / 2` of the paths where the metric is defined; a failed, halted or undefined path counts as null, so `defined + null` is N.
 
 A refusal of the settings before any replay (no window or fold fits, a warm-up too short, a missing close, a block above the returns) is exit 2, `evaluate.refused`, with a `next` naming the key to change.
 

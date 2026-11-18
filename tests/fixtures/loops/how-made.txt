@@ -13,3 +13,10 @@ bootstrap-seed7.jsonl: the replay lines (the first four lines of --json output) 
 recorded once on 2026-11-16 (macOS, atlc 0.0.0-9000, algotradelib ai/backtest-evaluation ad4d27c), from the repository's
 root. A path depends only on the seed, its number, the scheme, the block and the history, and the draws use integer
 arithmetic only, so the lines are compared byte for byte on every platform; re-record them only when a report changes.
+
+Re-recorded on 2026-11-18 (macOS, atlc 0.0.0-9000 d016ff0, algotradelib a5b983d) with the same command, when each
+line's path gained `"join"`. Only that field changed, and the reports are untouched: deleting it gives the 2026-11-16
+file byte for byte,
+
+  sed 's/,"join":"returns"//g' tests/fixtures/loops/bootstrap-seed7.jsonl | \
+    cmp - <(git show daff1da:tests/fixtures/loops/bootstrap-seed7.jsonl)

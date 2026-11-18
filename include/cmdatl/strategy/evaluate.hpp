@@ -19,8 +19,8 @@ namespace cmdatl {
 inline const std::vector<std::string> EVALUATE_SUMMARY{
   "method", "jobs", "param_sets", "invalid", "tried", "replays", "paths", "failed", "objective", "direction", "best",
   // windows and bootstrap
-  "scheme", "length", "step", "warmup", "windows", "uncovered_from", "halted", "summary", "block", "seed", "history",
-  "warnings", "intervals",
+  "scheme", "length", "step", "warmup", "windows", "uncovered_from", "halted", "summary", "block", "join", "seed",
+  "history", "warnings", "intervals",
   // walk-forward
   "train", "test", "train_replays", "folds", "chained", "chained_null_reason"
 };

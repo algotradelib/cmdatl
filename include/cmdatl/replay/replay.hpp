@@ -1920,6 +1920,16 @@ struct Window {
   std::size_t periods_{0};
 };
 
+/** @brief How a bootstrap path was drawn: its block scheme, block length and join. */
+struct Drawn {
+  /** @brief The scheme (`bootstrap.scheme`). */
+  std::string scheme_;
+  /** @brief The block length in periods. */
+  std::size_t block_{0};
+  /** @brief How its blocks are joined (`bootstrap.join`). */
+  std::string join_;
+};
+
 /** @brief A replay's path: its number in the stream, its seed (none for stdin) and its label. */
 struct PathOf {
   /** @brief Its number, from 0, in the order read. */
@@ -1928,8 +1938,8 @@ struct PathOf {
   std::optional<std::uint64_t> seed_;
   /** @brief Its label (`bars.path_column`'s cell), or none. */
   std::optional<std::string> id_;
-  /** @brief A bootstrap path's scheme and block length, or none. */
-  std::optional<std::pair<std::string, std::size_t>> drawn_;
+  /** @brief How a bootstrap path was drawn, or none. */
+  std::optional<Drawn> drawn_;
 };
 
 /** @brief One replay of a batch: its index, the parameters it sets, its window and its path. */

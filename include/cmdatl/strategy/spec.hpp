@@ -189,6 +189,7 @@ inline const std::vector<Key>& keys() {
     {"walk_forward.train", Kind::LENGTH, {}, {}, 2, false},
     {"walk_forward.test", Kind::LENGTH, {}, {}, 2, false},
     {"bootstrap.scheme", Kind::CHOICE, {}, {"circular", "moving", "stationary"}},
+    {"bootstrap.join", Kind::CHOICE, {}, {"returns", "differences", "levels"}},
     {"bootstrap.block", Kind::COUNT, {}, {}, 1},
     {"bootstrap.paths", Kind::COUNT, {}, {}, 1},
     {"bootstrap.seed", Kind::SEED, {}, {}},

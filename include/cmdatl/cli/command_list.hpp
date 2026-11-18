@@ -429,7 +429,7 @@ inline std::vector<Command> command_list() {
     .streams("params", "the grid's values of this replay, by name")
     .streams("window", "windows, walk-forward: fold, role, warm_from, from, to and periods of the window; else null")
     .streams("path", "stdin: number, seed (null), id (the bars.path_column cell); bootstrap: number (0 the history), "
-      "seed, id (null), scheme, block; else null")
+      "seed, id (null), scheme, block, join; else null")
     .streams("report", "the replay's report, as strategy backtest gives it, or null")
     .streams("failure", "without a report: kind (params, when the bounds refused the set, or replay) and message")
     .returns("method", "grid, windows, walk-forward or bootstrap")
@@ -452,6 +452,7 @@ inline std::vector<Command> command_list() {
     .returns("halted", "windows and bootstrap: the replays that halted")
     .returns("summary", "windows with windows.summary: defined, null and the statistics named of each figure")
     .returns("block", "bootstrap: the block length in periods")
+    .returns("join", "bootstrap: returns, differences or levels")
     .returns("seed", "bootstrap: the seed, as given or drawn")
     .returns("history", "bootstrap: path 0's figures, or null")
     .returns(

@@ -1429,6 +1429,7 @@ TEST_CASE("strategy evaluate windows and bootstrap with atlc: spans; history cou
   CHECK(recorded == slurp(source / "tests" / "fixtures" / "loops" / "bootstrap-seed7.jsonl"));
   const auto reply = reply_of(paths.back());
   CHECK(reply.at("seed").as_int64() == 7);
+  CHECK(reply.at("join") == boost::json::value("returns"));
   CHECK(
     reply.at("intervals").at("total_return").at("defined").as_int64() +
       reply.at("intervals").at("total_return").at("null").as_int64() ==

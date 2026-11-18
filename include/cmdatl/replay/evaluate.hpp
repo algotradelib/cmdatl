@@ -301,11 +301,14 @@ inline std::string line_of(
   }
   out += ",\"path\":";
   if (const auto& p = replay.path_) {
+    std::string drawn;
+    if (const auto& d = p->drawn_) {
+      drawn = ",\"scheme\":" + quoted(d->scheme_) + ",\"block\":" + std::to_string(d->block_) +
+        ",\"join\":" + quoted(d->join_);
+    }
     out += "{\"number\":" + std::to_string(p->number_) +
       ",\"seed\":" + (p->seed_ ? std::to_string(*p->seed_) : std::string("null")) +
-      ",\"id\":" + (p->id_ ? quoted(*p->id_) : std::string("null")) +
-      (p->drawn_ ? ",\"scheme\":" + quoted(p->drawn_->first) + ",\"block\":" + std::to_string(p->drawn_->second) : "") +
-      "}";
+      ",\"id\":" + (p->id_ ? quoted(*p->id_) : std::string("null")) + drawn + "}";
   } else {
     out += "null";
   }

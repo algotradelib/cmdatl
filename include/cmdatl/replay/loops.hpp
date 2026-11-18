@@ -768,6 +768,10 @@ int loops_main(
       scheme == "stationary" ?
       atl::analytics::BlockScheme::STATIONARY :
       atl::analytics::BlockScheme::CIRCULAR;
+    const auto join = s.get_or("bootstrap.join", "returns");
+    if (join != "returns" && join != "differences" && join != "levels") {
+      throw std::invalid_argument("bootstrap.join is returns, differences or levels, not " + join);
+    }
     const auto paths = static_cast<std::size_t>(whole_of(s.get_or("bootstrap.paths", "100"), "bootstrap.paths"));
     if (paths < 1 || paths > 10000) {
       throw std::invalid_argument("bootstrap.paths is 1 to 10000");
@@ -797,19 +801,30 @@ int loops_main(
         "give wide tables of closes, or a CSV with bars.layout = \"wide\""
       );
     }
-    // The closes by symbol and period: every symbol a close on every period.
+    // Each symbol's bar on each period, found by its id (a long source orders a date's bars by time, then symbol):
+    // every symbol one bar on every period.
     const auto symbols = prepared->symbols_.size();
+    const auto& ids = prepared->ids_;
+    std::vector<std::vector<std::size_t>> at(symbols, std::vector<std::size_t>(n));
     std::vector<std::vector<atl::Decimal64>> closes(symbols);
     for (std::size_t k = 0; k < n; ++k) {
+      std::vector<std::size_t> seen(symbols, 0);
+      for (auto i = p.first_[k]; i < p.first_[k + 1]; ++i) {
+        const auto j = static_cast<std::size_t>(std::find(ids.begin(), ids.end(), events[i].instrument_) - ids.begin());
+        if (j < symbols) {
+          at[j][k] = i;
+          ++seen[j];
+        }
+      }
       for (std::size_t j = 0; j < symbols; ++j) {
-        const auto at = p.first_[k] + j;
-        if (at >= p.first_[k + 1] || !(events[at].instrument_ == prepared->ids_[j])) {
+        if (seen[j] != 1) {
           throw Refused(
-            prepared->symbols_[j] + " has no close on " + std::to_string(p.dates_[k]),
+            prepared->symbols_[j] + (seen[j] == 0 ? " has no bar on " : " has two bars on ") +
+              std::to_string(p.dates_[k]),
             "give every symbol a close on every date, or narrow replay.from and replay.to"
           );
         }
-        closes[j].push_back(events[at].bar_.close_);
+        closes[j].push_back(events[at[j][k]].bar_.close_);
       }
     }
     const bool fixed = kind != atl::analytics::BlockScheme::STATIONARY;
@@ -853,8 +868,8 @@ int loops_main(
     for (std::size_t k = 0; k <= paths; ++k) {
       tasks.push_back(
         Task{
-          Replay{k, {}, std::nullopt, PathOf{k, seed, std::nullopt, std::make_pair(scheme, block)}}, prepared, nullptr,
-          0, std::numeric_limits<std::size_t>::max(), std::nullopt
+          Replay{k, {}, std::nullopt, PathOf{k, seed, std::nullopt, Drawn{scheme, block, join}}}, prepared, nullptr, 0,
+          std::numeric_limits<std::size_t>::max(), std::nullopt
         }
       );
     }
@@ -870,7 +885,7 @@ int loops_main(
       for (std::size_t j = 0; j < symbols; ++j) {
         const auto rebuilt = bt::resample_closes(closes[j], prepared->config_.instruments_[j].price_rule_, draw);
         for (std::size_t k = 0; k < n; ++k) {
-          auto& bar = path[p.first_[k] + j].bar_;
+          auto& bar = path[at[j][k]].bar_;
           bar.open_ = bar.high_ = bar.low_ = bar.close_ = rebuilt[k];
         }
       }
@@ -895,8 +910,8 @@ int loops_main(
       hooks
     );
     o << tally.head(method, jobs, std::to_string(paths + 1), objective, direction) << ",\"scheme\":" << quoted(scheme)
-      << ",\"block\":" << block << ",\"seed\":" << seed << ",\"history\":" << history << ",\"warnings\":" << warnings
-      << ",\"halted\":" << tally.halted_ << ",\"intervals\":{";
+      << ",\"block\":" << block << ",\"join\":" << quoted(join) << ",\"seed\":" << seed << ",\"history\":" << history
+      << ",\"warnings\":" << warnings << ",\"halted\":" << tally.halted_ << ",\"intervals\":{";
     // Over paths 1 to N: a path without the figure (failed, halted, undefined) counts as null.
     for (std::size_t k = 0; k < wanted.size(); ++k) {
       std::vector<double> values;

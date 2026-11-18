@@ -1986,8 +1986,13 @@ TEST_CASE("windows and bootstrap keys: lengths in periods or spans; each method 
   const auto paths = evaluate(
     boot +
     "block = 5\npaths = 10000\nseed = 9007199254740991\nlevel = 0.9\nintervals = [\"total_return\", \"measures.calmar\"]\n"
+    "join = \"levels\"\n"
   );
   REQUIRE(paths.errors_.empty());
+  CHECK(paths.arg("bootstrap.join") == std::optional<std::string>("levels"));
+  CHECK(
+    has(one_error(boot + "block = 5\njoin = \"logs\"\n"), "`bootstrap.join` is one of \"returns\", \"differences\"")
+  );
   CHECK(paths.arg("bootstrap.intervals") == std::optional<std::string>("total_return,measures.calmar"));
   CHECK(paths.arg("bootstrap.seed") == std::optional<std::string>("9007199254740991"));
   CHECK(has(grid_error("[evaluate]\nmethod = \"bootstrap\"\n"), "give bootstrap.block = N"));
