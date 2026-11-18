@@ -1539,14 +1539,14 @@ struct Sessions : runtest::SessionProgram {
 TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
   Scratch dir;
   // Seed 9 draws path 1 of three dates as {0, 0} (circular blocks of 1): bar 1 as it is, then bar 1 joined to it.
-  // Two symbols, BBB's bars stamped at 00:00 UTC and AAA's at 21:00, so each date's bars are BBB's first.
+  // Two symbols stamped at 21:00 UTC, but BBB at 00:00 on the last date, so that date's bars are BBB's first.
   std::string pair = HEADER + "\n";
   const std::vector<std::pair<std::string, std::string>> prices{{"100", "50"}, {"200", "60"}, {"100", "45"}};
   for (std::size_t day = 0; day < prices.size(); ++day) {
     const auto at = 1577836800 + 86400 * static_cast<long long>(day);
     const auto& [a, b] = prices[day];
-    pair += std::to_string(at) + ",BBB," + b + "," + b + "," + b + "," + b + ",1000\n" + std::to_string(at + 75600) +
-      ",AAA," + a + "," + a + "," + a + "," + a + ",1000\n";
+    pair += std::to_string(at + 75600) + ",AAA," + a + "," + a + "," + a + "," + a + ",1000\n" +
+      std::to_string(day == 2 ? at : at + 75600) + ",BBB," + b + "," + b + "," + b + "," + b + ",1000\n";
   }
   const auto pairs = dir.write("pair.csv", pair);
   const auto value = [](const Ran& ran, std::size_t k, const char* key) {
