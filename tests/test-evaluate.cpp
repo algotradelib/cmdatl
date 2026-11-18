@@ -1536,8 +1536,11 @@ TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
       ",AAA," + a + "," + a + "," + a + "," + a + ",1000\n";
   }
   const auto pairs = dir.write("pair.csv", pair);
-  const auto equity = [](const Ran& ran, std::size_t k) {
-    return std::stod(std::string(line_of(ran, k).at("report").at("closing_equity").as_string()));
+  const auto value = [](const Ran& ran, std::size_t k, const char* key) {
+    return std::stod(std::string(line_of(ran, k).at("report").at(key).as_string()));
+  };
+  const auto equity = [&value](const Ran& ran, std::size_t k) {
+    return value(ran, k, "closing_equity");
   };
   const auto held = [&](std::vector<std::string> more) {
     more.insert(more.end(), {"bootstrap.seed=9", "bootstrap.block=1", "bootstrap.paths=1", "param.m=10"});
@@ -1549,6 +1552,53 @@ TEST_CASE("loops: bootstrap joins blocks and rebuilds whole bars") {
   REQUIRE(returns.exit_ == 0);
   CHECK(equity(returns, 1) == 100000 - 200 - 600 + 400 + 720);
   CHECK(report_text(lines_of(returns.out_)[0]) == flat(drive<Holder>(on_pair(pairs, "", {"param.m=10"}))));
+  // Chained changes end at 200 + 100 and 60 + 10; the drawn prices at 200 and 60.
+  CHECK(equity(held({"bootstrap.join=differences"}), 1) == 100000 - 200 - 600 + 300 + 700);
+  CHECK(equity(held({"bootstrap.join=levels"}), 1) == 100000 - 200 - 600 + 200 + 600);
+  // Whole bars: a market buy decided on bar 1 fills at bar 2's open, here bar 1's (150, 210, 140, 200) joined to the
+  // close 200 by each join, at a commission of 10 %; the equity is 100000 less the open and its commission plus the
+  // last close.
+  runtest::script() = runtest::Script{};
+  runtest::script().decisions_[2] = runtest::Decision{1, "1", true};
+  const auto bars = dir.write(
+    "ohlc.csv",
+    HEADER +
+      "\n1577836800,AAA,95,105,90,100,1000\n1577923200,AAA,150,210,140,200,2000\n"
+      "1578009600,AAA,180,190,90,100,3000\n"
+  );
+  const auto bought = [&](std::vector<std::string> more) {
+    more.insert(
+      more.end(),
+      {"evaluate.method=bootstrap", "bootstrap.seed=9", "bootstrap.block=1", "bootstrap.paths=1",
+        "replay.commission=0.1"}
+    );
+    const auto ran = drive<runtest::Program>(on_csv(bars, more));
+    INFO(ran.out_ << ran.err_);
+    REQUIRE(ran.exit_ == 0);
+    return ran;
+  };
+  const auto chained = bought({});
+  CHECK(value(chained, 0, "commission_paid") == 18);
+  CHECK(equity(chained, 0) == 99902);
+  CHECK(
+    report_text(lines_of(chained.out_)[0]) ==
+    flat(
+      drive<runtest::Program>(
+        {"bars.source=csv", "bars.file=" + bars, "bars.symbol_column=symbol", "instrument.x=AAA",
+          "replay.commission=0.1"}
+      )
+    )
+  );
+  // Returns (300, 420, 280, 400), differences (250, 310, 240, 300), levels the bar as it is.
+  CHECK(value(chained, 1, "commission_paid") == 30);
+  CHECK(equity(chained, 1) == 100070);
+  const auto changes = bought({"bootstrap.join=differences"});
+  CHECK(value(changes, 1, "commission_paid") == 25);
+  CHECK(equity(changes, 1) == 100025);
+  const auto levels = bought({"bootstrap.join=levels"});
+  CHECK(value(levels, 1, "commission_paid") == 15);
+  CHECK(equity(levels, 1) == 100035);
+  runtest::script() = runtest::Script{};
 }
 
 TEST_CASE("loops: the summary's statistics are the ones named, in order; quantiles type 7 with nulls counted apart") {
@@ -1651,21 +1701,22 @@ TEST_CASE("loops: bootstrap intervals for the metrics the user names; measures i
   );
 }
 
-TEST_CASE("loops: a driver called directly refuses bootstrap on bars with their own open high or low") {
+TEST_CASE("loops: a driver called directly refuses bootstrap on intraday bars") {
   Scratch dir;
   std::string rows = HEADER + "\n";
-  for (int day = 0; day < 6; ++day) {
-    const auto ts = std::to_string(1704067200 + 86400 * day);
-    rows += ts + ",AAA,100,103,99," + std::to_string(101 + day) + ",1000\n" + ts + ",BBB,50,52,49,51,1000\n";
+  for (int bar = 0; bar < 6; ++bar) {
+    const auto ts = std::to_string(1704123000 + 300 * bar);
+    rows += ts + ",AAA,100,103,99," + std::to_string(101 + bar) + ",1000\n" + ts + ",BBB,50,52,49,51,1000\n";
   }
-  const auto ran = drive<Holder>(
-    on_pair(dir.write("ohlc.csv", rows), "bootstrap", {"bootstrap.block=2", "bootstrap.paths=1", "bootstrap.seed=7"})
-  );
+  const auto ran = drive<Holder>(on_pair(
+    dir.write("ohlc.csv", rows), "bootstrap",
+    {"bars.interval=5m", "bootstrap.block=2", "bootstrap.paths=1", "bootstrap.seed=7"}
+  ));
   CHECK(ran.exit_ == 1);
   REQUIRE(lines_of(ran.out_).size() == 1);
   CHECK(
     ran.out_.rfind(
-      "{\"stopped\":{\"code\":\"evaluate.refused\",\"message\":\"a bootstrap path rebuilds daily closes", 0
+      "{\"stopped\":{\"code\":\"evaluate.refused\",\"message\":\"a bootstrap path rebuilds daily bars", 0
     ) == 0
   );
 }

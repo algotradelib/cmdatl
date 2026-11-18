@@ -521,15 +521,17 @@ One parameter set, replayed on the history (path 0) and on `paths` block-bootstr
 | `bootstrap.intervals` | a list of the names `evaluate.objective` takes | none | the metrics given an interval over the paths |
 | `bootstrap.level` | a number above 0 and below 1 | 0.95 | the intervals' coverage |
 
-- A path redraws the history's close-to-close returns in blocks, the same days for every symbol, and rebuilds each symbol's closes from them on its price grid; every path has the history's dates. Path 0 is the history itself, so its report is `strategy backtest`'s.
+- A path redraws the history's days in blocks, the same days for every symbol, and rebuilds each drawn day's whole bar joined to the path's previous close (by ratios, by changes, or the bar as it is), on the symbol's price grid; every path has the history's dates. An ordered bar stays ordered (its low at most its open and close, its high at least both). Path 0 is the history itself, so its report is `strategy backtest`'s.
 - Path `p` depends only on the seed, `p`, the scheme, the block and the history: not on `paths` or `evaluate.jobs`; the reply's `seed` given back reproduces every path.
-- Closes only: wide tables of closes (no `bars.open`, `bars.high` or `bars.low`) or a CSV with `bars.layout = "wide"`, daily bars, every symbol a close on every date. Refused: other sources, a program with `on_open`, `on_close` or `data {}`, limit orders, `replay.fill_header`, and a `[grid]`. Allowed: `replay.fill` (on a flat bar both next-bar rules fill at the next close), shorts, costs, `replay.from` and `replay.to` (the history drawn from), measures.
-- Bars are flat (open, high and low are the close) with a fixed volume, which the replay never caps fills by.
+- The input: daily bars, every symbol a bar on every date, from a CSV, a store or wide tables of closes. Refused: `bars.source = "stdin"`, wide tables with `bars.open`, `bars.high` or `bars.low`, a program with `on_open`, `on_close` or `data {}`, limit orders, `replay.fill_header`, and a `[grid]`. Allowed: `replay.fill`, shorts, costs, `replay.from` and `replay.to` (the history drawn from), measures.
+- Each path bar takes the drawn day's volume, which the replay never caps fills by; a table of closes still replays flat bars (open, high and low are the close).
+- On whole bars `next-open` fills at the path's open, so the drawn day's overnight gap enters fills; on flat bars both next-bar rules fill at the next close.
+- `levels` suits a series that is already stationary: on trending prices each block boundary is a jump.
 - `warnings` holds `{"code": "block_below_lookback", "block": b, "lookback": w}` when the block is shorter than the program's warm-up: an indicator longer than a block reads joined, unrelated days. It does not refuse.
 - Each line's `path` is `{"number": p, "seed": S, "id": null, "scheme": ..., "block": b, "join": ...}`; replay `p` is path `p`.
 - The reply adds `paths` (the paths replayed, path 0 included), `scheme`, `block`, `join`, `seed`, `history` (path 0's `total_return`, `sharpe_annualized`, `sortino_per_period`, `max_drawdown`, `turnover`, `executions` and measures), `warnings`, `halted`, and `intervals`: for each name of `bootstrap.intervals`, over paths 1 to N, `{"level", "lower", "median", "upper", "defined", "null"}`, the type-7 quantiles at `(1 - level) / 2`, 0.5 and `(1 + level) / 2` of the paths where the metric is defined; a failed, halted or undefined path counts as null, so `defined + null` is N.
 
-A refusal of the settings before any replay (no window or fold fits, a warm-up too short, a missing close, a block above the returns) is exit 2, `evaluate.refused`, with a `next` naming the key to change.
+A refusal of the settings before any replay (no window or fold fits, a warm-up too short, a missing bar, a block above the returns) is exit 2, `evaluate.refused`, with a `next` naming the key to change.
 
 ## Limit orders
 

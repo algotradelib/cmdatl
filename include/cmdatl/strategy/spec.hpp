@@ -2201,13 +2201,12 @@ inline std::vector<Error> resolve(
       errors.push_back(Error::nowhere("nothing to choose: give [grid] two parameter sets or more, or use windows"));
     }
     if (method == "bootstrap") {
-      // A path rebuilds daily closes only: nothing a program could read of a bar's open, high or low, or of data {}.
-      const bool closes = (source == "wide" && !get("bars.open") && !get("bars.high") && !get("bars.low")) ||
-        (source == "csv" && text("bars.layout").value_or("long") == "wide");
-      if (!closes || !daily) {
+      // A path rebuilds daily bars, whole.
+      const bool wide_bars = source == "wide" && (get("bars.open") || get("bars.high") || get("bars.low"));
+      if (wide_bars || !daily) {
         errors.push_back(at(
           "bars.source",
-          "a bootstrap path rebuilds daily closes: give wide tables of closes, or a CSV with bars.layout = \"wide\""
+          "a bootstrap path rebuilds daily bars: give daily bars, and no bars.open, bars.high or bars.low on wide tables"
         ));
       }
       if (program.session_ || !program.data_.empty()) {

@@ -2001,20 +2001,19 @@ TEST_CASE("windows and bootstrap keys: lengths in periods or spans; each method 
   CHECK(has(one_error(boot + "block = 5\nseed = 9007199254740992\n"), "0 to 2^53 - 1"));
   CHECK(has(one_error(boot + "block = 5\nseed = -1\n"), "0 to 2^53 - 1"));
   CHECK(has(evaluate(boot + "block = 5\nlevel = 1\n").errors_.at(0), "`bootstrap.level` is above 0 and below 1"));
-  // What a path cannot carry: open, high and low; an OHLCV source; limit orders.
+  // A path rebuilds daily bars, whole: an OHLCV source is replayed; intraday bars are not.
   CHECK(has(
     evaluate(
       "strategy = \"m.atls\"\n[bars]\nfile = \"closes.csv\"\nopen = \"o.csv\"\n[evaluate]\nmethod = \"bootstrap\"\n[bootstrap]\nblock = 5\n"
     )
       .errors_.at(0),
-    "rebuilds daily closes"
+    "rebuilds daily bars"
   ));
+  const std::string csv = "strategy = \"m.atls\"\n[bars]\nsource = \"csv\"\nfile = \"b.csv\"\nsymbol = \"AAA\"\n";
+  CHECK(evaluate(csv + boot.substr(boot.find("[evaluate]")) + "block = 5\n").errors_.empty());
   CHECK(has(
-    evaluate(
-      "strategy = \"m.atls\"\n[bars]\nsource = \"csv\"\nfile = \"b.csv\"\nsymbol = \"AAA\"\n[evaluate]\nmethod = \"bootstrap\"\n[bootstrap]\nblock = 5\n"
-    )
-      .errors_.at(0),
-    "rebuilds daily closes"
+    evaluate(csv + "interval = \"5m\"\n" + boot.substr(boot.find("[evaluate]")) + "block = 5\n").errors_.at(0),
+    "rebuilds daily bars"
   ));
   CHECK(
     has(evaluate(boot + "block = 5\n[orders]\ntype = \"limit\"\n").errors_.at(0), "not replayed on bootstrap paths")

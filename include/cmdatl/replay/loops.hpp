@@ -11,7 +11,7 @@
  * @file
  * @brief The evaluation methods over the many-replays core: `windows` (one parameter set over rolling or expanding
  *   windows), `walk-forward` (a set chosen on each training window by `evaluate.objective`, replayed on the next test
- *   window, the tests chained by the library) and `bootstrap` (block-bootstrap paths of the closes; path 0 the history).
+ *   window, the tests chained by the library) and `bootstrap` (block-bootstrap paths of the daily bars; path 0 the history).
  *
  * The orders: window `k` is replay `k`; walk-forward's training replay of fold `k` and set `g` of `S` is `k * S + g`,
  * then one test per fold with a choice, numbered on from `F * S` in fold order; bootstrap path `p` is replay `p`.
@@ -787,18 +787,15 @@ int loops_main(
       std::random_device device;
       seed = ((static_cast<std::uint64_t>(device()) << 32) | device()) & ((std::uint64_t{1} << 53) - 1);
     }
-    // A path rebuilds daily closes, and nothing else a bar or a program could read: refused here too, for a driver
-    // called without the run spec's checks.
-    const bool flat = std::all_of(events.begin(), events.end(), [](const atl::strategy::BarEvent& e) {
-      const auto& b = e.bar_;
-      return e.interval_ == atl::BarInterval::ONE_DAY && (!b.open_ || *b.open_ == b.close_) && b.high_ == b.close_ &&
-        b.low_ == b.close_;
+    // A path rebuilds daily bars, and nothing else a program could read: refused here too, for a driver called
+    // without the run spec's checks.
+    const bool days = std::all_of(events.begin(), events.end(), [](const atl::strategy::BarEvent& e) {
+      return e.interval_ == atl::BarInterval::ONE_DAY;
     });
-    if (!flat || Strategy::atls_session || reads_data<Strategy>::value || s.get_or("orders.type", "") == "limit") {
+    if (!days || Strategy::atls_session || reads_data<Strategy>::value || s.get_or("orders.type", "") == "limit") {
       throw Refused(
-        "a bootstrap path rebuilds daily closes only: no bar with its own open, high or low, no on_open, on_close or "
-        "data {}, no limit orders",
-        "give wide tables of closes, or a CSV with bars.layout = \"wide\""
+        "a bootstrap path rebuilds daily bars: no intraday bar, no on_open, on_close or data {}, no limit orders",
+        "give daily bars, no data {} and no limit orders"
       );
     }
     // Each symbol's bar on each period, found by its id (a long source orders a date's bars by time, then symbol):
@@ -806,7 +803,7 @@ int loops_main(
     const auto symbols = prepared->symbols_.size();
     const auto& ids = prepared->ids_;
     std::vector<std::vector<std::size_t>> at(symbols, std::vector<std::size_t>(n));
-    std::vector<std::vector<atl::Decimal64>> closes(symbols);
+    std::vector<std::vector<atl::Bar>> bars(symbols);
     for (std::size_t k = 0; k < n; ++k) {
       std::vector<std::size_t> seen(symbols, 0);
       for (auto i = p.first_[k]; i < p.first_[k + 1]; ++i) {
@@ -824,7 +821,7 @@ int loops_main(
             "give every symbol a close on every date, or narrow replay.from and replay.to"
           );
         }
-        closes[j].push_back(events[at[j][k]].bar_.close_);
+        bars[j].push_back(events[at[j][k]].bar_);
       }
     }
     const bool fixed = kind != atl::analytics::BlockScheme::STATIONARY;
@@ -873,7 +870,14 @@ int loops_main(
         }
       );
     }
-    // Path `p`: the returns drawn for every symbol at once, the closes rebuilt on each one's grid; path 0 the identity.
+    // Path `p`: the days drawn for every symbol at once, each symbol's bars rebuilt by the join on its grid; path 0 the
+    // identity.
+    const auto rebuild = [&join](const std::vector<atl::Bar>& in, const atl::PriceRule& rule, const auto& draw) {
+      if (join == "differences") {
+        return bt::resample_bars<bt::Differences>(in, rule, draw);
+      }
+      return join == "levels" ? bt::resample_bars<bt::Levels>(in, rule, draw) : bt::resample_bars(in, rule, draw);
+    };
     const auto build = [&](Task& task) {
       const auto number = task.replay_.index_;
       std::vector<std::size_t> draw(n - 1);
@@ -883,10 +887,9 @@ int loops_main(
       }
       auto path = events;
       for (std::size_t j = 0; j < symbols; ++j) {
-        const auto rebuilt = bt::resample_closes(closes[j], prepared->config_.instruments_[j].price_rule_, draw);
+        const auto rebuilt = rebuild(bars[j], prepared->config_.instruments_[j].price_rule_, draw);
         for (std::size_t k = 0; k < n; ++k) {
-          auto& bar = path[at[j][k]].bar_;
-          bar.open_ = bar.high_ = bar.low_ = bar.close_ = rebuilt[k];
+          path[at[j][k]].bar_ = rebuilt[k];
         }
       }
       task.events_ = std::make_shared<const std::vector<atl::strategy::BarEvent>>(std::move(path));
