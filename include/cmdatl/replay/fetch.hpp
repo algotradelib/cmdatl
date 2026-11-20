@@ -339,7 +339,7 @@ int fetch_main(
       );
       // No history is no backtest: never replaced by bars an earlier fetch left in the store.
       if (series.bars_.empty()) {
-        return failed({{"symbol", symbol}, {"message", who + " answered no finished bars"}});
+        return failed({{"symbol", symbol}, {"message", who + " answered no bars finished when the fetch began"}});
       }
 #if defined(CMDATL_DUCKDB)
       const auto written =

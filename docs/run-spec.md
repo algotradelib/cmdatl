@@ -176,7 +176,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 - The store is written in its own layout and by its own rule: `source=NAME`, every version kept, a bar appended only when it is new or changed, under the series directory's `.lock`.
 - The replay is exactly the bars this fetch received (a later fetch by another writer and an older history already in the store are left out); `replay.from` and `replay.to` narrow it further, and a symbol answered with no bars is refused (`fetch.failed`).
 - A bar not finished when the fetch began is dropped, neither stored nor replayed: an intraday bar that had not ended, a daily bar of the fetch's own market date (whatever the hour: an extended session can still change it), a week or a month not over.
-  So a `bars.count = N` fetch during a trading day leaves `N - 1` daily bars, and `bars.count = 1` leaves none (`fetch.failed`, "no finished bars").
+  So a `bars.count = N` fetch during a trading day leaves `N - 1` daily bars, and `bars.count = 1` leaves none (`fetch.failed`, "no bars finished when the fetch began").
 - The reply's `fetched` gives `fetched_at` (to the microsecond) and, per symbol, the bars fetched, those new to the store and the first and last date.
   `bars.source = "store"` with `bars.as_of = fetched_at` reads the store as it stood after the fetch: every bar's latest version up to that instant, which can include bars this fetch did not return (an older history, or bars an earlier fetch had and this one did not); it is the same history only when the store held nothing else for those series.
 - Prices are raw (not adjusted), each within `DECIMAL(18,4)`, and the history is the vendor's as of the fetch, revisions included: it is not what was known on each day.
