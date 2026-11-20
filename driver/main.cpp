@@ -5,8 +5,20 @@
 
 #include <cmdatl/driver/run.hpp>
 #include <cmdatl/replay/replay.hpp>
-#if defined(CMDATL_DRIVER_KIS)
-#include <cmdatl/driver/kis_account.hpp>
+#if defined(CMDATL_DRIVER_BUILTIN)
+// The built-in broker this driver trades, written by cmdatl run: `BuiltinClient` and its library header.
+#include "broker.hpp"
+
+#include <cmdatl/brokers/derive.hpp>
+#include <cmdatl/driver/builtin_account.hpp>
+
+// A header, a type and a name that disagree do not compile, and neither does a broker cmdatl does not permit as an
+// account, whatever reaches the build.
+static_assert(
+  cmdatl::brokers::facts_of<BuiltinClient>().name_ == CMDATL_DRIVER_BROKER &&
+    cmdatl::brokers::facts_of<BuiltinClient>().account_,
+  "the driver's broker.hpp names another broker than CMDATL_DRIVER_BROKER, or one cmdatl does not permit as an account"
+);
 #elif defined(CMDATL_DRIVER_USER)
 // A broker folder's adapter, copied into the build by cmdatl run, before the folder's part of the run.
 #include "adapter/adapter.hpp"
@@ -151,9 +163,10 @@ Program make(const std::vector<std::string>& args, const std::vector<atl::Instru
  * @return The run's exit.
  */
 int main(int argc, char** argv) {
-#if defined(CMDATL_DRIVER_KIS)
-  // A KIS account: the bars come from the broker, so only the symbols and the strategy are read from the arguments.
-  return cmdatl::driver::kis_account_main<Program>(
+#if defined(CMDATL_DRIVER_BUILTIN)
+  // A built-in broker's account: the bars come from the broker, so only the symbols and the strategy are read from the
+  // arguments.
+  return cmdatl::driver::builtin_account_main<Program, BuiltinClient>(
     argc, argv,
     [](const std::vector<std::string>& args) {
       return replay::symbols_of<Program>(settings_of(args));
@@ -161,7 +174,7 @@ int main(int argc, char** argv) {
     make
   );
 #elif defined(CMDATL_DRIVER_USER)
-  // A broker folder's account: as a KIS account, through the folder's adapter.
+  // A broker folder's account: as a built-in broker's account, through the folder's adapter.
   return cmdatl::driver::user_account_main<Program>(
     argc, argv,
     [](const std::vector<std::string>& args) {

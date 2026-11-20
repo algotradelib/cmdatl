@@ -317,7 +317,7 @@ TEST_CASE("a broker's account reads its journal: absent is empty, a damaged one 
 TEST_CASE("KIS's setup refuses a login that is not the operator file's account, and never repeats a login") {
   const KisFixture fixture;
   Logins logins;
-  cmdatl::KisSetup setup(&logins);
+  cmdatl::BuiltinSetup<atl::kis::KisBlockingClient> setup(&logins);
   const auto refused = [&](const std::string& demo, const std::string& real, const std::string& words) {
     logins.items_ = {{"kis/demo", demo}, {"kis/real", real}};
     const auto ran = run_on(setup, {"status"});
@@ -360,7 +360,7 @@ TEST_CASE("KIS's setup builds its sessions without sending, and answers busy bes
   );
   Logins logins;
   logins.items_ = {{"kis/demo", DEMO_LOGIN}, {"kis/real", REAL_LOGIN}};
-  cmdatl::KisSetup setup(&logins);
+  cmdatl::BuiltinSetup<atl::kis::KisBlockingClient> setup(&logins);
   const auto ran = run_on(setup, {"status"});
   INFO(ran.out_);
   CHECK(ran.exit_ == 1);
@@ -395,7 +395,7 @@ TEST_CASE("every login refusal of KIS's setup is declared by the four reads") {
       Logins logins;
       logins.items_ = refusal.items_;
       logins.failing_ = refusal.failing_;
-      cmdatl::KisSetup setup(&logins);
+      cmdatl::BuiltinSetup<atl::kis::KisBlockingClient> setup(&logins);
       const auto ran = run_on(setup, args);
       CHECK(ran.exit_ == 1);
       CHECK(code_of(ran.out_) == refusal.code_);

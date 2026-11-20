@@ -1,4 +1,4 @@
-// A test-only cmdatl, never installed: the whole command line on the shipped KIS setup (`cli/kis.hpp`) and the shipped
+// A test-only cmdatl, never installed: the whole command line on the shipped KIS setup (`cli/builtin.hpp`) and the shipped
 // table, with three differences, all made in this file: the logins come from files the test wrote (made-up ones), every
 // KIS client talks to a loopback server, and the live clock starts at an instant the test gives.
 //
@@ -16,8 +16,10 @@
 //
 // It is the only test code that compiles the KIS client with its transport replaced.
 
-#include <cmdatl/cli/kis.hpp>
+#include <cmdatl/cli/builtin.hpp>
 #include <cmdatl/cmdatl>
+
+#include <algotradelib/kis>
 
 #include <boost/asio/ssl/context.hpp>
 
@@ -48,7 +50,7 @@ struct KisClientTestAccess {
   /**
    * @brief Points a blocking client at a loopback server with the transport options KIS's client resolves for its
    *   configuration (a demo order on a fresh connection) and no rate budget: the one option cmdatl sets
-   *   (`KisSessions::client` in `account/kis.hpp`) is the pacing, which is the library's to test.
+   *   (`BuiltinSessions::client` in `account/builtin.hpp`) is the pacing, which is the library's to test.
    * @param client The client.
    * @param context The TLS context trusting the server; it must outlive the client.
    * @param port The server's port.
@@ -181,12 +183,12 @@ public:
   }
 
   /** @brief The account's session. */
-  cmdatl::KisSessions::Session& trading() {
+  cmdatl::BuiltinSessions<algotradelib::kis::KisBlockingClient>::Session& trading() {
     return inner_.trading();
   }
 
   /** @brief The market-data session. */
-  cmdatl::KisSessions::Session& market() {
+  cmdatl::BuiltinSessions<algotradelib::kis::KisBlockingClient>::Session& market() {
     return inner_.market();
   }
 
@@ -217,7 +219,7 @@ private:
   boost::asio::ssl::context context_;
   Wiring wiring_;
   std::chrono::steady_clock::time_point started_;
-  cmdatl::KisSetup inner_;
+  cmdatl::BuiltinSetup<algotradelib::kis::KisBlockingClient> inner_;
   bool wired_{false};
   bool spoiled_{false};
 };

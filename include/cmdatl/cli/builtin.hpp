@@ -1,11 +1,12 @@
 #pragma once
 
-// The command path on a KIS account: the logins read in this process, as `cmdatl run` reads them, and the two sessions
-// a run builds (`account/kis.hpp`). Included by `main` alone, which hands `kis_command` to `cmdatl::run`, so no other
-// translation unit compiles the KIS client.
+// The command path on a built-in broker's account: the logins read in this process, as `cmdatl run` reads them, and the
+// two sessions a run builds (`account/builtin.hpp`). Included by `src/accounts.cpp` alone, which `main` hands to
+// `cmdatl::run`, so no other translation unit of the binary compiles a broker's client.
 
-#include "../account/kis.hpp"
+#include "../account/builtin.hpp"
 #include "../auth/login.hpp"
+#include "../brokers/derive.hpp"
 #include "../strategy/runs.hpp"
 #include "./broker_command.hpp"
 
@@ -16,14 +17,18 @@
 
 namespace cmdatl {
 
-/** @brief KIS's setup for `broker_command_reply` (see `broker_command.hpp`). */
-class KisSetup {
+/**
+ * @brief A built-in broker's setup for `broker_command_reply` (see `broker_command.hpp`).
+ * @tparam Client The broker's blocking client.
+ */
+template <typename Client>
+class BuiltinSetup {
 public:
   /**
    * @brief A setup reading the logins from a store.
    * @param store The credential store, borrowed; null for the system's, opened by `identify`.
    */
-  explicit KisSetup(auth::CredentialStore* store = nullptr) : store_(store) {}
+  explicit BuiltinSetup(auth::CredentialStore* store = nullptr) : store_(store) {}
 
   /**
    * @brief Reads and checks the logins, then constructs the sessions, which sends nothing.
@@ -38,15 +43,17 @@ public:
     }
     std::vector<std::string> documents;
     if (
-      auto refused =
-        runs::read_run_logins(config, auth::lookup_broker("kis", ""), store_ ? store_ : system.get(), documents)
+      auto refused = runs::read_run_logins(
+        config, auth::lookup_broker(std::string(brokers::facts_of<Client>().word_), ""), store_ ? store_ : system.get(),
+        documents
+      )
     ) {
       return refused;
     }
-    algotradelib::kis::KisConfig trading;
-    algotradelib::kis::KisAccount account;
-    std::optional<algotradelib::kis::KisConfig> market;
-    if (const auto mismatch = read_kis_logins(config, documents, trading, account, market, effective)) {
+    typename algotradelib::BrokerTraits<Client>::Config trading;
+    typename algotradelib::BrokerTraits<Client>::Account account;
+    std::optional<typename algotradelib::BrokerTraits<Client>::Config> market;
+    if (const auto mismatch = read_builtin_logins<Client>(config, documents, trading, account, market, effective)) {
       return error_reply(Exit::FAILED, "auth.account_mismatch", *mismatch);
     }
     sessions_.emplace(std::move(trading), std::move(account), std::move(market));
@@ -54,12 +61,12 @@ public:
   }
 
   /** @brief The account's session. */
-  KisSessions::Session& trading() {
+  typename BuiltinSessions<Client>::Session& trading() {
     return sessions_->trading();
   }
 
   /** @brief The market-data session. */
-  KisSessions::Session& market() {
+  typename BuiltinSessions<Client>::Session& market() {
     return sessions_->market();
   }
 
@@ -75,21 +82,23 @@ public:
 
 private:
   auth::CredentialStore* store_;
-  std::optional<KisSessions> sessions_;
+  std::optional<BuiltinSessions<Client>> sessions_;
 };
 
 /**
- * @brief An account command on a KIS account, with the system's credential store.
+ * @brief An account command on a built-in broker's account, with the system's credential store.
+ * @tparam Client The broker's blocking client.
  * @param command The command.
  * @param invocation Its arguments.
- * @param snapshot The operator's file, read and `OK`, naming a KIS account.
+ * @param snapshot The operator's file, read and `OK`, naming the broker's account.
  * @param output The output.
  * @return The reply.
  */
-inline Reply kis_command(
+template <typename Client>
+Reply builtin_command(
   const Command& command, const Invocation& invocation, const ConfigSnapshot& snapshot, Output& output
 ) {
-  KisSetup setup;
+  BuiltinSetup<Client> setup;
   return broker_command_reply(command, invocation, *snapshot.config_, output, setup);
 }
 

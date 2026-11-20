@@ -80,6 +80,14 @@ TEST_CASE("the market settings a run refuses before anything is built") {
   CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}));
 }
 
+TEST_CASE("the driver's broker.hpp the build writes for each built-in is the checked-in fixture") {
+  for (const auto& facts : cmdatl::builtin::FACTS) {
+    const auto fixture =
+      std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "builtin" / std::string(facts.name_) / "broker.hpp";
+    CHECK(build::broker_header(facts) == slurp(fixture));
+  }
+}
+
 TEST_CASE("a broker folder's driver header names the folder it is built from, every byte escaped") {
   build::Request request;
   request.struct_ = "Dip";

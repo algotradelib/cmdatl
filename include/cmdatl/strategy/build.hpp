@@ -12,6 +12,7 @@
 
 #include "../account/account.hpp"
 #include "../auth/user_brokers.hpp"
+#include "../core/builtins.hpp"
 #include "../core/reply.hpp"
 #include "../system/files.hpp"
 #include "../system/process.hpp"
@@ -435,7 +436,10 @@ struct Request {
   std::vector<std::string> program_measures_{};
   /** @brief A backtest's measures from the run spec (`measures`), in order: functions the header defines. */
   std::vector<std::string> measures_{};
-  /** @brief The broker a run's driver trades (`kis`), or empty for the mock market or a broker folder. */
+  /**
+   * @brief The built-in broker a run's driver trades, by its traits name (`kis`, `tossinvest`), or empty for the mock
+   *   market or a broker folder.
+   */
   std::string broker_{};
   /** @brief A broker folder's files, read once, compiled into the driver as `adapter/`; none for no folder. */
   std::optional<auth::AdapterSnapshot> adapter_{};
@@ -455,6 +459,17 @@ inline std::string adapter_digest(const auth::AdapterSnapshot& snapshot) {
   char digest[17];
   std::snprintf(digest, sizeof(digest), "%016llx", static_cast<unsigned long long>(fnv1a(framed)));
   return digest;
+}
+
+/**
+ * @brief The driver's `broker.hpp` for a built-in broker: its library header and the client the driver compiles, which
+ *   the driver asserts against `CMDATL_DRIVER_BROKER` and the facts.
+ * @param facts The broker's facts.
+ * @return The file.
+ */
+inline std::string broker_header(const builtin::Facts& facts) {
+  return "#pragma once\n// Written by cmdatl run: the built-in broker this driver trades.\n#include " +
+    std::string(facts.library_header_) + "\nusing BuiltinClient = " + std::string(facts.client_type_) + ";\n";
 }
 
 /**
@@ -773,6 +788,13 @@ inline std::optional<Reply> build_driver(
     inputs[backtest_file ? path.substr(backtest_prefix.size()) : path] = std::move(text);
   }
   inputs["program.hpp"] = program_header(request);
+  if (!request.broker_.empty()) {
+    const auto* facts = builtin::find(request.broker_);
+    if (facts == nullptr) {
+      return error_reply(Exit::FAILED, "build.failed", "cmdatl has no built-in broker " + request.broker_);
+    }
+    inputs["broker.hpp"] = broker_header(*facts);
+  }
   // The broker folder's files as read once: the bytes the checks saw are the bytes compiled.
   if (request.adapter_) {
     for (const auto& [relative, bytes] : request.adapter_->files_) {

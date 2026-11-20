@@ -124,7 +124,7 @@ configure_file(${CMDATL_GENERATED}/guides.hpp.new ${CMDATL_GENERATED}/cmdatl/gui
 # licence, and the backtest driver's main.cpp and CMakeLists.txt.
 add_executable(cmdatl_embed tools/embed.cpp)
 target_compile_features(cmdatl_embed PRIVATE cxx_std_17)
-set(CMDATL_DRIVER_MODULES driver replay orders account system core)
+set(CMDATL_DRIVER_MODULES driver replay orders account brokers system core)
 set(cmdatl_driver_pairs "")
 set(cmdatl_driver_sources "")
 foreach(module IN LISTS CMDATL_DRIVER_MODULES)
@@ -172,8 +172,14 @@ if(APPLE)
   target_link_libraries(cmdatl_core INTERFACE "-framework Security" "-framework CoreFoundation")
 endif()
 
-add_executable(cmdatl src/main.cpp)
-target_link_libraries(cmdatl PRIVATE cmdatl_core)
+# The built-in brokers' catalog: cmdatl's facts checked against the library's compile-time list (src/catalog.cpp), linked
+# by the binary and by the tests that read it. It includes nothing a test builds with its hooks.
+add_library(cmdatl_builtins STATIC src/catalog.cpp)
+target_link_libraries(cmdatl_builtins PUBLIC cmdatl_core)
+
+# The account path on a built-in broker (src/accounts.cpp) is the binary's alone: tests reach no broker through it.
+add_executable(cmdatl src/main.cpp src/accounts.cpp)
+target_link_libraries(cmdatl PRIVATE cmdatl_builtins)
 # The library's target names OpenSSL and the brokers' dependencies; cmdatl links only what it uses.
 target_link_options(cmdatl PRIVATE
   $<$<PLATFORM_ID:Darwin>:LINKER:-dead_strip_dylibs>
@@ -208,7 +214,7 @@ if(CMDATL_BUILD_TESTS)
     tests/test-order-process.cpp tests/test-run-start.cpp tests/test-guides.cpp tests/test-spec.cpp tests/test-auth.cpp
     tests/test-user-brokers.cpp tests/test-broker-reads.cpp
   )
-  target_link_libraries(test-cli PRIVATE cmdatl_core Catch2::Catch2WithMain)
+  target_link_libraries(test-cli PRIVATE cmdatl_builtins Catch2::Catch2WithMain)
   # forkpty, for the terminal cases of test-auth.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_link_libraries(test-cli PRIVATE util)
@@ -275,7 +281,7 @@ if(CMDATL_BUILD_TESTS)
   # The fault tests: their own executable, whose one translation unit defines CMDATL_FAULT_HOOKS and gives the
   # system calls of the account's state files their stand-ins, so no inline definition is mixed with them.
   add_executable(test-faults tests/test-faults.cpp)
-  target_link_libraries(test-faults PRIVATE cmdatl_core Catch2::Catch2WithMain)
+  target_link_libraries(test-faults PRIVATE cmdatl_builtins Catch2::Catch2WithMain)
   add_dependencies(test-faults cmdatl fake-atlc hold-lock)
   target_compile_definitions(test-faults PRIVATE
     CMDATL_FAULT_HOOKS
@@ -296,10 +302,13 @@ if(CMDATL_BUILD_TESTS)
   target_include_directories(driver-no-data-facts PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts)
   target_compile_definitions(driver-no-data-facts PRIVATE TOML_HEADER_ONLY=1)
   target_link_libraries(driver-no-data-facts PRIVATE cmdatl_core)
-  # A KIS account's driver, compiled as a run's build compiles it; it is never run here (it would call the broker).
+  # A KIS account's driver, compiled as a run's build compiles it, with the broker.hpp the build writes (checked by a
+  # test); it is never run here (it would call the broker).
   add_executable(driver-kis driver/main.cpp)
-  target_include_directories(driver-kis PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts)
-  target_compile_definitions(driver-kis PRIVATE TOML_HEADER_ONLY=1 CMDATL_DRIVER_KIS=1)
+  target_include_directories(driver-kis PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts ${CMAKE_CURRENT_SOURCE_DIR}/tests/builtin/kis
+  )
+  target_compile_definitions(driver-kis PRIVATE TOML_HEADER_ONLY=1 CMDATL_DRIVER_BUILTIN=1 CMDATL_DRIVER_BROKER="kis")
   target_link_libraries(driver-kis PRIVATE cmdatl_core)
   # A broker folder's account driver, compiled here as a run's build compiles it, against a fixture adapter over the
   # library's mock broker and one whose client states none of what a run reads at its start (it must compile, and
@@ -319,7 +328,7 @@ if(CMDATL_BUILD_TESTS)
   file(REAL_PATH "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/mockbroker/adapter" folder_mockbroker)
   add_executable(test-runs tests/test-runs.cpp tests/test-account-run.cpp tests/test-owed-recovery.cpp)
   target_include_directories(test-runs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/mockbroker)
-  target_link_libraries(test-runs PRIVATE cmdatl_core Catch2::Catch2WithMain)
+  target_link_libraries(test-runs PRIVATE cmdatl_builtins Catch2::Catch2WithMain)
   add_dependencies(test-runs cmdatl fake-atlc hold-lock driver-adapter-limited driver-adapter-mockbroker)
   target_compile_definitions(test-runs PRIVATE
     CMDATL_RUN_TEST_HOOKS
@@ -337,10 +346,10 @@ if(CMDATL_BUILD_TESTS)
     # The whole command line on KIS's shipped setup, its clients pointed at loopback servers: never installed, and the
     # one test program that compiles the KIS client's transport replacement.
     add_executable(kis-command tests/kis-command.cpp)
-    target_link_libraries(kis-command PRIVATE cmdatl_core)
+    target_link_libraries(kis-command PRIVATE cmdatl_builtins)
     # Runs every command as a kis-command child against two loopback servers (demo) or one (real).
     add_executable(test-kis tests/test-kis-commands.cpp)
-    target_link_libraries(test-kis PRIVATE cmdatl_core Catch2::Catch2WithMain)
+    target_link_libraries(test-kis PRIVATE cmdatl_builtins Catch2::Catch2WithMain)
     add_dependencies(test-kis kis-command)
     # support.hpp names cmdatl and the fake atlc for helpers this program does not call.
     target_compile_definitions(test-kis PRIVATE

@@ -1,14 +1,12 @@
 #pragma once
 
+#include "../brokers/catalog.hpp"
 #include "../core/reply.hpp"
 
-#include <algotradelib/src/brokers/kis/client.hpp>
-#include <algotradelib/src/brokers/kis/config.hpp>
-#include <algotradelib/src/brokers/kiwoom/config.hpp>
-#include <algotradelib/src/brokers/tossinvest/config.hpp>
-
+#include <cstddef>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace cmdatl {
@@ -50,40 +48,35 @@ struct Broker {
 };
 
 /**
- * @brief The brokers, in the order login lists them.
+ * @brief The brokers, in the order login lists them: the built-ins of the binary's catalog, each named by the user's
+ *   word (`toss`, never `tossinvest`).
  * @return The brokers.
  */
 inline const std::vector<Broker>& brokers() {
-  static const std::vector<Broker> list{
-    {"kis", "Korea Investment & Securities (KIS)", true,
-      {{"app_key", "App key: ", false, std::nullopt, false}, {"app_secret", "App secret: ", true, std::nullopt, false},
-        {"account_number", "Account number (8 digits): ", false, std::nullopt, true},
-        {"account_product_code", "Account product code (2 digits, Enter for 01): ", false, std::string("01"), false}},
-      {"KIS_APP_KEY", "KIS_APP_SECRET", "KIS_DEMO", "KIS_CANO", "KIS_ACNT_PRDT_CD"},
-      [](const std::string& text, const std::string& origin) {
-        algotradelib::kis::KisConfig config;
-        config.from_json_text(text, origin);
-        algotradelib::kis::KisAccount account;
-        account.from_json_text(text, origin);
-        return config.token_identity();
-      }},
-    {"kiwoom", "Kiwoom Securities", true,
-      {{"appkey", "App key: ", false, std::nullopt, false}, {"secretkey", "Secret key: ", true, std::nullopt, false}},
-      {"KIWOOM_APP_KEY", "KIWOOM_SECRET_KEY", "KIWOOM_DEMO"},
-      [](const std::string& text, const std::string& origin) {
-        algotradelib::kiwoom::KiwoomConfig config;
-        config.from_json_text(text, origin);
-        return config.token_identity();
-      }},
-    {"toss", "Toss Securities", false,
-      {{"client_id", "Client id: ", false, std::nullopt, false},
-        {"client_secret", "Client secret: ", true, std::nullopt, false}},
-      {"TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET"}, [](const std::string& text, const std::string& origin) {
-        algotradelib::tossinvest::TossConfig config;
-        config.from_json_text(text, origin);
-        return config.token_identity();
-      }},
-  };
+  static const std::vector<Broker> list = [] {
+    std::vector<Broker> out;
+    for (const auto& entry : ::cmdatl::brokers::catalog()) {
+      const auto& facts = *entry.facts_;
+      Broker broker;
+      broker.name_ = std::string(facts.word_);
+      broker.display_ = std::string(facts.display_);
+      broker.has_demo_ = entry.has_demo_;
+      for (std::size_t i = 0; i < facts.field_count_; ++i) {
+        const auto& field = facts.fields_[i];
+        broker.fields_.push_back(
+          {std::string(field.json_), std::string(field.prompt_), field.secret_,
+            field.default_.empty() ? std::nullopt : std::optional<std::string>(std::string(field.default_)),
+            field.shown_masked_}
+        );
+      }
+      for (std::size_t i = 0; i < facts.env_var_count_; ++i) {
+        broker.env_vars_.emplace_back(facts.env_vars_[i]);
+      }
+      broker.read_ = entry.read_login_;
+      out.push_back(std::move(broker));
+    }
+    return out;
+  }();
   return list;
 }
 

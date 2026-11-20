@@ -5,7 +5,9 @@
 
 #include "./paper-support.hpp"
 
-#include <cmdatl/cli/kis.hpp>
+#include <cmdatl/cli/builtin.hpp>
+
+#include <algotradelib/kis>
 
 #include <algotradelib/mock>
 
@@ -329,7 +331,10 @@ struct StandIn {
     atl::kis::KisConfig trading;
     atl::kis::KisAccount account;
     std::optional<atl::kis::KisConfig> market;
-    if (const auto mismatch = cmdatl::read_kis_logins(config, documents, trading, account, market, effective)) {
+    if (
+      const auto mismatch =
+        cmdatl::read_builtin_logins<atl::kis::KisBlockingClient>(config, documents, trading, account, market, effective)
+    ) {
       return cmdatl::error_reply(cmdatl::Exit::FAILED, "auth.account_mismatch", *mismatch);
     }
     return std::nullopt;

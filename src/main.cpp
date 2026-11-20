@@ -1,4 +1,3 @@
-#include <cmdatl/cli/kis.hpp>
 #include <cmdatl/cmdatl>
 
 #include <cstdio>
@@ -12,6 +11,23 @@
 #else
 #include <unistd.h>
 #endif
+
+namespace cmdatl {
+
+/**
+ * @brief An account command on a built-in broker's account (`src/accounts.cpp`, the one unit of the binary that compiles
+ *   a broker's client).
+ * @param command The command.
+ * @param invocation Its arguments.
+ * @param snapshot The operator's file, naming a built-in broker's account.
+ * @param output The output.
+ * @return The reply.
+ */
+Reply builtin_account_command(
+  const Command& command, const Invocation& invocation, const ConfigSnapshot& snapshot, Output& output
+);
+
+} // namespace cmdatl
 
 /**
  * @brief Whether stdout is a terminal.
@@ -38,8 +54,8 @@ int main(int argc, char** argv) {
   // exception reaching here was thrown before any command started, so nothing was sent.
   try {
     const std::vector<std::string> args(argv + 1, argv + argc);
-    // The reads on a KIS account are compiled here alone (`cli/kis.hpp`).
-    return cmdatl::run(args, std::cout, std::cerr, stdout_is_terminal(), cmdatl::kis_command);
+    // The commands on a built-in broker's account are compiled in `src/accounts.cpp` alone.
+    return cmdatl::run(args, std::cout, std::cerr, stdout_is_terminal(), cmdatl::builtin_account_command);
   } catch (const std::exception& e) {
     std::cerr << "cmdatl: internal error: " << e.what() << "\n";
   } catch (...) {
