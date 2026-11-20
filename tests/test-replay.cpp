@@ -2,6 +2,7 @@
 // strategy's interface, the loaders' rules on files written here, the replay through `cmdatl::replay::main` with the
 // hand-written program of run-strategy.hpp, and a generated sweep of hostile settings and files.
 // replay.hpp is included first and alone, so the module is shown to need nothing of cmdatl's or a generated strategy's.
+#include <cmdatl/replay/fetch.hpp>
 #include <cmdatl/replay/replay.hpp>
 
 #include "./run-strategy.hpp"
@@ -1220,4 +1221,35 @@ TEST_CASE("a daily bar's date is its midnight's or the market's date of a sessio
   CHECK(replay::market_noon(day - std::chrono::hours(9), krx) == krx_noon);
   CHECK(replay::market_noon(day, krx) == krx_noon);
   CHECK(replay::market_noon(day + std::chrono::hours(6) + std::chrono::minutes(30), krx) == krx_noon);
+}
+
+TEST_CASE("a fetch keeps only the bars finished when it began") {
+  namespace rp = cmdatl::replay;
+  using atl::BarInterval;
+  using atl::BarStamp;
+  const auto utc = [](int yyyymmdd, int hour, int minute = 0) {
+    return rp::day_of(yyyymmdd) + std::chrono::hours(hour) + std::chrono::minutes(minute);
+  };
+  // Thursday 2024-03-14, 22:00 KST.
+  const auto fetched = utc(20240314, 13);
+  const auto kept =
+    [&fetched](BarInterval interval, BarStamp stamp, std::vector<std::chrono::system_clock::time_point> at) {
+      atl::BarSeries series;
+      series.interval_ = interval;
+      series.stamp_ = stamp;
+      for (const auto& t : at) {
+        atl::Bar bar;
+        bar.timestamp_ = t;
+        series.bars_.push_back(bar);
+      }
+      return rp::finished_bars(series, fetched, "kr").bars_.size();
+    };
+  // Minutes: open-stamped, ended by then; close-stamped, stamped by then.
+  CHECK(kept(BarInterval::ONE_MINUTE, BarStamp::OPEN, {utc(20240314, 12, 58), utc(20240314, 12, 59), fetched}) == 2);
+  CHECK(kept(BarInterval::ONE_MINUTE, BarStamp::CLOSE, {fetched, utc(20240314, 13, 1)}) == 1);
+  // Days stamped 00:00 KST: the 13th's kept, the 14th's dropped, though its session closed at 15:30.
+  CHECK(kept(BarInterval::ONE_DAY, BarStamp::OPEN, {utc(20240312, 15), utc(20240313, 15)}) == 1);
+  // Weeks from Monday 4 March (ended) and 11 March (not); months December 2023 and February 2024 (leap; ended), March.
+  CHECK(kept(BarInterval::ONE_WEEK, BarStamp::OPEN, {utc(20240303, 15), utc(20240310, 15)}) == 1);
+  CHECK(kept(BarInterval::ONE_MONTH, BarStamp::OPEN, {utc(20231130, 15), utc(20240131, 15), utc(20240229, 15)}) == 2);
 }

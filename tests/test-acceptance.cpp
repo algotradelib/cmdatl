@@ -837,6 +837,13 @@ TEST_CASE(
   reply = reply_of(ran.out_);
   CHECK(reply.at("fetched").at("series").as_array().at(0).at("new_rows").as_int64() == 0);
   CHECK(reply.at("report") == first);
+  // An evaluation fetches the same way, through the login staged on descriptor 3, and returns what it fetched.
+  ran = run({"--json", "strategy", "evaluate", at("vendor.toml"), "grid.lookback=10,20"});
+  INFO(ran.out_ << "\n" << ran.err_);
+  REQUIRE(ran.exit_ == 0);
+  const auto evaluated = reply_of(lines_of(ran.out_).back());
+  CHECK(evaluated.at("replays").as_int64() == 2);
+  CHECK(evaluated.at("fetched").at("series").as_array().at(0).at("rows").as_int64() == 150);
 
   // An option from the command line, typed by broker.toml, reaches the adapter (a history of 100 bars), and the driver
   // is the same build: options are the run's data, not its shape.

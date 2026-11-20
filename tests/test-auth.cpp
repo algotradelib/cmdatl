@@ -1,5 +1,6 @@
 #include <cmdatl/auth/login.hpp>
 #include <cmdatl/brokers/derive.hpp>
+#include <cmdatl/strategy/spec.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -234,14 +235,23 @@ std::string kis_document(const std::string& extra = "") {
 
 } // namespace
 
-TEST_CASE("the built-in catalog reads the library's traits, and auth lists the brokers by the user's word") {
+TEST_CASE("the built-in catalog reads the library's traits and auth lists the brokers by the user's word") {
   const auto& catalog = cmdatl::brokers::catalog();
   const auto& listed = cmdatl::auth::brokers();
   const std::vector<std::string> words{"kis", "kiwoom", "toss"};
   const std::vector<bool> demo{true, true, false};
   REQUIRE(catalog.size() == 3);
   REQUIRE(listed.size() == 3);
+  // The intervals each serves, of cmdatl's words (never 1y, which no replay reads).
+  const std::vector<std::vector<std::string>> intervals{
+    {"1m", "1d", "1w", "1mo"}, {"1m", "1d", "1w", "1mo"}, {"1m", "1d"}
+  };
+  CHECK(
+    std::vector<std::string>(cmdatl::brokers::INTERVAL_WORDS.begin(), cmdatl::brokers::INTERVAL_WORDS.end()) ==
+    cmdatl::spec::INTERVALS
+  );
   for (std::size_t i = 0; i < 3; ++i) {
+    CHECK(catalog[i].intervals_ == intervals[i]);
     CHECK(catalog[i].facts_ == &cmdatl::builtin::FACTS[i]);
     CHECK(catalog[i].has_demo_ == demo[i]);
     CHECK(listed[i].name_ == words[i]);
@@ -452,6 +462,25 @@ TEST_CASE("auth logout removes one login, and asks which only on a terminal") {
   CHECK(code(auth::logout({}, in.fd(), prompts, nullptr)) == "auth.no_store");
   CHECK(code(auth::logout({std::string("kis"), std::string("x")}, in.fd(), prompts, &store)) == "usage.bad_value");
   CHECK(prompts.str().empty());
+}
+
+TEST_CASE("a login under a store partition's name reserved later is listed and removed and none is made") {
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "absent").string());
+  MemoryStore store;
+  store.items_["kis-krx/real"] = "{}";
+  const auto listed = auth::status({std::string("kis-krx"), std::nullopt}, &store).body_.at("logins").as_array();
+  REQUIRE(listed.size() == 1);
+  CHECK(listed[0].at("broker").as_string() == "kis-krx");
+  CHECK(code(auth::status({std::string("mock"), std::nullopt}, &store)) == "usage.bad_value");
+  std::ostringstream prompts;
+  const Input in;
+  CHECK(auth::logout({std::string("kis-krx"), std::string("real")}, in.fd(), prompts, &store).exit_ == Exit::OK);
+  CHECK(store.items_.count("kis-krx/real") == 0);
+  auth::LoginRequest request;
+  request.broker_ = "kis-krx";
+  request.adapter_ = dir.path().string();
+  CHECK(code(auth::login(request, in.fd(), prompts, &store)) == "usage.bad_value");
 }
 
 TEST_CASE("auth logout and a replacing login remove the old login's saved token as far as they can") {

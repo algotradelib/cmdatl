@@ -666,6 +666,38 @@ TEST_CASE("a broker folder's history names the folder in the spec file, and runs
   CHECK(store.resolved_.duckdb_ == "/specs/d");
 }
 
+TEST_CASE("a built-in broker's history takes its word and an interval it serves by count on KRX with no folder") {
+  sp::Program session;
+  session.mode_ = "universe";
+  session.session_ = true;
+  const auto p = single();
+  const auto built_in = [](const std::string& source, const std::string& more = "") {
+    return "strategy = \"m.atls\"\n[bars]\nsource = \"" + source + "\"\ncount = 5\nstore_root = \"/s\"\n" + more;
+  };
+  const std::vector<std::tuple<std::string, const sp::Program*, std::string>> cases{
+    {built_in("toss", "interval = \"1w\"\n"), &p, "toss serves 1m, 1d"},
+    {built_in("kis", "interval = \"1m\"\n"), &p, "which a fetch by count cannot page"},
+    {built_in("kiwoom", "adapter = \"/a\"\n"), &p, "`bars.adapter` applies to bars.source = a broker folder's name"},
+    {"strategy = \"m.atls\"\n[bars]\nsource = \"kis\"\nstore_root = \"/s\"\n", &p, "give `bars.count`"},
+    {built_in("kis", "[replay]\nmarket = \"us\"\n"), &p, "quotes KRX shares in won"},
+    {built_in("toss", "interval = \"1m\"\nopen_point = true\n"), &session, "intraday bars are replayed as they are"},
+  };
+  for (const auto& [src, program, says] : cases) {
+    INFO(src);
+    const auto r = run(src, *program);
+    REQUIRE(r.errors_.size() == 1);
+    CHECK(has(r.errors_.front(), says));
+  }
+  // A session program on fetched minutes needs no open point, and the market is KRX's without being named.
+  const auto minutes = run(built_in("toss", "interval = \"1m\"\n"), session);
+  REQUIRE(minutes.errors_.empty());
+  CHECK(minutes.resolved_.fetch_builtin_ == cmdatl::builtin::from_word("toss"));
+  CHECK(minutes.arg("replay.market") == std::optional<std::string>("kr"));
+  // An evaluation fetches as a backtest does.
+  sp::Resolved evaluated;
+  CHECK(sp::resolve({spec(built_in("kiwoom")).entries_}, p, evaluated, false, sp::Purpose::EVALUATE).empty());
+}
+
 TEST_CASE("a broker folder's options are flat, typed by its broker.toml on the command line, and reach it as JSON") {
   const auto p = single();
   const auto declared = [](const std::string& text) {

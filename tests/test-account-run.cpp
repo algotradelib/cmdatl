@@ -14,15 +14,18 @@
 #include <algotradelib/krx>
 #include <cmdatl/account/operator.hpp>
 #include <cmdatl/account/session.hpp>
+#include <cmdatl/brokers/connect.hpp>
 #include <cmdatl/driver/account.hpp>
 #include <cmdatl/driver/builtin_account.hpp>
 #include <cmdatl/driver/clock.hpp>
 #include <cmdatl/driver/user_account.hpp>
+#include <cmdatl/replay/fetch.hpp>
 #include <cmdatl/strategy/runs.hpp>
 #include <cmdatl/system/credential_pipe.hpp>
 #include <cmdatl/system/process.hpp>
 
 #include <algotradelib/kis>
+#include <algotradelib/kiwoom>
 #include <algotradelib/mock>
 
 #include <boost/json.hpp>
@@ -1902,3 +1905,52 @@ TEST_CASE("a signal during a wait before the start answers interrupted with noth
   }
 }
 #endif
+
+namespace {
+
+/** @brief C++17 detection of a member function: a fetch's session may have `bars` and none of the others. */
+template <typename T, typename = void>
+struct HasBars : std::false_type {};
+template <typename T>
+struct HasBars<T, std::void_t<decltype(&T::bars)>> : std::true_type {};
+template <typename T, typename = void>
+struct HasPlace : std::false_type {};
+template <typename T>
+struct HasPlace<T, std::void_t<decltype(&T::place)>> : std::true_type {};
+template <typename T, typename = void>
+struct HasCancel : std::false_type {};
+template <typename T>
+struct HasCancel<T, std::void_t<decltype(&T::cancel)>> : std::true_type {};
+template <typename T, typename = void>
+struct HasHoldings : std::false_type {};
+template <typename T>
+struct HasHoldings<T, std::void_t<decltype(&T::holdings)>> : std::true_type {};
+template <typename T, typename = void>
+struct HasWorkingOrders : std::false_type {};
+template <typename T>
+struct HasWorkingOrders<T, std::void_t<decltype(&T::working_orders)>> : std::true_type {};
+
+} // namespace
+
+TEST_CASE("a built-in bar source binds an account that cannot trade where its broker has one and reaches only bars") {
+  using History = cmdatl::replay::BarsOnly<atl::BlockingSession<atl::kis::KisBlockingClient>>;
+  static_assert(
+    HasBars<History>::value && !HasPlace<History>::value && !HasCancel<History>::value &&
+      !HasHoldings<History>::value && !HasWorkingOrders<History>::value,
+    "a fetch reaches only bars"
+  );
+  ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+  // Made-up keys: building a client sends nothing.
+  const std::string kis_login = R"({"app_key":"fake-key","app_secret":"fake-secret","account_number":"12345678")";
+  const auto kis = cmdatl::brokers::connect_bars<atl::kis::KisBlockingClient>(kis_login + R"(,"demo":false})", "{}");
+  CHECK(kis.client_ != nullptr);
+  CHECK(kis.account_.account_number_.empty());
+  CHECK(kis.account_id_.empty());
+  const auto kiwoom = cmdatl::brokers::connect_bars<atl::kiwoom::KiwoomBlockingClient>(
+    R"({"appkey":"k","secretkey":"s","demo":false})", "{}"
+  );
+  CHECK(kiwoom.client_->config().market_tape_ == atl::kiwoom::MarketTape::KRX);
+  CHECK_THROWS(cmdatl::brokers::connect_bars<atl::kis::KisBlockingClient>(kis_login + R"(,"demo":true})", "{}"));
+  CHECK_THROWS(cmdatl::brokers::connect_bars<atl::kis::KisBlockingClient>(kis_login + "}", R"({"x":1})"));
+}

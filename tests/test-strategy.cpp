@@ -299,6 +299,18 @@ TEST_CASE("the backtest takes the program's measures from atlc and refuses a spe
   CHECK(fake.args("driver").empty());
 }
 
+TEST_CASE("a backtest on toss asks for the stored real login toss/real before anything is built") {
+  const FakeAtlc fake("check out " + INFO_OK + "\ndriver args\ndriver out " + REPORT + "\n");
+  spit("toss.toml", "strategy = 'dip.atls'\n[bars]\nsource = 'toss'\ncount = 5\nstore_root = 'store'\n");
+  const ScopedVariable login("CMDATL_TEST_FETCH_LOGIN", (fake.dir() / "no-login.json").string());
+  const auto ran = run({"strategy", "backtest", "toss.toml"});
+  CHECK(code_of(ran.out_) == "auth.not_found");
+  const auto error = reply_of(ran.out_).at("error").as_object();
+  CHECK(error.at("message").as_string() == "no login toss/real in the credential store: the backtest fetches with it");
+  CHECK(error.at("next").as_string() == "the operator runs cmdatl auth login --broker toss");
+  CHECK(fake.args("driver").empty());
+}
+
 TEST_CASE("the backtest refuses --fills and --equity naming one file before anything runs") {
   const Watchdog watchdog("one output file", 60);
   const FakeAtlc fake("check out " + INFO_OK + "\ndriver out " + REPORT + "\n");
