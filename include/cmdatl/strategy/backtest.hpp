@@ -207,22 +207,144 @@ inline std::optional<Reply> checked_settings(
   return check_given(given, atlc.path_, output, purpose, checked);
 }
 
+/** @brief What a fetch needs: a broker folder's files or a built-in's traits name to build, the login, its arguments. */
+struct Fetch {
+  std::optional<auth::AdapterSnapshot> adapter_;
+  std::string broker_;
+  std::string login_;
+  std::vector<std::string> args_;
+};
+
+/**
+ * @brief For a backtest or an evaluation that fetches its bars: the broker folder found and its files read once, its
+ *   options checked, its login read and checked against that folder; or a built-in broker's real login.
+ * @param given The settings.
+ * @param checked The checked settings.
+ * @param output Where progress goes.
+ * @param fetch Set to what the fetch needs; left empty for a run that does not fetch.
+ * @return The refusal, or nothing.
+ */
+inline std::optional<Reply> prepare_fetch(
+  const GivenSettings& given, const CheckedSettings& checked, Output& output, Fetch& fetch
+) {
+  const auto& fetching = checked.resolved_.fetch_source_;
+  const auto* built_in = checked.resolved_.fetch_builtin_;
+  if (fetching.empty()) {
+    return std::nullopt;
+  }
+  std::optional<auth::BrokerLookup> found;
+  std::string options = "{}";
+  std::string name;
+  std::string login_command = "cmdatl auth login --broker " + fetching;
+  if (built_in != nullptr) {
+    const auto* broker = auth::find_broker(fetching);
+    name = auth::login_name(*broker, false);
+    login_command += broker->has_demo_ ? " --env real" : "";
+  } else {
+    found = auth::lookup_broker(fetching, checked.resolved_.fetch_adapter_);
+    if (found->found_ != auth::BrokerFound::FOLDER) {
+      return auth::broker_refusal(*found);
+    }
+    const auto errors = spec::fetch_options(checked.resolved_, found->folder_->options_, options);
+    if (!errors.empty()) {
+      return settings_refusal(errors, given.spec_);
+    }
+    name = auth::login_name(found->folder_->entry_, false);
+    login_command += " --adapter " + found->folder_->folder_.string();
+  }
+  auth::StoreAnswer answer;
+  std::string kind = "store";
+  bool hooked = false;
+#if defined(CMDATL_RUN_TEST_HOOKS)
+  // Test builds only: the login from a file, and the system's store never opened.
+  if (const auto file = variable("CMDATL_TEST_FETCH_LOGIN")) {
+    hooked = true;
+    answer.status_ = build::read_file(*file, answer.value_) ? auth::StoreStatus::OK : auth::StoreStatus::NOT_FOUND;
+  }
+#endif
+  if (!hooked) {
+    const auto store = auth::open_store(auth::interaction_allowed(0));
+    if (store == nullptr) {
+      return auth::no_store_reply();
+    }
+    kind = store->kind();
+    answer = store->get(name);
+  }
+  if (answer.status_ == auth::StoreStatus::NOT_FOUND) {
+    return error_reply(
+      Exit::FAILED, "auth.not_found", "no login " + name + " in the credential store: the backtest fetches with it",
+      "the operator runs " + login_command
+    );
+  }
+  if (answer.status_ != auth::StoreStatus::OK) {
+    return auth::store_failure(kind, answer.status_, answer.detail_);
+  }
+  fetch.args_ = {"fetch.source=" + fetching, "fetch.options=" + options};
+  if (built_in != nullptr) {
+    fetch.login_ = std::move(answer.value_);
+    fetch.broker_ = std::string(built_in->name_);
+    fetch.args_.push_back("fetch.store_source=" + std::string(built_in->store_source_));
+    output.progress("cmdatl: fetching through " + std::string(built_in->display_) + " with the login " + name);
+    return std::nullopt;
+  }
+  const auto& folder = *found->folder_;
+  if (auto refused = auth::folder_login(answer.value_, name, folder, false, fetch.login_)) {
+    return refused;
+  }
+  output.progress(
+    "cmdatl: fetching through the broker folder " + folder.snapshot_.folder_ + " (" +
+    build::adapter_digest(folder.snapshot_) + ")"
+  );
+  fetch.adapter_ = std::move(found->folder_->snapshot_);
+  return std::nullopt;
+}
+
+/**
+ * @brief The reply to a fetch that failed (the driver's exit 3), with the outcome it wrote; nothing for any other end.
+ * @param ran The driver's end.
+ * @param fetched The outcome, if read.
+ * @param source The fetch's `bars.source`.
+ * @return The reply, or nothing.
+ */
+inline std::optional<Reply> fetch_failure(
+  const ChildResult& ran, std::optional<json::object>& fetched, const std::string& source
+) {
+  if (ran.kind_ != ChildResult::Kind::FINISHED || ran.signaled_ || ran.code_ != 3) {
+    return std::nullopt;
+  }
+  std::string message = "the fetch through " + source + " failed";
+  const json::object* error = nullptr;
+  if (fetched && fetched->contains("error") && fetched->at("error").is_object()) {
+    error = &fetched->at("error").as_object();
+  }
+  if (error != nullptr && error->contains("message") && error->at("message").is_string()) {
+    message += ": " + std::string(error->at("message").as_string());
+  }
+  auto reply = error_reply(
+    Exit::FAILED, "fetch.failed", message,
+    "check the login (cmdatl auth status) and the broker or broker folder; bars already fetched stay in the store"
+  );
+  if (fetched) {
+    reply.body_["fetched"] = std::move(*fetched);
+  }
+  return reply;
+}
+
 /**
  * @brief The backtest driver, built once per program shape and copied into a scratch directory, and its arguments; a
  *   broker folder's history is read from the store it is fetched into.
  * @param given The settings.
  * @param checked The checked settings.
  * @param atlc The atlc found.
- * @param adapter A broker folder's files, for a fetch.
+ * @param fetch What a fetch builds with: a broker folder's files, or a built-in broker.
  * @param output Where progress goes.
  * @param scratch Set to the scratch directory that holds the copy.
  * @param argv Set to the driver and its arguments.
  * @return The refusal, or nothing.
  */
 inline std::optional<Reply> driver_argv(
-  const GivenSettings& given, const CheckedSettings& checked, const Atlc& atlc,
-  const std::optional<auth::AdapterSnapshot>& adapter, Output& output, std::optional<ScratchCopy>& scratch,
-  std::vector<std::string>& argv
+  const GivenSettings& given, const CheckedSettings& checked, const Atlc& atlc, const Fetch& fetch, Output& output,
+  std::optional<ScratchCopy>& scratch, std::vector<std::string>& argv
 ) {
 #if defined(CMDATL_RUN_TEST_HOOKS)
   // Test builds only: a stand-in driver instead of the build, so the reply's mapping is tested without CMake.
@@ -258,7 +380,8 @@ inline std::optional<Reply> driver_argv(
     request.header_ = checked.resolved_.header_;
     request.program_measures_ = checked.info_.program_.measures_;
     request.measures_ = checked.resolved_.measures_;
-    request.adapter_ = adapter;
+    request.adapter_ = fetch.adapter_;
+    request.broker_ = fetch.broker_;
     const auto progress = [&output](const std::string& line) {
       output.progress(line);
     };
@@ -340,69 +463,19 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   if (auto refused = checked_settings(given, output, spec::Purpose::BACKTEST, atlc, checked)) {
     return std::move(*refused);
   }
-  // A broker folder's history: the folder found and its files read once, its options checked against its
-  // declarations, its login read and checked against that folder, and the files compiled as read.
   const auto& fetching = checked.resolved_.fetch_source_;
-  std::optional<auth::AdapterSnapshot> adapter;
-  std::string login;
-  std::string options = "{}";
-  if (!fetching.empty()) {
-    auto found = auth::lookup_broker(fetching, checked.resolved_.fetch_adapter_);
-    if (found.found_ != auth::BrokerFound::FOLDER) {
-      return auth::broker_refusal(found);
-    }
-    const auto& folder = *found.folder_;
-    const auto errors = spec::fetch_options(checked.resolved_, folder.options_, options);
-    if (!errors.empty()) {
-      return settings_refusal(errors, given.spec_);
-    }
-    const auto name = auth::login_name(folder.entry_, false);
-    auth::StoreAnswer answer;
-    std::string kind = "store";
-    bool hooked = false;
-#if defined(CMDATL_RUN_TEST_HOOKS)
-    // Test builds only: the login from a file, and the system's store never opened.
-    if (const auto file = variable("CMDATL_TEST_FETCH_LOGIN")) {
-      hooked = true;
-      answer.status_ = build::read_file(*file, answer.value_) ? auth::StoreStatus::OK : auth::StoreStatus::NOT_FOUND;
-    }
-#endif
-    if (!hooked) {
-      const auto store = auth::open_store(auth::interaction_allowed(0));
-      if (store == nullptr) {
-        return auth::no_store_reply();
-      }
-      kind = store->kind();
-      answer = store->get(name);
-    }
-    if (answer.status_ == auth::StoreStatus::NOT_FOUND) {
-      return error_reply(
-        Exit::FAILED, "auth.not_found", "no login " + name + " in the credential store: the backtest fetches with it",
-        "the operator runs cmdatl auth login --broker " + fetching + " --adapter " + folder.folder_.string()
-      );
-    }
-    if (answer.status_ != auth::StoreStatus::OK) {
-      return auth::store_failure(kind, answer.status_, answer.detail_);
-    }
-    if (auto refused = auth::folder_login(answer.value_, name, folder, false, login)) {
-      return std::move(*refused);
-    }
-    output.progress(
-      "cmdatl: fetching through the broker folder " + folder.snapshot_.folder_ + " (" +
-      build::adapter_digest(folder.snapshot_) + ")"
-    );
-    adapter = std::move(found.folder_->snapshot_);
+  Fetch fetch;
+  if (auto refused = prepare_fetch(given, checked, output, fetch)) {
+    return std::move(*refused);
   }
   std::vector<std::string> argv;
   std::optional<ScratchCopy> scratch;
-  if (auto failed = driver_argv(given, checked, atlc, adapter, output, scratch, argv)) {
+  if (auto failed = driver_argv(given, checked, atlc, fetch, output, scratch, argv)) {
     return std::move(*failed);
   }
-  std::filesystem::path outcome;
+  const auto outcome = (scratch ? scratch->path() : std::filesystem::temp_directory_path()) / "fetch.json";
   if (!fetching.empty()) {
-    outcome = (scratch ? scratch->path() : std::filesystem::temp_directory_path()) / "fetch.json";
-    argv.push_back("fetch.source=" + fetching);
-    argv.push_back("fetch.options=" + options);
+    argv.insert(argv.end(), fetch.args_.begin(), fetch.args_.end());
     argv.push_back("fetch.outcome=" + outcome.string());
   }
   std::string fills;
@@ -419,7 +492,7 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   // in the driver alone, and closed here once the driver has ended, on every path.
   StagedLogin staged;
   if (!fetching.empty()) {
-    if (const int error = staged.stage(login)) {
+    if (const int error = staged.stage(fetch.login_)) {
       return error_reply(
         Exit::FAILED, "replay.failed",
         "the login could not be handed to the driver: " + std::string(std::strerror(error))
@@ -436,23 +509,8 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   std::optional<json::object> fetched;
   if (!fetching.empty()) {
     fetched = read_fetch_outcome(outcome);
-    if (ran.kind_ == ChildResult::Kind::FINISHED && !ran.signaled_ && ran.code_ == 3) {
-      std::string message = "the fetch through " + fetching + " failed";
-      const json::object* error = nullptr;
-      if (fetched && fetched->contains("error") && fetched->at("error").is_object()) {
-        error = &fetched->at("error").as_object();
-      }
-      if (error != nullptr && error->contains("message") && error->at("message").is_string()) {
-        message += ": " + std::string(error->at("message").as_string());
-      }
-      auto reply = error_reply(
-        Exit::FAILED, "fetch.failed", message,
-        "check the login (cmdatl auth status) and the broker folder; bars already fetched stay in the store"
-      );
-      if (fetched) {
-        reply.body_["fetched"] = std::move(*fetched);
-      }
-      return reply;
+    if (auto failed = fetch_failure(ran, fetched, fetching)) {
+      return std::move(*failed);
     }
   }
   json::object report;
@@ -473,7 +531,8 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
   }
   if (fetched) {
     // The history is the vendor's as of the fetch, revisions included; the store as of it can hold more than it.
-    (*fetched)["caveat"] = std::string("the bars are the broker folder's history as of fetched_at, revised values ") +
+    (*fetched)["caveat"] = "the bars are the " + std::string(fetch.adapter_ ? "broker folder" : "broker") +
+      "'s history as of fetched_at, revised values " +
       "included; bars.source = \"store\" with bars.as_of = fetched_at reads the store as it stood after this fetch, " +
       "which can hold bars this fetch did not return (an older history, or bars an earlier fetch had)";
     reply.body_["fetched"] = std::move(*fetched);

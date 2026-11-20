@@ -1,14 +1,16 @@
 #pragma once
 
 // `strategy evaluate`: the settings read and checked as a backtest's, with `[evaluate]` and `[grid]`, the backtest's
-// driver built (a backtest's build serves it), run with `evaluate.method=grid`, and each of its JSON lines emitted as
-// a `replay` event before the final reply, which carries the driver's summary.
+// driver built (a backtest's build serves it, a fetch included), run with `evaluate.method=grid`, and each of its JSON
+// lines emitted as a `replay` event before the final reply, which carries the driver's summary (and the fetch's).
 
 #include "../system/terminal.hpp"
 #include "./backtest.hpp"
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <vector>
@@ -191,10 +193,27 @@ inline Reply evaluate_reply(const Invocation& invocation, Output& output) {
       "pipe the rows in: GENERATOR | cmdatl strategy evaluate ..."
     );
   }
+  const auto& fetching = checked.resolved_.fetch_source_;
+  Fetch fetch;
+  if (auto refused = prepare_fetch(given, checked, output, fetch)) {
+    return std::move(*refused);
+  }
   std::vector<std::string> argv;
   std::optional<ScratchCopy> scratch;
-  if (auto failed = driver_argv(given, checked, atlc, std::nullopt, output, scratch, argv)) {
+  if (auto failed = driver_argv(given, checked, atlc, fetch, output, scratch, argv)) {
     return std::move(*failed);
+  }
+  const auto outcome = (scratch ? scratch->path() : std::filesystem::temp_directory_path()) / "fetch.json";
+  StagedLogin staged;
+  if (!fetching.empty()) {
+    argv.insert(argv.end(), fetch.args_.begin(), fetch.args_.end());
+    argv.push_back("fetch.outcome=" + outcome.string());
+    if (const int error = staged.stage(fetch.login_)) {
+      return error_reply(
+        Exit::FAILED, "replay.failed",
+        "the login could not be handed to the driver: " + std::string(std::strerror(error))
+      );
+    }
   }
   EvaluationLines lines(output);
   const auto ran = run_child(
@@ -202,13 +221,24 @@ inline Reply evaluate_reply(const Invocation& invocation, Output& output) {
     [&output](const std::string& line) {
       output.progress(line);
     },
-    nullptr, -1,
+    nullptr, staged.fd(),
     [&lines](const std::string& line) {
       lines.take(line);
     },
     from_stdin ? ChildInput::INHERITED : ChildInput::NUL
   );
-  return lines.reply(ran, given, atlc);
+  if (fetching.empty()) {
+    return lines.reply(ran, given, atlc);
+  }
+  auto fetched = read_fetch_outcome(outcome);
+  if (auto failed = fetch_failure(ran, fetched, fetching)) {
+    return std::move(*failed);
+  }
+  auto reply = lines.reply(ran, given, atlc);
+  if (fetched) {
+    reply.body_["fetched"] = std::move(*fetched);
+  }
+  return reply;
 #endif
 }
 

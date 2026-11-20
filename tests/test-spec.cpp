@@ -1715,12 +1715,11 @@ TEST_CASE("an evaluation's keys: only for strategy evaluate, the grid typed by t
   CHECK(has(
     grid_error("[grid]\nlookback = [1]\n[grid.entry]\nfrom = 1\nto = 2\n"), "gives `grid.entry.from`, `.to` and `.step`"
   ));
-  // An evaluation reads stored bars: a broker folder's fetch is refused.
+  // An evaluation fetches as a backtest does.
   const auto fetch = evaluate(
     "[bars]\nsource = \"vendor\"\nadapter = \"/a\"\ncount = 10\nstore_root = \"/s\"\n[replay]\nmarket = \"kr\"\n"
   );
-  REQUIRE(fetch.errors_.size() == 1);
-  CHECK(has(fetch.errors_.front(), "an evaluation does not fetch"));
+  CHECK(fetch.errors_.empty());
   // The command line: comma-separated decimals or a one-line TOML array, a range's parts as numbers.
   const auto line = evaluate(
     WIDE_SPEC, sp::Purpose::EVALUATE,

@@ -769,15 +769,15 @@ inline std::optional<Reply> build_driver(
     inputs[relative] = std::move(text);
   }
   // A run's driver takes every carried file but the backtest's own; a backtest's driver takes only those, at the root,
-  // the replay module and the credential reader.
+  // and the modules a fetch includes: replay, brokers (a built-in's connection), core and system.
   const std::string backtest_prefix = "backtest/";
   const std::string replay_prefix = "cmdatl/replay/";
   for (const auto& file : DRIVER_FILES) {
     std::string path = file.path_;
     const bool backtest_file = path.compare(0, backtest_prefix.size(), backtest_prefix) == 0;
-    // The descriptor-3 reader too, for a backtest that fetches through a broker folder's adapter.
-    const bool replay_file =
-      path.compare(0, replay_prefix.size(), replay_prefix) == 0 || path == "cmdatl/system/credential_pipe.hpp";
+    const bool replay_file = path.compare(0, replay_prefix.size(), replay_prefix) == 0 ||
+      path.rfind("cmdatl/brokers/", 0) == 0 || path.rfind("cmdatl/core/", 0) == 0 ||
+      path.rfind("cmdatl/system/", 0) == 0;
     if (backtest ? !backtest_file && !replay_file : backtest_file) {
       continue;
     }

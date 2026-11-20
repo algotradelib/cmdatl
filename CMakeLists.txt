@@ -310,6 +310,16 @@ if(CMDATL_BUILD_TESTS)
   )
   target_compile_definitions(driver-kis PRIVATE TOML_HEADER_ONLY=1 CMDATL_DRIVER_BUILTIN=1 CMDATL_DRIVER_BROKER="kis")
   target_link_libraries(driver-kis PRIVATE cmdatl_core)
+  # Each built-in broker's backtest driver, compiled as a backtest fetching its history compiles it (never run here: it
+  # would call the broker), with the broker.hpp the build writes.
+  foreach(broker IN ITEMS kis kiwoom tossinvest)
+    add_executable(backtest-builtin-${broker} driver/backtest/main.cpp)
+    target_include_directories(backtest-builtin-${broker} PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts ${CMAKE_CURRENT_SOURCE_DIR}/tests/builtin/${broker}
+    )
+    target_compile_definitions(backtest-builtin-${broker} PRIVATE CMDATL_FETCH_BUILTIN=1 CMDATL_DRIVER_BROKER="${broker}")
+    target_link_libraries(backtest-builtin-${broker} PRIVATE cmdatl_core Threads::Threads)
+  endforeach()
   # A broker folder's account driver, compiled here as a run's build compiles it, against a fixture adapter over the
   # library's mock broker and one whose client states none of what a run reads at its start (it must compile, and
   # refuse at start).

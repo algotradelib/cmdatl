@@ -9,6 +9,8 @@
 // key, never read as TOML: `instruments.stock=005930` is the string 005930.
 
 #include "../account/operator.hpp"
+#include "../brokers/derive.hpp"
+#include "../core/builtins.hpp"
 #include "../core/options.hpp"
 #include "../core/reply.hpp"
 #include "../core/table.hpp"
@@ -124,8 +126,10 @@ inline const std::vector<Key>& keys() {
   static const std::vector<std::string> store{"store"};
   // A broker folder's name as bars.source: the bars fetched through its adapter into the store.
   static const std::vector<std::string> folder{"folder"};
-  static const std::vector<std::string> csv_or_folder{"csv", "stdin", "folder"};
-  static const std::vector<std::string> store_or_folder{"store", "folder"};
+  // A built-in broker's word as bars.source: the same fetch through its client, with no folder or options.
+  static const std::vector<std::string> fetching{"folder", "builtin"};
+  static const std::vector<std::string> csv_or_folder{"csv", "stdin", "folder", "builtin"};
+  static const std::vector<std::string> store_or_folder{"store", "folder", "builtin"};
   static const std::vector<Key> table{
     {"strategy", Kind::PATH, {}, {}},
     {"header", Kind::PATH, {}, {}},
@@ -156,7 +160,7 @@ inline const std::vector<Key>& keys() {
     {"bars.columns.volume", Kind::TEXT, long_csv, {}},
     {"bars.store", Kind::COORDINATES, store, {}},
     {"bars.store_root", Kind::PATH, store_or_folder, {}},
-    {"bars.count", Kind::COUNT, folder, {}},
+    {"bars.count", Kind::COUNT, fetching, {}},
     {"bars.as_of", Kind::INSTANT, store, {}},
     {"bars.open_point", Kind::BOOL, {}, {}},
     {"replay.from", Kind::DATE, {}, {}},
@@ -1155,16 +1159,24 @@ inline std::optional<Error> check(Entry& e) {
       ) {
         return std::nullopt;
       }
-      // bars.source also names a broker folder, whose adapter fetches the bars (found when the backtest starts).
+      // bars.source also names a broker folder, whose adapter fetches the bars (found when the backtest starts), or a
+      // built-in broker by its word.
       const bool source = e.key_ == "bars.source";
-      if (source && e.value_.type_ == Value::Type::STR && user_broker_name(e.value_.text_)) {
+      if (
+        source && e.value_.type_ == Value::Type::STR &&
+        (user_broker_name(e.value_.text_) || builtin::from_word(e.value_.text_) != nullptr)
+      ) {
         return std::nullopt;
       }
       std::string list;
       for (const auto& choice : choices) {
         list += (list.empty() ? "" : ", ") + ("\"" + choice + "\"");
       }
-      return bad("one of " + list + (source ? " or a broker folder's name" : ""));
+      std::string words;
+      for (const auto& facts : builtin::FACTS) {
+        words += (words.empty() ? "" : ", ") + std::string(facts.word_);
+      }
+      return bad("one of " + list + (source ? ", a built-in broker (" + words + ") or a broker folder's name" : ""));
     }
     case Kind::NUMBER: {
       const auto* key = known(e.key_);
@@ -1361,6 +1373,8 @@ struct Resolved {
   bool store_{false};
   /** @brief The broker folder whose adapter fetches the bars (`bars.source`), or empty. */
   std::string fetch_source_;
+  /** @brief The built-in broker whose client fetches the bars (`bars.source` its word), or null. */
+  const builtin::Facts* fetch_builtin_{nullptr};
   /** @brief That folder's path (`bars.adapter`), absolute as written, or empty. */
   std::string fetch_adapter_;
   /** @brief Where `bars.adapter` is written. */
@@ -1620,7 +1634,8 @@ inline std::vector<Error> resolve(
   // The data source, and the keys that belong to it; a broker folder's keys are listed under `folder`.
   const auto source = text("bars.source").value_or(get("bars.store") != nullptr ? "store" : "wide");
   const bool folder = user_broker_name(source);
-  const std::string applies_as = folder ? "folder" : source;
+  const auto* built_in = brokers::find_entry(source);
+  const std::string applies_as = folder ? "folder" : built_in != nullptr ? "builtin" : source;
   for (const auto& e : merged) {
     const auto* k = known(e.key_);
     if (
@@ -1628,9 +1643,14 @@ inline std::vector<Error> resolve(
       std::find(k->sources_.begin(), k->sources_.end(), applies_as) == k->sources_.end()
     ) {
       auto list = quoted_list(k->sources_, " or ");
-      const auto at = list.find("\"folder\"");
-      if (at != std::string::npos) {
-        list.replace(at, 8, "a broker folder's name");
+      for (
+        const auto& [name, words] :
+        {std::make_pair("\"folder\"", "a broker folder's name"), {"\"builtin\"", "a built-in broker"}}
+      ) {
+        const auto at = list.find(name);
+        if (at != std::string::npos) {
+          list.replace(at, std::string(name).size(), words);
+        }
       }
       errors.push_back(
         Error::at(
@@ -1687,6 +1707,50 @@ inline std::vector<Error> resolve(
       if (!(n >= 1 && n <= 100000)) {
         errors.push_back(Error::at(e->origin_, "`bars.count` is 1 to 100000 bars"));
       }
+    }
+  } else if (built_in != nullptr) {
+    // A built-in broker's history: how many bars, where they are kept, an interval it serves, KRX's market.
+    const auto& facts = *built_in->facts_;
+    for (const auto* k : {"bars.count", "bars.store_root"}) {
+      if (get(k) == nullptr) {
+        errors.push_back(
+          Error::nowhere(
+            "the run fetches its bars through " + source + " (bars.source = \"" + source + "\"): give `" + k + "`"
+          )
+        );
+      }
+    }
+    if (const auto* e = get("bars.count"); e != nullptr && !(e->value_.number_ >= 1 && e->value_.number_ <= 100000)) {
+      errors.push_back(Error::at(e->origin_, "`bars.count` is 1 to 100000 bars"));
+    }
+    // What it serves by count: its intervals but those its history pages a day at a time (KIS's 1m).
+    const auto refused = split(std::string(facts.count_fetch_refused_), ' ');
+    std::vector<std::string> served;
+    for (const auto& one : built_in->intervals_) {
+      if (std::find(refused.begin(), refused.end(), one) == refused.end()) {
+        served.push_back(one);
+      }
+    }
+    // The default, 1d, is served by every built-in: only a given interval is refused.
+    if (
+      const auto* e = get("bars.interval");
+      e != nullptr && std::find(served.begin(), served.end(), e->value_.text()) == served.end()
+    ) {
+      const bool paged = std::find(refused.begin(), refused.end(), e->value_.text()) != refused.end();
+      errors.push_back(
+        Error::at(
+          e->origin_,
+          source + " serves " + join(served, ", ") +
+            (paged ? "; its " + e->value_.text() +
+                  " history comes back a day at a time, which a fetch by count cannot page" :
+                     "")
+        )
+      );
+    }
+    if (const auto* e = get("replay.market"); e != nullptr && e->value_.text() != builtin::MARKET) {
+      errors.push_back(Error::at(e->origin_, "`replay.market`: " + source + " quotes KRX shares in won: \"kr\""));
+    } else if (e == nullptr) {
+      merged.push_back(Entry{"replay.market", Value::str(std::string(builtin::MARKET)), {}});
     }
   } else if (source == "wide") {
     both("bars.file", "bars.close");
@@ -1860,7 +1924,7 @@ inline std::vector<Error> resolve(
       errors.push_back(Error::at(e->origin_, "`header` = \"" + path + "\" is not a regular file"));
     }
   }
-  // Whether every bar is daily: wide tables always, a CSV by its interval, a store by each coordinate's.
+  // Whether every bar is daily: wide tables always, a CSV or a fetch by its interval, a store by each coordinate's.
   bool daily = true;
   std::string intraday;
   // Whether a bar is shorter than a day (weekly and monthly bars are not daily, nor intraday).
@@ -1868,7 +1932,7 @@ inline std::vector<Error> resolve(
   const auto shorter = [](const std::string& interval) {
     return interval != "1d" && interval != "1w" && interval != "1mo";
   };
-  if (source == "csv") {
+  if (source == "csv" || folder || built_in != nullptr) {
     const auto interval = text("bars.interval").value_or("1d");
     sub_daily = shorter(interval);
     if (interval != "1d") {
@@ -2124,12 +2188,6 @@ inline std::vector<Error> resolve(
       }
     }
   } else {
-    if (folder) {
-      errors.push_back(at(
-        "bars.source",
-        "an evaluation does not fetch: fetch with cmdatl strategy backtest, then evaluate on bars.source = \"store\""
-      ));
-    }
     if (const auto* e = get("evaluate.jobs"); e != nullptr && !(e->value_.number_ >= 1 && e->value_.number_ <= 256)) {
       errors.push_back(Error::at(e->origin_, "`evaluate.jobs` is 1 to 256"));
     }
@@ -2264,8 +2322,9 @@ inline std::vector<Error> resolve(
     out.args_.emplace_back("evaluate.method", "grid");
   }
   out.args_.insert(out.args_.end(), grid.begin(), grid.end());
-  out.store_ = source == "store" || folder;
-  out.fetch_source_ = folder ? source : std::string();
+  out.store_ = source == "store" || folder || built_in != nullptr;
+  out.fetch_source_ = folder || built_in != nullptr ? source : std::string();
+  out.fetch_builtin_ = built_in != nullptr ? built_in->facts_ : nullptr;
   if (const auto* e = get("bars.adapter"); e != nullptr && folder) {
     out.fetch_adapter_ = e->value_.text();
     out.fetch_adapter_at_ = e->origin_;

@@ -45,7 +45,17 @@ target_compile_options(driver PRIVATE $<$<CXX_COMPILER_ID:GNU>:-ffp-contract=off
 # DUCKDB_ROOT, then the system's paths; the executable finds the library by an rpath to its directory.
 # A broker folder's history: its adapter is copied into this source directory as adapter/, and named by
 # CMDATL_DRIVER_ADAPTER (a folder's name, checked by cmdatl); the fetch writes the store, so DuckDB is linked too.
-if(CMDATL_DRIVER_ADAPTER)
+# A built-in broker's history: the client cmdatl wrote into broker.hpp, named by CMDATL_DRIVER_BROKER, which the driver
+# asserts at compile time.
+if(CMDATL_DRIVER_BROKER)
+  if(NOT CMDATL_DRIVER_BROKER MATCHES "^[a-z][a-z0-9-]*$")
+    message(FATAL_ERROR "CMDATL_DRIVER_BROKER must be a built-in broker's name, not ${CMDATL_DRIVER_BROKER}")
+  endif()
+  if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/broker.hpp")
+    message(FATAL_ERROR "CMDATL_DRIVER_BROKER needs broker.hpp beside main.cpp, written by cmdatl")
+  endif()
+  target_compile_definitions(driver PRIVATE CMDATL_FETCH_BUILTIN=1 CMDATL_DRIVER_BROKER="${CMDATL_DRIVER_BROKER}")
+elseif(CMDATL_DRIVER_ADAPTER)
   if(NOT CMDATL_DRIVER_ADAPTER MATCHES "^[a-z][a-z0-9-]*$")
     message(FATAL_ERROR "CMDATL_DRIVER_ADAPTER must be a broker folder's name, not ${CMDATL_DRIVER_ADAPTER}")
   endif()

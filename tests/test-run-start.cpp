@@ -80,9 +80,12 @@ TEST_CASE("the market settings a run refuses before anything is built") {
   CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}));
 }
 
-TEST_CASE("the KIS driver's broker.hpp the build writes is the fixture driver-kis compiles") {
-  const auto fixture = std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "builtin" / "kis" / "broker.hpp";
-  CHECK(build::broker_header(*cmdatl::builtin::find("kis")) == slurp(fixture));
+TEST_CASE("the driver's broker.hpp the build writes for each built-in is the fixture its compile target reads") {
+  for (const auto& facts : cmdatl::builtin::FACTS) {
+    const auto fixture =
+      std::filesystem::path(CMDATL_SOURCE_DIR) / "tests" / "builtin" / std::string(facts.name_) / "broker.hpp";
+    CHECK(build::broker_header(facts) == slurp(fixture));
+  }
 }
 
 TEST_CASE("a broker folder's driver header names the folder it is built from, every byte escaped") {
@@ -479,7 +482,7 @@ TEST_CASE("the table's run command: arguments, codes and the schema version") {
     CHECK(std::find(run->errors_.begin(), run->errors_.end(), code) != run->errors_.end());
   }
   CHECK(cmdatl::check_table(table).empty());
-  CHECK(cmdatl::SCHEMA_VERSION == 19);
+  CHECK(cmdatl::SCHEMA_VERSION == 20);
 }
 
 // --- Processes, against the real atlc and algotradelib ---
