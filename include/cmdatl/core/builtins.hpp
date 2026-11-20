@@ -39,6 +39,8 @@ struct LoginField {
  * data and the calendar). `account_and_product_`: the operator file's number is eight digits, `-`, two digits.
  * `token_minute_code_`: the broker's code for a second access token asked within a minute, or empty. The login's fields
  * and the environment variables the library's `from_env()` reads are the first `field_count_` and `env_var_count_`.
+ * As a bar source: `store_source_` is the store's `source=` for its bars, naming the tape (`kis-krx`); intervals a fetch
+ * by count cannot page are `count_fetch_refused_` (KIS's `1m`, whose request never leaves its day).
  */
 struct Facts {
   std::string_view name_;
@@ -54,7 +56,12 @@ struct Facts {
   std::size_t field_count_{0};
   std::array<std::string_view, 5> env_vars_;
   std::size_t env_var_count_{0};
+  std::string_view store_source_;
+  std::string_view count_fetch_refused_;
 };
+
+/** @brief The replay market of every built-in's bars (KRX symbols in won), until a row differs. */
+inline constexpr std::string_view MARKET = "kr";
 
 /** @brief The built-ins, in the order `auth login` lists them and the library's list holds them. */
 inline constexpr std::array<Facts, 3> FACTS{{
@@ -63,13 +70,13 @@ inline constexpr std::array<Facts, 3> FACTS{{
     {{{"app_key", "App key: ", false, "", false}, {"app_secret", "App secret: ", true, "", false},
       {"account_number", "Account number (8 digits): ", false, "", true},
       {"account_product_code", "Account product code (2 digits, Enter for 01): ", false, "01", false}}},
-    4, {{"KIS_APP_KEY", "KIS_APP_SECRET", "KIS_DEMO", "KIS_CANO", "KIS_ACNT_PRDT_CD"}}, 5},
+    4, {{"KIS_APP_KEY", "KIS_APP_SECRET", "KIS_DEMO", "KIS_CANO", "KIS_ACNT_PRDT_CD"}}, 5, "kis-krx", "1m"},
   {"kiwoom", "kiwoom", "Kiwoom Securities", "Kiwoom", "algotradelib::kiwoom::KiwoomBlockingClient", false, false, false,
     "", {{{"appkey", "App key: ", false, "", false}, {"secretkey", "Secret key: ", true, "", false}}}, 2,
-    {{"KIWOOM_APP_KEY", "KIWOOM_SECRET_KEY", "KIWOOM_DEMO"}}, 3},
+    {{"KIWOOM_APP_KEY", "KIWOOM_SECRET_KEY", "KIWOOM_DEMO"}}, 3, "kiwoom-krx", ""},
   {"tossinvest", "toss", "Toss Securities", "Toss", "algotradelib::tossinvest::TossBlockingClient", false, false, false,
     "", {{{"client_id", "Client id: ", false, "", false}, {"client_secret", "Client secret: ", true, "", false}}}, 2,
-    {{"TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET"}}, 2},
+    {{"TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET"}}, 2, "toss", ""},
 }};
 
 /**

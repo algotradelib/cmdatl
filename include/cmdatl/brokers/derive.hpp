@@ -9,13 +9,18 @@
 
 #include <algotradelib/broker>
 
+#include <array>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace cmdatl {
 namespace brokers {
+
+/** @brief cmdatl's interval words (`spec::INTERVALS`), of which a built-in's served intervals are taken. */
+inline constexpr std::array<std::string_view, 8> INTERVAL_WORDS{"1m", "5m", "15m", "30m", "1h", "1d", "1w", "1mo"};
 
 /**
  * @brief The row of `builtin::FACTS` for a client, found at compile time; a client without one does not compile.
@@ -89,11 +94,15 @@ std::string read_login(const std::string& text, const std::string& origin) {
   return config.token_identity();
 }
 
-/** @brief A built-in broker: cmdatl's facts, whether its config has a demo, and its login's loader (`read_login`). */
+/**
+ * @brief A built-in broker: cmdatl's facts, whether its config has a demo, its login's loader (`read_login`), and of
+ *   cmdatl's interval words those its traits serve (`supports_interval`).
+ */
 struct Entry {
   const builtin::Facts* facts_{nullptr};
   bool has_demo_{false};
   std::string (*read_login_)(const std::string& text, const std::string& origin){nullptr};
+  std::vector<std::string> intervals_;
 };
 
 /**
@@ -103,9 +112,20 @@ struct Entry {
  */
 template <typename Client>
 Entry entry() {
-  return {
+  Entry out{
     &facts_of<Client>(), HasDemo<typename algotradelib::BrokerTraits<Client>::Config>::value, &read_login<Client>
   };
+  for (const auto word : INTERVAL_WORDS) {
+    for (const auto interval : algotradelib::all_bar_intervals) {
+      if (
+        algotradelib::bar_interval_name(interval) == word &&
+        algotradelib::BrokerCaps<Client>::supports_interval(interval)
+      ) {
+        out.intervals_.emplace_back(word);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -113,6 +133,13 @@ Entry entry() {
  * @return Them, in `builtin::FACTS`' order.
  */
 const std::vector<Entry>& catalog();
+
+/**
+ * @brief A built-in broker by the user's word, mapped with `builtin::from_word`.
+ * @param word The word, such as `toss`.
+ * @return Its entry, or null.
+ */
+const Entry* find_entry(std::string_view word);
 
 } // namespace brokers
 } // namespace cmdatl

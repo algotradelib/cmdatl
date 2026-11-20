@@ -6,6 +6,7 @@
 #include <cmdatl/brokers/derive.hpp>
 
 #include <cstddef>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -36,6 +37,16 @@ const std::vector<Entry>& catalog() {
   static const std::vector<Entry> list =
     entries(algotradelib::builtin_brokers{}, std::make_index_sequence<algotradelib::builtin_brokers::size>{});
   return list;
+}
+
+const Entry* find_entry(std::string_view word) {
+  const auto* facts = builtin::from_word(word);
+  for (const auto& one : catalog()) {
+    if (facts != nullptr && one.facts_ == facts) {
+      return &one;
+    }
+  }
+  return nullptr;
 }
 
 } // namespace brokers
