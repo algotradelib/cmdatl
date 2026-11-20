@@ -317,6 +317,9 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
       "unsupported.broker"
     );
   }
+  if (const auto reserved = reserved_partition(config.broker_)) {
+    return refuse(broker->source(), "account.broker: " + *reserved);
+  }
   if (config.broker_ != "mock" && built_in == nullptr && !user_broker_name(config.broker_)) {
     return refuse(
       broker->source(),

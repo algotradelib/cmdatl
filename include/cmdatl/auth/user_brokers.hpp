@@ -530,7 +530,7 @@ inline BrokerLookup lookup_broker(const std::string& name, const std::string& ad
     return found;
   }
   if (!user_broker_name(name)) {
-    found.problem_ = "no broker " + name;
+    found.problem_ = reserved_partition(name).value_or("no broker " + name);
     return found;
   }
   if (adapter.empty()) {

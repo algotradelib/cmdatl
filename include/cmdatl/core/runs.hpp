@@ -66,16 +66,27 @@ inline bool user_broker_name(const std::string& name) {
 }
 
 /**
+ * @brief Why a name is refused as a broker folder's when it is a built-in's store partition (`kis-krx`), not its word.
+ * @param name The name.
+ * @return The reason, or nothing.
+ */
+inline std::optional<std::string> reserved_partition(const std::string& name) {
+  for (const auto& facts : builtin::FACTS) {
+    if (name == facts.store_source_ && name != facts.word_) {
+      return name + " is reserved: " + std::string(facts.word_) + "'s bars are stored under it";
+    }
+  }
+  return std::nullopt;
+}
+
+/**
  * @brief Whether `auth status` and `auth logout` take a login's broker name: a folder's, or a built-in's store partition
  *   (`kis-krx`), reserved after a folder's login could be stored under it, so such a login stays listed and removable.
  * @param name The name.
  * @return Whether they take it.
  */
 inline bool listed_broker_name(const std::string& name) {
-  return user_broker_name(name) ||
-    std::any_of(builtin::FACTS.begin(), builtin::FACTS.end(), [&name](const builtin::Facts& facts) {
-      return name == facts.store_source_ && name != facts.word_;
-    });
+  return user_broker_name(name) || reserved_partition(name).has_value();
 }
 
 /**
