@@ -107,7 +107,7 @@ inline double final_level(const algotradelib::backtest::MeasureInput& in) {
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `bars.source` | `"wide"`, `"csv"`, `"store"`, `"stdin"` or a broker folder's name | `"store"` when `bars.store` is set, else `"wide"` | where the bars come from |
+| `bars.source` | `"wide"`, `"csv"`, `"store"`, `"stdin"`, a built-in broker (`"kis"`, `"kiwoom"`, `"toss"`) or a broker folder's name | `"store"` when `bars.store` is set, else `"wide"` | where the bars come from |
 
 `source = "wide"`: tables of one field each, a header and then rows of a yyyymmdd date and one cell per symbol (an empty cell, `NaN` or `nan` is missing), as Chan's book publishes them.
 
@@ -175,6 +175,8 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 - The symbols come from `[instruments]`; a symbol holding `/`, `\`, `=`, `,`, a glob character (`*?[]{}`), a control character or a space at either end, or being `.` or `..`, is refused before anything is fetched.
 - The store is written in its own layout and by its own rule: `source=NAME`, every version kept, a bar appended only when it is new or changed, under the series directory's `.lock`.
 - The replay is exactly the bars this fetch received (a later fetch by another writer and an older history already in the store are left out); `replay.from` and `replay.to` narrow it further, and a symbol answered with no bars is refused (`fetch.failed`).
+- A bar not finished when the fetch began is dropped, neither stored nor replayed: an intraday bar that had not ended, a daily bar of the fetch's own market date (whatever the hour: an extended session can still change it), a week or a month not over.
+  So a `bars.count = N` fetch during a trading day leaves `N - 1` daily bars, and `bars.count = 1` leaves none (`fetch.failed`, "no finished bars").
 - The reply's `fetched` gives `fetched_at` (to the microsecond) and, per symbol, the bars fetched, those new to the store and the first and last date.
   `bars.source = "store"` with `bars.as_of = fetched_at` reads the store as it stood after the fetch: every bar's latest version up to that instant, which can include bars this fetch did not return (an older history, or bars an earlier fetch had and this one did not); it is the same history only when the store held nothing else for those series.
 - Prices are raw (not adjusted), each within `DECIMAL(18,4)`, and the history is the vendor's as of the fetch, revisions included: it is not what was known on each day.
@@ -183,8 +185,24 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 - An adapter's error is reported by its category, HTTP status and code (`fetch.failed`), never by its text, which could carry a credential.
 - A login bound to another folder, or to none, is refused before anything is built (`auth.adapter_mismatch`).
 
-A backtest of a store or of a broker folder needs DuckDB (`[build]` below); a CSV or wide run does not.
-A run (`cmdatl run`) reads files, not a store or a broker folder.
+`source = "kis"`, `"kiwoom"` or `"toss"`, a built-in broker: the same fetch through the library's client, with the broker's real login (`cmdatl auth login --broker kis --env real`; `toss` has no demo, so `--broker toss`), and no folder or options.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `bars.count` | whole number, 1 to 100000 | required | the last bars of each symbol fetched |
+| `bars.interval` | one the broker serves by count: `kis` `1d`, `1w`, `1mo`; `kiwoom` `1m`, `1d`, `1w`, `1mo`; `toss` `1m`, `1d` | `"1d"` | the bars' interval; another is refused at the key, before any login is read |
+| `bars.store_root` | path | required | the store the bars are written into |
+
+- `bars.adapter` and `bars.options.*` are refused; `replay.market` is `"kr"` when not given, and another value is refused.
+- The symbols are KRX short codes from `[instruments]` (`005930`), with no `A` prefix or tape suffix; a code the broker cannot address fails the fetch before its request (`fetch.failed`, `reached_broker: false`).
+- KIS and Kiwoom bars are KRX's tape alone (a daily bar closes at 15:30), Toss's KRX and NXT combined (it offers no other); the store names the tape: `source=kis-krx`, `source=kiwoom-krx`, `source=toss`.
+- KIS `1m` is refused: its minute history comes back a day at a time, which a fetch by count cannot page.
+- The fetch shares the token store a run or a command uses (`~/.cache/cmdatl/tokens`), so it reuses a token instead of asking a new one, and paces itself at one request a second.
+- Toss daily bars were observed raw with `adjusted=false` across 2017-2018 (identical to KIS's and Kiwoom's over the 2018 split); a Toss daily series before 2017 is unobserved, and its `1m` history starts 2022-11-23.
+- Known limits: KIS daily rows read between about 00:03 and 09:00 KST come without opens, which the store refuses (`fetch.failed`); KIS restates the day just ended between midnight and 06:00, so the store can keep two versions of it; a Kiwoom `1m` fetch reaching past about a year fails with `PROTOCOL`; `kis/real` is also a KIS demo run's market-data login, and each process paces only itself, so the two can meet KIS's `EGW00201`; `fetched_at` is this machine's clock.
+
+A backtest of a store, a built-in broker or a broker folder needs DuckDB (`[build]` below); a CSV or wide run does not.
+A run (`cmdatl run`) reads files, not a store, a built-in broker's history or a broker folder.
 A spec names data only: credentials never appear in it.
 
 ### `[data.NAME]`: the program's data values
@@ -390,7 +408,8 @@ cmdatl strategy evaluate dip.toml grid.lookback.from=10 grid.lookback.to=60 grid
 ```
 
 `cmdatl strategy evaluate` reads its target and settings as `strategy backtest` does, builds the same driver (a backtest's build serves it), loads the bars once, and replays them once per parameter set of `[grid]`.
-It takes no `--fills` or `--equity`, and does not fetch: a spec whose `bars.source` names an adapter folder is refused (fetch with `strategy backtest`, then evaluate on `bars.source = "store"`).
+It takes no `--fills` or `--equity`.
+With a built-in broker or a broker folder as `bars.source` it fetches as a backtest does, once per evaluation, and returns `fetched`; `bars.source = "store"` with `bars.as_of` evaluates again on one fetch.
 `strategy backtest` and `cmdatl run` refuse the keys below.
 With `bars.source = "stdin"` it replays the paths a generator pipes in (`GENERATOR | cmdatl strategy evaluate spec.toml bars.source=stdin bars.path_column=path`; `[bars]` describes the stream); stdin may not be a terminal.
 

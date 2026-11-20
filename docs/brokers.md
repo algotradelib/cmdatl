@@ -70,13 +70,13 @@ cmdatl strategy backtest daily.toml
 - A path is relative to the file that writes it (`--adapter`: to the working directory); `..` and links in it are resolved by the system.
 - `bars.adapter` is written in the run spec, never on the command line: it selects code cmdatl compiles.
   A name that is not built in needs it, and a built-in source refuses it.
-- A backtest with `bars.source = "NAME"` fetches through the adapter into the Parquet store, then replays the bars received ([Run settings](run-spec.md)).
-- The adapter returns closed bars only (never a bar still forming), with times as UTC instants and the stamp the vendor actually uses (`open` or `close`): cmdatl checks the series' shape, not what its numbers mean.
+- A backtest or an evaluation with `bars.source = "NAME"` fetches through the adapter into the Parquet store, then replays the bars received ([Run settings](run-spec.md)); the built-in brokers `kis`, `kiwoom` and `toss` are bar sources the same way, with no folder.
+- The adapter returns bars with times as UTC instants and the stamp the vendor actually uses (`open` or `close`); cmdatl drops a bar not finished when the fetch began, and checks the series' shape, not what its numbers mean.
 - A run trades a broker folder's account when the operator's file says `[account] broker = "NAME"` and `adapter = "PATH"` (relative to that file), as a [KIS account](runs.md#runs-on-a-kis-account) (demo by default; `env = "real"` written out); a data vendor's folder is never an account.
   A client that does not state a trading calendar, a working-order listing and reference data (`BrokerTraits`) is refused before anything is read.
   As on a KIS account, a run trades KRX shares (`replay.market = "kr"`), and no account run polls price bands.
   A run that is not on a KIS account does not wait out KIS's one-access-token-a-minute refusal (`EGW00133`) as a KIS account's run does: such a refusal ends the start with nothing sent.
-- The built-in names (`mock`, `paper`, `kis`, `kiwoom`, `toss`, `csv`, `wide`, `store`) cannot be taken, and a built-in broker takes no `adapter`.
+- The built-in names (`mock`, `paper`, `kis`, `kiwoom`, `toss`, `csv`, `wide`, `store`, `stdin`) and the built-in brokers' store partitions (`kis-krx`, `kiwoom-krx`) cannot be taken, and a built-in broker takes no `adapter`; a login stored earlier under a name reserved later is still listed and removed by `auth status` and `auth logout`.
 
 ## Options
 
