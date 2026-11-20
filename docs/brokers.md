@@ -76,7 +76,7 @@ cmdatl strategy backtest daily.toml
   A client that does not state a trading calendar, a working-order listing and reference data (`BrokerTraits`) is refused before anything is read.
   As on a KIS account, a run trades KRX shares (`replay.market = "kr"`), and no account run polls price bands.
   A run that is not on a KIS account does not wait out KIS's one-access-token-a-minute refusal (`EGW00133`) as a KIS account's run does: such a refusal ends the start with nothing sent.
-- The built-in names (`mock`, `paper`, `kis`, `kiwoom`, `toss`, `csv`, `wide`, `store`, `stdin`) and the built-in brokers' store partitions (`kis-krx`, `kiwoom-krx`) cannot be taken, and a built-in broker takes no `adapter`; a login stored earlier under a name reserved later is still listed and removed by `auth status` and `auth logout`.
+- The built-in names (`mock`, `paper`, `kis`, `kiwoom`, `toss`, `csv`, `wide`, `store`, `stdin`) and the built-in brokers' store partitions (`kis-krx`, `kiwoom-krx`) cannot be taken, and a built-in broker takes no `adapter`; a login stored earlier under a store partition's name is still listed and removed by `auth status` and `auth logout`.
 
 ## Options
 

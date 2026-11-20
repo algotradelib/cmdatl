@@ -176,7 +176,8 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 - The store is written in its own layout and by its own rule: `source=NAME`, every version kept, a bar appended only when it is new or changed, under the series directory's `.lock`.
 - The replay is exactly the bars this fetch received (a later fetch by another writer and an older history already in the store are left out); `replay.from` and `replay.to` narrow it further, and a symbol answered with no bars is refused (`fetch.failed`).
 - A bar not finished when the fetch began is dropped, neither stored nor replayed: an intraday bar that had not ended, a daily bar of the fetch's own market date (whatever the hour: an extended session can still change it), a week or a month not over.
-  So a `bars.count = N` fetch during a trading day leaves `N - 1` daily bars, and `bars.count = 1` leaves none (`fetch.failed`, "no bars finished when the fetch began").
+  So once the broker serves the day's bar, a `bars.count = N` fetch on a trading day leaves `N - 1` daily bars, and `bars.count = 1` leaves none (`fetch.failed`, "no bars finished when the fetch began").
+  A source that dates a week or a month by its last day loses a finished one for up to a period, which is safe.
 - The reply's `fetched` gives `fetched_at` (to the microsecond) and, per symbol, the bars fetched, those new to the store and the first and last date.
   `bars.source = "store"` with `bars.as_of = fetched_at` reads the store as it stood after the fetch: every bar's latest version up to that instant, which can include bars this fetch did not return (an older history, or bars an earlier fetch had and this one did not); it is the same history only when the store held nothing else for those series.
 - Prices are raw (not adjusted), each within `DECIMAL(18,4)`, and the history is the vendor's as of the fetch, revisions included: it is not what was known on each day.
@@ -186,6 +187,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 - A login bound to another folder, or to none, is refused before anything is built (`auth.adapter_mismatch`).
 
 `source = "kis"`, `"kiwoom"` or `"toss"`, a built-in broker: the same fetch through the library's client, with the broker's real login (`cmdatl auth login --broker kis --env real`; `toss` has no demo, so `--broker toss`), and no folder or options.
+It writes the store, so it needs DuckDB as a broker folder's fetch does (`build.duckdb` or `DUCKDB_ROOT`, `[build]` below).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -197,7 +199,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 - The symbols are KRX short codes from `[instruments]` (`005930`), with no `A` prefix or tape suffix; a code the broker cannot address fails the fetch before its request (`fetch.failed`, `reached_broker: false`).
 - KIS and Kiwoom bars are KRX's tape alone (a daily bar closes at 15:30), Toss's KRX and NXT combined (it offers no other); the store names the tape: `source=kis-krx`, `source=kiwoom-krx`, `source=toss`.
 - KIS `1m` is refused: its minute history comes back a day at a time, which a fetch by count cannot page.
-- The fetch shares the token store a run or a command uses (`~/.cache/cmdatl/tokens`), so it reuses a token instead of asking a new one, and paces itself at one request a second.
+- The fetch shares the token store a run or a command uses (`$XDG_CACHE_HOME/cmdatl/tokens`, else `~/.cache/cmdatl/tokens`), so it reuses a token instead of asking a new one, and paces itself at one request a second.
 - Toss daily bars were observed raw with `adjusted=false` across 2017-2018 (identical to KIS's and Kiwoom's over the 2018 split); a Toss daily series before 2017 is unobserved, and its `1m` history starts 2022-11-23.
 - Known limits: KIS daily rows read between about 00:03 and 09:00 KST come without opens, which the store refuses (`fetch.failed`); KIS restates the day just ended between midnight and 06:00, so the store can keep two versions of it; a Kiwoom `1m` fetch reaching past about a year fails with `PROTOCOL`; `kis/real` is also a KIS demo run's market-data login, and each process paces only itself, so the two can meet KIS's `EGW00201`; `fetched_at` is this machine's clock.
 
