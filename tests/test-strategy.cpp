@@ -306,7 +306,7 @@ TEST_CASE("a backtest on toss asks for the stored real login toss/real before an
   const auto ran = run({"strategy", "backtest", "toss.toml"});
   CHECK(code_of(ran.out_) == "auth.not_found");
   const auto error = reply_of(ran.out_).at("error").as_object();
-  CHECK(error.at("message").as_string() == "no login toss/real in the credential store: the backtest fetches with it");
+  CHECK(error.at("message").as_string() == "no login toss/real in the credential store: the fetch reads it");
   CHECK(error.at("next").as_string() == "the operator runs cmdatl auth login --broker toss");
   CHECK(fake.args("driver").empty());
 }

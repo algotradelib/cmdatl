@@ -272,7 +272,7 @@ inline std::optional<Reply> prepare_fetch(
   }
   if (answer.status_ == auth::StoreStatus::NOT_FOUND) {
     return error_reply(
-      Exit::FAILED, "auth.not_found", "no login " + name + " in the credential store: the backtest fetches with it",
+      Exit::FAILED, "auth.not_found", "no login " + name + " in the credential store: the fetch reads it",
       "the operator runs " + login_command
     );
   }
@@ -297,6 +297,19 @@ inline std::optional<Reply> prepare_fetch(
   );
   fetch.adapter_ = std::move(found->folder_->snapshot_);
   return std::nullopt;
+}
+
+/**
+ * @brief What a successful fetch's `fetched` says of its bars: the history is the source's as of the fetch, revisions
+ *   included, and the store as of it can hold more than it.
+ * @param fetch The fetch.
+ * @return The caveat.
+ */
+inline std::string fetched_caveat(const Fetch& fetch) {
+  return "the bars are the " + std::string(fetch.adapter_ ? "broker folder" : "broker") +
+    "'s history as of fetched_at, revised values included; bars.source = \"store\" with bars.as_of = fetched_at "
+    "reads the store as it stood after this fetch, which can hold bars this fetch did not return (an older history, "
+    "or bars an earlier fetch had)";
 }
 
 /**
@@ -530,11 +543,7 @@ inline Reply backtest_reply(const Invocation& invocation, Output& output) {
     reply.body_["equity"] = equity;
   }
   if (fetched) {
-    // The history is the vendor's as of the fetch, revisions included; the store as of it can hold more than it.
-    (*fetched)["caveat"] = "the bars are the " + std::string(fetch.adapter_ ? "broker folder" : "broker") +
-      "'s history as of fetched_at, revised values " +
-      "included; bars.source = \"store\" with bars.as_of = fetched_at reads the store as it stood after this fetch, " +
-      "which can hold bars this fetch did not return (an older history, or bars an earlier fetch had)";
+    (*fetched)["caveat"] = fetched_caveat(fetch);
     reply.body_["fetched"] = std::move(*fetched);
   }
   return reply;

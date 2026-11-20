@@ -235,7 +235,9 @@ inline Reply evaluate_reply(const Invocation& invocation, Output& output) {
     return std::move(*failed);
   }
   auto reply = lines.reply(ran, given, atlc);
-  if (fetched) {
+  // What was fetched belongs to the evaluation's result; a failed replay's reply carries its own diagnosis only.
+  if (fetched && !is_failure(reply)) {
+    (*fetched)["caveat"] = fetched_caveat(fetch);
     reply.body_["fetched"] = std::move(*fetched);
   }
   return reply;
