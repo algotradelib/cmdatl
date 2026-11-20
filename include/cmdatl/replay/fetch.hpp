@@ -65,24 +65,41 @@ inline std::string utc_date(long long seconds) {
 }
 
 /**
+ * @brief The market date a bar states, as the replay dates it (`market_noon`): a daily bar stamped 00:00 KST, 15:00 UTC
+ *   the day before, is that KST date.
+ * @param seconds The bar's stamp, Unix seconds.
+ * @param market The market (`kr`, `us`).
+ * @return `YYYY-MM-DD`.
+ */
+inline std::string market_date(long long seconds, const std::string& market) {
+  using Days = std::chrono::duration<std::int64_t, std::ratio<86400>>;
+  const auto session = session_of(market);
+  const auto noon = market_noon(std::chrono::system_clock::time_point(std::chrono::seconds(seconds)), session);
+  return utc_date(std::chrono::floor<Days>(noon + session.utc_offset_).time_since_epoch().count() * 86400);
+}
+
+/**
  * @brief Checks a fetched series is what was asked: the instrument, the interval, raw prices, ascending unique times.
  * @param series The series.
  * @param query The query.
+ * @param who What answered: `the adapter`, or `the broker` for a built-in.
  * @return What is wrong, or none.
  */
-inline std::optional<std::string> fetched_problem(const atl::BarSeries& series, const atl::BarQuery& query) {
+inline std::optional<std::string> fetched_problem(
+  const atl::BarSeries& series, const atl::BarQuery& query, const std::string& who = "the adapter"
+) {
   if (!(series.instrument_ == query.instrument_)) {
-    return std::string("the adapter answered another instrument");
+    return who + " answered another instrument";
   }
   if (series.interval_ != query.interval_) {
-    return std::string("the adapter answered another interval");
+    return who + " answered another interval";
   }
   if (series.adjusted_) {
-    return std::string("the adapter answered adjusted prices; raw ones were asked");
+    return who + " answered adjusted prices; raw ones were asked";
   }
   for (std::size_t k = 1; k < series.bars_.size(); ++k) {
     if (!(series.bars_[k - 1].timestamp_ < series.bars_[k].timestamp_)) {
-      return std::string("the adapter's bars are not in ascending time, each once");
+      return who + "'s bars are not in ascending time, each once";
     }
   }
   return std::nullopt;
@@ -106,17 +123,11 @@ inline atl::BarSeries finished_bars(
     return std::chrono::floor<Days>(at + session.utc_offset_).time_since_epoch().count();
   };
   const auto today = date_of(fetched_at);
-  const std::vector<std::pair<atl::BarInterval, int>> minutes{
-    {atl::BarInterval::ONE_MINUTE, 1}, {atl::BarInterval::FIVE_MINUTES, 5}, {atl::BarInterval::FIFTEEN_MINUTES, 15},
-    {atl::BarInterval::THIRTY_MINUTES, 30}, {atl::BarInterval::ONE_HOUR, 60}
-  };
-  const auto intraday = std::find_if(minutes.begin(), minutes.end(), [&series](const auto& m) {
-    return m.first == series.interval_;
-  });
+  const auto length = atl::bar_interval_length(series.interval_);
   const auto unfinished = [&](const atl::Bar& bar) {
-    if (intraday != minutes.end()) {
+    if (length) {
       const bool open = series.stamp_ != atl::BarStamp::CLOSE;
-      return bar.timestamp_ + std::chrono::minutes(open ? intraday->second : 0) > fetched_at;
+      return bar.timestamp_ + (open ? *length : std::chrono::seconds(0)) > fetched_at;
     }
     const auto date = date_of(market_noon(bar.timestamp_, session));
     if (series.interval_ == atl::BarInterval::ONE_DAY || series.interval_ == atl::BarInterval::ONE_WEEK) {
@@ -331,7 +342,7 @@ int fetch_main(
         }
         return failed(std::move(detail));
       }
-      if (const auto problem = fetched_problem(answer->value(), query)) {
+      if (const auto problem = fetched_problem(answer->value(), query, store_source.empty() ? "the adapter" : "the broker")) {
         return failed({{"symbol", symbol}, {"message", *problem}});
       }
       const auto series = finished_bars(
@@ -350,8 +361,8 @@ int fetch_main(
           {"symbol", symbol},
           {"rows", written.rows_},
           {"new_rows", written.new_rows_},
-          {"first", written.rows_ > 0 ? json::value(utc_date(written.first_)) : json::value(nullptr)},
-          {"last", written.rows_ > 0 ? json::value(utc_date(written.last_)) : json::value(nullptr)},
+          {"first", written.rows_ > 0 ? json::value(market_date(written.first_, market)) : json::value(nullptr)},
+          {"last", written.rows_ > 0 ? json::value(market_date(written.last_, market)) : json::value(nullptr)},
           {"path", written.path_},
         }
       );
