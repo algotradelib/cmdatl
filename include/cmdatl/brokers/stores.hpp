@@ -7,8 +7,11 @@
 
 #include <algotradelib/network>
 
+#include <boost/asio/ssl/context.hpp>
+
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace cmdatl {
 
@@ -43,6 +46,35 @@ inline std::shared_ptr<algotradelib::network::CalendarCache> run_calendar_cache(
  */
 inline algotradelib::network::ClientStores run_client_stores() {
   return algotradelib::network::ClientStores{run_token_store(), run_calendar_cache()};
+}
+
+/**
+ * @brief A TLS context for a built-in broker's clients, which verifies the broker's certificate with the system's roots.
+ * @return The context; the clients borrow it, so it outlives them.
+ */
+inline std::unique_ptr<boost::asio::ssl::context> broker_tls() {
+  auto tls = std::make_unique<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
+  tls->set_default_verify_paths();
+  tls->set_verify_mode(boost::asio::ssl::verify_peer);
+  return tls;
+}
+
+/**
+ * @brief A built-in broker's client, paced at one request a second (the rate a KIS demo key is refused above,
+ *   `EGW00201`), on the given stores; constructing it sends nothing.
+ * @tparam Client The broker's blocking client.
+ * @param tls The TLS context, borrowed (`broker_tls`).
+ * @param config Its config.
+ * @param stores The stores (`run_client_stores`).
+ * @return The client.
+ */
+template <typename Client, typename Config>
+std::shared_ptr<Client> paced_client(
+  boost::asio::ssl::context& tls, Config config, const algotradelib::network::ClientStores& stores
+) {
+  algotradelib::network::HttpClientOptions paced;
+  paced.rate_limit_ = algotradelib::network::RateLimitBudget{1, 1, 0};
+  return algotradelib::network::make_client<Client>(tls, std::move(config), paced, stores);
 }
 
 } // namespace cmdatl

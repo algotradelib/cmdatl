@@ -64,12 +64,8 @@ Connection<Client> connect_bars(const std::string& login, const std::string& opt
   if constexpr (HasNoAccount<Client>::value) {
     out.account_ = Traits::no_account();
   }
-  out.tls_ = std::make_unique<boost::asio::ssl::context>(boost::asio::ssl::context::tls_client);
-  out.tls_->set_default_verify_paths();
-  out.tls_->set_verify_mode(boost::asio::ssl::verify_peer);
-  algotradelib::network::HttpClientOptions paced;
-  paced.rate_limit_ = algotradelib::network::RateLimitBudget{1, 1, 0};
-  out.client_ = algotradelib::network::make_client<Client>(*out.tls_, std::move(config), paced, run_client_stores());
+  out.tls_ = broker_tls();
+  out.client_ = paced_client<Client>(*out.tls_, std::move(config), run_client_stores());
   return out;
 }
 

@@ -136,14 +136,12 @@ public:
   BuiltinSessions(
     Config trading, typename algotradelib::BrokerTraits<Client>::Account account, std::optional<Config> market
   )
-  : tls_(boost::asio::ssl::context::tls_client), stores_(run_client_stores()) {
-    tls_.set_default_verify_paths();
-    tls_.set_verify_mode(boost::asio::ssl::verify_peer);
-    trading_.emplace(client(std::move(trading)), std::move(account));
+  : tls_(broker_tls()), stores_(run_client_stores()) {
+    trading_.emplace(paced_client<Client>(*tls_, std::move(trading), stores_), std::move(account));
     if constexpr (brokers::facts_of<Client>().real_market_data_on_demo_) {
       if (market) {
         // No account: a session that cannot trade, so a swap by mistake places nothing.
-        market_.emplace(client(std::move(*market)), algotradelib::BrokerTraits<Client>::no_account());
+        market_.emplace(paced_client<Client>(*tls_, std::move(*market), stores_), algotradelib::BrokerTraits<Client>::no_account());
       }
     } else {
       static_cast<void>(market);
@@ -164,18 +162,7 @@ public:
   }
 
 private:
-  /**
-   * @brief A paced client on the shared stores.
-   * @param config Its config.
-   * @return The client.
-   */
-  std::shared_ptr<Client> client(Config config) {
-    algotradelib::network::HttpClientOptions paced;
-    paced.rate_limit_ = algotradelib::network::RateLimitBudget{1, 1, 0};
-    return algotradelib::network::make_client<Client>(tls_, std::move(config), paced, stores_);
-  }
-
-  boost::asio::ssl::context tls_;
+  std::unique_ptr<boost::asio::ssl::context> tls_;
   algotradelib::network::ClientStores stores_;
   std::optional<Session> trading_;
   std::optional<Session> market_;

@@ -50,7 +50,7 @@ struct KisClientTestAccess {
   /**
    * @brief Points a blocking client at a loopback server with the transport options KIS's client resolves for its
    *   configuration (a demo order on a fresh connection) and no rate budget: the one option cmdatl sets
-   *   (`BuiltinSessions::client` in `account/builtin.hpp`) is the pacing, which is the library's to test.
+   *   (`paced_client` in `brokers/stores.hpp`) is the pacing, which is the library's to test.
    * @param client The client.
    * @param context The TLS context trusting the server; it must outlive the client.
    * @param port The server's port.
