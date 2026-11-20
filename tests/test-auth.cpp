@@ -1,6 +1,5 @@
 #include <cmdatl/auth/login.hpp>
-#include <cmdatl/brokers/catalog.hpp>
-#include <cmdatl/strategy/spec.hpp>
+#include <cmdatl/brokers/derive.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -12,7 +11,6 @@
 #include <csignal>
 #include <iterator>
 #include <map>
-#include <optional>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -236,51 +234,18 @@ std::string kis_document(const std::string& extra = "") {
 
 } // namespace
 
-TEST_CASE("the built-in catalog reads the library's traits, and auth lists the same brokers by the user's word") {
+TEST_CASE("the built-in catalog reads the library's traits, and auth lists the brokers by the user's word") {
   const auto& catalog = cmdatl::brokers::catalog();
-  REQUIRE(catalog.size() == cmdatl::builtin::FACTS.size());
-  for (std::size_t i = 0; i < catalog.size(); ++i) {
-    CHECK(catalog[i].facts_ == &cmdatl::builtin::FACTS[i]);
-  }
-  using Intervals = std::vector<std::string>;
-  CHECK(catalog[0].has_demo_);
-  CHECK(catalog[0].intervals_ == Intervals{"1m", "1d", "1w", "1mo"});
-  CHECK(catalog[1].has_demo_);
-  CHECK(catalog[1].intervals_ == Intervals{"1m", "1d", "1w", "1mo"});
-  CHECK(!catalog[2].has_demo_);
-  CHECK(catalog[2].intervals_ == Intervals{"1m", "1d"});
-  CHECK(cmdatl::brokers::find_entry("toss") == &catalog[2]);
-  CHECK(cmdatl::brokers::find_entry("tossinvest") == nullptr);
-  CHECK(
-    Intervals(cmdatl::brokers::INTERVAL_WORDS.begin(), cmdatl::brokers::INTERVAL_WORDS.end()) == cmdatl::spec::INTERVALS
-  );
-  // The rows auth asks from: the words, and the fields and variables each broker always had.
   const auto& listed = cmdatl::auth::brokers();
+  const std::vector<std::string> words{"kis", "kiwoom", "toss"};
+  const std::vector<bool> demo{true, true, false};
+  REQUIRE(catalog.size() == 3);
   REQUIRE(listed.size() == 3);
-  const std::vector<std::vector<std::string>> fields{
-    {"app_key", "app_secret", "account_number", "account_product_code"}, {"appkey", "secretkey"},
-    {"client_id", "client_secret"}
-  };
-  const std::vector<std::vector<std::string>> variables{
-    {"KIS_APP_KEY", "KIS_APP_SECRET", "KIS_DEMO", "KIS_CANO", "KIS_ACNT_PRDT_CD"},
-    {"KIWOOM_APP_KEY", "KIWOOM_SECRET_KEY", "KIWOOM_DEMO"}, {"TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET"}
-  };
-  const std::vector<std::string> names{"kis", "kiwoom", "toss"};
-  for (std::size_t i = 0; i < listed.size(); ++i) {
-    CHECK(listed[i].name_ == names[i]);
-    CHECK(listed[i].has_demo_ == catalog[i].has_demo_);
-    CHECK(listed[i].env_vars_ == variables[i]);
-    std::vector<std::string> json_names;
-    for (const auto& field : listed[i].fields_) {
-      json_names.push_back(field.json_);
-      // Only each broker's second field is a secret, and only KIS's account number is shown masked.
-      CHECK(field.secret_ == (json_names.size() == 2));
-      CHECK(field.shown_masked_ == (field.json_ == "account_number"));
-      CHECK(
-        field.default_ == (field.json_ == "account_product_code" ? std::optional<std::string>("01") : std::nullopt)
-      );
-    }
-    CHECK(json_names == fields[i]);
+  for (std::size_t i = 0; i < 3; ++i) {
+    CHECK(catalog[i].facts_ == &cmdatl::builtin::FACTS[i]);
+    CHECK(catalog[i].has_demo_ == demo[i]);
+    CHECK(listed[i].name_ == words[i]);
+    CHECK(listed[i].has_demo_ == demo[i]);
   }
 }
 

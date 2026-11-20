@@ -197,7 +197,7 @@ inline std::optional<Reply> read_run_logins(
   // A second document only where the broker's market data comes from the real login on demo (empty on real): the
   // count the driver unframes (`BuiltinAccountBroker::logins`).
   const auto* built_in = found.folder_ ? nullptr : builtin::from_word(config.broker_);
-  const bool second = built_in != nullptr && built_in->market_data_ == builtin::MarketDataLogin::REAL_WHEN_DEMO;
+  const bool second = built_in != nullptr && built_in->real_market_data_on_demo_;
   std::string market;
   if (second && demo) {
     if (

@@ -13,20 +13,8 @@
 #endif
 
 namespace cmdatl {
-
-/**
- * @brief An account command on a built-in broker's account (`src/accounts.cpp`, the one unit of the binary that compiles
- *   a broker's client).
- * @param command The command.
- * @param invocation Its arguments.
- * @param snapshot The operator's file, naming a built-in broker's account.
- * @param output The output.
- * @return The reply.
- */
-Reply builtin_account_command(
-  const Command& command, const Invocation& invocation, const ConfigSnapshot& snapshot, Output& output
-);
-
+// The account path on a built-in broker: `src/accounts.cpp`, the one unit of the binary that compiles a broker's client.
+Reply builtin_account_command(const Command&, const Invocation&, const ConfigSnapshot&, Output&);
 } // namespace cmdatl
 
 /**

@@ -1,18 +1,17 @@
 #pragma once
 
 // What a run and a command on a built-in broker's account share: the logins checked against the operator's file, and
-// the two sessions on the shared stores (`brokers/stores.hpp`). Included by the built-in driver and by the command path
+// the two sessions with the token store and the calendar cache. Included by the built-in driver and by the command path
 // (`cli/builtin.hpp`), so nothing else compiles a broker's client.
 //
 // Where the facts say a demo account's market data comes from the real login (KIS: a demo host refuses reference data
 // and the holiday calendar, `EGW02006`), it is read with the traits' `no_account()`, which cannot trade, as the
-// library's `example-live-program` does. Every client is paced at `builtin::REQUESTS_PER_SECOND` (one request a second,
-// the rate a KIS demo key is refused above, `EGW00201`), and reads the tape the facts choose (KIS: KRX's alone, so a
-// daily bar closes at 15:30).
+// library's `example-live-program` does. Every client is paced at one request a second, the rate a KIS demo key is
+// refused above (`EGW00201`), and reads KRX's tape wherever its config chooses one (`brokers::set_tape`).
 
 #include "../brokers/derive.hpp"
-#include "../brokers/stores.hpp"
 #include "../core/builtins.hpp"
+#include "../system/files.hpp"
 #include "./account.hpp"
 #include "./operator.hpp"
 
@@ -29,6 +28,30 @@
 #include <vector>
 
 namespace cmdatl {
+
+/**
+ * @brief The store a built-in broker's clients share their access tokens through: the library's file store on
+ *   `token_folder()`, its missing parents made `0700`. Without a cache folder it names none, and refuses at the first
+ *   read, before anything is sent.
+ * @return The store.
+ */
+inline std::shared_ptr<algotradelib::network::TokenStore> run_token_store() {
+  const auto folder = token_folder().value_or(std::string());
+  (void)make_private_dirs(folder);
+  return std::make_shared<algotradelib::network::FileTokenStore>(folder);
+}
+
+/**
+ * @brief The cache a built-in broker's clients share the trading calendar through, so a later process on the same KST
+ *   day makes no holiday inquiry: the library's file cache on `cache_folder("calendars")`, made as the token folder is.
+ *   Without a cache folder it names none: the calendar is then asked of the broker each time.
+ * @return The cache.
+ */
+inline std::shared_ptr<algotradelib::network::CalendarCache> run_calendar_cache() {
+  const auto folder = cache_folder("calendars").value_or(std::string());
+  (void)make_private_dirs(folder);
+  return std::make_shared<algotradelib::network::FileCalendarCache>(folder);
+}
 
 /**
  * @brief Whether a login is the operator file's account: its account id, and the environment.
@@ -52,8 +75,8 @@ inline std::optional<std::string> account_mismatch(
 }
 
 /**
- * @brief Reads a built-in account's logins and checks them against the operator's file; every config reads the tape
- *   the facts choose.
+ * @brief Reads a built-in account's logins and checks them against the operator's file; every config reads KRX's tape
+ *   where it chooses one.
  * @tparam Client The broker's blocking client, one whose login carries its account.
  * @param config The operator's file.
  * @param documents The account's login, then where the facts say so on demo the real login (read for market data only).
@@ -93,8 +116,8 @@ std::optional<std::string> read_builtin_logins(
   }
   effective.number_ = account_id;
   // One tape for every read, set on each config: bars never come from another book than the quotes.
-  brokers::set_tape<Client>(trading);
-  if constexpr (facts.market_data_ == builtin::MarketDataLogin::REAL_WHEN_DEMO) {
+  brokers::set_tape(trading);
+  if constexpr (facts.real_market_data_on_demo_) {
     if (!demo) {
       return std::nullopt;
     }
@@ -107,7 +130,7 @@ std::optional<std::string> read_builtin_logins(
     if (brokers::is_demo(real)) {
       return "the login stored as " + std::string(facts.word_) + "/real is a demo login";
     }
-    brokers::set_tape<Client>(real);
+    brokers::set_tape(real);
     market = std::move(real);
   }
   return std::nullopt;
@@ -115,7 +138,7 @@ std::optional<std::string> read_builtin_logins(
 
 /**
  * @brief A built-in account's two sessions: the account's, and where the facts say so on demo the real login's with
- *   `no_account()`, for market data; every client paced at `builtin::REQUESTS_PER_SECOND`, on `run_client_stores()`.
+ *   `no_account()`, for market data; every client paced at one request a second, on the shared token store and calendar cache.
  *
  * Constructing them sends nothing.
  * @tparam Client The broker's blocking client.
@@ -137,11 +160,11 @@ public:
   BuiltinSessions(
     Config trading, typename algotradelib::BrokerTraits<Client>::Account account, std::optional<Config> market
   )
-  : tls_(boost::asio::ssl::context::tls_client), stores_(run_client_stores()) {
+  : tls_(boost::asio::ssl::context::tls_client), stores_{run_token_store(), run_calendar_cache()} {
     tls_.set_default_verify_paths();
     tls_.set_verify_mode(boost::asio::ssl::verify_peer);
     trading_.emplace(client(std::move(trading)), std::move(account));
-    if constexpr (brokers::facts_of<Client>().market_data_ == builtin::MarketDataLogin::REAL_WHEN_DEMO) {
+    if constexpr (brokers::facts_of<Client>().real_market_data_on_demo_) {
       if (market) {
         // No account: a session that cannot trade, so a swap by mistake places nothing.
         market_.emplace(client(std::move(*market)), algotradelib::BrokerTraits<Client>::no_account());
@@ -172,8 +195,7 @@ private:
    */
   std::shared_ptr<Client> client(Config config) {
     algotradelib::network::HttpClientOptions paced;
-    paced.rate_limit_ =
-      algotradelib::network::RateLimitBudget{builtin::REQUESTS_PER_SECOND, builtin::REQUESTS_PER_SECOND, 0};
+    paced.rate_limit_ = algotradelib::network::RateLimitBudget{1, 1, 0};
     return algotradelib::network::make_client<Client>(tls_, std::move(config), paced, stores_);
   }
 

@@ -249,11 +249,11 @@ inline bool order_value_text(const std::string& text) {
 
 /**
  * @brief Whether an account number is written as the operator file takes it for an account and a product code (KIS's
- *   form, `builtin::NumberForm::ACCOUNT_AND_PRODUCT`): eight digits, `-`, two digits.
+ *   form, `builtin::Facts::account_and_product_`): eight digits, `-`, two digits.
  * @param text The number.
  * @return Whether it is.
  */
-inline bool kis_account_number(const std::string& text) {
+inline bool account_and_product_number(const std::string& text) {
   if (text.size() != 11 || text[8] != '-') {
     return false;
   }
@@ -400,9 +400,7 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
     if (!account_number_text(*text)) {
       return refuse(account->get("number")->source(), "account.number must be 1 to 64 of letters, digits, '_' or '-'");
     }
-    if (
-      built_in != nullptr && built_in->number_ == builtin::NumberForm::ACCOUNT_AND_PRODUCT && !kis_account_number(*text)
-    ) {
+    if (built_in != nullptr && built_in->account_and_product_ && !account_and_product_number(*text)) {
       return refuse(
         account->get("number")->source(),
         "account.number for " + std::string(built_in->short_) +

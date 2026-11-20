@@ -1,26 +1,21 @@
 #pragma once
 
 // What the library states about a built-in broker, read from its traits at compile time, beside cmdatl's own facts
-// (`core/builtins.hpp`): demo or not, the intervals, the tape setting and the login's loader.
-// Includes only the facts and the library: never `system/`, so the catalog (`src/catalog.cpp`) links no inline function
-// of cmdatl's that a test builds with its hooks.
+// (`core/builtins.hpp`): demo or not, the tape setting and the login's loader; and the binary's catalog of them, defined
+// in `src/catalog.cpp` (the one unit that reads the library's list; a driver never calls it).
+// Includes only the facts and the library, so the catalog links no inline function a test builds with its hooks.
 
 #include "../core/builtins.hpp"
 
 #include <algotradelib/broker>
 
-#include <array>
 #include <string>
-#include <string_view>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 namespace cmdatl {
 namespace brokers {
-
-/** @brief cmdatl's interval words, of which a built-in's served intervals are taken (`spec::INTERVALS`). */
-inline constexpr std::array<std::string_view, 8> INTERVAL_WORDS{"1m", "5m", "15m", "30m", "1h", "1d", "1w", "1mo"};
 
 /**
  * @brief The row of `builtin::FACTS` for a client, found at compile time; a client without one does not compile.
@@ -34,30 +29,20 @@ constexpr const builtin::Facts& facts_of() {
   return *row;
 }
 
-/** @brief Whether a config has the member `is_demo_` (C++17 detection). */
+/** @brief C++17 detection of a config's members `is_demo_` (`HasDemo`) and `market_tape_` (`HasTape`). */
 template <typename Config, typename = void>
 struct HasDemo : std::false_type {};
-
-/** @brief Whether a config has the member `is_demo_`: it has. */
 template <typename Config>
 struct HasDemo<Config, std::void_t<decltype(std::declval<Config&>().is_demo_)>> : std::true_type {};
-
-/** @brief Whether a config has the member `market_tape_` (C++17 detection). */
 template <typename Config, typename = void>
 struct HasTape : std::false_type {};
-
-/** @brief Whether a config has the member `market_tape_`: it has. */
 template <typename Config>
 struct HasTape<Config, std::void_t<decltype(std::declval<Config&>().market_tape_)>> : std::true_type {};
-
-/** @brief Whether a built-in has a demo environment: its config states `is_demo_`. */
-template <typename Client>
-inline constexpr bool has_demo = HasDemo<typename algotradelib::BrokerTraits<Client>::Config>::value;
 
 /**
  * @brief Whether a config is a demo login's.
  * @param config The config.
- * @return Its `is_demo_` where it has one, else false.
+ * @return Its `is_demo_` where it has one, else false (a broker without a demo).
  */
 template <typename Config>
 bool is_demo(const Config& config) {
@@ -70,18 +55,13 @@ bool is_demo(const Config& config) {
 }
 
 /**
- * @brief Sets the tape cmdatl's facts choose for a client's market data; a tape asked of a config without one does not
- *   compile.
- * @tparam Client The client.
- * @param config Its config.
+ * @brief Reads KRX's tape alone wherever a config chooses one (KIS, Kiwoom; the library's default is KRX and NXT
+ *   combined), so a daily bar closes at 15:30 and bars never come from another book than the quotes.
+ * @param config The config.
  */
-template <typename Client>
-void set_tape(typename algotradelib::BrokerTraits<Client>::Config& config) {
-  using Config = typename algotradelib::BrokerTraits<Client>::Config;
-  if constexpr (facts_of<Client>().tape_ == builtin::Tape::KRX) {
-    static_assert(
-      HasTape<Config>::value, "the facts ask for the KRX tape, and the client's config has no market_tape_"
-    );
+template <typename Config>
+void set_tape(Config& config) {
+  if constexpr (HasTape<Config>::value) {
     config.market_tape_ = decltype(config.market_tape_)::KRX;
   } else {
     static_cast<void>(config);
@@ -109,15 +89,10 @@ std::string read_login(const std::string& text, const std::string& origin) {
   return config.token_identity();
 }
 
-/** @brief A built-in broker: cmdatl's facts and what the library states. */
+/** @brief A built-in broker: cmdatl's facts, whether its config has a demo, and its login's loader (`read_login`). */
 struct Entry {
-  /** @brief cmdatl's facts. */
   const builtin::Facts* facts_{nullptr};
-  /** @brief Whether it has a demo environment. */
   bool has_demo_{false};
-  /** @brief Of cmdatl's interval words, those the library serves for it, in that order. */
-  std::vector<std::string> intervals_;
-  /** @brief Reads a stored login with the library's loaders (`read_login`). */
   std::string (*read_login_)(const std::string& text, const std::string& origin){nullptr};
 };
 
@@ -128,22 +103,16 @@ struct Entry {
  */
 template <typename Client>
 Entry entry() {
-  Entry out;
-  out.facts_ = &facts_of<Client>();
-  out.has_demo_ = has_demo<Client>;
-  for (const auto word : INTERVAL_WORDS) {
-    for (const auto interval : algotradelib::all_bar_intervals) {
-      if (
-        algotradelib::bar_interval_name(interval) == word &&
-        algotradelib::BrokerCaps<Client>::supports_interval(interval)
-      ) {
-        out.intervals_.emplace_back(word);
-      }
-    }
-  }
-  out.read_login_ = &read_login<Client>;
-  return out;
+  return {
+    &facts_of<Client>(), HasDemo<typename algotradelib::BrokerTraits<Client>::Config>::value, &read_login<Client>
+  };
 }
+
+/**
+ * @brief The binary's built-in brokers (`src/catalog.cpp`, the static library `cmdatl_builtins`).
+ * @return Them, in `builtin::FACTS`' order.
+ */
+const std::vector<Entry>& catalog();
 
 } // namespace brokers
 } // namespace cmdatl

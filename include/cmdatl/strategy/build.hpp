@@ -468,8 +468,8 @@ inline std::string adapter_digest(const auth::AdapterSnapshot& snapshot) {
  * @return The file.
  */
 inline std::string broker_header(const builtin::Facts& facts) {
-  return "#pragma once\n// Written by cmdatl run: the built-in broker this driver trades.\n#include " +
-    std::string(facts.library_header_) + "\nusing BuiltinClient = " + std::string(facts.client_type_) + ";\n";
+  return "#pragma once\n// Written by cmdatl run: the built-in broker this driver trades.\n#include <algotradelib/" +
+    std::string(facts.name_) + ">\nusing BuiltinClient = " + std::string(facts.client_type_) + ";\n";
 }
 
 /**

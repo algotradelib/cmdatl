@@ -37,8 +37,7 @@ template <typename Client>
 class BuiltinAccountBroker {
 public:
   /** @brief Whether a second login, the real one, is read for market data on demo. */
-  static constexpr bool REAL_MARKET_DATA =
-    brokers::facts_of<Client>().market_data_ == builtin::MarketDataLogin::REAL_WHEN_DEMO;
+  static constexpr bool REAL_MARKET_DATA = brokers::facts_of<Client>().real_market_data_on_demo_;
 
   /**
    * @brief The broker the driver trades, as the operator file names it.
@@ -82,14 +81,14 @@ public:
     ) {
       return run_error(base, Exit::FAILED, "auth.account_mismatch", *mismatch);
     }
-    constexpr const auto& facts = brokers::facts_of<Client>();
-    const std::string tape = facts.tape_ == builtin::Tape::KRX ? "KRX" : "KRX and NXT";
-    market_data = market_config_ ? std::string(facts.word_) + "-real (read only), " + tape : "own, " + tape;
+    // Every config reads KRX's tape (`brokers::set_tape`).
+    market_data =
+      market_config_ ? std::string(brokers::facts_of<Client>().word_) + "-real (read only), KRX" : "own, KRX";
     return std::nullopt;
   }
 
   /**
-   * @brief Builds the sessions and trades: every client paced at `builtin::REQUESTS_PER_SECOND`, its tokens shared
+   * @brief Builds the sessions and trades: every client paced at one request a second, its tokens shared
    *   through `run_token_store()`.
    * @tparam Program The program.
    * @param run The run.
