@@ -556,8 +556,9 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
  * @brief Whether a login's name passes a filter, and its broker and environment.
  * @param name The login's name (`kis/demo`).
  * @param filter The filter.
- * @param broker Where its broker's name goes: a built-in broker's, or a name a broker folder can have (whether the
- *   folder is there or not, so a login outlives its folder in `auth status` and `auth logout`).
+ * @param broker Where its broker's name goes: a built-in broker's, or any name of a broker folder's form (whether the
+ *   folder is there or not, or the name reserved later, so a login outlives its folder in `auth status` and
+ *   `auth logout`).
  * @param demo Where its environment goes.
  * @return Whether it is such a login and passes.
  */
@@ -569,7 +570,7 @@ inline bool matches(const std::string& name, const LoginFilter& filter, std::str
   broker = name.substr(0, slash);
   const auto environment = name.substr(slash + 1);
   if (
-    (find_broker(broker) == nullptr && !user_broker_name(broker)) || (environment != "demo" && environment != "real")
+    (find_broker(broker) == nullptr && !broker_name_text(broker)) || (environment != "demo" && environment != "real")
   ) {
     return false;
   }
@@ -583,7 +584,7 @@ inline bool matches(const std::string& name, const LoginFilter& filter, std::str
  * @return The refusal, or none.
  */
 inline std::optional<Reply> filter_problem(const LoginFilter& filter) {
-  if (filter.broker_ && find_broker(*filter.broker_) == nullptr && !user_broker_name(*filter.broker_)) {
+  if (filter.broker_ && find_broker(*filter.broker_) == nullptr && !broker_name_text(*filter.broker_)) {
     return error_reply(Exit::USAGE, "usage.bad_value", "no broker " + *filter.broker_, brokers_hint());
   }
   if (filter.env_ && *filter.env_ != "demo" && *filter.env_ != "real") {
