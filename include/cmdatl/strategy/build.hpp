@@ -437,7 +437,7 @@ struct Request {
   /** @brief A backtest's measures from the run spec (`measures`), in order: functions the header defines. */
   std::vector<std::string> measures_{};
   /**
-   * @brief The built-in broker a run's driver trades, by its traits name (`kis`, `tossinvest`), or empty for the mock
+   * @brief The built-in broker a run's driver trades or a backtest's fetches from, by its traits name (`kis`, `tossinvest`), or empty for the mock
    *   market or a broker folder.
    */
   std::string broker_{};
@@ -468,7 +468,7 @@ inline std::string adapter_digest(const auth::AdapterSnapshot& snapshot) {
  * @return The file.
  */
 inline std::string broker_header(const builtin::Facts& facts) {
-  return "#pragma once\n// Written by cmdatl run: the built-in broker this driver trades.\n#include <algotradelib/" +
+  return "#pragma once\n// Written by cmdatl: the built-in broker this driver is built for.\n#include <algotradelib/" +
     std::string(facts.name_) + ">\nusing BuiltinClient = " + std::string(facts.client_type_) + ";\n";
 }
 

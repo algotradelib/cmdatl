@@ -1172,6 +1172,12 @@ inline std::optional<Error> check(Entry& e) {
       for (const auto& choice : choices) {
         list += (list.empty() ? "" : ", ") + ("\"" + choice + "\"");
       }
+      if (
+        const auto reserved =
+          source && e.value_.type_ == Value::Type::STR ? reserved_partition(e.value_.text_) : std::nullopt
+      ) {
+        return Error::at(e.origin_, "`bars.source`: " + *reserved);
+      }
       std::string words;
       for (const auto& facts : builtin::FACTS) {
         words += (words.empty() ? "" : ", ") + std::string(facts.word_);
@@ -1956,7 +1962,12 @@ inline std::vector<Error> resolve(
     ));
   }
   if (open_point && !daily) {
-    errors.push_back(at(intraday, "bars.open_point splits daily bars; intraday bars are replayed as they are"));
+    // A week or a month spans sessions, so it has no one open to split at.
+    errors.push_back(at(
+      intraday,
+      std::string("bars.open_point splits daily bars; ") + (sub_daily ? "intraday" : "weekly and monthly") +
+        " bars are replayed as they are"
+    ));
   }
   if (program.session_ && daily && !open_point) {
     errors.push_back(at(
