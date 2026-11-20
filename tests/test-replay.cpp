@@ -2,8 +2,9 @@
 // strategy's interface, the loaders' rules on files written here, the replay through `cmdatl::replay::main` with the
 // hand-written program of run-strategy.hpp, and a generated sweep of hostile settings and files.
 // replay.hpp is included first and alone, so the module is shown to need nothing of cmdatl's or a generated strategy's.
-#include <cmdatl/replay/fetch.hpp>
 #include <cmdatl/replay/replay.hpp>
+
+#include <cmdatl/replay/fetch.hpp>
 
 #include "./run-strategy.hpp"
 
@@ -1252,4 +1253,6 @@ TEST_CASE("a fetch keeps only the bars finished when it began") {
   // Weeks from Monday 4 March (ended) and 11 March (not); months December 2023 and February 2024 (leap; ended), March.
   CHECK(kept(BarInterval::ONE_WEEK, BarStamp::OPEN, {utc(20240303, 15), utc(20240310, 15)}) == 1);
   CHECK(kept(BarInterval::ONE_MONTH, BarStamp::OPEN, {utc(20231130, 15), utc(20240131, 15), utc(20240229, 15)}) == 2);
+  // The reply dates a bar as the replay does: Monday 2026-10-12's, stamped 00:00 KST, is not Sunday's.
+  CHECK(rp::market_date(rp::day_seconds(20261011) + 15 * 3600, "kr") == "2026-10-12");
 }

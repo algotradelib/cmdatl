@@ -1939,6 +1939,12 @@ TEST_CASE("a built-in bar source binds an account that cannot trade where its br
       !HasHoldings<History>::value && !HasWorkingOrders<History>::value,
     "a fetch reaches only bars"
   );
+  // KIS declares an account that cannot trade; Kiwoom, whose key is its account, declares none.
+  static_assert(
+    cmdatl::brokers::HasNoAccount<atl::kis::KisBlockingClient>::value &&
+      !cmdatl::brokers::HasNoAccount<atl::kiwoom::KiwoomBlockingClient>::value,
+    "no_account() is detected where the traits declare it"
+  );
   ScratchDir dir;
   const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
   // Made-up keys: building a client sends nothing.
@@ -1947,6 +1953,10 @@ TEST_CASE("a built-in bar source binds an account that cannot trade where its br
   CHECK(kis.client_ != nullptr);
   CHECK(kis.account_.account_number_.empty());
   CHECK(kis.account_id_.empty());
+  // The KIS client states no config to read back: the tape is checked on the setting connect_bars applies.
+  atl::kis::KisConfig tape;
+  cmdatl::brokers::set_tape(tape);
+  CHECK(tape.market_tape_ == atl::kis::MarketTape::KRX);
   const auto kiwoom = cmdatl::brokers::connect_bars<atl::kiwoom::KiwoomBlockingClient>(
     R"({"appkey":"k","secretkey":"s","demo":false})", "{}"
   );
