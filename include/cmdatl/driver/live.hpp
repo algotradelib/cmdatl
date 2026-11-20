@@ -101,10 +101,7 @@ inline constexpr int START_RATE_RETRIES = 2;
 /** @brief The wait before a read refused for the request rate is tried again, when the broker named none. */
 inline constexpr std::chrono::seconds START_RATE_WAIT{2};
 
-/** @brief KIS's code for a second access token asked for within a minute on the same key. */
-inline constexpr const char* KIS_TOKEN_MINUTE = "EGW00133";
-
-/** @brief The wait before a read whose access token KIS refused for its one-a-minute rule is tried again. */
+/** @brief The wait before a read whose access token the broker refused for its one-a-minute rule is tried again. */
 inline constexpr std::chrono::seconds START_TOKEN_WAIT{61};
 
 /** @brief The longest wait a broker's `retry_after_` may ask for before a start's read is tried again. */
@@ -116,7 +113,7 @@ enum class StartRead {
   NONE,
   /** @brief The broker refused it for its request rate, each time it was tried. */
   RATE,
-  /** @brief KIS refused the session's access token for its one-a-minute rule, after the session's one wait. */
+  /** @brief The broker refused the session's access token for its one-a-minute rule, after the session's one wait. */
   TOKEN,
   /** @brief A signal arrived during a wait; the read was not tried again. */
   INTERRUPTED,
@@ -124,10 +121,17 @@ enum class StartRead {
   LONG_WAIT,
 };
 
-/** @brief What a session has used of its waits before the start: one wait for KIS's token minute. */
+/**
+ * @brief What a session has used of its waits before the start, and its broker's token-minute rule: one wait for a
+ *   second access token refused within a minute (KIS's), where the broker's facts name its code.
+ */
 struct StartBudget {
-  /** @brief Whether the session's wait for KIS's token minute was used. */
+  /** @brief Whether the session's wait for the token minute was used. */
   bool token_waited_{false};
+  /** @brief The broker's code for a second access token asked within a minute; empty for none (no wait). */
+  std::string_view token_minute_code_;
+  /** @brief The broker's short name, for the line noted before that wait. */
+  std::string_view short_;
 };
 
 /**
@@ -149,7 +153,8 @@ struct StartAnswer {
  * A refusal for the broker's request rate is read again at most `START_RATE_RETRIES` times per call.
  * Each of those waits is the broker's `retry_after_`, or `START_RATE_WAIT` when it named none or a negative one.
  * A `retry_after_` above `START_RATE_WAIT_LIMIT` is returned at once as `LONG_WAIT`, neither waited nor shortened.
- * KIS's one-token-a-minute refusal (`KIS_TOKEN_MINUTE`) is waited out once per session (`START_TOKEN_WAIT`).
+ * A broker's one-token-a-minute refusal (a non-empty `budget.token_minute_code_`) is waited out once per session
+ * (`START_TOKEN_WAIT`).
  * A second one on the same session, in this call or a later one, is returned at once.
  * Any other failure is returned at once, and the counts never reset when the kind of refusal changes.
  * Before each wait `note` is given a line saying so; after it, a signal returns `INTERRUPTED` without reading again,
@@ -188,14 +193,18 @@ auto read_at_start(Read&& read, Clock& clock, Note&& note, StartBudget& budget, 
       line = "cmdatl: the broker refused a read for its request rate; reading again in " +
         std::to_string(wait.count()) + " s (" + std::to_string(rate_retries + 1) + " of " +
         std::to_string(START_RATE_RETRIES + 1) + ")";
-    } else if (error.category_ == atl::ErrorCategory::AUTHENTICATION && error.broker_code_ == KIS_TOKEN_MINUTE) {
+    } else if (
+      error.category_ == atl::ErrorCategory::AUTHENTICATION && !budget.token_minute_code_.empty() &&
+      error.broker_code_ == budget.token_minute_code_
+    ) {
       if (budget.token_waited_) {
         return {std::move(answer), StartRead::TOKEN};
       }
       budget.token_waited_ = true;
       wait = START_TOKEN_WAIT;
-      line = "cmdatl: KIS issues one access token a minute and refused this one; reading again in " +
-        std::to_string(wait.count()) + " s (Ctrl-C stops; nothing was sent)";
+      line = "cmdatl: " + std::string(budget.short_) +
+        " issues one access token a minute and refused this one; reading again in " + std::to_string(wait.count()) +
+        " s (Ctrl-C stops; nothing was sent)";
     } else {
       return {std::move(answer), StartRead::NONE};
     }

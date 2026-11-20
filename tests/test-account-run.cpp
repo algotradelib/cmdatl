@@ -1434,6 +1434,8 @@ TEST_CASE("a read before the start waits as each refusal asks and notes the wait
     std::size_t reads = 0;
     std::vector<std::string> notes;
     cmdatl::driver::StartBudget budget;
+    budget.token_minute_code_ = "EGW00133";
+    budget.short_ = "KIS";
     const auto answer = cmdatl::driver::read_at_start(
       scripted(
         {atl::Result<int>(rate_refusal()), atl::Result<int>(token_refusal()), atl::Result<int>(rate_refusal()),
@@ -1511,6 +1513,7 @@ TEST_CASE("a read before the start waits as each refusal asks and notes the wait
   SECTION("a protocol error and an authentication error with another code are read once") {
     atl::runner::ManualClock clock(t0);
     cmdatl::driver::StartBudget budget;
+    budget.token_minute_code_ = "EGW00133";
     atl::BrokerError protocol;
     protocol.category_ = atl::ErrorCategory::PROTOCOL;
     auto other = token_refusal();
@@ -1532,6 +1535,16 @@ TEST_CASE("a read before the start waits as each refusal asks and notes the wait
     }
     CHECK(clock.now() == t0);
     CHECK(!budget.token_waited_);
+    // A broker folder's budget names no code: an authentication error without one is not a token refusal.
+    cmdatl::driver::StartBudget folder;
+    auto uncoded = token_refusal();
+    uncoded.broker_code_.clear();
+    std::size_t reads = 0;
+    const auto answer = cmdatl::driver::read_at_start(
+      scripted({atl::Result<int>(uncoded), atl::Result<int>(7)}, reads), clock, [](const std::string&) {}, folder
+    );
+    CHECK(answer.refused_ == StartRead::NONE);
+    CHECK(reads == 1);
   }
 }
 

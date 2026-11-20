@@ -22,6 +22,7 @@
 #include "../account/operator.hpp"
 #include "../account/owned_orders.hpp"
 #include "../account/session.hpp"
+#include "../core/builtins.hpp"
 #include "../core/errors.hpp"
 #include "../core/reply.hpp"
 #include "../core/time.hpp"
@@ -536,6 +537,13 @@ int run_account(
     // One token wait per session; on a real account the market-data session is the trading one.
     StartBudget trading_budget;
     StartBudget market_budget;
+    // The broker's token-minute rule from its facts; none for a broker folder.
+    if (const auto* built_in = builtin::from_word(config.broker_)) {
+      for (auto* budget : {&trading_budget, &market_budget}) {
+        budget->token_minute_code_ = built_in->token_minute_code_;
+        budget->short_ = built_in->short_;
+      }
+    }
     auto& market_waits =
       static_cast<const void*>(&market) == static_cast<const void*>(&inner) ? trading_budget : market_budget;
     const auto start_note = [](const std::string& line) {
