@@ -47,6 +47,28 @@ inline std::optional<std::string> token_folder() {
   return cache_folder("tokens");
 }
 
+#if !defined(_WIN32)
+/**
+ * @brief Creates a directory and its missing parents, each new one `0700`.
+ * @param dir The directory.
+ * @return 0, or the error number.
+ */
+inline int make_private_dirs(const std::filesystem::path& dir) {
+  std::filesystem::path at;
+  for (const auto& part : dir) {
+    at /= part;
+    if (::mkdir(at.c_str(), 0700) != 0 && errno != EEXIST) {
+      return errno;
+    }
+  }
+  struct stat info{};
+  if (::stat(dir.c_str(), &info) != 0) {
+    return errno;
+  }
+  return S_ISDIR(info.st_mode) ? 0 : ENOTDIR;
+}
+#endif
+
 /**
  * @brief What the operator does after the token store refused: `chmod` only when the reason is that the folder or a
  *   file in it is not private.
