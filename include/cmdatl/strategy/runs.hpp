@@ -10,6 +10,7 @@
 #include "../account/account.hpp"
 #include "../account/operator.hpp"
 #include "../auth/login.hpp"
+#include "../core/builtins.hpp"
 #include "../core/errors.hpp"
 #include "../core/options.hpp"
 #include "../core/reply.hpp"
@@ -123,8 +124,9 @@ private:
 
 /**
  * @brief Reads the logins a run on a broker's account needs, in this process (the store's access list names `cmdatl`):
- *   the account's (`<broker>/<env>`), then on a KIS demo account the real login, read only for market data (a KIS demo
- *   host refuses reference data and the calendar); an empty document for none. A broker folder's run reads its own
+ *   the account's (`<broker>/<env>`), then for a built-in whose market data comes from the real login on demo (KIS's,
+ *   whose demo host refuses reference data and the calendar) that login, read only for market data, or an empty
+ *   document on real. A broker folder's run reads its own
  *   login only, bound to the folder found, and is refused for a data vendor's folder or a demo account its broker does
  *   not have.
  * @param config The operator's file, for a broker's account.
@@ -192,21 +194,26 @@ inline std::optional<Reply> read_run_logins(
     }
     account = std::move(document);
   }
+  // A second document only where the broker's market data comes from the real login on demo (empty on real): the
+  // count the driver unframes (`BuiltinAccountBroker::logins`).
+  const auto* built_in = found.folder_ ? nullptr : builtin::from_word(config.broker_);
+  const bool second = built_in != nullptr && built_in->market_data_ == builtin::MarketDataLogin::REAL_WHEN_DEMO;
   std::string market;
-  if (config.broker_ == "kis" && demo) {
+  if (second && demo) {
     if (
       auto refused = read(
         auth::login_name(*broker, false),
-        "a run on a KIS demo account reads market data with the real login (a demo host refuses reference data and the "
-        "calendar), and there is none; it is only read, never traded",
-        "cmdatl auth login --broker kis --env real", market
+        "a run on a " + std::string(built_in->short_) +
+          " demo account reads market data with the real login (a demo host refuses reference data and the "
+          "calendar), and there is none; it is only read, never traded",
+        "cmdatl auth login --broker " + std::string(built_in->word_) + " --env real", market
       )
     ) {
       return refused;
     }
   }
   documents = {std::move(account)};
-  if (!found.folder_) {
+  if (second) {
     documents.push_back(std::move(market));
   }
   return std::nullopt;
@@ -428,8 +435,9 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
     request.fill_header_ = resolved.fill_header_;
     request.fill_function_ = resolved.fill_function_;
     request.header_ = resolved.header_;
-    if (broker && auth::find_broker(config.broker_) != nullptr) {
-      request.broker_ = config.broker_;
+    if (const auto* built_in = broker ? builtin::from_word(config.broker_) : nullptr) {
+      // The driver compiles the broker named by its traits name (`tossinvest`, never the user's `toss`).
+      request.broker_ = std::string(built_in->name_);
     } else if (broker) {
       // A broker folder: compiled as it was read when its login was checked.
       const auto& snapshot = found.folder_->snapshot_;

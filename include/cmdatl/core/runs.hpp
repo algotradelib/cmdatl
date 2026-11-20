@@ -3,6 +3,8 @@
 // What a run's driver and `run` both read: the run id's grammar, atlc's arguments, and the market settings a run
 // refuses.
 
+#include "./builtins.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <optional>
@@ -37,22 +39,24 @@ inline bool account_number_text(const std::string& text) {
 
 /**
  * @brief Whether a name can be a broker folder's (what its login is stored under): a lowercase letter, then at most
- *   31 lowercase letters, digits or `-`, and not a name cmdatl itself gives a meaning (`mock`, `paper`, the built-in brokers
- *   `kis`, `kiwoom` and `toss`, and the bar sources `csv`, `wide` and `store`).
+ *   31 lowercase letters, digits or `-`, and not a name cmdatl itself gives a meaning (`mock`, `paper`, the bar sources
+ *   `csv`, `wide`, `store` and `stdin`, and each built-in broker's word, traits name and store source, such as `toss`,
+ *   `tossinvest` and `kis-krx`, so a folder neither shadows a built-in nor writes into its store partition).
  * @param name The name.
  * @return Whether it can.
  */
 inline bool user_broker_name(const std::string& name) {
-  static const std::vector<std::string> reserved{
-    "mock", "paper", "kis", "kiwoom", "toss", "csv", "wide", "store", "stdin"
-  };
+  static const std::vector<std::string> reserved{"mock", "paper", "csv", "wide", "store", "stdin"};
   if (name.empty() || name.size() > 32 || name[0] < 'a' || name[0] > 'z') {
     return false;
   }
   const bool plain = std::all_of(name.begin(), name.end(), [](char c) {
     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
   });
-  return plain && std::find(reserved.begin(), reserved.end(), name) == reserved.end();
+  const bool built_in = std::any_of(builtin::FACTS.begin(), builtin::FACTS.end(), [&name](const builtin::Facts& facts) {
+    return name == facts.word_ || name == facts.name_ || name == facts.store_source_;
+  });
+  return plain && !built_in && std::find(reserved.begin(), reserved.end(), name) == reserved.end();
 }
 
 /**
@@ -85,7 +89,10 @@ inline constexpr const char* SESSION_UNSUPPORTED_NEXT =
 inline constexpr const char* START_RATE_NEXT =
   "nothing was sent; the broker refused the reads for its request rate: start the run again in a minute";
 
-/** @brief What to do when a run's reads before its start stayed refused for KIS's one access token a minute. */
+/**
+ * @brief What to do when a run's reads before its start stayed refused for KIS's one access token a minute; reached only
+ *   on a broker whose facts name a token-minute code (`builtin::Facts::token_minute_code_`), which only KIS's do.
+ */
 inline constexpr const char* START_TOKEN_NEXT =
   "nothing was sent; KIS issues one access token a minute: start the run again in a minute, with no other program "
   "using the same KIS key";

@@ -6,6 +6,7 @@
 // bare word as a value, text that is not UTF-8); the validator below then refuses any key it does not list, any
 // value of another TOML type, and any value outside its range, with the file, the line and the column.
 
+#include "../core/builtins.hpp"
 #include "../core/options.hpp"
 #include "../core/reply.hpp"
 #include "../core/runs.hpp"
@@ -247,7 +248,8 @@ inline bool order_value_text(const std::string& text) {
 }
 
 /**
- * @brief Whether a KIS account number is written as the operator file takes it: eight digits, `-`, two digits.
+ * @brief Whether an account number is written as the operator file takes it for an account and a product code (KIS's
+ *   form, `builtin::NumberForm::ACCOUNT_AND_PRODUCT`): eight digits, `-`, two digits.
  * @param text The number.
  * @return Whether it is.
  */
@@ -306,24 +308,27 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (config.broker_ == "paper") {
     return refuse(broker->source(), "broker = \"paper\" is now broker = \"mock\", with a [mock] table");
   }
-  if (config.broker_ == "kiwoom" || config.broker_ == "toss") {
+  const auto* built_in = builtin::from_word(config.broker_);
+  if (built_in != nullptr && !built_in->account_) {
     return refuse(
       broker->source(),
-      "the broker " + config.broker_ + " is not supported in this version; broker = \"kis\" or \"mock\" is",
+      "the broker " + config.broker_ + " is not supported in this version; broker = " + builtin::account_words() +
+        " or \"mock\" is",
       "unsupported.broker"
     );
   }
-  if (config.broker_ != "mock" && config.broker_ != "kis" && !user_broker_name(config.broker_)) {
+  if (config.broker_ != "mock" && built_in == nullptr && !user_broker_name(config.broker_)) {
     return refuse(
       broker->source(),
-      "account.broker must be \"kis\", \"mock\" or a broker folder's name, not \"" + config.broker_ + "\""
+      "account.broker must be " + builtin::account_words() + ", \"mock\" or a broker folder's name, not \"" +
+        config.broker_ + "\""
     );
   }
   text = std::nullopt;
   if (auto bad = string_of(*account, "adapter", "account.adapter", text)) {
     return bad;
   }
-  const bool folder = config.broker_ != "mock" && config.broker_ != "kis";
+  const bool folder = config.broker_ != "mock" && built_in == nullptr;
   if (folder && (!text || text->empty())) {
     return refuse(
       text ? account->get("adapter")->source() : account->source(),
@@ -395,10 +400,13 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
     if (!account_number_text(*text)) {
       return refuse(account->get("number")->source(), "account.number must be 1 to 64 of letters, digits, '_' or '-'");
     }
-    if (config.broker_ == "kis" && !kis_account_number(*text)) {
+    if (
+      built_in != nullptr && built_in->number_ == builtin::NumberForm::ACCOUNT_AND_PRODUCT && !kis_account_number(*text)
+    ) {
       return refuse(
         account->get("number")->source(),
-        "account.number for KIS is the eight-digit account and the two-digit product code, as \"12345678-01\""
+        "account.number for " + std::string(built_in->short_) +
+          " is the eight-digit account and the two-digit product code, as \"12345678-01\""
       );
     }
     config.number_ = *text;

@@ -2,6 +2,7 @@
 
 #include "../account/account.hpp"
 #include "../account/operator.hpp"
+#include "../core/builtins.hpp"
 #include "./command_list.hpp"
 #include "./describe.hpp"
 
@@ -20,8 +21,8 @@
 namespace cmdatl {
 
 /**
- * @brief The command path on a KIS account (`kis.hpp`), handed in by `main`, so that only `main` compiles the KIS
- *   client; without it a KIS account answers `unsupported.broker`.
+ * @brief The command path on a built-in broker's account (`src/accounts.cpp`), handed in by `main`, so that only `main`
+ *   compiles a broker's client; without it such an account answers `unsupported.broker`.
  */
 using BrokerPath = std::function<Reply(const Command&, const Invocation&, const ConfigSnapshot&, Output&)>;
 
@@ -425,25 +426,26 @@ Reply run_account_kind(AccountKind kind, const Invocation& invocation, BasicAcco
  * @param invocation Its arguments.
  * @param snapshot The operator's file, read and `OK`.
  * @param output The output, carrying the account's environment.
- * @param kis The command path on a KIS account, or empty.
+ * @param accounts The command path on a built-in broker's account, or empty.
  * @return The reply.
  */
 inline Reply account_command_reply(
   const Command& command, const Invocation& invocation, const ConfigSnapshot& snapshot, Output& output,
-  const BrokerPath& kis = {}
+  const BrokerPath& accounts = {}
 ) {
 #if defined(_WIN32)
   (void)command;
   (void)invocation;
   (void)snapshot;
   (void)output;
-  (void)kis;
+  (void)accounts;
   return error_reply(
     Exit::FAILED, "unavailable.platform", "account commands run on macOS and Linux only in this version"
   );
 #else
-  if (snapshot.config_->broker_ == "kis" && kis) {
-    return kis(command, invocation, snapshot, output);
+  const auto* built_in = builtin::from_word(snapshot.config_->broker_);
+  if (built_in != nullptr && built_in->account_ && accounts) {
+    return accounts(command, invocation, snapshot, output);
   }
   auto opened = Account::open(snapshot, output, [] {
     return interrupted();
@@ -471,11 +473,11 @@ inline Reply account_command_reply(
  * @param prepared The command line, read and checked.
  * @param out stdout.
  * @param err stderr.
- * @param kis The command path on a KIS account, or empty.
+ * @param accounts The command path on a built-in broker's account, or empty.
  * @return The exit code.
  */
 inline int run_on_account(
-  const Command& command, const Prepared& prepared, std::ostream& out, std::ostream& err, const BrokerPath& kis
+  const Command& command, const Prepared& prepared, std::ostream& out, std::ostream& err, const BrokerPath& accounts
 ) {
   const auto& rendering = prepared.globals_.rendering_;
   const bool unknown_if_lost = command.may_send_ || command.mutates_;
@@ -519,7 +521,7 @@ inline int run_on_account(
     Output output(out, err, rendering, env);
     Reply reply;
     try {
-      reply = account_command_reply(command, prepared.invocation_, *snapshot, output, kis);
+      reply = account_command_reply(command, prepared.invocation_, *snapshot, output, accounts);
     } catch (const std::exception& e) {
       reply = unknown_if_lost ?
         error_reply(Exit::UNKNOWN, "unknown.internal", e.what(), hint.empty() ? "cmdatl order reconcile" : hint) :
@@ -604,12 +606,12 @@ inline int run_on_config(const Command& command, const Prepared& prepared, std::
  * @param err stderr: failures written as text.
  * @param terminal Whether `out` is a terminal (text by default) or not (compact JSON by default).
  * @param table The commands.
- * @param kis The command path on a KIS account, or empty.
+ * @param accounts The command path on a built-in broker's account, or empty.
  * @return The exit code.
  */
 inline int run(
   const std::vector<std::string>& args, std::ostream& out, std::ostream& err, bool terminal, const Table& table,
-  const BrokerPath& kis = {}
+  const BrokerPath& accounts = {}
 ) {
   const auto prepared = prepare(args, table, terminal);
   const auto& rendering = prepared.globals_.rendering_;
@@ -645,7 +647,7 @@ inline int run(
     return write(not_yet, "offline");
   }
   if (command.account_ != AccountKind::NONE) {
-    return run_on_account(command, prepared, out, err, kis);
+    return run_on_account(command, prepared, out, err, accounts);
   }
   if (command.run_config_) {
     return run_on_config(command, prepared, out, err);
@@ -687,14 +689,15 @@ inline int run(
  * @param out stdout: replies, help, and failures in JSON.
  * @param err stderr: failures written as text.
  * @param terminal Whether `out` is a terminal (text by default) or not (compact JSON by default).
- * @param kis The command path on a KIS account, or empty.
+ * @param accounts The command path on a built-in broker's account, or empty.
  * @return The exit code.
  */
 inline int run(
-  const std::vector<std::string>& args, std::ostream& out, std::ostream& err, bool terminal, const BrokerPath& kis = {}
+  const std::vector<std::string>& args, std::ostream& out, std::ostream& err, bool terminal,
+  const BrokerPath& accounts = {}
 ) {
   const Table table(command_list());
-  return run(args, out, err, terminal, table, kis);
+  return run(args, out, err, terminal, table, accounts);
 }
 
 } // namespace cmdatl

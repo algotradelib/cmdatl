@@ -3,6 +3,7 @@
 #include "../account/account.hpp"
 #include "../account/capabilities.hpp"
 #include "../account/operator.hpp"
+#include "../core/builtins.hpp"
 #include "../core/reply.hpp"
 #include "../strategy/atlc.hpp"
 #include "../system/lock.hpp"
@@ -14,6 +15,7 @@
 #include <optional>
 #include <string>
 #include <system_error>
+#include <utility>
 
 #ifndef CMDATL_VERSION
 #define CMDATL_VERSION "0.0.0.9000"
@@ -137,7 +139,13 @@ inline Reply env_reply() {
     }
   }
   reply.body_["schema_version"] = SCHEMA_VERSION;
-  reply.body_["modes"] = json::array{"mock", "kis"};
+  json::array modes{"mock"};
+  for (const auto& facts : builtin::FACTS) {
+    if (facts.account_) {
+      modes.emplace_back(json::string(facts.word_.data(), facts.word_.size()));
+    }
+  }
+  reply.body_["modes"] = std::move(modes);
   return reply;
 }
 
