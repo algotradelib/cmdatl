@@ -141,7 +141,9 @@ public:
     if constexpr (brokers::facts_of<Client>().real_market_data_on_demo_) {
       if (market) {
         // No account: a session that cannot trade, so a swap by mistake places nothing.
-        market_.emplace(paced_client<Client>(*tls_, std::move(*market), stores_), algotradelib::BrokerTraits<Client>::no_account());
+        market_.emplace(
+          paced_client<Client>(*tls_, std::move(*market), stores_), algotradelib::BrokerTraits<Client>::no_account()
+        );
       }
     } else {
       static_cast<void>(market);
