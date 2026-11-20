@@ -1,12 +1,13 @@
 #pragma once
 
-// A backtest on a broker folder's history (`bars.source = "<name>"`): the backtest driver, built with the folder's
-// adapter, connects with the login `strategy backtest` hands it, fetches each symbol's last `count` bars, writes them
+// A backtest on a broker's or a broker folder's history (`bars.source = "<name>"`): the backtest driver, built with the
+// broker's client or the folder's adapter, connects with the login `strategy backtest` hands it, fetches each symbol's
+// last `count` bars, drops a bar not finished when the fetch began, writes them
 // into the store as one version (`store_write.hpp`), then replays exactly the bars it received (written as a CSV beside
 // its outcome), never a later revision by another writer or an older history already in the store.
 //
 // The adapter's error text is never written: its category, HTTP status and code are (a vendor may put its token in a
-// URL). cmdatl's wiring calls only `connect` and `bars`, and builds no trading session.
+// URL). cmdatl's wiring calls only `connect` and, through `BarsOnly`, `bars`.
 
 #include "./adapter_text.hpp"
 #include "./replay.hpp"
@@ -17,6 +18,7 @@
 
 #include <boost/json.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -87,6 +89,72 @@ inline std::optional<std::string> fetched_problem(const atl::BarSeries& series, 
 }
 
 /**
+ * @brief The bars of a series that were finished when the fetch began: an intraday bar that ended by then (its stamp
+ *   for `close`, its stamp plus the interval for `open`); a daily bar of an earlier market date (the extended sessions
+ *   can still change today's); a week whose date plus six days, or a month whose last day, is before the fetch's date.
+ * @param series The series.
+ * @param fetched_at When the fetch began.
+ * @param market The market (`kr`, `us`), whose session dates the bars.
+ * @return The series with only those bars.
+ */
+inline atl::BarSeries finished_bars(
+  atl::BarSeries series, std::chrono::system_clock::time_point fetched_at, const std::string& market
+) {
+  using Days = std::chrono::duration<std::int64_t, std::ratio<86400>>;
+  const auto session = session_of(market);
+  const auto date_of = [&session](std::chrono::system_clock::time_point at) {
+    return std::chrono::floor<Days>(at + session.utc_offset_).time_since_epoch().count();
+  };
+  const auto today = date_of(fetched_at);
+  const std::vector<std::pair<atl::BarInterval, int>> minutes{
+    {atl::BarInterval::ONE_MINUTE, 1}, {atl::BarInterval::FIVE_MINUTES, 5}, {atl::BarInterval::FIFTEEN_MINUTES, 15},
+    {atl::BarInterval::THIRTY_MINUTES, 30}, {atl::BarInterval::ONE_HOUR, 60}
+  };
+  const auto intraday = std::find_if(minutes.begin(), minutes.end(), [&series](const auto& m) {
+    return m.first == series.interval_;
+  });
+  const auto unfinished = [&](const atl::Bar& bar) {
+    if (intraday != minutes.end()) {
+      const bool open = series.stamp_ != atl::BarStamp::CLOSE;
+      return bar.timestamp_ + std::chrono::minutes(open ? intraday->second : 0) > fetched_at;
+    }
+    const auto date = date_of(market_noon(bar.timestamp_, session));
+    if (series.interval_ == atl::BarInterval::ONE_DAY || series.interval_ == atl::BarInterval::ONE_WEEK) {
+      return date + (series.interval_ == atl::BarInterval::ONE_WEEK ? 6 : 0) >= today;
+    }
+    // A month: the day before the next month's first, from the year and month (never an invalid date).
+    const std::time_t at = static_cast<std::time_t>(date * 86400);
+    std::tm parts{};
+    ::gmtime_r(&at, &parts);
+    const int next = parts.tm_mon == 11 ?
+      (parts.tm_year + 1901) * 10000 + 101 :
+      (parts.tm_year + 1900) * 10000 + (parts.tm_mon + 2) * 100 + 1;
+    return day_seconds(next) / 86400 - 1 >= today;
+  };
+  series.bars_.erase(std::remove_if(series.bars_.begin(), series.bars_.end(), unfinished), series.bars_.end());
+  return series;
+}
+
+/**
+ * @brief What a fetch may call on a session: its bars, and nothing else (no order, no account read).
+ * @tparam Session The session, borrowed.
+ */
+template <typename Session>
+class BarsOnly {
+public:
+  /** @brief Borrows a session. @param session The session. */
+  explicit BarsOnly(Session& session) : session_(session) {}
+
+  /** @brief The session's bars. @param query The query. @return Its answer. */
+  auto bars(const atl::BarQuery& query) {
+    return session_.bars(query);
+  }
+
+private:
+  Session& session_;
+};
+
+/**
  * @brief Appends a fetched series to the replay's CSV: one row per bar, as the CSV loader reads a long file.
  * @param csv The CSV so far.
  * @param series The series.
@@ -123,8 +191,9 @@ inline bool write_fetch_outcome(const std::string& path, const boost::json::obje
  *   `account_`).
  * @param argc The argument count.
  * @param argv The settings, each `key=value`, with `fetch.source`, `fetch.count`, `fetch.interval`, `fetch.options`
- *   (the options checked against the folder's declarations, a JSON object's text; `{}` without it) and `fetch.outcome`
- *   (the file the outcome goes to); `bars.source = "store"` and `bars.store_root` given.
+ *   (the options checked against the folder's declarations, a JSON object's text; `{}` without it), `fetch.outcome`
+ *   (the file the outcome goes to) and, for a built-in broker, `fetch.store_source` (the store's `source=`, else
+ *   `fetch.source`); `bars.source = "store"` and `bars.store_root` given.
  * @param fills_of Gives the fill model.
  * @param measures_of Gives the report's measures.
  * @param connect Connects with the login.
@@ -138,6 +207,7 @@ int fetch_main(
   namespace json = boost::json;
   std::vector<std::string> args;
   std::string source;
+  std::string store_source;
   std::string interval = "1d";
   std::string outcome_path;
   std::string options = "{}";
@@ -160,11 +230,14 @@ int fetch_main(
       outcome_path = *v;
     } else if (const auto v = take("fetch.options")) {
       options = *v;
+    } else if (const auto v = take("fetch.store_source")) {
+      store_source = *v;
     } else {
       args.push_back(arg);
     }
   }
   json::object outcome{{"source", source}};
+  const std::string who = store_source.empty() ? "the broker folder's adapter" : "the broker";
   const auto failed = [&](json::object error) {
     outcome["error"] = std::move(error);
     (void)write_fetch_outcome(outcome_path, outcome);
@@ -223,11 +296,13 @@ int fetch_main(
     if (!connection) {
       return failed(
         {{"message",
-          "the broker folder's adapter could not use the stored login or the options (its text is not shown)"}}
+          who + " could not use the stored login" + (store_source.empty() ? " or the options" : "") +
+            " (its text is not shown)"}}
       );
     }
     using Client = typename std::decay_t<decltype(connection->client_)>::element_type;
     atl::BlockingSession<Client> session(connection->client_, std::move(connection->account_));
+    BarsOnly<atl::BlockingSession<Client>> history(session);
     for (const auto& symbol : symbols) {
       atl::BarQuery query;
       query.instrument_ = instrument_of(symbol, market).id_;
@@ -236,9 +311,9 @@ int fetch_main(
       query.adjusted_ = false;
       std::optional<atl::Result<atl::BarSeries>> answer;
       try {
-        answer.emplace(session.bars(query));
+        answer.emplace(history.bars(query));
       } catch (...) {
-        return failed({{"symbol", symbol}, {"message", "the broker folder's adapter threw (its text is not shown)"}});
+        return failed({{"symbol", symbol}, {"message", who + " threw (its text is not shown)"}});
       }
       if (!*answer) {
         const auto& error = answer->error();
@@ -256,16 +331,19 @@ int fetch_main(
         }
         return failed(std::move(detail));
       }
-      const auto& series = answer->value();
-      if (const auto problem = fetched_problem(series, query)) {
+      if (const auto problem = fetched_problem(answer->value(), query)) {
         return failed({{"symbol", symbol}, {"message", *problem}});
       }
+      const auto series = finished_bars(
+        answer->value(), std::chrono::system_clock::time_point(std::chrono::microseconds(fetched_at)), market
+      );
       // No history is no backtest: never replaced by bars an earlier fetch left in the store.
       if (series.bars_.empty()) {
-        return failed({{"symbol", symbol}, {"message", "the broker folder's adapter answered no bars"}});
+        return failed({{"symbol", symbol}, {"message", who + " answered no finished bars"}});
       }
 #if defined(CMDATL_DUCKDB)
-      const auto written = store_series(root, source, interval, series, fetched_at);
+      const auto written =
+        store_series(root, store_source.empty() ? source : store_source, interval, series, fetched_at);
       append_csv(replayed, series);
       stored.emplace_back(
         json::object{
