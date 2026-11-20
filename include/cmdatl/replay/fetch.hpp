@@ -1,7 +1,7 @@
 #pragma once
 
 // A backtest on a broker's or a broker folder's history (`bars.source = "<name>"`): the backtest driver, built with the
-// broker's client or the folder's adapter, connects with the login `strategy backtest` or `strategy evaluate` hands it, fetches each symbol's
+// broker's client or the folder's adapter, connects with the login `strategy backtest` hands it, fetches each symbol's
 // last `count` bars, drops a bar not finished when the fetch began, writes them
 // into the store as one version (`store_write.hpp`), then replays exactly the bars it received (written as a CSV beside
 // its outcome), never a later revision by another writer or an older history already in the store.
@@ -181,7 +181,7 @@ inline void append_csv(std::string& csv, const atl::BarSeries& series) {
 }
 
 /**
- * @brief Writes the fetch's outcome where `strategy backtest` or `strategy evaluate` reads it.
+ * @brief Writes the fetch's outcome where `strategy backtest` reads it.
  * @param path The file.
  * @param outcome The outcome.
  * @return Whether it was written.
@@ -256,13 +256,11 @@ int fetch_main(
   };
   if (source.empty() || outcome_path.empty() || count <= 0) {
     const std::string usage = "the driver needs fetch.source, fetch.count and fetch.outcome";
-    std::cerr << "error: " << usage << "; run it with cmdatl strategy backtest or evaluate\n";
+    std::cerr << "error: " << usage << "; run it with cmdatl strategy backtest\n";
     return 1;
   }
   if (!login || login->empty()) {
-    return failed(
-      {{"message", "the driver received no login on descriptor 3; run it with cmdatl strategy backtest or evaluate"}}
-    );
+    return failed({{"message", "the driver received no login on descriptor 3; run it with cmdatl strategy backtest"}});
   }
   std::vector<std::string> symbols;
   std::string market;
@@ -283,7 +281,7 @@ int fetch_main(
     return 1;
   }
   if (symbols.empty()) {
-    std::cerr << "error: a fetch through a login names its symbols in [instruments]\n";
+    std::cerr << "error: a backtest on a login's history names its symbols in [instruments]\n";
     return 1;
   }
   for (const auto& symbol : symbols) {

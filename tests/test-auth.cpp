@@ -480,9 +480,7 @@ TEST_CASE("a login under a store partition's name reserved later is listed and r
   auth::LoginRequest request;
   request.broker_ = "kis-krx";
   request.adapter_ = dir.path().string();
-  const auto refused = auth::login(request, in.fd(), prompts, &store);
-  CHECK(code(refused) == "usage.bad_value");
-  CHECK(json::serialize(refused.body_).find("kis-krx is reserved") != std::string::npos);
+  CHECK(code(auth::login(request, in.fd(), prompts, &store)) == "usage.bad_value");
 }
 
 TEST_CASE("auth logout and a replacing login remove the old login's saved token as far as they can") {

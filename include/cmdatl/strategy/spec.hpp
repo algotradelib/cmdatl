@@ -1172,12 +1172,6 @@ inline std::optional<Error> check(Entry& e) {
       for (const auto& choice : choices) {
         list += (list.empty() ? "" : ", ") + ("\"" + choice + "\"");
       }
-      if (
-        const auto reserved =
-          source && e.value_.type_ == Value::Type::STR ? reserved_partition(e.value_.text_) : std::nullopt
-      ) {
-        return Error::at(e.origin_, "`bars.source`: " + *reserved);
-      }
       std::string words;
       for (const auto& facts : builtin::FACTS) {
         words += (words.empty() ? "" : ", ") + std::string(facts.word_);

@@ -272,7 +272,7 @@ inline std::optional<Reply> prepare_fetch(
   }
   if (answer.status_ == auth::StoreStatus::NOT_FOUND) {
     return error_reply(
-      Exit::FAILED, "auth.not_found", "no login " + name + " in the credential store: the fetch reads it",
+      Exit::FAILED, "auth.not_found", "no login " + name + " in the credential store: the backtest fetches with it",
       "the operator runs " + login_command
     );
   }
