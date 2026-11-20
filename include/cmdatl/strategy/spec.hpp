@@ -1736,16 +1736,11 @@ inline std::vector<Error> resolve(
       const auto* e = get("bars.interval");
       e != nullptr && std::find(served.begin(), served.end(), e->value_.text()) == served.end()
     ) {
-      const bool paged = std::find(refused.begin(), refused.end(), e->value_.text()) != refused.end();
-      errors.push_back(
-        Error::at(
-          e->origin_,
-          source + " serves " + join(served, ", ") +
-            (paged ? "; its " + e->value_.text() +
-                  " history comes back a day at a time, which a fetch by count cannot page" :
-                     "")
-        )
-      );
+      std::string why = source + " serves " + join(served, ", ");
+      if (std::find(refused.begin(), refused.end(), e->value_.text()) != refused.end()) {
+        why += "; its " + e->value_.text() + " history comes back a day at a time, which a fetch by count cannot page";
+      }
+      errors.push_back(Error::at(e->origin_, why));
     }
     if (const auto* e = get("replay.market"); e != nullptr && e->value_.text() != builtin::MARKET) {
       errors.push_back(Error::at(e->origin_, "`replay.market`: " + source + " quotes KRX shares in won: \"kr\""));
