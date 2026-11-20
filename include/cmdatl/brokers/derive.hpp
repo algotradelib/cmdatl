@@ -113,7 +113,7 @@ struct Entry {
 template <typename Client>
 Entry entry() {
   Entry out{
-    &facts_of<Client>(), HasDemo<typename algotradelib::BrokerTraits<Client>::Config>::value, &read_login<Client>
+    &facts_of<Client>(), HasDemo<typename algotradelib::BrokerTraits<Client>::Config>::value, &read_login<Client>, {}
   };
   for (const auto word : INTERVAL_WORDS) {
     for (const auto interval : algotradelib::all_bar_intervals) {
