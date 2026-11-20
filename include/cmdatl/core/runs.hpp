@@ -39,7 +39,7 @@ inline bool account_number_text(const std::string& text) {
 
 /**
  * @brief Whether a text has a broker folder's name's form: a lowercase letter, then at most 31 lowercase letters, digits
- *   or `-`. A login stored under such a name is listed and removed even when the name is reserved later.
+ *   or `-`.
  * @param name The name.
  * @return Whether it has.
  */
@@ -63,6 +63,19 @@ inline bool user_broker_name(const std::string& name) {
     return name == facts.word_ || name == facts.store_source_;
   });
   return broker_name_text(name) && !built_in && std::find(reserved.begin(), reserved.end(), name) == reserved.end();
+}
+
+/**
+ * @brief Whether `auth status` and `auth logout` take a login's broker name: a folder's, or a built-in's store partition
+ *   (`kis-krx`), reserved after a folder's login could be stored under it, so such a login stays listed and removable.
+ * @param name The name.
+ * @return Whether they take it.
+ */
+inline bool listed_broker_name(const std::string& name) {
+  return user_broker_name(name) ||
+    std::any_of(builtin::FACTS.begin(), builtin::FACTS.end(), [&name](const builtin::Facts& facts) {
+      return name == facts.store_source_ && name != facts.word_;
+    });
 }
 
 /**
