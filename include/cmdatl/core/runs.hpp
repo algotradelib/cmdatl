@@ -3,6 +3,8 @@
 // What a run's driver and `run` both read: the run id's grammar, atlc's arguments, and the market settings a run
 // refuses.
 
+#include "./builtins.hpp"
+
 #include <algorithm>
 #include <cstddef>
 #include <optional>
@@ -37,22 +39,21 @@ inline bool account_number_text(const std::string& text) {
 
 /**
  * @brief Whether a name can be a broker folder's (what its login is stored under): a lowercase letter, then at most
- *   31 lowercase letters, digits or `-`, and not a name cmdatl itself gives a meaning (`mock`, `paper`, the built-in brokers
- *   `kis`, `kiwoom` and `toss`, and the bar sources `csv`, `wide` and `store`).
+ *   31 lowercase letters, digits or `-`, and not a name cmdatl itself gives a meaning (`mock`, `paper`, the built-in brokers'
+ *   words, `kis`, `kiwoom` and `toss`, and the bar sources `csv`, `wide`, `store` and `stdin`).
  * @param name The name.
  * @return Whether it can.
  */
 inline bool user_broker_name(const std::string& name) {
-  static const std::vector<std::string> reserved{
-    "mock", "paper", "kis", "kiwoom", "toss", "csv", "wide", "store", "stdin"
-  };
+  static const std::vector<std::string> reserved{"mock", "paper", "csv", "wide", "store", "stdin"};
   if (name.empty() || name.size() > 32 || name[0] < 'a' || name[0] > 'z') {
     return false;
   }
   const bool plain = std::all_of(name.begin(), name.end(), [](char c) {
     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
   });
-  return plain && std::find(reserved.begin(), reserved.end(), name) == reserved.end();
+  return plain && builtin::from_word(name) == nullptr &&
+    std::find(reserved.begin(), reserved.end(), name) == reserved.end();
 }
 
 /**
