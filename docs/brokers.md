@@ -75,7 +75,7 @@ cmdatl strategy backtest daily.toml
 - A run trades a broker folder's account when the operator's file says `[account] broker = "NAME"` and `adapter = "PATH"` (relative to that file), as a [KIS account](runs.md#runs-on-a-kis-account) (demo by default; `env = "real"` written out); a data vendor's folder is never an account.
   A client that does not state a trading calendar, a working-order listing and reference data (`BrokerTraits`) is refused before anything is read.
   As on a KIS account, a run trades KRX shares (`replay.market = "kr"`), and no account run polls price bands.
-  A folder's run does not wait out KIS's one-access-token-a-minute refusal (`EGW00133`) as a KIS account's run does: such a refusal ends the start with nothing sent.
+  A run that is not on a KIS account does not wait out KIS's one-access-token-a-minute refusal (`EGW00133`) as a KIS account's run does: such a refusal ends the start with nothing sent.
 - The built-in names (`mock`, `paper`, `kis`, `kiwoom`, `toss`, `csv`, `wide`, `store`) cannot be taken, and a built-in broker takes no `adapter`.
 
 ## Options

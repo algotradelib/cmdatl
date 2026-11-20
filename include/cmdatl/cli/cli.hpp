@@ -21,8 +21,8 @@
 namespace cmdatl {
 
 /**
- * @brief The command path on a built-in broker's account (`src/accounts.cpp`), handed in by `main`, so that only `main`
- *   compiles a broker's client; without it such an account answers `unsupported.broker`.
+ * @brief The command path on a built-in broker's account (`src/accounts.cpp`), handed in by `main`, so that only the
+ *   binary compiles a broker's client for a command; without it such an account answers `unsupported.broker`.
  */
 using BrokerPath = std::function<Reply(const Command&, const Invocation&, const ConfigSnapshot&, Output&)>;
 

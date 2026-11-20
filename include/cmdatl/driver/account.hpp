@@ -15,8 +15,8 @@
 // to settle them, and places nothing.
 // A signal or a closed output withdraws; removing the armed file quiesces.
 //
-// Generic over its sessions and clock, so the tests drive it with the library's mock client; `main.cpp` builds the KIS
-// sessions from the logins `cmdatl run` hands over on descriptor 3 (`kis_account.hpp`).
+// Generic over its sessions and clock, so the tests drive it with the library's mock client; `main.cpp` builds the
+// broker's sessions from the logins `cmdatl run` hands over on descriptor 3 (`builtin_account.hpp`).
 
 #include "../account/account.hpp"
 #include "../account/operator.hpp"

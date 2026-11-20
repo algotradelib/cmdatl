@@ -1,7 +1,7 @@
 #pragma once
 
 // An account driver's entry, the same for every broker: the logins read from descriptor 3, the run's arguments, the
-// operator file and its limits checked, then the broker's own part (`kis_account.hpp`, `user_account.hpp`) reads its
+// operator file and its limits checked, then the broker's own part (`builtin_account.hpp`, `user_account.hpp`) reads its
 // logins, says which account they drive, and builds the sessions `run_account` trades through.
 //
 // A broker's part is an object with:
