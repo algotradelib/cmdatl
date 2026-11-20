@@ -24,7 +24,7 @@ namespace {
 const std::map<std::string, std::set<std::string>> ALLOWED{
   {"core", {}},
   {"system", {}},
-  {"brokers", {"core"}},
+  {"brokers", {"core", "system"}},
   {"account", {"core", "system", "brokers"}},
   {"orders", {"core", "system", "account"}},
   {"strategy", {"core", "system", "account", "auth", "brokers"}},

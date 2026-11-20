@@ -10,8 +10,8 @@
 // refused above (`EGW00201`), and reads KRX's tape wherever its config chooses one (`brokers::set_tape`).
 
 #include "../brokers/derive.hpp"
+#include "../brokers/stores.hpp"
 #include "../core/builtins.hpp"
-#include "../system/files.hpp"
 #include "./account.hpp"
 #include "./operator.hpp"
 
@@ -28,30 +28,6 @@
 #include <vector>
 
 namespace cmdatl {
-
-/**
- * @brief The store a built-in broker's clients share their access tokens through: the library's file store on
- *   `token_folder()`, its missing parents made `0700`. Without a cache folder it names none, and refuses at the first
- *   read, before anything is sent.
- * @return The store.
- */
-inline std::shared_ptr<algotradelib::network::TokenStore> run_token_store() {
-  const auto folder = token_folder().value_or(std::string());
-  (void)make_private_dirs(folder);
-  return std::make_shared<algotradelib::network::FileTokenStore>(folder);
-}
-
-/**
- * @brief The cache a built-in broker's clients share the trading calendar through, so a later process on the same KST
- *   day makes no holiday inquiry: the library's file cache on `cache_folder("calendars")`, made as the token folder is.
- *   Without a cache folder it names none: the calendar is then asked of the broker each time.
- * @return The cache.
- */
-inline std::shared_ptr<algotradelib::network::CalendarCache> run_calendar_cache() {
-  const auto folder = cache_folder("calendars").value_or(std::string());
-  (void)make_private_dirs(folder);
-  return std::make_shared<algotradelib::network::FileCalendarCache>(folder);
-}
 
 /**
  * @brief Whether a login is the operator file's account: its account id, and the environment.
@@ -160,7 +136,7 @@ public:
   BuiltinSessions(
     Config trading, typename algotradelib::BrokerTraits<Client>::Account account, std::optional<Config> market
   )
-  : tls_(boost::asio::ssl::context::tls_client), stores_{run_token_store(), run_calendar_cache()} {
+  : tls_(boost::asio::ssl::context::tls_client), stores_(run_client_stores()) {
     tls_.set_default_verify_paths();
     tls_.set_verify_mode(boost::asio::ssl::verify_peer);
     trading_.emplace(client(std::move(trading)), std::move(account));
