@@ -310,9 +310,19 @@ if(CMDATL_BUILD_TESTS)
   )
   target_compile_definitions(driver-kis PRIVATE TOML_HEADER_ONLY=1 CMDATL_DRIVER_BUILTIN=1 CMDATL_DRIVER_BROKER="kis")
   target_link_libraries(driver-kis PRIVATE cmdatl_core)
+  # An Alpaca account's driver, as a run's build compiles it: run by a test only up to its refusal (Alpaca states no
+  # buying power, so no run starts), which comes before any login is read or the broker called.
+  add_executable(driver-alpaca driver/main.cpp)
+  target_include_directories(driver-alpaca PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts ${CMAKE_CURRENT_SOURCE_DIR}/tests/builtin/alpaca
+  )
+  target_compile_definitions(driver-alpaca PRIVATE
+    TOML_HEADER_ONLY=1 CMDATL_DRIVER_BUILTIN=1 CMDATL_DRIVER_BROKER="alpaca"
+  )
+  target_link_libraries(driver-alpaca PRIVATE cmdatl_core)
   # Each built-in broker's backtest driver, compiled as a backtest fetching its history compiles it (never run here: it
   # would call the broker), with the broker.hpp the build writes.
-  foreach(broker IN ITEMS kis kiwoom tossinvest)
+  foreach(broker IN ITEMS kis kiwoom tossinvest alpaca)
     add_executable(backtest-builtin-${broker} driver/backtest/main.cpp)
     target_include_directories(backtest-builtin-${broker} PRIVATE
       ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts ${CMAKE_CURRENT_SOURCE_DIR}/tests/builtin/${broker}
@@ -339,13 +349,16 @@ if(CMDATL_BUILD_TESTS)
   add_executable(test-runs tests/test-runs.cpp tests/test-account-run.cpp tests/test-owed-recovery.cpp)
   target_include_directories(test-runs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/adapters/mockbroker)
   target_link_libraries(test-runs PRIVATE cmdatl_builtins Catch2::Catch2WithMain)
-  add_dependencies(test-runs cmdatl fake-atlc hold-lock driver-adapter-limited driver-adapter-mockbroker)
+  add_dependencies(
+    test-runs cmdatl fake-atlc hold-lock driver-adapter-limited driver-adapter-mockbroker driver-alpaca
+  )
   target_compile_definitions(test-runs PRIVATE
     CMDATL_RUN_TEST_HOOKS
     CMDATL_ADAPTER_NAME="mockbroker"
     CMDATL_ADAPTER_FOLDER="${folder_mockbroker}"
     CMDATL_DRIVER_LIMITED="$<TARGET_FILE:driver-adapter-limited>"
     CMDATL_DRIVER_MOCKBROKER="$<TARGET_FILE:driver-adapter-mockbroker>"
+    CMDATL_DRIVER_ALPACA="$<TARGET_FILE:driver-alpaca>"
     CMDATL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
     CMDATL_BINARY="$<TARGET_FILE:cmdatl>"
     CMDATL_FAKE_ATLC="$<TARGET_FILE:fake-atlc>"

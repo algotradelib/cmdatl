@@ -408,6 +408,52 @@ TEST_CASE("every login refusal of KIS's setup is declared by the four reads") {
 
 namespace {
 
+/** @brief The mock's capabilities, but no buying power, as Alpaca states. */
+struct NoPowerCaps : atl::BrokerCaps<atl::mock::MockClient> {
+  /** @brief None. */
+  static constexpr bool has_buying_power = false;
+};
+
+/** @brief A mock session that states no buying power. */
+struct NoPowerSession : atl::BlockingSession<atl::mock::MockClient> {
+  using atl::BlockingSession<atl::mock::MockClient>::BlockingSession;
+  /** @brief Its capabilities. */
+  using Caps = NoPowerCaps;
+};
+
+/** @brief The stand-in's logins, clock and market, through a session that states no buying power. */
+struct NoPowerSetup {
+  /** @brief The stand-in. */
+  StandIn& in_;
+  /** @brief The session, on its own client over the stand-in's market. */
+  NoPowerSession session_;
+
+  /** @brief Builds it. @param in The stand-in. */
+  explicit NoPowerSetup(StandIn& in)
+  : in_(in), session_(std::make_shared<atl::mock::MockClient>(*in.market_), atl::mock::MockAccount{}) {}
+
+  /** @brief As the stand-in's. @param config The file. @param effective Its number set. @return The refusal. */
+  std::optional<cmdatl::Reply> identify(const cmdatl::OperatorConfig& config, cmdatl::OperatorConfig& effective) {
+    return in_.identify(config, effective);
+  }
+  /** @brief The session. @return It. */
+  NoPowerSession& trading() {
+    return session_;
+  }
+  /** @brief The session. @return It. */
+  NoPowerSession& market() {
+    return session_;
+  }
+  /** @brief The stand-in's clock. @return Its next answer. */
+  cmdatl::Clock::time_point now() {
+    return in_.now();
+  }
+  /** @brief The stand-in's stop. @return Whether a stop was asked for. */
+  bool stopped() {
+    return in_.stopped();
+  }
+};
+
 /** @brief The stand-in's desk, as the command path builds it: one mock session for trading and market data. */
 using StandInDesk = cmdatl::BrokerDesk<HookedSession, HookedSession>;
 
@@ -637,6 +683,27 @@ TEST_CASE("order plan on a broker's account plans on its sessions and starts its
     )
   );
   CHECK(setup.market_->order_history(atl::OrderHistoryQuery{}).orders_.size() == history);
+
+  // On a broker that states no buying power cmdatl refuses a buy itself, before the guard: no plan, nothing sent.
+  NoPowerSetup none(setup);
+  const auto bought = run_on(none, {"order", "plan", "000660", "--target", "1", "--limit", "181000"});
+  INFO(bought.out_);
+  CHECK(bought.exit_ == 3);
+  CHECK(code_of(bought.out_) == "refused.no_buying_power");
+  const auto refusal = reply_of(bought.out_);
+  CHECK(!refusal.contains("plan_id"));
+  CHECK(refusal.at("error").at("retry") == false);
+  CHECK(!refusal.at("error").at("next").as_string().empty());
+  CHECK(setup.market_->order_history(atl::OrderHistoryQuery{}).orders_.size() == history);
+  // A target already held runs once() end to end with no buying-power read; the account shows none.
+  const auto met = run_on(none, {"order", "plan", "000660", "--target", "0", "--limit", "181000"});
+  INFO(met.out_);
+  CHECK(met.exit_ == 0);
+  CHECK(reply_of(met.out_).at("reason") == "met");
+  const auto read = run_on(none, {"account"});
+  INFO(read.out_);
+  REQUIRE(read.exit_ == 0);
+  CHECK(reply_of(read.out_).at("buying_power").is_null());
 }
 
 TEST_CASE("a broker account's journal is started only when absent: an empty or foreign one is unknown and untouched") {

@@ -564,7 +564,7 @@ TEST_CASE("the config route: backtest and env read one snapshot, and a named fil
     CHECK(body.at("atlc").as_object().at("source").as_string() == "config");
     CHECK(body.at("atlc").as_object().at("version").as_string() == "0.0.0-9000");
     CHECK(body.at("account").as_object().at("number").as_string() == "paper-0001");
-    CHECK(body.at("modes") == boost::json::array{"mock", "kis"});
+    CHECK(body.at("modes") == boost::json::array{"mock", "kis", "alpaca"});
     CHECK(body.at("schema_version").as_int64() == cmdatl::SCHEMA_VERSION);
     CHECK(body.at("mock").as_object().at("cash").as_string() == "100000000");
     CHECK(body.at("capabilities").as_object().at("clock").as_bool());

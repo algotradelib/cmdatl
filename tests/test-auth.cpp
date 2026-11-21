@@ -261,19 +261,19 @@ TEST_CASE("a listed client without a facts row is not offered") {
 TEST_CASE("the built-in catalog reads the library's traits and auth lists the brokers by the user's word") {
   const auto& catalog = cmdatl::brokers::catalog();
   const auto& listed = cmdatl::auth::brokers();
-  const std::vector<std::string> words{"kis", "kiwoom", "toss"};
-  const std::vector<bool> demo{true, true, false};
-  REQUIRE(catalog.size() == 3);
-  REQUIRE(listed.size() == 3);
+  const std::vector<std::string> words{"kis", "kiwoom", "toss", "alpaca"};
+  const std::vector<bool> demo{true, true, false, true};
+  REQUIRE(catalog.size() == 4);
+  REQUIRE(listed.size() == 4);
   // The intervals each serves, of cmdatl's words (never 1y, which no replay reads).
   const std::vector<std::vector<std::string>> intervals{
-    {"1m", "1d", "1w", "1mo"}, {"1m", "1d", "1w", "1mo"}, {"1m", "1d"}
+    {"1m", "1d", "1w", "1mo"}, {"1m", "1d", "1w", "1mo"}, {"1m", "1d"}, {"1m", "5m", "15m", "30m", "1h", "1d"}
   };
   CHECK(
     std::vector<std::string>(cmdatl::brokers::INTERVAL_WORDS.begin(), cmdatl::brokers::INTERVAL_WORDS.end()) ==
     cmdatl::spec::INTERVALS
   );
-  for (std::size_t i = 0; i < 3; ++i) {
+  for (std::size_t i = 0; i < 4; ++i) {
     CHECK(catalog[i].intervals_ == intervals[i]);
     CHECK(catalog[i].facts_ == &cmdatl::builtin::FACTS[i]);
     CHECK(catalog[i].has_demo_ == demo[i]);
@@ -645,6 +645,15 @@ TEST_CASE("auth logout and a replacing login remove the old login's saved token 
   CHECK(warning(reply).find("no key could be read from the stored login") != std::string::npos);
   CHECK(saved(kis_demo));
 
+  // A broker that saves no access token (Alpaca): with the token folder present, no warning on logout.
+  REQUIRE(
+    login_with(store, "alpaca", "demo", R"({"key_id":")" + KEY + R"(","secret_key":")" + SECRET + R"("})").exit_ ==
+    Exit::OK
+  );
+  reply = logout(store, "alpaca", "demo");
+  REQUIRE(reply.exit_ == Exit::OK);
+  CHECK(!reply.body_.contains("token_warning"));
+
   // No token folder: nothing to remove, nothing created, no warning.
   {
     const ScopedVariable none("XDG_CACHE_HOME", (dir.path() / "none").string());
@@ -934,7 +943,7 @@ TEST_CASE("auth login on a terminal asks only what the chosen broker needs") {
   SECTION("KIS: the environment, the keys and the account, the product code defaulting on Enter") {
     const ScratchDir dir;
     TerminalLogin child(dir.path(), {});
-    REQUIRE(child.wait_for("Choose 1-3: "));
+    REQUIRE(child.wait_for("Choose 1-4: "));
     child.type("1");
     REQUIRE(child.wait_for("Choose 1-2: "));
     child.type("");
@@ -964,7 +973,7 @@ TEST_CASE("auth login on a terminal asks only what the chosen broker needs") {
   SECTION("Kiwoom: the environment and the keys, no account") {
     const ScratchDir dir;
     TerminalLogin child(dir.path(), {});
-    REQUIRE(child.wait_for("Choose 1-3: "));
+    REQUIRE(child.wait_for("Choose 1-4: "));
     child.type("2");
     REQUIRE(child.wait_for("Choose 1-2: "));
     child.type("2");
@@ -985,7 +994,7 @@ TEST_CASE("auth login on a terminal asks only what the chosen broker needs") {
   SECTION("Toss: no environment and no account") {
     const ScratchDir dir;
     TerminalLogin child(dir.path(), {});
-    REQUIRE(child.wait_for("Choose 1-3: "));
+    REQUIRE(child.wait_for("Choose 1-4: "));
     child.type("3");
     REQUIRE(child.wait_for("Client id: "));
     child.type(KEY);
@@ -1092,7 +1101,7 @@ TEST_CASE("auth login on a terminal stops on a signal or the end of input, echo 
       INFO(choice);
       const ScratchDir dir;
       TerminalLogin child(dir.path(), choice ? auth::LoginRequest{} : request);
-      REQUIRE(child.wait_for(choice ? "Choose 1-3: " : "App key: "));
+      REQUIRE(child.wait_for(choice ? "Choose 1-4: " : "App key: "));
       child.press("half");
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
       child.signal(SIGTERM);
@@ -1113,7 +1122,7 @@ TEST_CASE("auth login on a terminal stops on a signal or the end of input, echo 
   SECTION("a choice that is not one") {
     const ScratchDir dir;
     TerminalLogin child(dir.path(), {});
-    REQUIRE(child.wait_for("Choose 1-3: "));
+    REQUIRE(child.wait_for("Choose 1-4: "));
     child.type("9");
     CHECK(child.finish() == 2);
     CHECK(child.transcript().find("[code usage.bad_value]") != std::string::npos);

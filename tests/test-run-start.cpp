@@ -6,7 +6,9 @@
 #include "./paper-support.hpp"
 #include "./support.hpp"
 
+#include <cmdatl/account/market.hpp>
 #include <cmdatl/cmdatl>
+#include <cmdatl/replay/replay.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -78,6 +80,90 @@ TEST_CASE("the market settings a run refuses before anything is built") {
   CHECK(!cmdatl::spec_refusal({"replay.market=kr", "replay.fill=next-open"}, "kr"));
   // The last value wins, as atlc's settings read it.
   CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}, "kr"));
+}
+
+namespace {
+
+/** @brief Capabilities of a broker that states its session hours. */
+struct States {
+  /** @brief It does. */
+  static constexpr bool has_calendar_sessions = true;
+};
+
+/** @brief Capabilities of a broker that does not. */
+struct StatesNone {
+  /** @brief It does not. */
+  static constexpr bool has_calendar_sessions = false;
+};
+
+} // namespace
+
+TEST_CASE("an account's market follows its broker's row and a run on Alpaca is refused before anything is read") {
+  namespace atl = algotradelib;
+  cmdatl::OperatorConfig config;
+  for (const auto* word : {"kis", "mock", "a-folder"}) {
+    config.broker_ = word;
+    const auto market = cmdatl::account_market(config);
+    CHECK(market.country_ == atl::Country::KR);
+    CHECK(market.venue_ == atl::Venue::COMBINED);
+    CHECK(market.currency_ == atl::Currency::krw());
+    CHECK(market.window_.utc_offset_ == atl::strategy::SessionWindow::krx().utc_offset_);
+    CHECK(cmdatl::instrument_of(market, "005930") == cmdatl::kr("005930"));
+  }
+  config.broker_ = "alpaca";
+  const auto us = cmdatl::account_market(config);
+  CHECK(us.country_ == atl::Country::US);
+  CHECK(us.venue_ == atl::Venue::UNSPECIFIED);
+  CHECK(us.currency_ == atl::Currency::usd());
+  CHECK(cmdatl::instrument_of(us, "SPY") == atl::InstrumentId{atl::Country::US, atl::Venue::UNSPECIFIED, "SPY"});
+  const auto preset = cmdatl::replay::session_of("us");
+  CHECK(us.window_.open_ == preset.open_);
+  CHECK(us.window_.close_ == preset.close_);
+  CHECK(us.window_.utc_offset_ == preset.utc_offset_);
+  // The account's day starts at 05:00 UTC: 23:30 New York on 11-23 is 11-23, 10:30 on 11-24 is 11-24 (11-25 in KST).
+  const auto day = [](const std::string& kst_noon) {
+    return cmdatl::kst_day(kst(kst_noon + "T12:00"));
+  };
+  CHECK(cmdatl::market_day(us, kst("2026-11-24T13:30")) == day("2026-11-23"));
+  CHECK(cmdatl::market_day(us, kst("2026-11-25T00:30")) == day("2026-11-24"));
+  CHECK(cmdatl::kst_day(kst("2026-11-25T00:30")) == day("2026-11-25"));
+  // The fixed offset dates 00:00-01:00 EDT to the day before, when nothing trades: 00:30 EDT on 07-15 is 07-14.
+  CHECK(cmdatl::market_day(us, kst("2026-07-15T13:30")) == day("2026-07-14"));
+  // The phase: the stated hours where the broker states them, else the window (KRX's, closed by 23:40 KST).
+  atl::TradingCalendar calendar;
+  calendar.country_ = atl::Country::US;
+  const std::vector<std::pair<unsigned, cmdatl::Clock::time_point>> opens{
+    {24, kst("2026-11-24T23:30")}, {25, kst("2026-11-25T23:30")}
+  };
+  for (const auto& [date, open] : opens) {
+    atl::TradingDay day_row;
+    day_row.date_ = atl::Date{2026, 11, date};
+    day_row.open_ = true;
+    day_row.regular_ = atl::SessionHours{open, open + std::chrono::hours(6) + std::chrono::minutes(30)};
+    calendar.days_.push_back(day_row);
+  }
+  const auto at = kst("2026-11-24T23:40");
+  const auto kr = cmdatl::market_of_word("kr");
+  CHECK(cmdatl::market_phase<States>(us, &calendar, at) == atl::strategy::MarketPhase::OPEN);
+  CHECK(cmdatl::market_phase<States>(us, nullptr, at) == atl::strategy::MarketPhase::UNKNOWN);
+  CHECK(cmdatl::market_phase<StatesNone>(kr, &calendar, at) == atl::strategy::MarketPhase::POST_CLOSE);
+  // A run spec on an Alpaca account names the us market.
+  CHECK(!cmdatl::spec_refusal({"replay.market=us"}, "us"));
+  const auto refused = cmdatl::spec_refusal({"replay.market=kr"}, "us");
+  REQUIRE(refused);
+  CHECK(refused->second.find("US shares in dollars") != std::string::npos);
+  // Alpaca states no buying power: `run` refuses before atlc, the spec, the keychain or the build.
+  const support::PaperFixture fixture;
+  fixture.write_config(
+    "[account]\nbroker = \"alpaca\"\nenv = \"demo\"\nnumber = \"PA0000000001\"\n\n[limits]\nsymbols = [\"SPY\"]\n"
+    "position = { SPY = 2 }\norder_value = \"1000\"\ndaily_orders = 3\n"
+  );
+  const auto ran = fixture.json({"run", (fixture.dir() / "absent.toml").string()});
+  INFO(ran.out_);
+  CHECK(ran.exit_ == 1);
+  CHECK(code_of(ran.out_) == "config.invalid");
+  CHECK(ran.out_.find("states no buying power") != std::string::npos);
+  CHECK(!std::filesystem::exists(fixture.dir() / "state"));
 }
 
 TEST_CASE("the driver's broker.hpp the build writes for each built-in is the fixture its compile target reads") {
@@ -482,7 +568,7 @@ TEST_CASE("the table's run command: arguments, codes and the schema version") {
     CHECK(std::find(run->errors_.begin(), run->errors_.end(), code) != run->errors_.end());
   }
   CHECK(cmdatl::check_table(table).empty());
-  CHECK(cmdatl::SCHEMA_VERSION == 20);
+  CHECK(cmdatl::SCHEMA_VERSION == 21);
 }
 
 // --- Processes, against the real atlc and algotradelib ---

@@ -24,6 +24,7 @@
 #include <cmdatl/system/credential_pipe.hpp>
 #include <cmdatl/system/process.hpp>
 
+#include <algotradelib/alpaca>
 #include <algotradelib/kis>
 #include <algotradelib/kiwoom>
 #include <algotradelib/mock>
@@ -858,6 +859,59 @@ TEST_CASE("a KIS run reads KRX's tape on every config it builds on demo and on r
     CHECK(!BuiltinBrokerTest::market(broker));
     CHECK(market_data == "own, KRX");
   }
+}
+
+TEST_CASE("an Alpaca account is named by number, its paper keys save no token and read bars, and no run starts") {
+  using AlpacaBroker = cmdatl::driver::BuiltinAccountBroker<atl::alpaca::AlpacaBlockingClient>;
+  // Fake keys: identify only reads the documents, and nothing here connects.
+  const std::string paper = R"({"key_id":"fake-key","secret_key":"fake-secret","demo":true})";
+  const std::string live = R"({"key_id":"fake-key","secret_key":"fake-secret","demo":false})";
+  CHECK(cmdatl::brokers::read_login<atl::alpaca::AlpacaBlockingClient>(paper, "a test").empty());
+  cmdatl::OperatorConfig config;
+  config.broker_ = "alpaca";
+  config.env_ = "demo";
+  const auto read = [&config](const std::string& login) {
+    atl::alpaca::AlpacaConfig trading;
+    atl::alpaca::AlpacaAccount account;
+    std::optional<atl::alpaca::AlpacaConfig> market;
+    auto effective = config;
+    return cmdatl::read_builtin_logins<atl::alpaca::AlpacaBlockingClient>(
+      config, {login}, trading, account, market, effective
+    );
+  };
+  // Alpaca lists its account: the operator file must name it.
+  const auto unnamed = read(paper);
+  REQUIRE(unnamed);
+  CHECK(unnamed->find("names no account.number") != std::string::npos);
+  config.number_ = "PA0000000001";
+  CHECK(!read(paper));
+  // A live login in a demo file is refused before anything is sent.
+  CHECK(read(live));
+  {
+    AlpacaBroker broker;
+    auto effective = config;
+    std::string market_data;
+    REQUIRE(!broker.identify(json::object{}, config, {paper}, effective, market_data));
+    CHECK(effective.number_ == "PA0000000001");
+    CHECK(market_data == "own, IEX");
+  }
+  // A backtest's fetch reads the paper keys, never the live ones; the client's stores go under a scratch cache.
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+  CHECK(cmdatl::brokers::connect_bars<atl::alpaca::AlpacaBlockingClient>(paper, "{}").client_);
+  CHECK_THROWS(cmdatl::brokers::connect_bars<atl::alpaca::AlpacaBlockingClient>(live, "{}"));
+  // The built driver refuses before it unframes the login, so no broker is called.
+  PaperFixture fixture;
+  fixture.write_config(
+    "[account]\nbroker = \"alpaca\"\nenv = \"demo\"\nnumber = \"PA0000000001\"\n\n[limits]\nsymbols = [\"SPY\"]\n"
+    "position = { SPY = 2 }\norder_value = \"1000\"\ndaily_orders = 3\n"
+  );
+  fixture.arm();
+  const auto [exit, reply] = driver_child(fixture, CMDATL_DRIVER_ALPACA, paper, {"run.options={}", "replay.market=us"});
+  CHECK(exit == 1);
+  CHECK(reply.at("error").at("code") == "config.invalid");
+  CHECK(reply.at("env") == "alpaca-demo");
+  CHECK(!std::filesystem::exists(fixture.dir() / "state"));
 }
 
 TEST_CASE("the credentials' framing: two documents round trip, and anything else is refused") {

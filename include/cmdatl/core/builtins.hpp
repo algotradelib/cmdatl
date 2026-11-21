@@ -83,7 +83,7 @@ inline constexpr std::array<Market, 2> MARKETS{{
 }};
 
 /** @brief The built-ins cmdatl offers, in the order `auth login` lists them; each names a client of the library's list. */
-inline constexpr std::array<Facts, 3> FACTS{{
+inline constexpr std::array<Facts, 4> FACTS{{
   {"kis", "kis", "Korea Investment & Securities (KIS)", "KIS", "algotradelib::kis::KisBlockingClient", true, true, true,
     "EGW00133",
     {{{"app_key", "App key: ", false, "", false}, {"app_secret", "App secret: ", true, "", false},
@@ -97,6 +97,9 @@ inline constexpr std::array<Facts, 3> FACTS{{
   {"tossinvest", "toss", "Toss Securities", "Toss", "algotradelib::tossinvest::TossBlockingClient", false, false, false,
     "", {{{"client_id", "Client id: ", false, "", false}, {"client_secret", "Client secret: ", true, "", false}}}, 2,
     {{"TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET"}}, 2, "toss", "", "kr", "", false},
+  {"alpaca", "alpaca", "Alpaca", "Alpaca", "algotradelib::alpaca::AlpacaBlockingClient", true, false, false, "",
+    {{{"key_id", "API key ID: ", false, "", false}, {"secret_key", "Secret key: ", true, "", false}}}, 2,
+    {{"ALPACA_KEY", "ALPACA_SECRET", "ALPACA_DEMO"}}, 3, "alpaca-iex", "", "us", "IEX", true},
 }};
 
 /**
