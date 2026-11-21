@@ -335,12 +335,15 @@ inline int parse_date(const std::string& text) {
  * @brief An instrument of a market preset.
  * @param symbol The symbol.
  * @param market `us` (USD, no tick rule) or `kr` (KRW, KRX ticks).
- * @return The instrument.
+ * @return The instrument: KRX and NXT combined in `kr`; no venue in `us`, where the broker routes (as an account's
+ *   instruments, and as Alpaca's bar requests require).
  */
 inline atl::Instrument instrument_of(const std::string& symbol, const std::string& market) {
   atl::Instrument instrument;
   const bool kr = market == "kr";
-  instrument.id_ = atl::InstrumentId{kr ? atl::Country::KR : atl::Country::US, atl::Venue::COMBINED, symbol};
+  instrument.id_ = atl::InstrumentId{
+    kr ? atl::Country::KR : atl::Country::US, kr ? atl::Venue::COMBINED : atl::Venue::UNSPECIFIED, symbol
+  };
   instrument.name_ = symbol;
   instrument.type_ = atl::SecurityType::STOCK;
   instrument.currency_ = atl::Currency{kr ? "KRW" : "USD"};

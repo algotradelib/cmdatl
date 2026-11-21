@@ -111,7 +111,8 @@ inline constexpr const char* NO_BUYING_POWER_RUN =
   "broker";
 
 /** @brief What to do on a broker that states no buying power. */
-inline constexpr const char* NO_BUYING_POWER_RUN_NEXT = "trade this account with cmdatl's order commands (sells only)";
+inline constexpr const char* NO_BUYING_POWER_RUN_NEXT =
+  "a run needs a broker that states buying power; on a built-in broker's account cmdatl's order commands can sell";
 
 /** @brief What to do when a run's reads before its start stayed refused for the broker's request rate. */
 inline constexpr const char* START_RATE_NEXT =

@@ -197,7 +197,7 @@ It writes the store, so it needs DuckDB as a broker folder's fetch does (`build.
 
 - `bars.adapter` and `bars.options.*` are refused; `replay.market` is the broker's market when not given (`"us"` for `alpaca`, else `"kr"`), and another value is refused.
 - `alpaca` reads US symbols (`SPY`) from IEX, a small part of the consolidated volume, into `source=alpaca-iex`; its minute and hour bars include pre- and post-market trades, and `bars.count` above 9,999 fails the fetch (one page).
-- The symbols are KRX short codes from `[instruments]` (`005930`), with no `A` prefix or tape suffix; a code the broker cannot address fails the fetch before its request (`fetch.failed`, `reached_broker: false`).
+- For `kis`, `kiwoom` and `toss` the symbols are KRX short codes from `[instruments]` (`005930`), with no `A` prefix or tape suffix; a code the broker cannot address fails the fetch before its request (`fetch.failed`, `reached_broker: false`).
 - KIS and Kiwoom bars are KRX's tape alone (a daily bar closes at 15:30), Toss's KRX and NXT combined (it offers no other); the store names the tape: `source=kis-krx`, `source=kiwoom-krx`, `source=toss`.
 - KIS `1m` is refused: its minute history comes back a day at a time, which a fetch by count cannot page.
 - The fetch shares the token store a run or a command uses (`$XDG_CACHE_HOME/cmdatl/tokens`, else `~/.cache/cmdatl/tokens`), so it reuses a token instead of asking a new one, and paces itself at one request a second.

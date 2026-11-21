@@ -895,6 +895,12 @@ TEST_CASE("an Alpaca account is named by number, its paper keys save no token an
     CHECK(effective.number_ == "PA0000000001");
     CHECK(market_data == "own, IEX");
   }
+  // A fetch's query for a US symbol is one Alpaca's client takes (no venue), before anything is sent.
+  atl::BarQuery query;
+  query.instrument_ = cmdatl::replay::instrument_of("SPY", "us").id_;
+  query.interval_ = atl::BarInterval::ONE_DAY;
+  query.count_ = 5;
+  CHECK(!atl::BrokerTraits<atl::alpaca::AlpacaBlockingClient>::validate_bars(query));
   // A backtest's fetch reads the paper keys, never the live ones; the client's stores go under a scratch cache.
   const ScratchDir dir;
   const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());

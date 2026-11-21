@@ -174,4 +174,4 @@ cmdatl auth login --broker alpaca --env demo # the paper keys: the API key ID an
 - The account number is checked with Alpaca before the account's directory is made: one listing request, which changes nothing; a number Alpaca does not list, or one not written exactly as Alpaca shows it, is refused `auth.account_mismatch`.
 - The phase comes from Alpaca's stated session hours, so `open` is exactly Alpaca's regular session, daylight saving and early closes included; times in replies stay KST with their offset.
 - `buying_power` and `cash` are `null`.
-- An order cmdatl lets through is also refused by Alpaca's adapter while Alpaca's clock does not say the regular session (`market_closed`, nothing sent, exit 3); a sell takes three reads (the asset, the position, the clock) before it is sent, at one request a second per host, so a few seconds.
+- An order cmdatl lets through is also refused by Alpaca's adapter while Alpaca's clock does not say the regular session (Alpaca's `market_closed`: nothing sent, exit 3 `refused.withheld`); a sell takes three reads (the asset, the position, the clock) before it is sent, at one request a second per host, so a few seconds.
