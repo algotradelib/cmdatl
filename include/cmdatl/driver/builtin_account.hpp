@@ -38,6 +38,8 @@ class BuiltinAccountBroker {
 public:
   /** @brief Whether a second login, the real one, is read for market data on demo. */
   static constexpr bool REAL_MARKET_DATA = brokers::facts_of<Client>().real_market_data_on_demo_;
+  /** @brief Whether the broker states buying power; without it no run starts. */
+  static constexpr bool STATES_BUYING_POWER = atl::BrokerCaps<Client>::has_buying_power;
 
   /**
    * @brief The broker the driver trades, as the operator file names it.
@@ -98,7 +100,8 @@ public:
 
   /**
    * @brief Builds the sessions and trades: every client paced at one request a second, its tokens shared
-   *   through `run_token_store()`.
+   *   through `run_token_store()`; where the broker lists its accounts, the operator file's number is confirmed with
+   *   one listing first, before the account's directory and lock.
    * @tparam Program The program.
    * @param run The run.
    * @param effective The operator file, with the login's account.
@@ -108,6 +111,12 @@ public:
   template <typename Program>
   int start(AccountRun& run, const OperatorConfig& effective, Program&& strategy) {
     BuiltinSessions<Client> sessions(std::move(trading_config_), std::move(account_), std::move(market_config_));
+    const auto check = confirm_account(sessions.trading(), effective.number_);
+    if (!check.confirmed_) {
+      return check.mismatch_ ?
+        run_error(run.base_, Exit::FAILED, "auth.account_mismatch", check.message_) :
+        run_error(run.base_, Exit::FAILED, "run.account_unreadable", check.message_);
+    }
     const auto make_clock = [](std::function<void()> after_slice) {
       return WallClock(std::move(after_slice));
     };

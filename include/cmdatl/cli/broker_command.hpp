@@ -9,7 +9,8 @@
 // A setup has:
 // - `std::optional<Reply> identify(const OperatorConfig& config, OperatorConfig& effective)`: reads the logins, checks
 //   them against the operator's file, sets `effective.number_` to the account they name (as a run does), and
-//   constructs the sessions, which sends nothing;
+//   constructs the sessions, which sends nothing; where the broker lists its accounts it then reads that listing once,
+//   which changes nothing at the broker, to confirm the operator file's number before the account is opened;
 // - `trading()`, `market()`: the sessions;
 // - `Clock::time_point now()`: the live clock; the reply is as of its reading after the calendar;
 // - `bool stopped()`: whether a stop was asked for, checked while waiting for the lock, before the calendar and each of

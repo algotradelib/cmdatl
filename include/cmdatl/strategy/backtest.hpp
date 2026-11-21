@@ -237,9 +237,11 @@ inline std::optional<Reply> prepare_fetch(
   std::string name;
   std::string login_command = "cmdatl auth login --broker " + fetching;
   if (built_in != nullptr) {
+    // The real login, or the demo one where the row says its paper keys read the same bars (Alpaca), so a backtest never
+    // needs keys that can spend real money.
     const auto* broker = auth::find_broker(fetching);
-    name = auth::login_name(*broker, false);
-    login_command += broker->has_demo_ ? " --env real" : "";
+    name = auth::login_name(*broker, built_in->demo_bars_);
+    login_command += broker->has_demo_ ? (built_in->demo_bars_ ? " --env demo" : " --env real") : "";
   } else {
     found = auth::lookup_broker(fetching, checked.resolved_.fetch_adapter_);
     if (found->found_ != auth::BrokerFound::FOLDER) {

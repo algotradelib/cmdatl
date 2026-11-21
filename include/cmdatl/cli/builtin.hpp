@@ -31,7 +31,8 @@ public:
   explicit BuiltinSetup(auth::CredentialStore* store = nullptr) : store_(store) {}
 
   /**
-   * @brief Reads and checks the logins, then constructs the sessions, which sends nothing.
+   * @brief Reads and checks the logins, then constructs the sessions, which sends nothing; where the broker lists its
+   *   accounts, confirms the operator file's number with one listing (`confirm_account`).
    * @param config The operator's file.
    * @param effective Its number set to the login's account.
    * @return The refusal, or nothing.
@@ -57,6 +58,12 @@ public:
       return error_reply(Exit::FAILED, "auth.account_mismatch", *mismatch);
     }
     sessions_.emplace(std::move(trading), std::move(account), std::move(market));
+    const auto check = confirm_account(sessions_->trading(), effective.number_);
+    if (!check.confirmed_) {
+      return check.mismatch_ ?
+        error_reply(Exit::FAILED, "auth.account_mismatch", check.message_) :
+        error_reply(Exit::FAILED, "account.unreadable", check.message_);
+    }
     return std::nullopt;
   }
 

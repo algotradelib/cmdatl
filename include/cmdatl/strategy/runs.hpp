@@ -300,6 +300,10 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
 #else
   const auto& config = *snapshot.config_;
   const bool broker = config.broker_ != "mock";
+  // A built-in without buying power: refused before anything else, since nothing in the spec could change it.
+  if (const auto* entry = brokers::find_entry(config.broker_); entry != nullptr && !entry->buying_power_) {
+    return error_reply(Exit::FAILED, "config.invalid", NO_BUYING_POWER_RUN, NO_BUYING_POWER_RUN_NEXT);
+  }
   GivenSettings given;
   if (auto refused = sort_words(target_and_settings(invocation), given)) {
     return std::move(*refused);

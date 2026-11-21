@@ -45,6 +45,8 @@ struct Broker {
    * @throws std::runtime_error with the library's message (the field, never its value).
    */
   std::string (*read_)(const std::string& text, const std::string& origin){nullptr};
+  /** @brief Whether a login of it saves an access token in the token folder (a broker folder's never does). */
+  bool token_{false};
 };
 
 /**
@@ -73,6 +75,7 @@ inline const std::vector<Broker>& brokers() {
         broker.env_vars_.emplace_back(facts.env_vars_[i]);
       }
       broker.read_ = entry.read_login_;
+      broker.token_ = entry.saves_token_;
       out.push_back(std::move(broker));
     }
     return out;

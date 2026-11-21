@@ -253,19 +253,26 @@ json::array positions_json(Desk& desk, const std::optional<std::string>& only) {
 }
 
 /**
- * @brief The buying power as text.
+ * @brief The buying power in the account's currency.
  * @tparam Desk The desk type.
+ * @param account The account.
  * @param desk The desk.
- * @return The amount.
+ * @return The amount as text, or null where the broker states no buying power.
  */
 template <typename Desk>
-std::string buying_power_text(Desk& desk) {
-  before_read(desk);
-  const auto power = desk.session().buying_power(algotradelib::Currency::krw());
-  if (!power) {
-    unreadable<Desk>("buying power", power.error());
+json::value buying_power_json(BasicAccount<Desk>& account, Desk& desk) {
+  if constexpr (Desk::Session::Caps::has_buying_power) {
+    before_read(desk);
+    const auto power = desk.session().buying_power(account.market().currency_);
+    if (!power) {
+      unreadable<Desk>("buying power", power.error());
+    }
+    return json::value(power.value().cash_.amount_.str());
+  } else {
+    (void)account;
+    (void)desk;
+    return json::value(nullptr);
   }
-  return power.value().cash_.amount_.str();
 }
 
 /**
@@ -416,7 +423,7 @@ Reply status_reply(const Invocation& invocation, BasicAccount<Desk>& account, De
   body["orders_left_today"] = orders_left_json(readiness);
   body["positions"] = positions_json(desk, std::nullopt);
   body["cash"] = cash_json(desk);
-  body["buying_power"] = buying_power_text(desk);
+  body["buying_power"] = buying_power_json(account, desk);
   const auto working = working_orders(desk);
   body["owed"] = owed_json(account, desk, std::nullopt, working);
   body["orders"] = orders_json(working);
@@ -452,7 +459,7 @@ Reply account_reply(const Invocation& invocation, BasicAccount<Desk>& account, D
   body["now"] = kst_iso(desk.now());
   body["positions"] = positions_json(desk, only);
   body["cash"] = cash_json(desk);
-  body["buying_power"] = buying_power_text(desk);
+  body["buying_power"] = buying_power_json(account, desk);
   body["owed"] = owed_rows(account, desk, only);
   body["orders_left_today"] = orders_left_json(account.readiness());
   return read_reply(account, std::move(body));

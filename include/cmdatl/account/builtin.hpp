@@ -8,6 +8,8 @@
 // and the holiday calendar, `EGW02006`), it is read with the traits' `no_account()`, which cannot trade, as the
 // library's `example-live-program` does. Every client is paced at one request a second, the rate a KIS demo key is
 // refused above (`EGW00201`), and reads KRX's tape wherever its config chooses one (`brokers::set_tape`).
+// A broker that lists its accounts (Alpaca: the keys are the account) carries no account in its login: the operator
+// file names it by number, and `confirm_account` checks that number with the broker before the account is opened.
 
 #include "../brokers/derive.hpp"
 #include "../brokers/stores.hpp"
@@ -24,6 +26,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -53,13 +56,17 @@ inline std::optional<std::string> account_mismatch(
 /**
  * @brief Reads a built-in account's logins and checks them against the operator's file; every config reads KRX's tape
  *   where it chooses one.
- * @tparam Client The broker's blocking client, one whose login carries its account.
+ *
+ * Where the broker lists its accounts the login carries none: the operator file must name the number, which becomes
+ * the effective one (`confirm_account` checks it with the broker), and `account` stays the traits' default.
+ * @tparam Client The broker's blocking client.
  * @param config The operator's file.
  * @param documents The account's login, then where the facts say so on demo the real login (read for market data only).
  * @param trading Set to the account's config.
  * @param account Set to the account.
  * @param market Set to the real login's config where that login is read.
- * @param effective Its number set to the login's account, which the operator file's number, when given, matched.
+ * @param effective Its number set to the login's account, which the operator file's number, when given, matched; or,
+ *   where the broker lists its accounts, to the operator file's number.
  * @return What is wrong (`auth.account_mismatch`), or nothing; the loaders' messages may quote what they read, so they
  *   are never repeated.
  */
@@ -71,26 +78,36 @@ std::optional<std::string> read_builtin_logins(
   std::optional<typename algotradelib::BrokerTraits<Client>::Config>& market, OperatorConfig& effective
 ) {
   using Traits = algotradelib::BrokerTraits<Client>;
-  static_assert(
-    !algotradelib::BrokerCaps<Client>::has_account_discovery,
-    "an account the broker lists (resolve_account) comes with that broker's account branch"
-  );
+  constexpr bool discovers = algotradelib::BrokerCaps<Client>::has_account_discovery;
   constexpr const auto& facts = brokers::facts_of<Client>();
   const bool demo = config.env_ == "demo";
   try {
     trading.from_json_text(documents[0], "the stored login");
-    account.from_json_text(documents[0], "the stored login");
+    if constexpr (!discovers) {
+      account.from_json_text(documents[0], "the stored login");
+    }
   } catch (const std::exception&) {
     return std::string("the stored login could not be read; log in again");
   }
-  const std::string account_id = Traits::display_of(account);
-  if (account_id.empty()) {
-    return std::string("the stored login could not be read; log in again");
+  if constexpr (discovers) {
+    if (config.number_.empty()) {
+      return "the operator file names no account.number, and " + std::string(facts.short_) +
+        " lists its account: write [account] number = \"...\" as " + std::string(facts.short_) + " shows it";
+    }
+    if (const auto mismatch = account_mismatch(config.number_, demo, config.number_, brokers::is_demo(trading))) {
+      return mismatch;
+    }
+    effective.number_ = config.number_;
+  } else {
+    const std::string account_id = Traits::display_of(account);
+    if (account_id.empty()) {
+      return std::string("the stored login could not be read; log in again");
+    }
+    if (const auto mismatch = account_mismatch(config.number_, demo, account_id, brokers::is_demo(trading))) {
+      return mismatch;
+    }
+    effective.number_ = account_id;
   }
-  if (const auto mismatch = account_mismatch(config.number_, demo, account_id, brokers::is_demo(trading))) {
-    return mismatch;
-  }
-  effective.number_ = account_id;
   // One tape for every read, set on each config: bars never come from another book than the quotes.
   brokers::set_tape(trading);
   if constexpr (facts.real_market_data_on_demo_) {
@@ -110,6 +127,67 @@ std::optional<std::string> read_builtin_logins(
     market = std::move(real);
   }
   return std::nullopt;
+}
+
+/** @brief What `confirm_account` found. */
+struct AccountCheck {
+  /** @brief The broker lists the operator file's account (or the broker lists none, and the login carries it). */
+  bool confirmed_{true};
+  /** @brief The broker refused the number (`auth.account_mismatch`), rather than failing to answer. */
+  bool mismatch_{false};
+  /** @brief What went wrong, in cmdatl's words: of a broker's error only a short printable code is shown. */
+  std::string message_;
+};
+
+/**
+ * @brief Checks with the broker that it lists the operator file's account, where the broker lists its accounts; one
+ *   listing request, which changes nothing at the broker; nothing for any other broker.
+ * @tparam Session The account's session.
+ * @param session The session, on the login's client.
+ * @param number The operator file's account number.
+ * @return Confirmed, a mismatch, or an unanswered listing.
+ */
+template <typename Session>
+AccountCheck confirm_account(Session& session, const std::string& number) {
+  namespace atl = algotradelib;
+  using Client = std::decay_t<decltype(session.client())>;
+  AccountCheck check;
+  if constexpr (atl::BrokerCaps<Client>::has_account_discovery) {
+    const auto resolved = atl::resolve_account(session.client(), std::nullopt, number);
+    // The library matches without separators; the number names the account's directory and journal, so only the
+    // broker's own spelling is one account.
+    if (resolved && resolved.value().display_number_ == number) {
+      return check;
+    }
+    check.confirmed_ = false;
+    if (resolved) {
+      check.mismatch_ = true;
+      check.message_ = "the operator file's account.number " + number +
+        " is not written exactly as the broker shows the login's account; write it as the broker shows it";
+      return check;
+    }
+    const auto& error = resolved.error();
+    const auto& code = error.broker_code_;
+    check.mismatch_ = error.category_ == atl::ErrorCategory::INVALID_ARGUMENT &&
+      (code == "account_not_found" || code == "no_accounts" || code == "several_accounts" ||
+        code == "account_without_number");
+    if (check.mismatch_) {
+      check.message_ = "the login's account is not the operator file's account.number " + number;
+    } else {
+      // The broker's message may quote its reply body: a short printable code at most, as a read's failure shows.
+      check.message_ = "the broker did not answer the account list";
+      if (
+        !code.empty() && code.size() <= 32 &&
+        code.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-.") == std::string::npos
+      ) {
+        check.message_ += " (code " + code + ")";
+      }
+    }
+  } else {
+    static_cast<void>(session);
+    static_cast<void>(number);
+  }
+  return check;
 }
 
 /**

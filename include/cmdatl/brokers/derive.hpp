@@ -58,6 +58,12 @@ template <typename Config, typename = void>
 struct HasTape : std::false_type {};
 template <typename Config>
 struct HasTape<Config, std::void_t<decltype(std::declval<Config&>().market_tape_)>> : std::true_type {};
+/** @brief C++17 detection of a config's `token_identity()`: a broker that saves an access token (Alpaca has none). */
+template <typename Config, typename = void>
+struct HasTokenIdentity : std::false_type {};
+template <typename Config>
+struct HasTokenIdentity<Config, std::void_t<decltype(std::declval<const Config&>().token_identity())>>
+: std::true_type {};
 
 /**
  * @brief Whether a config is a demo login's.
@@ -94,7 +100,8 @@ void set_tape(Config& config) {
  * @tparam Client The client.
  * @param text The login.
  * @param origin Where it came from, for the loaders' messages.
- * @return The library's identity of the login's key, which names its saved access token.
+ * @return The library's identity of the login's key, which names its saved access token; empty for a broker that
+ *   saves none.
  * @throws std::runtime_error with the library's message (the field, never its value).
  */
 template <typename Client>
@@ -106,18 +113,25 @@ std::string read_login(const std::string& text, const std::string& origin) {
     typename Traits::Account account;
     account.from_json_text(text, origin);
   }
-  return config.token_identity();
+  if constexpr (HasTokenIdentity<typename Traits::Config>::value) {
+    return config.token_identity();
+  } else {
+    return std::string();
+  }
 }
 
 /**
- * @brief A built-in broker: cmdatl's facts, whether its config has a demo, its login's loader (`read_login`), and of
- *   cmdatl's interval words those its traits serve (`supports_interval`).
+ * @brief A built-in broker: cmdatl's facts, whether its config has a demo, its login's loader (`read_login`), of
+ *   cmdatl's interval words those its traits serve (`supports_interval`), whether it states buying power, and whether
+ *   it saves an access token.
  */
 struct Entry {
   const builtin::Facts* facts_{nullptr};
   bool has_demo_{false};
   std::string (*read_login_)(const std::string& text, const std::string& origin){nullptr};
   std::vector<std::string> intervals_;
+  bool buying_power_{false};
+  bool saves_token_{false};
 };
 
 /**
@@ -128,7 +142,9 @@ struct Entry {
 template <typename Client>
 Entry entry() {
   Entry out{
-    &facts_of<Client>(), HasDemo<typename algotradelib::BrokerTraits<Client>::Config>::value, &read_login<Client>, {}
+    &facts_of<Client>(), HasDemo<typename algotradelib::BrokerTraits<Client>::Config>::value, &read_login<Client>, {},
+    algotradelib::BrokerCaps<Client>::has_buying_power,
+    HasTokenIdentity<typename algotradelib::BrokerTraits<Client>::Config>::value
   };
   for (const auto word : INTERVAL_WORDS) {
     for (const auto interval : algotradelib::all_bar_intervals) {

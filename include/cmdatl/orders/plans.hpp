@@ -117,8 +117,8 @@ struct Plan {
 
 /**
  * @brief The text a plan's snapshot hashes: the account's scope, the request as typed, the holding of the symbol,
- *   each working order on the symbol as `order_id:filled`, the cash of the buying power and the journal's size; a read
- *   that fails is written `?`, so a failure differs from every successful read.
+ *   each working order on the symbol as `order_id:filled`, the cash of the buying power (`none` where the broker states
+ *   none) and the journal's size; a read that fails is written `?`, so a failure differs from every successful read.
  * @tparam Session The session.
  * @param session The session.
  * @param scope The journal's scope.
@@ -126,12 +126,13 @@ struct Plan {
  * @param target The target, as typed.
  * @param limit The limit, as typed.
  * @param journal_size The journal's size in bytes, or nothing when it could not be read.
+ * @param currency The account's currency, whose buying power is read.
  * @return The text.
  */
 template <typename Session>
 std::string snapshot_text(
   Session& session, const std::string& scope, const std::string& symbol, const std::string& target,
-  const std::string& limit, std::optional<std::int64_t> journal_size
+  const std::string& limit, std::optional<std::int64_t> journal_size, const algotradelib::Currency& currency
 ) {
   std::string text = scope + "|" + symbol + "|" + target + "|" + limit;
   if (auto holdings = session.holdings()) {
@@ -154,10 +155,14 @@ std::string snapshot_text(
   } else {
     text += "|orders=?";
   }
-  if (auto cash = session.buying_power(algotradelib::Currency::krw())) {
-    text += "|cash=" + cash.value().cash_.amount_.str();
+  if constexpr (Session::Caps::has_buying_power) {
+    if (auto cash = session.buying_power(currency)) {
+      text += "|cash=" + cash.value().cash_.amount_.str();
+    } else {
+      text += "|cash=?";
+    }
   } else {
-    text += "|cash=?";
+    text += "|cash=none";
   }
   text += journal_size ? "|journal=" + std::to_string(*journal_size) : std::string("|journal=?");
   return text;
@@ -172,14 +177,15 @@ std::string snapshot_text(
  * @param target The target, as typed.
  * @param limit The limit, as typed.
  * @param journal_size The journal's size in bytes, or nothing when it could not be read.
+ * @param currency The account's currency, whose buying power is read.
  * @return The snapshot.
  */
 template <typename Session>
 std::string snapshot_of(
   Session& session, const std::string& scope, const std::string& symbol, const std::string& target,
-  const std::string& limit, std::optional<std::int64_t> journal_size
+  const std::string& limit, std::optional<std::int64_t> journal_size, const algotradelib::Currency& currency
 ) {
-  return hex_digits(fnv1a(snapshot_text(session, scope, symbol, target, limit, journal_size)), 16);
+  return hex_digits(fnv1a(snapshot_text(session, scope, symbol, target, limit, journal_size, currency)), 16);
 }
 
 /**

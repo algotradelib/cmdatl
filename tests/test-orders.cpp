@@ -1122,6 +1122,7 @@ TEST_CASE("snapshots: a failed read is written ? and never matches a good read")
   using Working = decltype(std::declval<cmdatl::AccountDesk::Session&>().working_orders());
   using WorkingValue = std::decay_t<decltype(std::declval<Working&>().value())>;
   struct Failing {
+    using Caps [[maybe_unused]] = cmdatl::AccountDesk::Session::Caps;
     bool holdings_{true};
     bool orders_{true};
     bool cash_{true};
@@ -1145,21 +1146,22 @@ TEST_CASE("snapshots: a failed read is written ? and never matches a good read")
     }
   };
   Failing good;
-  const auto ok = cmdatl::snapshot_text(good, SCOPE, "005930", "1", "75000", 10);
+  const auto ok = cmdatl::snapshot_text(good, SCOPE, "005930", "1", "75000", 10, atl::Currency::krw());
   for (int k = 0; k < 4; ++k) {
     Failing bad;
     bad.holdings_ = k != 0;
     bad.orders_ = k != 1;
     bad.cash_ = k != 2;
     const auto text = cmdatl::snapshot_text(
-      bad, SCOPE, "005930", "1", "75000", k == 3 ? std::nullopt : std::optional<std::int64_t>(10)
+      bad, SCOPE, "005930", "1", "75000", k == 3 ? std::nullopt : std::optional<std::int64_t>(10), atl::Currency::krw()
     );
     INFO(text);
     CHECK(text.find("?") != std::string::npos);
     CHECK(
       cmdatl::snapshot_of(
-        bad, SCOPE, "005930", "1", "75000", k == 3 ? std::nullopt : std::optional<std::int64_t>(10)
-      ) != cmdatl::snapshot_of(good, SCOPE, "005930", "1", "75000", 10)
+        bad, SCOPE, "005930", "1", "75000", k == 3 ? std::nullopt : std::optional<std::int64_t>(10),
+        atl::Currency::krw()
+      ) != cmdatl::snapshot_of(good, SCOPE, "005930", "1", "75000", 10, atl::Currency::krw())
     );
   }
   CHECK(ok.find("?") == std::string::npos);

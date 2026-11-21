@@ -253,7 +253,7 @@ inline Reply no_store_reply() {
 /**
  * @brief Removes a stored login's saved access token through the library's store, as far as it can, before the login
  *   is removed or replaced: the token's identity is read from the login. It never stops the change. A broker folder's
- *   login has no such token, nor has any login when the token folder does not exist.
+ *   login has no such token, nor has a broker that saves none, nor any login when the token folder does not exist.
  * @param broker The login's broker.
  * @param name The login's name.
  * @param store The credential store.
@@ -262,7 +262,9 @@ inline Reply no_store_reply() {
 inline std::optional<std::string> remove_token(const Broker& broker, const std::string& name, CredentialStore& store) {
   const auto folder = token_folder();
   struct stat info{};
-  if (broker.read_ == nullptr || !folder || (::lstat(folder->c_str(), &info) != 0 && errno == ENOENT)) {
+  if (
+    broker.read_ == nullptr || !broker.token_ || !folder || (::lstat(folder->c_str(), &info) != 0 && errno == ENOENT)
+  ) {
     return std::nullopt;
   }
   std::string reason = "the stored login could not be read";

@@ -105,6 +105,14 @@ inline constexpr const char* SESSION_UNSUPPORTED_NEXT =
   "run it with cmdatl strategy backtest (intraday bars, or bars.open_point on daily ones); a run takes programs "
   "without on_open/on_close";
 
+/** @brief Why a run on a broker that states no buying power does not start: one wording for `run` and the driver. */
+inline constexpr const char* NO_BUYING_POWER_RUN =
+  "the broker states no buying power, so cmdatl does not buy on it, and a run cannot start; nothing was sent to the "
+  "broker";
+
+/** @brief What to do on a broker that states no buying power. */
+inline constexpr const char* NO_BUYING_POWER_RUN_NEXT = "trade this account with cmdatl's order commands (sells only)";
+
 /** @brief What to do when a run's reads before its start stayed refused for the broker's request rate. */
 inline constexpr const char* START_RATE_NEXT =
   "nothing was sent; the broker refused the reads for its request rate: start the run again in a minute";

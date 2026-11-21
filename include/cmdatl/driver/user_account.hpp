@@ -176,6 +176,9 @@ public:
     "cmdatl_adapter::connect must return an object whose demo_ is a bool"
   );
 
+  /** @brief Whether the client states buying power; without it no run starts. */
+  static constexpr bool STATES_BUYING_POWER = Caps::has_buying_power;
+
   /** @brief Whether the run can be compiled for the client: what the run reads at its start, and orders. */
   static constexpr bool runnable =
     !Caps::data_only && Caps::has_calendar && Caps::has_working_orders && Caps::has_reference_data;

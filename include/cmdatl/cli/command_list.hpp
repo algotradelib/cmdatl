@@ -61,7 +61,7 @@ inline std::vector<Command> command_list() {
     .returns(
       "cash", "the mock market's cash after every fill, before what resting buys reserve; null on a broker's account"
     )
-    .returns("buying_power", "the broker's buying power")
+    .returns("buying_power", "the broker's buying power; null where the broker states none")
     .returns("owed", "orders the journal still waits on")
     .returns("orders", "working orders")
     .returns("quotes", "each allowed symbol, as quote's rows")
@@ -80,7 +80,7 @@ inline std::vector<Command> command_list() {
     .returns(
       "cash", "the mock market's cash after every fill, before what resting buys reserve; null on a broker's account"
     )
-    .returns("buying_power", "the broker's buying power")
+    .returns("buying_power", "the broker's buying power; null where the broker states none")
     .returns(
       "owed",
       "orders the journal still waits on: symbol, side, quantity, journal_id, state, order_id, broker_status, next"

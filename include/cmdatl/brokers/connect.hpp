@@ -43,21 +43,23 @@ struct Connection {
 };
 
 /**
- * @brief Connects a built-in broker for its history with a stored real login; sends nothing.
+ * @brief Connects a built-in broker for its history with a stored real login, or the demo one where the row says so
+ *   (`demo_bars_`); sends nothing.
  * @tparam Client The broker's blocking client.
  * @param login The login (the library's JSON document).
  * @param options `{}`: a built-in takes none (the spec refused any).
  * @return The connection: paced at one request a second, KRX's tape where the config chooses one, on cmdatl's token
  *   store and calendar cache.
- * @throws std::exception for an unreadable or demo login, or options (`fetch_main` shows a fixed text).
+ * @throws std::exception for an unreadable login, one of the other environment, or options (`fetch_main` shows a fixed
+ *   text).
  */
 template <typename Client>
 Connection<Client> connect_bars(const std::string& login, const std::string& options) {
   using Traits = algotradelib::BrokerTraits<Client>;
   typename Traits::Config config;
   config.from_json_text(login, "the stored login");
-  if (is_demo(config) || options != "{}") {
-    throw std::invalid_argument("a bar source reads a real login and takes no options");
+  if (is_demo(config) != facts_of<Client>().demo_bars_ || options != "{}") {
+    throw std::invalid_argument("a bar source reads the login its facts name and takes no options");
   }
   set_tape(config);
   Connection<Client> out;

@@ -54,6 +54,7 @@ inline const std::vector<std::string> ORDER_ERRORS{
   "refused.position_limit",
   "refused.daily_order_limit",
   "refused.order_value",
+  "refused.no_buying_power",
 };
 
 /**
@@ -562,6 +563,15 @@ Precheck precheck(
   if (change == 0) {
     return {};
   }
+  // Without a buying-power figure nothing bounds a buy (the guard would refuse it too): sells only.
+  if constexpr (!Desk::Session::Caps::has_buying_power) {
+    if (wanted > std::stoll(held->str())) {
+      return {
+        "refused.no_buying_power",
+        "the broker states no buying power, so cmdatl does not buy on this account; sells, cancels and reads work"
+      };
+    }
+  }
   const auto left = orders_left(config, account.journal());
   if (!left || *left == 0) {
     return {
@@ -639,8 +649,10 @@ Reply plan_reply(const Invocation& invocation, BasicAccount<Desk>& account, Outp
     plan.symbol_ = symbol;
     plan.target_ = target;
     plan.limit_ = limit;
-    plan.snapshot_ =
-      snapshot_of(account.desk().session(), account.config().scope(), symbol, target, limit, journal_size(account));
+    plan.snapshot_ = snapshot_of(
+      account.desk().session(), account.config().scope(), symbol, target, limit, journal_size(account),
+      account.market().currency_
+    );
     const auto issued = account.desk().live_now();
     plan.sim_ = nanos(issued);
     const auto id = book.issue(plan);
@@ -724,7 +736,7 @@ Reply place_reply(const Invocation& invocation, BasicAccount<Desk>& account, Out
   }
   const auto snapshot = snapshot_of(
     account.desk().session(), account.config().scope(), plan->symbol_, plan->target_, plan->limit_,
-    journal_size(account)
+    journal_size(account), account.market().currency_
   );
   // Its age on the live clock, after the snapshot's reads and just before it is used: it bounds admission, not the
   // broker's receipt.

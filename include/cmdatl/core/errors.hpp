@@ -90,8 +90,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"unsupported.capability", Exit::FAILED, false,
       "the broker folder's client does not state what a run needs; nothing was sent: trade it another way"},
     {"unsupported.broker", Exit::FAILED, false,
-      "the clock commands work on the mock account only; on a KIS account the reads and the order commands work (only "
-      "the operator can run order release), and cmdatl run trades it"},
+      "the clock commands work on the mock account only; on a built-in broker's account the reads and the order "
+      "commands work (only the operator can run order release), and cmdatl run trades a KIS account"},
     {"account.unreadable", Exit::FAILED, true,
       "the broker did not answer a holdings, buying-power or order-list read; nothing was sent: run the command again"},
     {"state.unavailable", Exit::FAILED, false,
@@ -127,6 +127,8 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"run.account_unreadable", Exit::FAILED, false, "nothing was sent; start the run again"},
     {"refused.daily_order_limit", Exit::REFUSED, false,
       "cmdatl env shows limits.daily_orders: more orders today are the operator's to allow; ask the operator"},
+    {"refused.no_buying_power", Exit::REFUSED, false,
+      "sell or hold: cmdatl does not buy on this account in this version"},
     {"refused.order_value", Exit::REFUSED, false,
       "cmdatl env shows limits.order_value: a larger order is the operator's to allow; ask the operator"},
     {"refused.no_plan", Exit::REFUSED, false, "cmdatl order plan gives a plan id"},
