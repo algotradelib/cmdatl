@@ -80,6 +80,24 @@ inline constexpr std::array<Facts, 3> FACTS{{
 }};
 
 /**
+ * @brief Whether no two rows share a traits name or a user's word.
+ * @return True when every `name_` and every `word_` is unique.
+ */
+constexpr bool rows_are_distinct() {
+  for (std::size_t i = 0; i < FACTS.size(); ++i) {
+    for (std::size_t j = i + 1; j < FACTS.size(); ++j) {
+      if (FACTS[i].name_ == FACTS[j].name_ || FACTS[i].word_ == FACTS[j].word_) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A row copied from another and left with its name or word would send one broker's commands to the other.
+static_assert(rows_are_distinct(), "two rows of builtin::FACTS share a name_ or a word_");
+
+/**
  * @brief The row of a built-in by its traits name.
  * @param name `BrokerTraits<Client>::name`.
  * @return The row, or null.
