@@ -1,6 +1,7 @@
 # Runs
 
 A run trades a strategy through algotradelib's live runner, the code that would trade a broker's account, on a mock market built from the run spec's data, or on a [KIS account](#runs-on-a-kis-account) the operator's file names.
+The account and order commands also work on an [Alpaca account](#an-alpaca-account), where runs do not start yet.
 
 ```sh
 cmdatl run dip.toml # builds the program once, then runs it in the foreground: events as JSON lines, the reply last
@@ -145,3 +146,32 @@ On the KIS account the operator's file names, `status`, `account`, `quote`, `ord
   Between a fill and the holdings showing it, or between KIS's acknowledgement and its list showing the order, a second directory can place the same order again: a target of 100 under a `limits.position` of 100 can end with 200 held, more directories can go further, and only KIS's own checks of buying power and sellable quantity bound it.
   Before trading from a new terminal, service or agent harness, compare `state_dir` in `cmdatl status` with the directory the account has used so far.
   These variables are the operator's to set and to keep the same everywhere, never an agent's.
+
+### An Alpaca account
+
+`[account] broker = "alpaca"` names an Alpaca account: its paper trading is `env = "demo"` (the default), and `env = "real"` is Alpaca's live host, on the same code path.
+Live trading is supported; the library's adapter has been checked on paper only.
+
+```toml
+[account]
+broker = "alpaca"
+env = "demo" # Alpaca's paper trading; "real" is the live host
+number = "PA0000000000" # required: Alpaca lists its account, so the file names it, as Alpaca's dashboard shows it
+
+[limits]
+symbols = ["SPY"]
+position = { SPY = 2 }
+order_value = "1000" # in USD, as every amount on this account
+daily_orders = 3 # per US trading day, counted from 00:00 at UTC-5
+```
+
+```sh
+cmdatl auth login --broker alpaca --env demo # the paper keys: the API key ID and the secret key
+```
+
+- Alpaca states no buying power (its account is a margin account), so cmdatl does not buy on it yet: `cmdatl run` is refused before anything is read (`config.invalid`, exit 1), and an `order plan` or `order place` that would buy is refused (`refused.no_buying_power`, exit 3, nothing sent).
+  Sells, `order cancel`, `order reconcile`, `order release`, `status`, `account`, `quote` and `order list` work as on a KIS account (see [Commands on a KIS account](#commands-on-a-kis-account)).
+- The account number is checked with Alpaca before the account's directory is made: one listing request, which changes nothing; a number Alpaca does not list, or one not written exactly as Alpaca shows it, is refused `auth.account_mismatch`.
+- The phase comes from Alpaca's stated session hours, so `open` is exactly Alpaca's regular session, daylight saving and early closes included; times in replies stay KST with their offset.
+- `buying_power` and `cash` are `null`.
+- An order cmdatl lets through is also refused by Alpaca's adapter while Alpaca's clock does not say the regular session (`market_closed`, nothing sent, exit 3); a sell takes three reads (the asset, the position, the clock) before it is sent, at one request a second per host, so a few seconds.

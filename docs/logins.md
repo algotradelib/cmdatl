@@ -10,17 +10,18 @@ cmdatl auth status # the stored logins, masked
 cmdatl auth logout --broker kis --env demo
 ```
 
-- On a terminal it asks for what the flags leave out: the broker; demo or real, for a broker with a demo (KIS and Kiwoom; Toss is real only); then the broker's fields, secrets without echo (KIS: app key, app secret, account number and product code; Kiwoom: app key and secret key; Toss: client id and client secret).
+- On a terminal it asks for what the flags leave out: the broker; demo or real, for a broker with a demo (KIS, Kiwoom and Alpaca, whose paper trading is its demo; Toss is real only); then the broker's fields, secrets without echo (KIS: app key, app secret, account number and product code; Kiwoom: app key and secret key; Toss: client id and client secret; Alpaca: API key ID and secret key).
 - `--with-secret` reads the broker's JSON credential document from standard input instead, as algotradelib's `from_json` reads a file; without a terminal nothing is asked, and a missing flag is exit 2.
 - One login per broker and environment, in the macOS keychain; on other systems this version has no store, and `auth login` refuses.
   A login replaces a stored one only when you answer yes, or with `--force`.
 - The document is checked with algotradelib's loaders, not with the broker: `auth status` shows `checked: false` until a run first uses the key.
 - A broker or vendor cmdatl was not built for is a [broker folder](brokers.md): `--adapter PATH` names it, its `broker.toml` says what is asked, and the login is stored unchecked, bound to that folder's path, for the adapter to read at a backtest or a run that names the same folder.
   On a terminal without `--broker`, only the built-in brokers are offered.
-- A built-in broker as a backtest's bar source (`bars.source = "kis"`) reads that broker's real login, a trading login, on the same descriptor-3 path a broker folder's fetch uses, into a driver that also compiles the C++ a run spec names (its `header` and market-price rule): run only specs you trust.
+- A built-in broker as a backtest's bar source (`bars.source = "kis"`) reads that broker's real login (Alpaca's paper login, `alpaca/demo`, whose keys read the same bars and cannot spend real money), a trading login, on the same descriptor-3 path a broker folder's fetch uses, into a driver that also compiles the C++ a run spec names (its `header` and market-price rule): run only specs you trust.
 - No command prints a secret.
   Without a terminal, or without a graphical session, cmdatl never waits on the keychain's own dialog: it answers `auth.store_locked`.
 - A run saves each key's access token in `$XDG_CACHE_HOME/cmdatl/tokens/`, else `~/.cache/cmdatl/tokens/`: one file per broker, environment and key, and every run on that key uses it until the token expires.
+- Alpaca has no access token: both keys go on every request as headers, and nothing of it is saved in the token folder.
 - A token is a bearer credential: whoever can read its file can use the account until the token expires, a day at most on KIS.
   The folder and its files are yours alone (modes 700 and 600), and a run refuses them when anyone else has any permission on them.
 - `auth logout` removes the login's saved token when it can, then the login; `auth login` replacing a login removes the old login's token first in the same way.

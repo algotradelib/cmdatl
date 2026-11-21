@@ -31,4 +31,5 @@ cmdatl order release 005930 --reason "read the order list and holdings"
   The approval is renamed after one use.
 - A failed `order plan` or `order reconcile` (exit 1) sent nothing, but may still have appended the library's recovery lines to the journal; it is safe to run again.
 - On a KIS account every order command works, `events` is `null`, and `order place` and `order cancel` reach KIS, demo or real as the operator's file says: see [Commands on a KIS account](runs.md#commands-on-a-kis-account).
+  On an Alpaca account the same, but a plan or a placement that would buy is refused `refused.no_buying_power` (Alpaca states no buying power): see [An Alpaca account](runs.md#an-alpaca-account).
 - A damaged journal has no cmdatl remedy: on the mock account, the operator keeps the account's directory for inspection and moves it aside, which abandons that mock market with it.

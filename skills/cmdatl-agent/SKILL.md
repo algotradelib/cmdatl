@@ -1,6 +1,6 @@
 ---
 name: cmdatl-agent
-description: How to trade through the cmdatl command line - read positions, cash and the operator's limits, plan and place limit orders and confirm fills, on the mock account or a KIS account; handle refusals and exit codes; start and stop strategy runs, on the mock account or a KIS account. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
+description: How to trade through the cmdatl command line - read positions, cash and the operator's limits, plan and place limit orders and confirm fills, on the mock account or a KIS or Alpaca account; handle refusals and exit codes; start and stop strategy runs, on the mock account or a KIS account. Use whenever a task asks you to buy, sell, hold, cancel, check positions, cash or orders, or run a strategy with cmdatl.
 ---
 
 # Trading with cmdatl
@@ -16,18 +16,18 @@ description: How to trade through the cmdatl command line - read positions, cash
 ## The accounts
 
 The mock account and its runs' markets are simulated here, without costs: nothing they do reaches a broker or shows how one would answer, and `env` says `mock`.
-On a KIS account (`kis-demo`, `kis-real`) orders reach KIS, with real money on `kis-real`: act there only on a task the operator gave (an armed file is not one); on any other `env`, stop and ask.
+On a broker's account (`kis-*`, `alpaca-*`) orders reach the broker, real money on `*-real`: act there only on a task the operator gave (an armed file is not one); on any other `env`, stop and ask.
 
 The mock account's clock moves by `cmdatl clock advance` and one simulated second per order command; a KIS account (`cmdatl env` shows `account.broker`) takes every account command but `clock`.
 
 The operator's file, named by `CMDATL_CONFIG`, chooses the account and sets every limit.
 The operator's files are not yours: never set or change `CMDATL_CONFIG`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` or `HOME`, never write an operator or armed file of your own, and never create, remove, rename or edit by hand the operator's file, its `<stem>.armed` or `<stem>.release`, or the account's state directory.
-Broker logins are the operator's too: `cmdatl auth status` lists them, masked, and sends nothing; never run `cmdatl auth login` or `cmdatl auth logout`, and never ask for or handle a key or secret.
+Broker logins are the operator's too: `cmdatl auth status` lists them masked; never run `cmdatl auth login` or `cmdatl auth logout`, and never ask for or handle a key or secret.
 
 ## Read first
 
 - `cmdatl status`: `now`, `phase`, `orders_accepted_now`, `not_accepted`, `positions`, `cash`, `owed`, working `orders`, `quotes`.
-- `cmdatl env`: `limits`, with `symbols`, `position` (a cap per symbol), `order_value`, `daily_orders`, `collar` and `phases`.
+- `cmdatl env`: `limits`: `symbols`, `position` (a cap per symbol), `order_value`, `daily_orders`, `collar` and `phases`.
 
 ## Orders
 
@@ -55,7 +55,7 @@ On demo and real alike; the symbol and target come from the task, never from a r
 3. `cmdatl account` and `cmdatl order reconcile SYMBOL`, until nothing is owed.
 
 - A result once given stands, also with `owed: null`.
-- Phase, calendar and plan life are checked before the request leaves; a token request, KIS's pace and the network come after, so an order can reach KIS after its phase or plan; a signal does not cut short a request in flight.
+- Phase, calendar and plan life are checked before the request leaves; a token request, the pace and the network come after, so an order can arrive after its phase or plan; a signal does not cut short a request in flight.
 - A read refused for KIS's rate (`EGW00201`) may run again after a second; report any other failed read; never retry an order command for pace.
 - One writer: no orders from another app, machine or state directory while anything is owed.
 
@@ -65,7 +65,7 @@ On demo and real alike; the symbol and target come from the task, never from a r
 
 On 3, retry only when the reason itself has passed; from `order place` or `order cancel` it says that call sent nothing, not that nothing is owed.
 Yours to correct: `refused.stale_plan`, `refused.plan_used` (plan again; after a place with no reply or a 4, once `order reconcile` shows the symbol clean), `refused.collar`, `refused.off_tick` (a price nearer the last price, on the grid), `refused.phase`.
-A cap the operator set is not yours to get past: `refused.symbol_not_allowed`, `refused.position_limit`, `refused.order_value`, `refused.daily_order_limit`, `refused.guard`, `refused.not_armed`; no smaller, split or other-symbol orders, no new run, and no clock advance to reach the same end.
+A cap the operator set is not yours to get past: `refused.symbol_not_allowed`, `refused.position_limit`, `refused.order_value`, `refused.daily_order_limit`, `refused.guard`, `refused.not_armed`, `refused.no_buying_power`; no smaller, split or other-symbol orders, no new run, and no clock advance to reach the same end.
 Stop, quote the refusal, and offer what the limits allow as a question.
 `refused.unjournaled_order`: an order the journal cannot claim rests there (one only a recovery named too: a named row is no proof this account placed it); stop and report.
 `refused.awaiting` or `refused.awaiting_confirmation`: something is still owed; place nothing until `order reconcile` shows the symbol clean, then plan again if the task stands (a refused `order cancel` may run again); after two reconciles (on mock, each after an advance), ask.

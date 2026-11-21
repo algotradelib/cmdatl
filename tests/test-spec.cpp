@@ -680,6 +680,8 @@ TEST_CASE("a built-in broker's history takes its word and an interval it serves 
     {built_in("kiwoom", "adapter = \"/a\"\n"), &p, "`bars.adapter` applies to bars.source = a broker folder's name"},
     {"strategy = \"m.atls\"\n[bars]\nsource = \"kis\"\nstore_root = \"/s\"\n", &p, "give `bars.count`"},
     {built_in("kis", "[replay]\nmarket = \"us\"\n"), &p, "quotes KRX shares in won"},
+    {built_in("alpaca", "[replay]\nmarket = \"kr\"\n"), &p, "alpaca quotes US shares in dollars: \"us\""},
+    {built_in("alpaca", "interval = \"1w\"\n"), &p, "alpaca serves 1m, 5m, 15m, 30m, 1h, 1d"},
     {built_in("toss", "interval = \"1m\"\nopen_point = true\n"), &session, "intraday bars are replayed as they are"},
   };
   for (const auto& [src, program, says] : cases) {

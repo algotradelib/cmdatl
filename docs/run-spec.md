@@ -107,7 +107,7 @@ inline double final_level(const algotradelib::backtest::MeasureInput& in) {
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `bars.source` | `"wide"`, `"csv"`, `"store"`, `"stdin"`, a built-in broker (`"kis"`, `"kiwoom"`, `"toss"`) or a broker folder's name | `"store"` when `bars.store` is set, else `"wide"` | where the bars come from |
+| `bars.source` | `"wide"`, `"csv"`, `"store"`, `"stdin"`, a built-in broker (`"kis"`, `"kiwoom"`, `"toss"`, `"alpaca"`) or a broker folder's name | `"store"` when `bars.store` is set, else `"wide"` | where the bars come from |
 
 `source = "wide"`: tables of one field each, a header and then rows of a yyyymmdd date and one cell per symbol (an empty cell, `NaN` or `nan` is missing), as Chan's book publishes them.
 
@@ -186,16 +186,17 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
 - An adapter's error is reported by its category, HTTP status and code (`fetch.failed`), never by its text, which could carry a credential.
 - A login bound to another folder, or to none, is refused before anything is built (`auth.adapter_mismatch`).
 
-`source = "kis"`, `"kiwoom"` or `"toss"`, a built-in broker: the same fetch through the library's client, with the broker's real login (`cmdatl auth login --broker kis --env real`; `toss` has no demo, so `--broker toss`), and no folder or options.
+`source = "kis"`, `"kiwoom"`, `"toss"` or `"alpaca"`, a built-in broker: the same fetch through the library's client, with the broker's real login (`cmdatl auth login --broker kis --env real`; `toss` has no demo, so `--broker toss`), or for `alpaca` its paper login (`cmdatl auth login --broker alpaca --env demo`), and no folder or options.
 It writes the store, so it needs DuckDB as a broker folder's fetch does (`build.duckdb` or `DUCKDB_ROOT`, `[build]` below).
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `bars.count` | whole number, 1 to 100000 | required | the last bars of each symbol fetched |
-| `bars.interval` | one the broker serves by count: `kis` `1d`, `1w`, `1mo`; `kiwoom` `1m`, `1d`, `1w`, `1mo`; `toss` `1m`, `1d` | `"1d"` | the bars' interval; another is refused at the key, before any login is read |
+| `bars.interval` | one the broker serves by count: `kis` `1d`, `1w`, `1mo`; `kiwoom` `1m`, `1d`, `1w`, `1mo`; `toss` `1m`, `1d`; `alpaca` `1m`, `5m`, `15m`, `30m`, `1h`, `1d` | `"1d"` | the bars' interval; another is refused at the key, before any login is read |
 | `bars.store_root` | path | required | the store the bars are written into |
 
-- `bars.adapter` and `bars.options.*` are refused; `replay.market` is `"kr"` when not given, and another value is refused.
+- `bars.adapter` and `bars.options.*` are refused; `replay.market` is the broker's market when not given (`"us"` for `alpaca`, else `"kr"`), and another value is refused.
+- `alpaca` reads US symbols (`SPY`) from IEX, a small part of the consolidated volume, into `source=alpaca-iex`; its minute and hour bars include pre- and post-market trades, and `bars.count` above 9,999 fails the fetch (one page).
 - The symbols are KRX short codes from `[instruments]` (`005930`), with no `A` prefix or tape suffix; a code the broker cannot address fails the fetch before its request (`fetch.failed`, `reached_broker: false`).
 - KIS and Kiwoom bars are KRX's tape alone (a daily bar closes at 15:30), Toss's KRX and NXT combined (it offers no other); the store names the tape: `source=kis-krx`, `source=kiwoom-krx`, `source=toss`.
 - KIS `1m` is refused: its minute history comes back a day at a time, which a fetch by count cannot page.
@@ -254,7 +255,7 @@ timezone = "UTC"
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `replay.from`, `replay.to` | date: `"YYYY-MM-DD"`, or yyyymmdd as a number or string, from 1970 | the first and last bar | the dates replayed, inclusive, in UTC |
-| `replay.market` | `"us"` or `"kr"` | `"kr"` when the first store coordinate's source starts with `kis`, `kiwoom` or `toss` or contains `krx`, else `"us"` | `us`: USD, any price; `kr`: KRW, prices on the KRX equity tick table, also for ETFs and ETNs, whose live ladder is finer (1 KRW below 2,000 KRW, 5 KRW from 2,000 KRW), so a replay's limits and `slippage_ticks` are coarser for them and can fill differently from a live run |
+| `replay.market` | `"us"` or `"kr"` | `"kr"` when the first store coordinate's source starts with `kis`, `kiwoom` or `toss` or contains `krx`, else `"us"` (so `alpaca-iex` is `"us"`) | `us`: USD, any price; `kr`: KRW, prices on the KRX equity tick table, also for ETFs and ETNs, whose live ladder is finer (1 KRW below 2,000 KRW, 5 KRW from 2,000 KRW), so a replay's limits and `slippage_ticks` are coarser for them and can fill differently from a live run |
 | `replay.cash` | number above 0 | 100000 (`us`), 100000000 (`kr`) | the opening cash |
 | `replay.commission` | number, 0 or more | 0 | the commission, a rate of each fill's value |
 | `replay.min_commission` | number, 0 or more | 0 | the least commission of a fill |

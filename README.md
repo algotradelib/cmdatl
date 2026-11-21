@@ -47,8 +47,9 @@ Placing a plan and following it to its fill are in [Orders](docs/orders.md) and 
 - The account and order commands (`status`, `order`, ...) work on a mock account: a market simulated from stored daily bars, with no broker and no network.
 - `cmdatl run` also trades a KIS account the operator's file names, a demo account (모의투자) unless the file says otherwise; see [Runs](docs/runs.md).
   On a KIS account `status`, `account`, `quote` and `order list` read the account, and the order commands work, of which only `order place` and `order cancel` send (real orders on `env = "real"`); `clock` answers `unsupported.broker`.
+- On an Alpaca account (paper trading unless `env = "real"`) the same commands work, sells only, since Alpaca states no buying power; `cmdatl run` does not start there yet.
 - Nothing is placed until the operator creates the armed file.
-- Broker logins are kept in the macOS keychain, so a run on a broker's account, a command on a KIS account, or a backtest that fetches its bars through a broker or a broker folder, needs macOS.
+- Broker logins are kept in the macOS keychain, so a run on a broker's account, a command on a built-in broker's account, or a backtest that fetches its bars through a broker or a broker folder, needs macOS.
   Everything else works on Linux too.
 
 ## Architecture
