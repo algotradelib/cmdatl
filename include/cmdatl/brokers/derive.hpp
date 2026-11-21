@@ -10,8 +10,10 @@
 #include <algotradelib/broker>
 
 #include <array>
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -33,6 +35,14 @@ constexpr const builtin::Facts& facts_of() {
   static_assert(row != nullptr, "the client has no row in cmdatl's builtin::FACTS (core/builtins.hpp)");
   return *row;
 }
+
+/**
+ * @brief Whether a client has a row of `builtin::FACTS`: a listed client without one is not offered, and nothing but
+ *   its traits name is compiled for it.
+ * @tparam Client A client.
+ */
+template <typename Client>
+inline constexpr bool has_facts = builtin::find(algotradelib::BrokerTraits<Client>::name) != nullptr;
 
 /** @brief C++17 detection of a config's members `is_demo_` (`HasDemo`) and `market_tape_` (`HasTape`). */
 template <typename Config, typename = void>
@@ -126,6 +136,76 @@ Entry entry() {
     }
   }
   return out;
+}
+
+/** @brief A client list's positions by traits name (`List` is an `algotradelib::type_list`). */
+template <typename List>
+struct ListedClients;
+template <typename... Clients>
+struct ListedClients<algotradelib::type_list<Clients...>> {
+  /**
+   * @brief The position of the client a name belongs to.
+   * @param name A traits name.
+   * @return Its position, or the list's size where no client has it.
+   */
+  static constexpr std::size_t position(std::string_view name) {
+    const std::array<std::string_view, sizeof...(Clients)> names{algotradelib::BrokerTraits<Clients>::name...};
+    for (std::size_t i = 0; i < names.size(); ++i) {
+      if (names[i] == name) {
+        return i;
+      }
+    }
+    return names.size();
+  }
+  /** @brief The client at a position. */
+  template <std::size_t I>
+  using At = std::tuple_element_t<I, std::tuple<Clients...>>;
+};
+
+/**
+ * @brief Whether a client list holds the client of every row of `builtin::FACTS` (a row naming no listed client is a
+ *   typo or a broker the library removed).
+ * @tparam List An `algotradelib::type_list`.
+ * @return True when it does.
+ */
+template <typename List>
+constexpr bool lists_every_row() {
+  for (const auto& facts : builtin::FACTS) {
+    if (ListedClients<List>::position(facts.name_) == List::size) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * @brief The entries of the rows whose client a list holds, in `builtin::FACTS`' order; a listed client without a row
+ *   has none.
+ * @tparam List An `algotradelib::type_list`.
+ * @tparam I The rows' positions.
+ * @return The entries.
+ */
+template <typename List, std::size_t... I>
+std::vector<Entry> catalog_of(std::index_sequence<I...>) {
+  std::vector<Entry> out;
+  const auto add = [&](auto row) {
+    constexpr std::size_t at = ListedClients<List>::position(builtin::FACTS[decltype(row)::value].name_);
+    if constexpr (at < List::size) {
+      out.push_back(entry<typename ListedClients<List>::template At<at>>());
+    }
+  };
+  (add(std::integral_constant<std::size_t, I>{}), ...);
+  return out;
+}
+
+/**
+ * @brief The entries of the rows whose client a list holds, in `builtin::FACTS`' order.
+ * @tparam List An `algotradelib::type_list`.
+ * @return The entries.
+ */
+template <typename List>
+std::vector<Entry> catalog_of() {
+  return catalog_of<List>(std::make_index_sequence<builtin::FACTS.size()>{});
 }
 
 /**

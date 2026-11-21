@@ -1,7 +1,8 @@
 // The account path on a built-in broker, handed to `cmdatl::run` by `main`: the user's word mapped to the library's
 // client at compile time (`with_broker`). Code is compiled only for the brokers cmdatl permits as accounts
-// (`builtin::Facts::account_`); every other broker compiles to a refusal, which nothing reaches: the operator's file
-// refuses such a broker first, and `cli.hpp` calls this only for a word with `account_`.
+// (`builtin::Facts::account_`); every other broker, and a listed client without a row of the facts, compiles to a
+// refusal, which nothing reaches: the operator's file refuses such a broker first, and `cli.hpp` calls this only for a
+// word with `account_`.
 
 #include <algotradelib/builtin_brokers>
 #include <cmdatl/cli/builtin.hpp>
@@ -27,7 +28,9 @@ Reply builtin_account_command(
   auto reply = algotradelib::with_broker<algotradelib::builtin_brokers>(
     facts != nullptr ? facts->name_ : std::string_view(), [&](auto tag) -> Reply {
       using Client = typename decltype(tag)::type;
-      if constexpr (brokers::facts_of<Client>().account_) {
+      if constexpr (!brokers::has_facts<Client>) {
+        return error_reply(Exit::FAILED, "unsupported.broker", "the broker is not supported in this version");
+      } else if constexpr (brokers::facts_of<Client>().account_) {
         return builtin_command<Client>(command, invocation, snapshot, output);
       } else {
         return error_reply(Exit::FAILED, "unsupported.broker", "the broker is not supported in this version");

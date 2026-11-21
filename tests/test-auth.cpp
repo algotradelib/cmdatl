@@ -14,6 +14,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -233,7 +234,29 @@ std::string kis_document(const std::string& extra = "") {
   return R"({"app_key":")" + KEY + R"(","app_secret":")" + SECRET + R"(","account_number":"12345678")" + extra + "}";
 }
 
+/** @brief A client a library might list that has no row of cmdatl's facts: it has only a traits name. */
+struct UnrowedClient {};
+
 } // namespace
+
+namespace algotradelib {
+
+/** @brief The unrowed client's traits: its name, all that cmdatl reads of a client without a row. */
+template <>
+struct BrokerTraits<UnrowedClient> {
+  /** @brief The name, which no row of `builtin::FACTS` has. */
+  static constexpr std::string_view name = "unrowed";
+};
+
+} // namespace algotradelib
+
+TEST_CASE("a listed client without a facts row is not offered") {
+  using Listed = algotradelib::type_list<UnrowedClient>;
+  static_assert(!cmdatl::brokers::has_facts<UnrowedClient>);
+  static_assert(!cmdatl::brokers::lists_every_row<Listed>(), "a row naming no listed client fails the rule");
+  CHECK(cmdatl::brokers::catalog_of<Listed>().empty());
+  CHECK(cmdatl::builtin::from_word("unrowed") == nullptr);
+}
 
 TEST_CASE("the built-in catalog reads the library's traits and auth lists the brokers by the user's word") {
   const auto& catalog = cmdatl::brokers::catalog();

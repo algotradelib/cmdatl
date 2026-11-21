@@ -2,8 +2,8 @@
 
 // What cmdatl decides about the library's built-in brokers, as constants: its word for each, the login it asks for, the
 // roles it permits, and the rules the library does not state. Everything the library states (demo or not, capabilities)
-// is read from its traits (`brokers/derive.hpp`); `src/catalog.cpp` checks this table against the library's list at
-// compile time.
+// is read from its traits (`brokers/derive.hpp`); `src/catalog.cpp` checks at compile time that every row names a client
+// of the library's list (a listed client without a row is not offered).
 //
 // Inside cmdatl's code a built-in is named by its traits name (`name_`); the user's word (`word_`) is read only through
 // `from_word` and written back where a user sees it.
@@ -63,7 +63,7 @@ struct Facts {
 /** @brief The replay market of every built-in's bars (KRX symbols in won), until a row differs. */
 inline constexpr std::string_view MARKET = "kr";
 
-/** @brief The built-ins, in the order `auth login` lists them and the library's list holds them. */
+/** @brief The built-ins cmdatl offers, in the order `auth login` lists them; each names a client of the library's list. */
 inline constexpr std::array<Facts, 3> FACTS{{
   {"kis", "kis", "Korea Investment & Securities (KIS)", "KIS", "algotradelib::kis::KisBlockingClient", true, true, true,
     "EGW00133",
