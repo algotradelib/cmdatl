@@ -1200,7 +1200,7 @@ TEST_CASE("a working order is the journal's only by today's acknowledged number 
       const atl::runner::JournalReplay& journal, const std::vector<cmdatl::Owed>& rows,
       const std::vector<atl::WorkingOrder<Tag>>& listed
     ) {
-      return inherited_orders<Tag>(journal, rows, ids, today, listed);
+      return inherited_orders<Tag>(journal, rows, ids, cmdatl::market_of_word("kr"), today, listed);
     };
 
   // The same order: owned, once.
@@ -1225,9 +1225,15 @@ TEST_CASE("a working order is the journal's only by today's acknowledged number 
   other = working("7");
   other.order_.ordered_date_assumed_ = true;
   CHECK(owners(replay, named, {other}) == std::vector<std::string>{""});
-  CHECK(inherited_orders<Tag>(replay, named, ids, today + 1, {working("7")}) == std::vector<std::string>{""});
+  CHECK(
+    inherited_orders<Tag>(replay, named, ids, cmdatl::market_of_word("kr"), today + 1, {working("7")}) ==
+    std::vector<std::string>{""}
+  );
   // Not a run instrument, not named, or held for the operator: not owned.
-  CHECK(inherited_orders<Tag>(replay, named, {kr("000660")}, today, {working("7")}) == std::vector<std::string>{""});
+  CHECK(
+    inherited_orders<Tag>(replay, named, {kr("000660")}, cmdatl::market_of_word("kr"), today, {working("7")}) ==
+    std::vector<std::string>{""}
+  );
   CHECK(owners(replay, {owed("a-1", "", "unnamed")}, {working("7")}) == std::vector<std::string>{""});
   CHECK(owners(replay, {owed("a-1", "7", "operator")}, {working("7")}) == std::vector<std::string>{""});
   // A number only a sweep wrote is no acknowledgement.

@@ -7,6 +7,7 @@
 
 #include "../core/time.hpp"
 #include "../system/lock.hpp"
+#include "./market.hpp"
 #include "./operator.hpp"
 #include "./session.hpp"
 
@@ -81,7 +82,8 @@ private:
  *
  * `begin()` reads the calendar, then takes the instant; the phase and every acceptance are evaluated at it on that
  * calendar, and the figures read after it are later by the seconds the reads take.
- * The calendar gives days, not hours or halts: the phase is the library's KRX window on them.
+ * The phase is the account's market's (`market_phase`): the broker's stated session hours where it states them, else
+ * the market's window on the calendar's days.
  * @tparam Trading The account's session.
  * @tparam Market The session market data, reference data and the calendar are read from (the trading one, or one that
  *   cannot trade).
@@ -115,7 +117,8 @@ public:
   : clock_(std::move(clock)),
     stopped_(std::move(stopped)),
     session_(trading, market, placement_policy(config, lock), clock_, nullptr),
-    market_(market) {
+    market_(market),
+    account_market_(account_market(config)) {
     session_.set_stopping(stopped_);
   }
 
@@ -125,7 +128,7 @@ public:
   /** @brief Reads the calendar (none when it cannot be read: the phase is then unknown), then takes the instant. */
   void begin() {
     stop_check();
-    auto calendar = market_.calendar(algotradelib::Country::KR);
+    auto calendar = market_.calendar(account_market_.country_);
     if (calendar) {
       calendar_ = std::move(calendar.value());
     }
@@ -219,15 +222,14 @@ private:
    * @return The phase.
    */
   algotradelib::strategy::MarketPhase phase_at(Clock::time_point at) const {
-    const auto window = algotradelib::strategy::SessionWindow::krx();
-    const auto trading = calendar_ ? calendar_->is_trading_day(window.local_date(at)) : std::optional<bool>();
-    return window.phase(at, trading);
+    return market_phase<typename Market::Caps>(account_market_, calendar_ ? &*calendar_ : nullptr, at);
   }
 
   std::function<Clock::time_point()> clock_;
   std::function<bool()> stopped_;
   Session session_;
   MarketSession market_;
+  AccountMarket account_market_;
   std::optional<algotradelib::TradingCalendar> calendar_;
   Clock::time_point now_{};
 };

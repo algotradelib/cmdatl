@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -119,17 +120,21 @@ inline constexpr const char* START_LONG_WAIT_NEXT =
   "after that wait";
 
 /**
- * @brief Why a run spec's market settings are refused before anything is loaded, or nothing: the market `kr`, no store,
- *   no standard input, no short sales, no fill at a decided close, no open points.
+ * @brief Why a run spec's market settings are refused before anything is loaded, or nothing: the account's market, no
+ *   store, no standard input, no short sales, no fill at a decided close, no open points.
  * @param args atlc's arguments.
+ * @param account The account's market (`builtin::account_market_word`): `kr` for the mock, KIS and broker folders.
  * @return The key at fault and why, or nothing.
  */
-inline std::optional<std::pair<std::string, std::string>> spec_refusal(const std::vector<std::string>& args) {
+inline std::optional<std::pair<std::string, std::string>> spec_refusal(
+  const std::vector<std::string>& args, std::string_view account
+) {
   const auto market = atlc_value(args, "replay.market");
-  if (!market || *market != "kr") {
+  if (!market || *market != account) {
     return std::make_pair(
       std::string("replay.market"),
-      std::string("a run trades KRX shares in won, under the operator's limits: set [replay] market = \"kr\"")
+      "a run trades " + std::string(builtin::market_row(account).phrase_) +
+        ", under the operator's limits: set [replay] market = \"" + std::string(account) + "\""
     );
   }
   if (atlc_value(args, "bars.source") == std::optional<std::string>("stdin")) {

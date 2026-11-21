@@ -1736,7 +1736,7 @@ TEST_CASE("on a broker's account an order command beside a run is busy and both 
   const auto snapshot = cmdatl::load_operator_config();
   REQUIRE(snapshot.config_);
   const auto view = cmdatl::journal_view(
-    setup.trading(), runner::read_journal_file(fixture.journal_file().string()), SCOPE,
+    setup.trading(), runner::read_journal_file(fixture.journal_file().string()), SCOPE, cmdatl::market_of_word("kr"),
     cmdatl::kst_day(kst("2024-03-26T10:00"))
   );
   CHECK(view.placed_today_ == 3);

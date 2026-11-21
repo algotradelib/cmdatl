@@ -57,6 +57,14 @@ public:
   }
 
   /**
+   * @brief The market of the account the driver trades: the row's.
+   * @return `kr` or `us`.
+   */
+  std::string market() const {
+    return std::string(brokers::facts_of<Client>().market_);
+  }
+
+  /**
    * @brief Reads the logins, checks them against the operator file, and names the account they drive.
    * @param base The reply's base.
    * @param config The operator file.
@@ -81,9 +89,10 @@ public:
     ) {
       return run_error(base, Exit::FAILED, "auth.account_mismatch", *mismatch);
     }
-    // Every config reads KRX's tape (`brokers::set_tape`).
-    market_data =
-      market_config_ ? std::string(brokers::facts_of<Client>().word_) + "-real (read only), KRX" : "own, KRX";
+    // The feed the row names: KRX's tape wherever a config chooses one (`brokers::set_tape`).
+    const auto& facts = brokers::facts_of<Client>();
+    const auto feed = facts.feed_.empty() ? std::string() : ", " + std::string(facts.feed_);
+    market_data = market_config_ ? std::string(facts.word_) + "-real (read only)" + feed : "own" + feed;
     return std::nullopt;
   }
 

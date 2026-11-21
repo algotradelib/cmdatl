@@ -267,8 +267,15 @@ struct Wiring {
   std::optional<std::chrono::nanoseconds> maximum_price_limits_age_;
   /** @brief How long a closing stop waits for the listing and holdings to account for the run's own orders. */
   std::chrono::nanoseconds closing_wait_{std::chrono::seconds(60)};
-  /** @brief The market's session window, which the loop derives dates and phases in. */
+  /**
+   * @brief The market's session window, which the loop derives dates in, and phases where the broker states no session
+   *   hours.
+   */
   atl::strategy::SessionWindow window_{atl::strategy::SessionWindow::krx()};
+  /** @brief The calendar's country. */
+  atl::Country country_{atl::Country::KR};
+  /** @brief The account's currency, whose buying power the guard reads. */
+  atl::Currency currency_{atl::Currency::krw()};
   /** @brief How long an order may stay owed with nobody able to account for it; the loop's own default, stated. */
   std::chrono::nanoseconds owed_order_limit_{std::chrono::minutes(10)};
   /** @brief The venue an order is sent to. */
@@ -411,7 +418,8 @@ Traded trade_on_rails(
   );
   source.set_journal(journal);
   source.set_bar_query(atl::BarInterval::ONE_DAY, wiring.bar_count_);
-  source.set_buying_power_currencies({atl::Currency::krw()});
+  source.set_calendar_country(wiring.country_);
+  source.set_buying_power_currencies({wiring.currency_});
   atl::runner::PollingLoop<decltype(bound), decltype(source), atl::runner::ClockReference<Clock>> loop(
     bound, source, wiring.schedule_, shared_clock
   );

@@ -33,6 +33,11 @@ template <typename Client>
 constexpr const builtin::Facts& facts_of() {
   constexpr const builtin::Facts* row = builtin::find(algotradelib::BrokerTraits<Client>::name);
   static_assert(row != nullptr, "the client has no row in cmdatl's builtin::FACTS (core/builtins.hpp)");
+  // A fixed window phases only KRX: any other market's phase comes from the broker's stated session hours.
+  static_assert(
+    row->market_ == "kr" || algotradelib::BrokerCaps<Client>::has_calendar_sessions,
+    "a builtin::FACTS row outside the kr market needs a client that states its session hours (has_calendar_sessions)"
+  );
   return *row;
 }
 

@@ -1709,7 +1709,7 @@ inline std::vector<Error> resolve(
       }
     }
   } else if (built_in != nullptr) {
-    // A built-in broker's history: how many bars, where they are kept, an interval it serves, KRX's market.
+    // A built-in broker's history: how many bars, where they are kept, an interval it serves, its row's market.
     const auto& facts = *built_in->facts_;
     for (const auto* k : {"bars.count", "bars.store_root"}) {
       if (get(k) == nullptr) {
@@ -1742,10 +1742,17 @@ inline std::vector<Error> resolve(
       }
       errors.push_back(Error::at(e->origin_, why));
     }
-    if (const auto* e = get("replay.market"); e != nullptr && e->value_.text() != builtin::MARKET) {
-      errors.push_back(Error::at(e->origin_, "`replay.market`: " + source + " quotes KRX shares in won: \"kr\""));
+    const std::string market(facts.market_);
+    if (const auto* e = get("replay.market"); e != nullptr && e->value_.text() != market) {
+      errors.push_back(
+        Error::at(
+          e->origin_,
+          "`replay.market`: " + source + " quotes " + std::string(builtin::market_row(market).phrase_) + ": \"" +
+            market + "\""
+        )
+      );
     } else if (e == nullptr) {
-      merged.push_back(Entry{"replay.market", Value::str(std::string(builtin::MARKET)), {}});
+      merged.push_back(Entry{"replay.market", Value::str(market), {}});
     }
   } else if (source == "wide") {
     both("bars.file", "bars.close");

@@ -473,7 +473,11 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   }
   const auto* order_value = limits->get("order_value");
   if (order_value == nullptr) {
-    return refuse(limits->source(), "[limits] needs order_value, the largest value of one order in KRW");
+    return refuse(
+      limits->source(),
+      "[limits] needs order_value, the largest value of one order in " +
+        std::string(builtin::market_row(builtin::account_market_word(config.broker_)).currency_)
+    );
   }
   if (const auto* whole = order_value->as_integer()) {
     if (whole->get() <= 0 || whole->get() > 10000000000000LL) {
@@ -496,7 +500,11 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   }
   const auto* daily = limits->get("daily_orders");
   if (daily == nullptr) {
-    return refuse(limits->source(), "[limits] needs daily_orders, the most placements per KST date");
+    return refuse(
+      limits->source(),
+      "[limits] needs daily_orders, the most placements per " +
+        std::string(builtin::market_row(builtin::account_market_word(config.broker_)).day_)
+    );
   }
   if (auto bad = integer_in(*limits, "daily_orders", "limits.daily_orders", 0, 10000, l.daily_orders_)) {
     return bad;

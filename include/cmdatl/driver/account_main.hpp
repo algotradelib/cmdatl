@@ -7,12 +7,15 @@
 // A broker's part is an object with:
 // - `std::string name() const`: the broker the driver was built for; an operator file naming another is refused;
 // - `std::size_t logins() const`: how many documents `cmdatl run` framed;
+// - `std::string market() const`: the market of the account the driver trades (`builtin::MARKETS`), which a run spec
+//   must name before the operator file is read;
 // - `std::optional<int> identify(base, config, documents, effective, market_data)`: reads the logins, checks them
 //   against the operator file, sets `effective.number_` to the account they drive and `market_data` for the start
 //   line; returns the exit after writing the reply, or nothing;
 // - `template <typename Program> int start(AccountRun&, const OperatorConfig& effective, Program&&)`: builds the
 //   sessions and returns `run_account`'s exit.
 
+#include "../account/market.hpp"
 #include "../account/operator.hpp"
 #include "../core/runs.hpp"
 #include "../system/credential_pipe.hpp"
@@ -73,7 +76,7 @@ int account_main(int argc, char** argv, Symbols symbols_of, Make make, Broker& b
       {{"unsupported", "session"}}
     );
   }
-  if (const auto refusal = spec_refusal(args.atlc_)) {
+  if (const auto refusal = spec_refusal(args.atlc_, broker.market())) {
     return run_error(base, Exit::USAGE, "spec.invalid", refusal->second, "", {{"key", refusal->first}});
   }
   const auto snapshot = load_operator_config();
@@ -118,8 +121,9 @@ int account_main(int argc, char** argv, Symbols symbols_of, Make make, Broker& b
   std::vector<atl::InstrumentId> ids;
   try {
     symbols = symbols_of(args.atlc_);
+    const auto market = account_market(config);
     for (const auto& symbol : symbols) {
-      ids.push_back(atl::InstrumentId{atl::Country::KR, atl::Venue::COMBINED, symbol});
+      ids.push_back(instrument_of(market, symbol));
     }
     strategy.emplace(make(args.atlc_, ids));
   } catch (const std::invalid_argument& error) {

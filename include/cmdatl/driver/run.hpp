@@ -383,7 +383,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
     );
   }
   // Row 3: the market's settings.
-  if (const auto refusal = spec_refusal(args.atlc_)) {
+  if (const auto refusal = spec_refusal(args.atlc_, "kr")) {
     return run_error(base, Exit::USAGE, "spec.invalid", refusal->second, "", {{"key", refusal->first}});
   }
   // Rows 4 and 7: the data, through the replay module's loader.
@@ -561,7 +561,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
         policy.phases_.push_back(*phase);
       }
     }
-    policy.window_ = settings.session_;
+    policy.market_.window_ = settings.session_;
     GuardedSession<atl::BlockingSession<atl::mock::MockClient>> session(
       inner, policy,
       [&market]() {
@@ -769,7 +769,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
       body["outcome"] = "refused_orders";
     }
     // The journal as the library restores it, read again from the file.
-    const auto view = journal_view(session, atl::runner::read_journal_file(journal_path), scope, 0);
+    const auto view =
+      journal_view(session, atl::runner::read_journal_file(journal_path), scope, market_of_word("kr"), 0);
     if (exit == Exit::OK && guard.lock_lost_) {
       exit = Exit::UNKNOWN;
       code = "unknown.lock_lost";

@@ -197,6 +197,7 @@ inline sending::OnceConfig once_config(const OperatorConfig& config, algotradeli
   once.maximum_portfolio_age_ = std::chrono::seconds(config.limits_.portfolio_age_);
   once.confirmation_timeout_ = std::chrono::minutes(10);
   once.refuse_unjournaled_orders_ = true;
+  once.market_ = account_market(config);
   return once;
 }
 
@@ -575,7 +576,8 @@ Precheck precheck(
     return {
       "refused.order_value",
       "an order of " + std::to_string(change) + " shares at " + limit + " is " +
-        (value ? value->str() : std::string("too large")) + " KRW; the operator allows " + config.limits_.order_value_
+        (value ? value->str() : std::string("too large")) + " " + account.market().currency_.str() +
+        "; the operator allows " + config.limits_.order_value_
     };
   }
   return {};
@@ -623,7 +625,7 @@ Reply plan_reply(const Invocation& invocation, BasicAccount<Desk>& account, Outp
     auto config = once_config(account.config(), risk_limits(account.config(), {symbol}, left));
     config.dry_run_ = true;
     sending::OnceRequest request;
-    request.instrument_ = kr(symbol);
+    request.instrument_ = instrument_of(account.market(), symbol);
     request.target_quantity_ = algotradelib::Decimal64::parse(target);
     request.limit_ = algotradelib::Decimal64::parse(limit);
     result = sending::once(account.desk(), *opened.journal_, account.lock(), request, config);
@@ -781,7 +783,7 @@ Reply place_reply(const Invocation& invocation, BasicAccount<Desk>& account, Out
     const auto left = orders_left(account.config(), account.journal()).value_or(0);
     const auto config = once_config(account.config(), risk_limits(account.config(), {plan->symbol_}, left));
     sending::OnceRequest request;
-    request.instrument_ = kr(plan->symbol_);
+    request.instrument_ = instrument_of(account.market(), plan->symbol_);
     request.target_quantity_ = algotradelib::Decimal64::parse(plan->target_);
     request.limit_ = algotradelib::Decimal64::parse(plan->limit_);
     result = sending::once(account.desk(), *opened.journal_, account.lock(), request, config);
@@ -846,7 +848,7 @@ Reply cancel_reply(const Invocation& invocation, BasicAccount<Desk>& account, Ou
     config.withdraw_only_ = true;
     config.limits_.max_orders_per_window_ = 0;
     sending::OnceRequest request;
-    request.instrument_ = kr(symbol);
+    request.instrument_ = instrument_of(account.market(), symbol);
     request.target_quantity_ = algotradelib::Decimal64(0, 0);
     result = sending::once(account.desk(), *opened.journal_, account.lock(), request, config);
   }
@@ -915,7 +917,7 @@ Reply reconcile_reply(const Invocation& invocation, BasicAccount<Desk>& account,
         // Reconcile never sends: no phase stands between it and the confirmations holdings support.
         config.limits_.permitted_phases_.reset();
         sending::OnceRequest request;
-        request.instrument_ = kr(symbol);
+        request.instrument_ = instrument_of(account.market(), symbol);
         request.target_quantity_ = *held;
         const auto result = sending::once(account.desk(), *opened.journal_, account.lock(), request, config);
         state = reconcile_row(result);
@@ -986,8 +988,9 @@ Reply release_reply(const Invocation& invocation, BasicAccount<Desk>& account, O
       return with_body(std::move(*opened.refusal_), std::move(body));
     }
     result = sending::release(
-      account.desk(), *opened.journal_, account.lock(), kr(symbol), invocation.get("reason"),
-      account.config().armed_path(), account.config().release_path(), [](std::string_view text) {
+      account.desk(), *opened.journal_, account.lock(), instrument_of(account.market(), symbol),
+      invocation.get("reason"), account.config().armed_path(), account.config().release_path(),
+      [](std::string_view text) {
         return valid_symbol(text);
       }
     );

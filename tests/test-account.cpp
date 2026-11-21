@@ -645,14 +645,14 @@ TEST_CASE("an operator-only line at an instant outside the interval makes the co
     auto& desk = opened->account_->desk();
     const auto today = cmdatl::kst_day(desk.now());
     replay.entries_ = {counted};
-    const auto alone = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
+    const auto alone = cmdatl::journal_view(desk.session(), replay, SCOPE, cmdatl::market_of_word("kr"), today);
     CHECK(alone.placed_today_ == 1);
     replay.entries_ = {salvaged, counted};
-    view = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
+    view = cmdatl::journal_view(desk.session(), replay, SCOPE, cmdatl::market_of_word("kr"), today);
     CHECK(view.placed_today_ == 1);
     CHECK(view.intact_ == alone.intact_);
     replay.entries_ = {salvaged, counted, far};
-    view = cmdatl::journal_view(desk.session(), replay, SCOPE, today);
+    view = cmdatl::journal_view(desk.session(), replay, SCOPE, cmdatl::market_of_word("kr"), today);
     CHECK(!view.intact_);
     CHECK(view.placed_today_ == 1);
     CHECK(!cmdatl::orders_left(opened->snapshot_.config_.value(), view));

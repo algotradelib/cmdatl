@@ -66,18 +66,18 @@ TEST_CASE("run grammars: run ids, argument keys, structs and offsets") {
 }
 
 TEST_CASE("the market settings a run refuses before anything is built") {
-  CHECK(!cmdatl::spec_refusal({"replay.market=kr"}));
-  CHECK(cmdatl::spec_refusal({})->first == "replay.market");
-  CHECK(cmdatl::spec_refusal({"replay.market=us"})->first == "replay.market");
-  CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.store=kis/krx"})->first == "bars.store");
-  CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.source=stdin"})->first == "bars.source");
-  CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.shorts=true"})->first == "replay.shorts");
-  CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.open_point=true"})->first == "bars.open_point");
-  CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.fill=decision-close"})->first == "replay.fill");
-  CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.fill=next-close"})->first == "replay.fill");
-  CHECK(!cmdatl::spec_refusal({"replay.market=kr", "replay.fill=next-open"}));
+  CHECK(!cmdatl::spec_refusal({"replay.market=kr"}, "kr"));
+  CHECK(cmdatl::spec_refusal({}, "kr")->first == "replay.market");
+  CHECK(cmdatl::spec_refusal({"replay.market=us"}, "kr")->first == "replay.market");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.store=kis/krx"}, "kr")->first == "bars.store");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.source=stdin"}, "kr")->first == "bars.source");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.shorts=true"}, "kr")->first == "replay.shorts");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "bars.open_point=true"}, "kr")->first == "bars.open_point");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.fill=decision-close"}, "kr")->first == "replay.fill");
+  CHECK(cmdatl::spec_refusal({"replay.market=kr", "replay.fill=next-close"}, "kr")->first == "replay.fill");
+  CHECK(!cmdatl::spec_refusal({"replay.market=kr", "replay.fill=next-open"}, "kr"));
   // The last value wins, as atlc's settings read it.
-  CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}));
+  CHECK(!cmdatl::spec_refusal({"replay.market=us", "replay.market=kr"}, "kr"));
 }
 
 TEST_CASE("the driver's broker.hpp the build writes for each built-in is the fixture its compile target reads") {

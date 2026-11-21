@@ -23,6 +23,7 @@
 // `refuse_unjournaled_orders_` (a working order the journal does not own refuses the call: on the mock, one no journal
 // line names; on a broker's account, one without the run's positive evidence, `inherited_orders`).
 
+#include "../account/market.hpp"
 #include "../account/operator.hpp"
 #include "../account/owned_orders.hpp"
 #include "../core/reply.hpp"
@@ -148,6 +149,8 @@ struct OnceConfig {
   bool withdraw_only_{false};
   /** @brief Refuse when the listing holds an order on the instrument the journal does not own (see the file's top). */
   bool refuse_unjournaled_orders_{false};
+  /** @brief The account's market: the calendar's country, the account's day and the phase. */
+  AccountMarket market_;
 };
 
 /** @brief The order a call placed, as the report and the reserved row name it. */
@@ -569,6 +572,7 @@ OnceResult once(
     session, desk.market_session(), {request.instrument_}
   );
   source.set_journal(journal);
+  source.set_calendar_country(config.market_.country_);
   source.set_buying_power_currencies({currency});
   once_detail::arm(bound, now(), config.maximum_portfolio_age_);
   if (!once_detail::answered(source.read_order_list(bound))) {
@@ -609,8 +613,7 @@ OnceResult once(
   }
   const auto at = now();
   once_detail::arm(bound, at, config.maximum_portfolio_age_);
-  const auto window = atl::strategy::SessionWindow::krx();
-  const auto phase = window.phase(at, bound.context().calendar().is_trading_day(window.local_date(at)));
+  const auto phase = market_phase<typename MarketSession::Caps>(config.market_, &bound.context().calendar(), at);
   bound.context().set_phase(phase);
   result.phase_ = std::string(atl::strategy::market_phase_name(phase));
   // 10. Outside a permitted phase, refused before the book is judged; a withdrawal is let through.
@@ -743,7 +746,7 @@ OnceResult once(
         claims.push_back(std::move(row));
       }
       const auto owners = inherited_orders<typename Session::BrokerTag>(
-        journal.replay(), claims, {request.instrument_}, kst_day(at), working_rows
+        journal.replay(), claims, {request.instrument_}, config.market_, market_day(config.market_, at), working_rows
       );
       for (std::size_t k = 0; k < owners.size(); ++k) {
         if (owners[k].empty()) {

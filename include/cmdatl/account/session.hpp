@@ -11,6 +11,7 @@
 
 #include "../system/lock.hpp"
 #include "../system/process.hpp"
+#include "./market.hpp"
 #include "./operator.hpp"
 
 #include <algotradelib/broker>
@@ -43,15 +44,14 @@ struct PlacementPolicy {
   double collar_{0.05};
   /** @brief The phases in which anything may be placed. */
   std::vector<atl::strategy::MarketPhase> phases_;
-  /** @brief The market's session window, which dates and phases are computed in. */
-  atl::strategy::SessionWindow window_{atl::strategy::SessionWindow::krx()};
-  /** @brief The calendar's country. */
-  atl::Country country_{atl::Country::KR};
+  /** @brief The account's market: the calendar's country, and the window phases are computed in where the broker
+   *   states no session hours. */
+  AccountMarket market_;
 };
 
 /**
  * @brief An account's placement policy, as the operator's file sets it: its armed file, the held lock, limit orders
- *   only unless `limits.order_type` says otherwise, the collar and the permitted phases, on the KRX window.
+ *   only unless `limits.order_type` says otherwise, the collar and the permitted phases, in the account's market.
  * @param config The operator's file.
  * @param lock The account's lock, held; it must outlive the policy.
  * @return The policy.
@@ -62,6 +62,7 @@ inline PlacementPolicy placement_policy(const OperatorConfig& config, const Owne
   policy.lock_ = &lock;
   policy.limit_only_ = config.limits_.order_type_ == "limit";
   policy.collar_ = config.limits_.collar_;
+  policy.market_ = account_market(config);
   for (const auto& name : config.limits_.phases_) {
     for (const auto phase : atl::strategy::all_market_phases) {
       if (atl::strategy::market_phase_name(phase) == name) {
@@ -216,16 +217,17 @@ public:
   }
 
   /**
-   * @brief The market's phase now, from the calendar read through the market session: `UNKNOWN` when it cannot be read.
+   * @brief The market's phase now, from the calendar read through the market session (its stated hours where the
+   *   broker states them): `UNKNOWN` when it cannot be read.
    * @return The phase.
    */
   atl::strategy::MarketPhase phase_now() {
     const auto now = now_();
-    const auto calendar = market_->calendar(policy_.country_, std::nullopt);
+    const auto calendar = market_->calendar(policy_.market_.country_, std::nullopt);
     if (!calendar) {
       return atl::strategy::MarketPhase::UNKNOWN;
     }
-    return policy_.window_.phase(now, calendar.value().is_trading_day(policy_.window_.local_date(now)));
+    return market_phase<typename Market::Caps>(policy_.market_, &calendar.value(), now);
   }
 
   /**

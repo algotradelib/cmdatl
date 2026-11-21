@@ -6,6 +6,7 @@
 #include "../core/reply.hpp"
 #include "../system/files.hpp"
 #include "../system/lock.hpp"
+#include "./market.hpp"
 #include "./mock_desk.hpp"
 #include "./operator.hpp"
 
@@ -164,13 +165,15 @@ inline void check_ownership(
  * @param session The account's session; the runner is bound to it and never sends.
  * @param replay The journal, read once.
  * @param scope The account's scope.
- * @param today The KST date to count placements on, as days from 1970-01-01.
+ * @param market The account's market, whose day placements are counted on.
+ * @param today The account's date to count placements on (`market_day`), as days from 1970-01-01.
  * @return The view; not intact when a placement's instant is outside the supported interval, as its date is then
  *   unknown (a salvaged operator-only line at the epoch is not counted at all).
  */
 template <typename Session>
 JournalView journal_view(
-  Session& session, const algotradelib::runner::JournalReplay& replay, const std::string& scope, std::int64_t today
+  Session& session, const algotradelib::runner::JournalReplay& replay, const std::string& scope,
+  const AccountMarket& market, std::int64_t today
 ) {
   namespace atl = algotradelib;
   JournalView view;
@@ -215,7 +218,7 @@ JournalView journal_view(
       continue;
     }
     if (!in_interval(entry.recorded_at_)) {
-      // The library does not bound an operator-only line's instant; one outside the interval gives no KST date.
+      // The library does not bound an operator-only line's instant; one outside the interval gives no date.
       if (view.intact_) {
         view.intact_ = false;
         view.detail_ = "the journal's entry " + entry.id_ + " was written at an instant outside 1990 to 2100";
@@ -230,7 +233,7 @@ JournalView journal_view(
     }
   }
   for (const auto& entry : first_line) {
-    if (kst_day(entry.second) == today) {
+    if (market_day(market, entry.second) == today) {
       ++view.placed_today_;
     }
   }
@@ -314,24 +317,27 @@ inline Reply lock_lost_reply() {
 using AccountDesk = MockDesk;
 
 /**
- * @brief The market phase at a desk's clock: the library's KRX session window on the calendar of the desk's market
- *   session; unknown whether today trades when it has no calendar or the calendar cannot be read.
+ * @brief The market phase at a desk's clock, on the calendar of the desk's market session (`market_phase`); unknown
+ *   whether today trades when it has no calendar or the calendar cannot be read.
  * @tparam Desk The desk type.
  * @param desk The desk.
+ * @param market The account's market.
  * @return The phase's name, such as `open`.
  */
 template <typename Desk>
-std::string phase_of(Desk& desk) {
-  const auto window = algotradelib::strategy::SessionWindow::krx();
+std::string phase_of(Desk& desk, const AccountMarket& market) {
+  using Caps = typename Desk::MarketSession::Caps;
   const auto now = desk.now();
-  std::optional<bool> trading;
-  if constexpr (Desk::MarketSession::Caps::has_calendar) {
-    const auto calendar = desk.market_session().calendar(algotradelib::Country::KR);
-    if (calendar) {
-      trading = calendar.value().is_trading_day(window.local_date(now));
+  std::optional<algotradelib::TradingCalendar> calendar;
+  if constexpr (Caps::has_calendar) {
+    auto read = desk.market_session().calendar(market.country_);
+    if (read) {
+      calendar = std::move(read.value());
     }
   }
-  return std::string(algotradelib::strategy::market_phase_name(window.phase(now, trading)));
+  return std::string(
+    algotradelib::strategy::market_phase_name(market_phase<Caps>(market, calendar ? &*calendar : nullptr, now))
+  );
 }
 
 /** @brief The key only an account's `open` can make. */
@@ -378,7 +384,7 @@ public:
    * @param dir The account's directory.
    */
   BasicAccount(AccountKey key, OperatorConfig config, std::string dir)
-  : config_(std::move(config)), lock_(std::move(dir)) {
+  : config_(std::move(config)), market_(account_market(config_)), lock_(std::move(dir)) {
     (void)key;
   }
 
@@ -463,6 +469,14 @@ public:
    */
   const OperatorConfig& config() const noexcept {
     return config_;
+  }
+
+  /**
+   * @brief The account's market, from the operator file's broker.
+   * @return The market.
+   */
+  const AccountMarket& market() const noexcept {
+    return market_;
   }
 
   /**
@@ -561,7 +575,7 @@ public:
       return;
     }
     replay_ = algotradelib::runner::read_journal_file(journal_path());
-    journal_ = journal_view(desk_->session(), replay_, config_.scope(), kst_day(desk_->now()));
+    journal_ = journal_view(desk_->session(), replay_, config_.scope(), market_, market_day(market_, desk_->now()));
     readiness_.reset();
   }
 
@@ -574,7 +588,7 @@ public:
       journal_.owned_ = true;
       journal_.intact_ = true;
     } else {
-      journal_ = journal_view(desk_->session(), replay_, config_.scope(), kst_day(desk_->now()));
+      journal_ = journal_view(desk_->session(), replay_, config_.scope(), market_, market_day(market_, desk_->now()));
     }
     phase_ = desk_->phase();
     readiness_.reset();
@@ -891,7 +905,7 @@ private:
       note_journal();
     }
     replay_ = algotradelib::runner::read_journal_file(journal_path());
-    journal_ = journal_view(desk_->session(), replay_, config_.scope(), kst_day(desk_->now()));
+    journal_ = journal_view(desk_->session(), replay_, config_.scope(), market_, market_day(market_, desk_->now()));
     return std::nullopt;
   }
 #endif
@@ -905,13 +919,14 @@ private:
     std::error_code ec;
     readiness.armed_ = std::filesystem::exists(config_.armed_path(), ec);
     readiness.orders_left_ = orders_left(config_, journal_);
-    readiness.phase_ = phase_ ? *phase_ : phase_of(*desk_);
+    readiness.phase_ = phase_ ? *phase_ : phase_of(*desk_, market_);
     const auto& phases = config_.limits_.phases_;
     readiness.phase_permitted_ = std::find(phases.begin(), phases.end(), readiness.phase_) != phases.end();
     return readiness;
   }
 
   OperatorConfig config_;
+  AccountMarket market_;
   OwnerLock lock_;
   algotradelib::runner::JournalReplay replay_;
   JournalView journal_;

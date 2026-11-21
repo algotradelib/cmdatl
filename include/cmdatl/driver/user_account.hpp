@@ -197,6 +197,14 @@ public:
   }
 
   /**
+   * @brief The market of the account the driver trades: KRX's, as every broker folder's account.
+   * @return `kr`.
+   */
+  std::string market() const {
+    return "kr";
+  }
+
+  /**
    * @brief Refuses a client the run cannot trade through, then connects with the login and checks the account.
    * @param base The reply's base.
    * @param config The operator file.

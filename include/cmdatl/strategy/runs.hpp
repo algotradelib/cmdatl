@@ -361,7 +361,7 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       return reply;
     }
     // The early refusals, with nothing built; the driver checks each again, and its checks are what count.
-    if (const auto refusal = spec_refusal(args)) {
+    if (const auto refusal = spec_refusal(args, builtin::account_market_word(config.broker_))) {
       auto reply = error_reply(Exit::USAGE, "spec.invalid", refusal->second, "fix the run spec");
       reply.body_["key"] = refusal->first;
       return reply;

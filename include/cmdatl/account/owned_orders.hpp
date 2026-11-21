@@ -5,6 +5,7 @@
 
 #include "../core/time.hpp"
 #include "./account.hpp"
+#include "./market.hpp"
 
 #include <algotradelib/runner>
 
@@ -28,7 +29,7 @@ namespace cmdatl {
  * broker number came from an acknowledgement (`ACCEPTED`) also written on `today`; every line of that placement names
  * that number or none, no other placement's line names it, and the row carries that number with the same instrument,
  * side and quantity, the same limit price when the row shows one, and an order date of `today` when the row shows one.
- * KRX day orders expire at the close, so a placement sent on an earlier day owns no working row, even when its
+ * Day orders expire at the close, so a placement sent on an earlier day owns no working row, even when its
  * acknowledgement was written today (a process suspended between the broker's answer and its line); one whose send day
  * the journal does not show owns none; a placement whose acknowledgement was lost (no number in the journal, or one
  * only a recovery sweep wrote) owns none either.
@@ -37,20 +38,21 @@ namespace cmdatl {
  * @param replay The account's journal, as read at the start.
  * @param owed What the journal still owes, as the library restores it.
  * @param ids The run's instruments.
- * @param today The run's KST date, as days from 1970-01-01.
+ * @param market The account's market, whose day `today` is.
+ * @param today The account's date (`market_day`), as days from 1970-01-01.
  * @param rows The working orders.
  * @return For each row, the journal id of the placement that owns it, or empty when none does.
  */
 template <typename Tag>
 std::vector<std::string> inherited_orders(
   const atl::runner::JournalReplay& replay, const std::vector<Owed>& owed, const std::vector<atl::InstrumentId>& ids,
-  std::int64_t today, const std::vector<atl::WorkingOrder<Tag>>& rows
+  const AccountMarket& market, std::int64_t today, const std::vector<atl::WorkingOrder<Tag>>& rows
 ) {
   const auto same = [](const atl::Decimal64& a, const atl::Decimal64& b) {
     return !atl::decimal_less(a, b) && !atl::decimal_less(b, a);
   };
-  const auto on_today = [today](std::chrono::system_clock::time_point at) {
-    return in_interval(at) && kst_day(at) == today;
+  const auto on_today = [&market, today](std::chrono::system_clock::time_point at) {
+    return in_interval(at) && market_day(market, at) == today;
   };
   // The broker numbers today's acknowledgements gave the placements still owed, each with its line.
   struct Claim {

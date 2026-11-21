@@ -187,15 +187,16 @@ inline json::value orders_left_json(const Readiness& readiness) {
 template <typename Desk>
 json::object quote_row(BasicAccount<Desk>& account, Desk& desk, const std::string& symbol) {
   const auto& readiness = account.readiness();
+  const auto& market = account.market();
   json::object row;
   row["symbol"] = symbol;
   before_read(desk);
-  const auto quote = desk.market_session().quote(kr(symbol));
+  const auto quote = desk.market_session().quote(instrument_of(market, symbol));
   row["last_price"] = quote ? json::value(quote.value().last_price_.str()) : json::value(nullptr);
   std::optional<algotradelib::PriceLimits> band;
   if constexpr (Desk::MarketSession::Caps::has_price_limits) {
     before_read(desk);
-    auto read = desk.market_session().price_limits(kr(symbol));
+    auto read = desk.market_session().price_limits(instrument_of(market, symbol));
     if (read) {
       band = std::move(read.value());
     }
@@ -731,7 +732,7 @@ Reply advance_reply(const Invocation& invocation, BasicAccount<Desk>& account, D
     json::object body;
     body["from"] = kst_iso(from);
     body["now"] = kst_iso(desk.now());
-    body["phase"] = phase_of(desk);
+    body["phase"] = phase_of(desk, account.market());
     auto events = events_json(desk);
     body["events"] = std::move(events);
     Reply reply;

@@ -19,6 +19,7 @@
 // broker's sessions from the logins `cmdatl run` hands over on descriptor 3 (`builtin_account.hpp`).
 
 #include "../account/account.hpp"
+#include "../account/market.hpp"
 #include "../account/operator.hpp"
 #include "../account/owned_orders.hpp"
 #include "../account/session.hpp"
@@ -223,8 +224,10 @@ struct LastReads {
   std::optional<std::pair<json::object, std::chrono::system_clock::time_point>> holdings_;
   /** @brief The working orders, and when they were read. */
   std::optional<std::pair<json::array, std::chrono::system_clock::time_point>> orders_;
-  /** @brief The KRW buying power, and when it was read. */
+  /** @brief The buying power in the account's currency, and when it was read. */
   std::optional<std::pair<std::string, std::chrono::system_clock::time_point>> cash_;
+  /** @brief The account's currency, the one recorded. */
+  atl::Currency currency_{atl::Currency::krw()};
 };
 
 /**
@@ -317,12 +320,12 @@ public:
     }
     return answer;
   }
-  /** @brief Forwarded, KRW recorded. @param currency The currency. @return The answer. */
+  /** @brief Forwarded, the account's currency recorded. @param currency The currency. @return The answer. */
   auto buying_power(atl::Currency currency) {
     auto answer = noted([&]() {
       return inner_->buying_power(currency);
     });
-    if (answer && currency == atl::Currency::krw()) {
+    if (answer && currency == reads_->currency_) {
       reads_->cash_ = std::make_pair(answer.value().cash_.amount_.str(), now_());
     }
     return answer;
@@ -488,12 +491,13 @@ int run_account(
     // Read once and kept: the start's checks read it, and append nothing.
     const auto journal_path = run.account_dir_ + "/journal.jsonl";
     const auto scope = config.scope();
-    const auto today = kst_day(now());
+    const auto trading_market = account_market(config);
+    const auto today = market_day(trading_market, now());
     const auto replay = atl::runner::read_journal_file(journal_path);
     JournalView at_start;
     std::int64_t left = config.limits_.daily_orders_;
     if (std::filesystem::exists(journal_path, ec)) {
-      at_start = journal_view(inner, replay, scope, today);
+      at_start = journal_view(inner, replay, scope, trading_market, today);
       const auto allowance = orders_left(config, at_start);
       if (!at_start.owned_ || !allowance) {
         return run_error(
@@ -570,8 +574,9 @@ int run_account(
           start_read_next(read_orders.refused_, read_failure_next(orders.error(), ""))
         );
       }
-      const auto owners =
-        inherited_orders<typename Inner::BrokerTag>(replay, at_start.owed_, run.ids_, today, orders.value().orders_);
+      const auto owners = inherited_orders<typename Inner::BrokerTag>(
+        replay, at_start.owed_, run.ids_, trading_market, today, orders.value().orders_
+      );
       const auto unowned = static_cast<std::size_t>(std::count(owners.begin(), owners.end(), std::string()));
       if (unowned > 0) {
         return run_error(
@@ -610,8 +615,8 @@ int run_account(
     // after the start would cost the first decision until its next read, hours later. The client keeps what it read.
     {
       const auto read_calendar = read_at_start(
-        [&market]() {
-          return market.calendar(atl::Country::KR, std::nullopt);
+        [&market, &trading_market]() {
+          return market.calendar(trading_market.country_, std::nullopt);
         },
         clock, start_note, market_waits
       );
@@ -628,8 +633,8 @@ int run_account(
           )
         );
       }
-      const auto today = atl::strategy::SessionWindow::krx().local_date(now());
-      if (!calendar.value().is_trading_day(today)) {
+      const auto local = trading_market.window_.local_date(now());
+      if (!calendar.value().is_trading_day(local)) {
         return run_error(
           base, Exit::FAILED, "run.reference_unreadable", "the trading calendar does not cover today",
           "nothing was sent; start the run again"
@@ -689,6 +694,7 @@ int run_account(
       }
     };
     LastReads reads;
+    reads.currency_ = trading_market.currency_;
     RecordingSession<GuardedSession<Inner, Market>> session(guarded, run.symbols_, now, reads, take_signal);
     // The market-data reads (bars, quotes) go through their own session, which is asked for no account read.
     LastReads market_reads;
@@ -716,7 +722,9 @@ int run_account(
     // warm-up, so the first decision has every bar it needs.
     wiring.bar_count_ = static_cast<int>(std::max<std::size_t>(run.warmup_, 1) + 1);
     wiring.maximum_portfolio_age_ = std::chrono::seconds(config.limits_.portfolio_age_);
-    wiring.window_ = atl::strategy::SessionWindow::krx();
+    wiring.window_ = trading_market.window_;
+    wiring.country_ = trading_market.country_;
+    wiring.currency_ = trading_market.currency_;
     wiring.closing_wait_ = std::chrono::seconds(30);
     wiring.final_rounds_ = 20;
     wiring.final_step_ = std::chrono::seconds(3);
@@ -834,7 +842,9 @@ int run_account(
       body["outcome"] = "refused_orders";
     }
     body["placed"] = placed;
-    const auto view = journal_view(inner, atl::runner::read_journal_file(journal_path), scope, kst_day(now()));
+    const auto view = journal_view(
+      inner, atl::runner::read_journal_file(journal_path), scope, trading_market, market_day(trading_market, now())
+    );
     if (exit == Exit::OK && (guard.lock_lost_ || !lock.still_at_path())) {
       exit = Exit::UNKNOWN;
       code = "unknown.lock_lost";

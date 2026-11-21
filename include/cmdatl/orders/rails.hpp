@@ -86,8 +86,9 @@ inline algotradelib::strategy::RiskLimits risk_limits(
   namespace atl = algotradelib;
   atl::strategy::RiskLimits limits;
   std::vector<atl::InstrumentId> universe;
+  const auto market = account_market(config);
   for (const auto& allowed : config.limits_.symbols_) {
-    universe.push_back(kr(allowed));
+    universe.push_back(instrument_of(market, allowed));
   }
   limits.permitted_universe_ = std::move(universe);
   // The library has one cap per runner, so several symbols get the smallest of theirs; a symbol without one caps at 0.
