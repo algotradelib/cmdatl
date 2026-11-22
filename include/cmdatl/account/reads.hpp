@@ -253,6 +253,32 @@ json::array positions_json(Desk& desk, const std::optional<std::string>& only) {
 }
 
 /**
+ * @brief The word for why a run did not open, as replies name it.
+ * @param kind The library's kind.
+ * @return `no_run`, `damaged`, `ledger`, `currency`, `transfer`, `write`, or `none`.
+ */
+inline const char* run_refusal_word(algotradelib::runner::RunRefusal kind) {
+  using Kind = algotradelib::runner::RunRefusal;
+  switch (kind) {
+    case Kind::NO_RUN:
+      return "no_run";
+    case Kind::DAMAGED:
+      return "damaged";
+    case Kind::LEDGER:
+      return "ledger";
+    case Kind::CURRENCY:
+      return "currency";
+    case Kind::TRANSFER:
+      return "transfer";
+    case Kind::WRITE:
+      return "write";
+    case Kind::NONE:
+      break;
+  }
+  return "none";
+}
+
+/**
  * @brief A run budget's figures for a reply, from the journal's view: `run_budget` (the run's id, whether it is open,
  *   closing the old run's orders), `run_cash` and `run_holding` by symbol; null without a budget, a field null where
  *   unknown.
@@ -269,11 +295,17 @@ void run_json(BasicAccount<Desk>& account, json::object& body) {
     body["run_holding"] = nullptr;
     return;
   }
-  // A command reads the run as a resume: it is open, or there is none (a journal no command started yet included).
+  // A command reads the run as a resume: it is open, there is none (a journal no command started yet included), or
+  // the library names why it cannot be taken up (a damaged one makes the whole read unknown before this).
   const auto& run = view.run_;
   json::object out{{"id", run ? json::value(run->id_) : json::value(nullptr)}, {"opened", run && run->opened_}};
   if (!run || !run->opened_) {
-    out["next"] = NO_RUN_NEXT;
+    const auto kind = run ? run->refusal_ : algotradelib::runner::RunRefusal::NO_RUN;
+    out["refused"] = run_refusal_word(kind);
+    out["detail"] = run ? json::value(run->refused_) : json::value(nullptr);
+    out["next"] = kind == algotradelib::runner::RunRefusal::CURRENCY ?
+      "the operator writes limits.budget for the account's currency, or opens a new run with cmdatl run" :
+      NO_RUN_NEXT;
   }
   body["run_budget"] = std::move(out);
   body["run_cash"] = view.run_cash_ ? json::value(view.run_cash_->amount_.str()) : json::value(nullptr);

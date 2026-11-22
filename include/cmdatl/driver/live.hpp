@@ -40,6 +40,11 @@ enum class Outcome {
   CLOSING_INCOMPLETE,
   /** @brief Recovery halted the runner; nothing was started. */
   RECOVERY_HALTED,
+  /**
+   * @brief A run budget's run was not taken up for a reason the operator settles (no run to resume, the budget's
+   *   currency, a transfer); nothing was started.
+   */
+  RUN_REFUSED,
   /** @brief An instrument's reference data could not be read; nothing was started. */
   REFERENCE_UNREADABLE,
   /** @brief The program defines `on_fill`, which a live runner never calls; nothing was started. */
@@ -71,6 +76,8 @@ inline const char* outcome_name(Outcome outcome) {
       return "closing_incomplete";
     case Outcome::RECOVERY_HALTED:
       return "recovery_halted";
+    case Outcome::RUN_REFUSED:
+      return "run_refused";
     case Outcome::REFERENCE_UNREADABLE:
       return "reference_unreadable";
     case Outcome::ON_FILL_UNSUPPORTED:
@@ -363,6 +370,8 @@ struct Traded {
   std::size_t pricing_refused_{0};
   /** @brief With `REFERENCE_UNREADABLE`, the refusal that ended the read. */
   StartRead start_read_{StartRead::NONE};
+  /** @brief With `RUN_REFUSED`, the library's kind. */
+  atl::runner::RunRefusal run_refusal_{atl::runner::RunRefusal::NONE};
 };
 
 // Whether a strategy counts the targets it could not price, as atlc's generated strategies do.
@@ -436,6 +445,20 @@ Traded trade_on_rails(
   // Whatever a previous process left owed is withheld until the broker's lists resolve it.
   const auto recovery = atl::runner::recover_runner(bound, journal);
   err << "recovery: " << bound.obligations().size() << " placement(s) owed after restore\n";
+  // The run's refusals the operator settles; damage and an unwritten opening halt, below.
+  if (wiring.limits_.run_budget_) {
+    using Kind = atl::runner::RunRefusal;
+    const auto& run = bound.run_recovery();
+    if (
+      run && !run->opened_ &&
+      (run->refusal_ == Kind::NO_RUN || run->refusal_ == Kind::CURRENCY || run->refusal_ == Kind::TRANSFER)
+    ) {
+      traded.outcome_ = Outcome::RUN_REFUSED;
+      traded.run_refusal_ = run->refusal_;
+      traded.detail_ = run->refused_;
+      return traded;
+    }
+  }
   if (const auto failure = bound.local_failure()) {
     traded.outcome_ = Outcome::RECOVERY_HALTED;
     traded.detail_ = *failure;

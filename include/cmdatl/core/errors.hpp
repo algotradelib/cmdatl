@@ -247,6 +247,7 @@ inline const std::vector<std::string> RUN_CODES{
   "refused.not_armed",
   "refused.orders_resting",
   "refused.daily_order_limit",
+  "refused.no_run",
   "busy.locked",
   "file.unwritable",
   "atlc.missing",

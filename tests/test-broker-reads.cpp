@@ -722,6 +722,8 @@ TEST_CASE("order plan on a broker's account plans on its sessions and starts its
   INFO(budgeted.out_);
   REQUIRE(budgeted.exit_ == 0);
   CHECK(reply_of(budgeted.out_).at("run_cash").is_null());
+  CHECK(reply_of(budgeted.out_).at("run_budget").at("refused") == "no_run");
+  CHECK(reply_of(budgeted.out_).at("run_budget").at("next").is_string());
   CHECK(setup.market_->order_history(atl::OrderHistoryQuery{}).orders_.size() == history);
 }
 

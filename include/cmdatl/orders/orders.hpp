@@ -318,6 +318,10 @@ inline Reply from_once(const sending::OnceResult& result, json::object body) {
   }
   const auto exit = result.exit_ == sending::OnceExit::REFUSED ? Exit::REFUSED : Exit::UNKNOWN;
   body["reason"] = result.reason_;
+  if (!result.code_.empty()) {
+    // A setting of the operator's file the run cannot take: nothing was sent.
+    return with_body(error_reply(Exit::FAILED, result.code_, result.detail_, result.next_), std::move(body));
+  }
   auto reply = coded(exit, once_code(result.exit_, result.reason_), result.detail_, std::move(body));
   if (!result.next_.empty()) {
     reply.body_["error"].as_object()["next"] = result.next_;

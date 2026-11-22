@@ -732,6 +732,20 @@ int run_main(int argc, char** argv, Load load, Make make) {
           );
         }
         break;
+      case Outcome::RUN_REFUSED:
+        if (thrown.empty()) {
+          return traded.run_refusal_ == atl::runner::RunRefusal::NO_RUN ?
+            run_error(
+              base, Exit::REFUSED, "refused.no_run", "no run to resume on this account (" + traded.detail_ + ")",
+              "start the run without --resume to open a new run"
+            ) :
+            run_error(
+              base, Exit::FAILED, "config.invalid",
+              "the account's run cannot take the operator file's settings (" + traded.detail_ + "); nothing was sent",
+              "the operator corrects limits.budget or limits.transfer, or opens a new run with cmdatl run"
+            );
+        }
+        break;
       case Outcome::RECOVERY_HALTED:
         if (thrown.empty()) {
           return run_error(base, Exit::UNKNOWN, "unknown.recovery_halted", traded.detail_);

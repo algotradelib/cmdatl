@@ -190,6 +190,8 @@ struct OnceResult {
   bool approval_kept_{false};
   /** @brief A `next` of its own, replacing the code's from the catalog; empty for the catalog's. */
   std::string next_;
+  /** @brief An error code of its own (a setting of the operator's file, exit 1), replacing the reason's; or empty. */
+  std::string code_;
 };
 
 /** @brief The strategy a call binds: none; the decision is the caller's target, submitted directly. */
@@ -550,27 +552,41 @@ OnceResult once(
 
   // 3. Recovery before any read.
   const auto recovery = atl::runner::recover_runner(bound, journal);
-  // A budget with no run to take up (or a run still closing the old one's orders): refused before any read or send,
-  // but a cancel, which lowers risk, goes on as without a budget; the library decides whether it is sent.
-  bool run_unopened = false;
-  // The library's own halt for a run that did not open, which a cancel goes on under.
-  std::optional<std::string> unopened_halt;
-  if (
-    config.limits_.run_budget_ &&
-    !(recovery.truncated_ || recovery.unattributable_ || recovery.unreadable_lines_ > 0 || recovery.unreadable_file_)
-  ) {
+  // A budget's run that did not open, by the library's kind: no run refuses a placement (a cancel goes on as without
+  // a budget); damage is unknown; a setting the run cannot take is the operator's file's; an unwritten opening is
+  // unknown.
+  if (config.limits_.run_budget_) {
     const auto& run = bound.run_recovery();
-    run_unopened = !run || !run->opened_;
-    unopened_halt = bound.local_failure();
-    if (run_unopened && !config.withdraw_only_) {
-      return refuse(
-        "no_run",
-        "no run is open on this account" + (run && !run->refused_.empty() ? " (" + run->refused_ + ")" : std::string())
-      );
+    if (run && !run->opened_) {
+      using Kind = atl::runner::RunRefusal;
+      switch (run->refusal_) {
+        case Kind::NO_RUN:
+          if (!config.withdraw_only_) {
+            return refuse("no_run", "no run is open on this account (" + run->refused_ + ")");
+          }
+          break;
+        case Kind::CURRENCY:
+        case Kind::TRANSFER:
+          result.exit_ = OnceExit::REFUSED;
+          result.reason_ = "run_setting";
+          result.code_ = "config.invalid";
+          result.detail_ = "the account's run cannot take the operator file's " +
+            std::string(run->refusal_ == Kind::CURRENCY ? "limits.budget currency" : "limits.transfer") + " (" +
+            run->refused_ + "); nothing was sent";
+          result.next_ = run->refusal_ == Kind::CURRENCY ?
+            "the operator writes limits.budget for the account's currency, or opens a new run with cmdatl run" :
+            "the operator corrects or removes the limits.transfer entry";
+          return result;
+        case Kind::WRITE:
+          return unknown("journal_write", "the run's opening line could not be written (" + run->refused_ + ")");
+        case Kind::DAMAGED:
+        case Kind::LEDGER:
+        case Kind::NONE:
+          return unknown("journal_damaged", "the journal's run cannot be read (" + run->refused_ + ")");
+      }
     }
   }
-  // An unopened run halts the runner by itself; that halt is not damage.
-  if (!once_detail::recovered(recovery, bound) && !run_unopened) {
+  if (!once_detail::recovered(recovery, bound)) {
     return unknown("journal_damaged", recovery.detail_.empty() ? "the journal is damaged" : recovery.detail_);
   }
   const auto unaccounted = [&] {
@@ -657,7 +673,7 @@ OnceResult once(
 
   // 6. An order still owed on the instrument, after this call's listing, history and holdings.
   bound.refresh_unconfirmed();
-  if (const auto failure = bound.local_failure(); failure && !(run_unopened && failure == unopened_halt)) {
+  if (const auto failure = bound.local_failure()) {
     return refuse(
       "journal_unwritable",
       "a confirmation could not be written to the journal before anything was sent (" + *failure +
@@ -897,13 +913,6 @@ OnceResult once(
     result.exit_ = mapped.exit_;
     result.reason_ = mapped.reason_;
     result.detail_ = mapped.detail_;
-    if (run_unopened && mapped.exit_ == OnceExit::REFUSED) {
-      // The library's own refusal: a budgeted runner sends no cancellation while its run is not open.
-      const auto& run = bound.run_recovery();
-      result.detail_ += "; with limits.budget the library sends no cancellation while the account's run is not open" +
-        (run && !run->refused_.empty() ? " (" + run->refused_ + ")" : std::string());
-      result.next_ = "the operator cancels it in the broker's app, or starts a run on this account with cmdatl run";
-    }
     return result;
   } catch (const std::exception& error) {
     return unknown("internal", error.what());

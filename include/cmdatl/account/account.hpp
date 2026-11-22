@@ -212,10 +212,11 @@ JournalView journal_view(
   const auto recovery = atl::runner::recover_runner(bound, contents);
   const bool damaged =
     recovery.truncated_ || recovery.unattributable_ || recovery.unreadable_lines_ > 0 || recovery.unreadable_file_;
-  bool run_refused = false;
+  // A run the operator's budget cannot take (its currency) is the file's to fix, not damage; no run halts nothing.
+  bool setting_refused = false;
   if (limits.run_budget_) {
     view.run_ = bound.run_recovery();
-    run_refused = view.run_ && !view.run_->opened_;
+    setting_refused = view.run_ && view.run_->refusal_ == atl::runner::RunRefusal::CURRENCY;
     view.run_cash_ = bound.run_cash();
     for (const auto& symbol : symbols) {
       if (const auto held = bound.run_holding(instrument_of(market, symbol))) {
@@ -223,8 +224,7 @@ JournalView journal_view(
       }
     }
   }
-  // A budget with no run to resume halts the view's runner; the journal itself is intact.
-  view.intact_ = !(damaged || (bound.guard().halted() && !run_refused));
+  view.intact_ = !(damaged || (bound.guard().halted() && !setting_refused));
   if (!view.intact_) {
     view.detail_ = recovery.detail_.empty() ? "the journal is damaged" : recovery.detail_;
   }
