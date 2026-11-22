@@ -156,7 +156,7 @@ Live trading is supported; the library's adapter has been checked on paper only.
 [account]
 broker = "alpaca"
 env = "demo" # Alpaca's paper trading; "real" is the live host
-number = "PA0000000000" # required: Alpaca lists its account, so the file names it, as Alpaca's dashboard shows it
+# number = "PA0000000000" # optional: the login names the account; written, it must match the login
 
 [limits]
 symbols = ["SPY"]
@@ -171,7 +171,9 @@ cmdatl auth login --broker alpaca --env demo # the paper keys: the API key ID an
 
 - Alpaca states no buying power (its account is a margin account), so without a [run budget](#a-run-budget) cmdatl does not buy on it: `cmdatl run` is refused before anything is read (`config.invalid`, exit 1), and an `order plan` or `order place` that would buy is refused (`refused.no_buying_power`, exit 3, nothing sent).
   With `limits.budget` the run and the buys go ahead within the run's cash. Sells, `order cancel`, `order reconcile`, `order release`, `status`, `account`, `quote` and `order list` work as on a KIS account (see [Commands on a KIS account](#commands-on-a-kis-account)).
-- The account number is checked with Alpaca before the account's directory is made: one listing request, which changes nothing; a number Alpaca does not list, or one not written exactly as Alpaca shows it, is refused `auth.account_mismatch`.
+- `cmdatl auth login --broker alpaca` asks Alpaca which account the keys trade (one read, which changes nothing) and stores its number with the login, as KIS's login carries its own; a paper key given for `--env real`, or the reverse, or keys Alpaca refuses, are refused `auth.account_unread` and nothing is stored. `auth status` shows the number masked.
+- At every start the number is the login's; a `number` written in `[account]` must equal it, or the start is refused `auth.account_mismatch`; Alpaca is asked once more (one listing, before the account's directory is made) that the keys still trade that account.
+  A login stored before cmdatl learned the number is refused `auth.account_mismatch` with the `auth login` to run again.
 - The phase comes from Alpaca's stated session hours, so `open` is exactly Alpaca's regular session, daylight saving and early closes included; times in replies stay KST with their offset.
 - `buying_power` and `cash` are `null`.
 - An order cmdatl lets through is also refused by Alpaca's adapter while Alpaca's clock does not say the regular session (Alpaca's `market_closed`: nothing sent, exit 3 `refused.withheld`); a sell takes three reads (the asset, the position, the clock) before it is sent, at one request a second per host, so a few seconds.
