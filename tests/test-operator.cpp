@@ -238,6 +238,13 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"a fee rate above 1",
       with("", limits_plus("budget = 1000000\nfees = { commission_rate = \"1.5\", commission_minimum = 0 }"), ""),
       "config.invalid", 0},
+    {"a commission minimum of eight decimals",
+      with(
+        "",
+        limits_plus("budget = 1000000\nfees = { commission_rate = 0, commission_minimum = \"100000000000.00000001\" }"),
+        ""
+      ),
+      "config.invalid", 0},
     {"a transfer id twice",
       with(
         "",

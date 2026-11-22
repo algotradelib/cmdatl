@@ -276,7 +276,8 @@ inline bool order_value_text(const std::string& text) {
 }
 
 /**
- * @brief Whether a text is a fee: `[0-9]{1,14}(\.[0-9]{1,8})?`, 0 or more, and for a rate at most 1.
+ * @brief Whether a text is a fee: a rate `[0-9](\.[0-9]{1,8})?` at most 1, or an amount `[0-9]{1,14}(\.[0-9]{1,4})?`
+ *   at most 10^13 (as `order_value`, so it always parses), 0 or more.
  * @param text The text.
  * @param rate Whether it is a fraction of an order's value.
  * @return Whether it is.
@@ -293,12 +294,14 @@ inline bool fee_text(const std::string& text, bool rate) {
   if (whole.empty() || whole.size() > 14 || !digits(whole)) {
     return false;
   }
-  if (dot != std::string::npos && (fraction.empty() || fraction.size() > 8 || !digits(fraction))) {
+  if (dot != std::string::npos && (fraction.empty() || fraction.size() > (rate ? 8u : 4u) || !digits(fraction))) {
     return false;
   }
   const auto units = std::stoll(whole);
   const bool fraction_zero = fraction.find_first_not_of('0') == std::string::npos;
-  return rate ? units == 0 || (units == 1 && fraction_zero) : units <= 10000000000000LL;
+  return rate ?
+    units == 0 || (units == 1 && fraction_zero) :
+    units < 10000000000000LL || (units == 10000000000000LL && fraction_zero);
 }
 
 /**
@@ -357,11 +360,10 @@ inline std::optional<Refusal> fee_of(
   }
   const auto* written = node->as_string();
   if (written == nullptr || !fee_text(written->get(), rate)) {
-    return refuse(
-      node->source(),
-      label + " must be 0 or a string holding a decimal of at most eight decimals" +
-        (rate ? std::string(", at most 1 (a fraction: \"0.00015\" is 0.015 %)") : std::string())
-    );
+    const std::string bound = rate ?
+      " of at most eight decimals, at most 1 (a fraction: \"0.00015\" is 0.015 %)" :
+      " of at most four decimals, at most 10000000000000";
+    return refuse(node->source(), label + " must be 0 or a string holding a decimal" + bound);
   }
   out = written->get();
   return std::nullopt;

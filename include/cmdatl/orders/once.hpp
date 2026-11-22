@@ -565,10 +565,7 @@ OnceResult once(
     if (run_unopened && !config.withdraw_only_) {
       return refuse(
         "no_run",
-        run && run->closing_ ?
-          "the account's new run is still closing the old run's orders" :
-          "no run is open on this account" +
-            (run && !run->refused_.empty() ? " (" + run->refused_ + ")" : std::string())
+        "no run is open on this account" + (run && !run->refused_.empty() ? " (" + run->refused_ + ")" : std::string())
       );
     }
   }

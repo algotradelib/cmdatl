@@ -158,9 +158,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
       "the operator writes the approval file beside the operator's file, one SYMBOL JOURNAL_ID line per owed order"},
     {"refused.nothing_owed", Exit::REFUSED, false, "cmdatl account shows what is owed"},
     {"refused.no_run", Exit::REFUSED, false,
-      "with limits.budget the order commands take up the account's run: the operator starts one with cmdatl run, and "
-      "a run still closing the old run's orders opens once they end (an order the broker refused to cancel waits for the "
-      "operator)"},
+      "with limits.budget the order commands take up the account's run: the operator starts one with cmdatl run"},
     {"refused.named", Exit::REFUSED, true,
       "the broker named the order: cmdatl order reconcile SYMBOL records it from holdings or the order history"},
     {"refused.awaiting", Exit::REFUSED, true,

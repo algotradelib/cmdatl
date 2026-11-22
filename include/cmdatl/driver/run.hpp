@@ -388,7 +388,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
   if (args.opening_ != "new") {
     return run_error(
       base, Exit::USAGE, "usage.bad_value",
-      "a mock run's market and journal are its own: it has no earlier run to resume or wait for", "leave out --resume"
+      "a mock run's market and journal are its own: it has no earlier run to resume or wait for",
+      "leave out --resume and --wait-open-orders"
     );
   }
   // Row 2: no bar of a run opens a session before it closes.

@@ -269,18 +269,13 @@ void run_json(BasicAccount<Desk>& account, json::object& body) {
     body["run_holding"] = nullptr;
     return;
   }
+  // A command reads the run as a resume: it is open, or there is none (a journal no command started yet included).
   const auto& run = view.run_;
-  if (run) {
-    json::object out{{"id", run->id_}, {"open", run->opened_}, {"closing", run->closing_}};
-    if (run->closing_) {
-      out["next"] = RUN_CLOSING_NEXT;
-    } else if (!run->opened_) {
-      out["next"] = NO_RUN_NEXT;
-    }
-    body["run_budget"] = std::move(out);
-  } else {
-    body["run_budget"] = nullptr;
+  json::object out{{"id", run ? json::value(run->id_) : json::value(nullptr)}, {"opened", run && run->opened_}};
+  if (!run || !run->opened_) {
+    out["next"] = NO_RUN_NEXT;
   }
+  body["run_budget"] = std::move(out);
   body["run_cash"] = view.run_cash_ ? json::value(view.run_cash_->amount_.str()) : json::value(nullptr);
   json::object holding;
   for (const auto& symbol : account.config().limits_.symbols_) {

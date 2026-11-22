@@ -123,8 +123,8 @@ inline algotradelib::strategy::RiskLimits risk_limits(
 }
 
 /**
- * @brief How a budgeted process takes up the account's run: it resumes it, with the operator file's transfers (each
- *   applied once by its id).
+ * @brief How `cmdatl run --resume` takes up the account's run: it resumes it, with the operator file's transfers
+ *   (each applied once by its id); the order commands resume with none.
  * @param config The operator's file.
  * @return The opening; unread without a budget.
  */

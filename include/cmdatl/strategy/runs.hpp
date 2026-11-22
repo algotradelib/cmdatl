@@ -318,6 +318,13 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       "leave them out"
     );
   }
+  if ((resume || wait) && !broker) {
+    return error_reply(
+      Exit::USAGE, "usage.bad_value",
+      "a mock run's market and journal are its own: it has no earlier run to resume or wait for",
+      "leave out --resume and --wait-open-orders"
+    );
+  }
   if (resume && wait) {
     return error_reply(
       Exit::USAGE, "usage.bad_value", "--wait-open-orders is for a new run, not with --resume", "give one of them"

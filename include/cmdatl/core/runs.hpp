@@ -112,9 +112,9 @@ inline constexpr const char* NO_BUYING_POWER_RUN =
 
 /** @brief What to do while a new run waits for the old run's open orders: one wording for events and replies. */
 inline constexpr const char* RUN_CLOSING_NEXT =
-  "the new run opens once the old run's open orders end: each is cancelled once per process, so an order the broker "
-  "refused to cancel holds it; the operator cancels it in the broker's app, or starts the run again with "
-  "--wait-open-orders";
+  "the new run opens once the old run's open orders end: without --wait-open-orders each is cancelled once per "
+  "process; an order the broker refused to cancel, or one waiting to be booked, holds it until the operator settles "
+  "it (the broker's app, cmdatl order release)";
 
 /** @brief What to do with a run budget and no run on the account. */
 inline constexpr const char* NO_RUN_NEXT = "the operator starts a run on this account with cmdatl run";

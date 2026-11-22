@@ -62,7 +62,7 @@ inline std::vector<Command> command_list() {
       "cash", "the mock market's cash after every fill, before what resting buys reserve; null on a broker's account"
     )
     .returns("buying_power", "the broker's buying power; null where the broker states none")
-    .returns("run_budget", "with limits.budget, the account's run: id, open, closing (the old run's orders); else null")
+    .returns("run_budget", "with limits.budget, the account's run: id (null without one), opened, and a next without one; else null")
     .returns("run_cash", "with limits.budget, the run's cash as its journal books it; null where unknown, or without a budget")
     .returns("run_holding", "with limits.budget, the run's own shares by symbol (null where unknown); else null")
     .returns("owed", "orders the journal still waits on")
@@ -84,7 +84,7 @@ inline std::vector<Command> command_list() {
       "cash", "the mock market's cash after every fill, before what resting buys reserve; null on a broker's account"
     )
     .returns("buying_power", "the broker's buying power; null where the broker states none")
-    .returns("run_budget", "with limits.budget, the account's run: id, open, closing (the old run's orders); else null")
+    .returns("run_budget", "with limits.budget, the account's run: id (null without one), opened, and a next without one; else null")
     .returns("run_cash", "with limits.budget, the run's cash as its journal books it; null where unknown, or without a budget")
     .returns("run_holding", "with limits.budget, the run's own shares by symbol (null where unknown); else null")
     .returns(

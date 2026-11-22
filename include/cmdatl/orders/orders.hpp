@@ -199,9 +199,12 @@ inline sending::OnceConfig once_config(const OperatorConfig& config, algotradeli
   once.confirmation_timeout_ = std::chrono::minutes(10);
   once.refuse_unjournaled_orders_ = true;
   once.market_ = account_market(config);
-  // Every order command takes up the account's current run; none is opened here.
+  // Every order command takes up the account's current run; none is opened here, and no transfer is applied (only
+  // cmdatl run --resume applies them).
   if (once.limits_.run_budget_) {
-    once.run_opening_ = resumed_run(config);
+    algotradelib::runner::RunOpening opening;
+    opening.resume_ = true;
+    once.run_opening_ = opening;
   }
   return once;
 }
