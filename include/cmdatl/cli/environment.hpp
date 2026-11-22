@@ -105,6 +105,28 @@ inline Reply env_reply() {
       {"plan_ttl", c.limits_.plan_ttl_},
       {"portfolio_age", c.limits_.portfolio_age_},
     };
+    auto& limits = reply.body_["limits"].as_object();
+    if (c.limits_.budget_.empty()) {
+      limits["budget"] = nullptr;
+      limits["fees"] = nullptr;
+    } else {
+      limits["budget"] = c.limits_.budget_;
+      const auto& f = *c.limits_.fees_;
+      const auto optional_text = [](const std::string& text) {
+        return text.empty() ? json::value(nullptr) : json::value(text);
+      };
+      limits["fees"] = json::object{
+        {"commission_rate", f.commission_rate_},
+        {"commission_minimum", f.commission_minimum_},
+        {"institution_rate", optional_text(f.institution_rate_)},
+        {"sell_tax_rate", optional_text(f.sell_tax_rate_)},
+      };
+    }
+    json::array transfers;
+    for (const auto& t : c.limits_.transfers_) {
+      transfers.push_back(json::object{{"id", t.id_}, {"amount", t.amount_}, {"withdrawal", t.withdrawal_}});
+    }
+    limits["transfers"] = std::move(transfers);
     std::error_code ec;
     reply.body_["armed"] =
       json::object{{"path", c.armed_path()}, {"exists", std::filesystem::exists(c.armed_path(), ec)}};

@@ -52,6 +52,28 @@ inline bool outside_collar(double limit, double mark, double collar) {
   return mark <= 0 || std::abs(limit - mark) > collar * mark;
 }
 
+/** @brief The fees a run budget estimates for each order (`[limits.fees]`), as decimals written. */
+struct Fees {
+  /** @brief The fraction of an order's value charged as commission, such as `0.00015`. */
+  std::string commission_rate_;
+  /** @brief The least commission on one order, in the account's currency. */
+  std::string commission_minimum_;
+  /** @brief A fraction charged on top of the commission (an institution fee), or empty for none. */
+  std::string institution_rate_;
+  /** @brief The fraction of a sell's value charged as tax, or empty for none. */
+  std::string sell_tax_rate_;
+};
+
+/** @brief Cash the operator adds to the account's run or takes from it, once (`[[limits.transfer]]`). */
+struct Transfer {
+  /** @brief The operator's id for it, applied once. */
+  std::string id_;
+  /** @brief How much, in the account's currency, as a decimal. */
+  std::string amount_;
+  /** @brief Whether it is taken from the run. */
+  bool withdrawal_{false};
+};
+
 /** @brief The operator's limits. */
 struct Limits {
   /** @brief The symbols that may be traded at all. */
@@ -72,6 +94,12 @@ struct Limits {
   std::int64_t plan_ttl_{60};
   /** @brief How old holdings and the listing may be when a decision is made, in seconds. */
   std::int64_t portfolio_age_{30};
+  /** @brief The run's starting cash in the account's currency, as a decimal, or empty for no run budget. */
+  std::string budget_;
+  /** @brief The fees the budget estimates; set exactly when `budget_` is. */
+  std::optional<Fees> fees_;
+  /** @brief Deposits and withdrawals for the account's run, in the file's order. */
+  std::vector<Transfer> transfers_;
 };
 
 /** @brief What the mock market is built from. */
@@ -248,6 +276,98 @@ inline bool order_value_text(const std::string& text) {
 }
 
 /**
+ * @brief Whether a text is a fee: `[0-9]{1,14}(\.[0-9]{1,8})?`, 0 or more, and for a rate at most 1.
+ * @param text The text.
+ * @param rate Whether it is a fraction of an order's value.
+ * @return Whether it is.
+ */
+inline bool fee_text(const std::string& text, bool rate) {
+  const auto dot = text.find('.');
+  const auto whole = text.substr(0, dot);
+  const auto fraction = dot == std::string::npos ? std::string() : text.substr(dot + 1);
+  const auto digits = [](const std::string& part) {
+    return std::all_of(part.begin(), part.end(), [](char c) {
+      return c >= '0' && c <= '9';
+    });
+  };
+  if (whole.empty() || whole.size() > 14 || !digits(whole)) {
+    return false;
+  }
+  if (dot != std::string::npos && (fraction.empty() || fraction.size() > 8 || !digits(fraction))) {
+    return false;
+  }
+  const auto units = std::stoll(whole);
+  const bool fraction_zero = fraction.find_first_not_of('0') == std::string::npos;
+  return rate ? units == 0 || (units == 1 && fraction_zero) : units <= 10000000000000LL;
+}
+
+/**
+ * @brief Reads an amount written as `order_value` is: an integer, or a string holding a decimal, above 0, at most
+ *   10^13, with at most four decimals.
+ * @param table The table.
+ * @param key The key.
+ * @param label The key's full name, for messages.
+ * @param out Set to the decimal's text.
+ * @return The refusal, or nothing.
+ */
+inline std::optional<Refusal> amount_of(
+  const toml::table& table, const char* key, const std::string& label, std::string& out
+) {
+  const auto* node = table.get(key);
+  if (const auto* whole = node->as_integer()) {
+    if (whole->get() <= 0 || whole->get() > 10000000000000LL) {
+      return refuse(node->source(), label + " must be above 0 and at most 10000000000000");
+    }
+    out = std::to_string(whole->get());
+    return std::nullopt;
+  }
+  if (const auto* written = node->as_string()) {
+    if (!order_value_text(written->get())) {
+      return refuse(
+        node->source(), label + " must be a decimal above 0 and at most 10000000000000, with at most four decimals"
+      );
+    }
+    out = written->get();
+    return std::nullopt;
+  }
+  return refuse(node->source(), label + " must be an integer, or a string holding a decimal, not " + type_name(*node));
+}
+
+/**
+ * @brief Reads a fee: the integer 0, or a string holding a decimal of at most eight decimals (a rate at most 1).
+ * @param table The table.
+ * @param key The key.
+ * @param label The key's full name, for messages.
+ * @param rate Whether it is a fraction of an order's value.
+ * @param out Set to the decimal's text.
+ * @return The refusal, or nothing.
+ */
+inline std::optional<Refusal> fee_of(
+  const toml::table& table, const char* key, const std::string& label, bool rate, std::string& out
+) {
+  const auto* node = table.get(key);
+  if (const auto* whole = node->as_integer()) {
+    if (whole->get() != 0) {
+      return refuse(
+        node->source(), label + " other than 0 is written as a string holding a decimal, such as \"0.00015\""
+      );
+    }
+    out = "0";
+    return std::nullopt;
+  }
+  const auto* written = node->as_string();
+  if (written == nullptr || !fee_text(written->get(), rate)) {
+    return refuse(
+      node->source(),
+      label + " must be 0 or a string holding a decimal of at most eight decimals" +
+        (rate ? std::string(", at most 1 (a fraction: \"0.00015\" is 0.015 %)") : std::string())
+    );
+  }
+  out = written->get();
+  return std::nullopt;
+}
+
+/**
  * @brief Whether an account number is written as the operator file takes it for an account and a product code (KIS's
  *   form, `builtin::Facts::account_and_product_`): eight digits, `-`, two digits.
  * @param text The number.
@@ -263,6 +383,121 @@ inline bool account_and_product_number(const std::string& text) {
     }
   }
   return true;
+}
+
+/**
+ * @brief Reads the run budget's keys of `[limits]`: `budget`, `[limits.fees]` (required with it, refused without it)
+ *   and `[[limits.transfer]]` (each `id`, `amount`, `withdrawal`; only with a budget).
+ * @param limits The `[limits]` table.
+ * @param l Where they go.
+ * @return The first refusal, or nothing.
+ */
+inline std::optional<Refusal> run_limits(const toml::table& limits, Limits& l) {
+  if (limits.get("budget") != nullptr) {
+    if (auto bad = amount_of(limits, "budget", "limits.budget", l.budget_)) {
+      return bad;
+    }
+  }
+  const auto* fees_node = limits.get("fees");
+  if (l.budget_.empty()) {
+    for (const auto* key : {"fees", "transfer"}) {
+      if (const auto* node = limits.get(key)) {
+        return refuse(
+          node->source(), std::string("limits.") + key + " goes with limits.budget, the run's starting cash"
+        );
+      }
+    }
+    return std::nullopt;
+  }
+  if (fees_node == nullptr) {
+    return refuse(
+      limits.source(),
+      "limits.budget needs [limits.fees]: commission_rate and commission_minimum, and institution_rate and "
+      "sell_tax_rate where the broker charges them (write 0 where it charges none)"
+    );
+  }
+  const auto* fees = fees_node->as_table();
+  if (fees == nullptr) {
+    return refuse(fees_node->source(), "limits.fees must be a table, not " + type_name(*fees_node));
+  }
+  if (
+    auto bad =
+      only_keys(*fees, "limits.fees", {"commission_minimum", "commission_rate", "institution_rate", "sell_tax_rate"})
+  ) {
+    return bad;
+  }
+  Fees f;
+  for (const auto* key : {"commission_rate", "commission_minimum"}) {
+    if (fees->get(key) == nullptr) {
+      return refuse(fees->source(), std::string("[limits.fees] needs ") + key + " (0 where the broker charges none)");
+    }
+  }
+  if (auto bad = fee_of(*fees, "commission_rate", "limits.fees.commission_rate", true, f.commission_rate_)) {
+    return bad;
+  }
+  if (auto bad = fee_of(*fees, "commission_minimum", "limits.fees.commission_minimum", false, f.commission_minimum_)) {
+    return bad;
+  }
+  if (fees->get("institution_rate") != nullptr) {
+    if (auto bad = fee_of(*fees, "institution_rate", "limits.fees.institution_rate", true, f.institution_rate_)) {
+      return bad;
+    }
+  }
+  if (fees->get("sell_tax_rate") != nullptr) {
+    if (auto bad = fee_of(*fees, "sell_tax_rate", "limits.fees.sell_tax_rate", true, f.sell_tax_rate_)) {
+      return bad;
+    }
+  }
+  l.fees_ = std::move(f);
+  const auto* transfers = limits.get("transfer");
+  if (transfers == nullptr) {
+    return std::nullopt;
+  }
+  const auto* array = transfers->as_array();
+  if (array == nullptr || !array->is_array_of_tables()) {
+    return refuse(transfers->source(), "limits.transfer is written as [[limits.transfer]] tables");
+  }
+  if (array->size() > 100) {
+    return refuse(transfers->source(), "limits.transfer lists at most 100 transfers");
+  }
+  for (const auto& element : *array) {
+    const auto& table = *element.as_table();
+    if (auto bad = only_keys(table, "limits.transfer", {"amount", "id", "withdrawal"})) {
+      return bad;
+    }
+    Transfer t;
+    std::optional<std::string> id;
+    if (auto bad = string_of(table, "id", "limits.transfer.id", id)) {
+      return bad;
+    }
+    if (
+      !id || id->empty() || id->size() > 64 ||
+      id->find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-") != std::string::npos
+    ) {
+      return refuse(table.source(), "a transfer needs an id of 1 to 64 letters, digits, '_' or '-'");
+    }
+    for (const auto& other : l.transfers_) {
+      if (other.id_ == *id) {
+        return refuse(table.source(), "limits.transfer lists the id " + *id + " twice");
+      }
+    }
+    t.id_ = *id;
+    if (table.get("amount") == nullptr) {
+      return refuse(table.source(), "a transfer needs an amount");
+    }
+    if (auto bad = amount_of(table, "amount", "limits.transfer.amount", t.amount_)) {
+      return bad;
+    }
+    if (const auto* withdrawal = table.get("withdrawal")) {
+      const auto* flag = withdrawal->as_boolean();
+      if (flag == nullptr) {
+        return refuse(withdrawal->source(), "limits.transfer.withdrawal must be true or false");
+      }
+      t.withdrawal_ = flag->get();
+    }
+    l.transfers_.push_back(std::move(t));
+  }
+  return std::nullopt;
 }
 
 /**
@@ -417,8 +652,8 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
   if (
     auto bad = only_keys(
       *limits, "limits",
-      {"collar", "daily_orders", "order_type", "order_value", "phases", "plan_ttl", "portfolio_age", "position",
-        "symbols"}
+      {"budget", "collar", "daily_orders", "fees", "order_type", "order_value", "phases", "plan_ttl", "portfolio_age",
+        "position", "symbols", "transfer"}
     )
   ) {
     return bad;
@@ -558,6 +793,9 @@ inline std::optional<Refusal> validate(const toml::table& root, OperatorConfig& 
     return bad;
   }
   if (auto bad = integer_in(*limits, "portfolio_age", "limits.portfolio_age", 1, 86400, l.portfolio_age_)) {
+    return bad;
+  }
+  if (auto bad = run_limits(*limits, l)) {
     return bad;
   }
 

@@ -113,4 +113,31 @@ algotradelib::strategy::MarketPhase market_phase(
   }
 }
 
+/**
+ * @brief The operator file's run budget as the library's limits: `run_budget_` in the account's currency and
+ *   `run_fees_`; both empty without `limits.budget`. Nothing else is set.
+ * @param config The operator's file.
+ * @return The limits.
+ */
+inline algotradelib::strategy::RiskLimits run_budget_limits(const OperatorConfig& config) {
+  namespace atl = algotradelib;
+  atl::strategy::RiskLimits limits;
+  if (config.limits_.budget_.empty()) {
+    return limits;
+  }
+  limits.run_budget_ = atl::Money{atl::Decimal64::parse(config.limits_.budget_), account_market(config).currency_};
+  const auto& f = *config.limits_.fees_;
+  atl::strategy::RunFees fees;
+  fees.commission_rate_ = atl::Decimal64::parse(f.commission_rate_);
+  fees.commission_minimum_ = atl::Decimal64::parse(f.commission_minimum_);
+  if (!f.institution_rate_.empty()) {
+    fees.institution_rate_ = atl::Decimal64::parse(f.institution_rate_);
+  }
+  if (!f.sell_tax_rate_.empty()) {
+    fees.sell_tax_rate_ = atl::Decimal64::parse(f.sell_tax_rate_);
+  }
+  limits.run_fees_ = fees;
+  return limits;
+}
+
 } // namespace cmdatl

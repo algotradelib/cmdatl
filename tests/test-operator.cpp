@@ -231,6 +231,23 @@ TEST_CASE("the operator's file: every rule refused alone, with its line and colu
     {"an armed_file key", "armed_file = \"/tmp/a\"\n" + ConfigParts{}.text(), "config.invalid", 1},
     {"an unknown table", ConfigParts{}.text() + "\n[extra]\nx = 1\n", "config.invalid", 16},
     {"atlc a number", "atlc = 1\n" + ConfigParts{}.text(), "config.invalid", 1},
+    // The run budget: fees go with it, and it with them; rates are fractions; a transfer's id is applied once.
+    {"a budget without fees", with("", limits_plus("budget = 1000000"), ""), "config.invalid", 0},
+    {"fees without a budget", with("", limits_plus("fees = { commission_rate = \"0\", commission_minimum = 0 }"), ""),
+      "config.invalid", 0},
+    {"a fee rate above 1",
+      with("", limits_plus("budget = 1000000\nfees = { commission_rate = \"1.5\", commission_minimum = 0 }"), ""),
+      "config.invalid", 0},
+    {"a transfer id twice",
+      with(
+        "",
+        limits_plus(
+          "budget = 1000000\nfees = { commission_rate = \"0\", commission_minimum = 0 }\n"
+          "[[limits.transfer]]\nid = \"a\"\namount = 10\n[[limits.transfer]]\nid = \"a\"\namount = 20"
+        ),
+        ""
+      ),
+      "config.invalid", 0},
     // What toml++ refuses: the cases CLI11's reader let through.
     {"a repeated key", with("", limits_plus("daily_orders = 4"), ""), "config.invalid", 10},
     {"a table opened twice", ConfigParts{}.text() + "[limits]\ncollar = 0.1\n", "config.invalid", 15},
@@ -300,6 +317,29 @@ TEST_CASE("a valid operator's file: defaults filled, paths beside it, the armed 
   CHECK(snapshot.config_->limits_.position_.at("005930") == 100000000);
   CHECK(snapshot.config_->paper_.bars_ == "/abs/bars.csv");
   CHECK(snapshot.config_->limits_.phases_.size() == 3);
+  // A run budget with its fees and a withdrawal, kept as written.
+  fixture.write_config(with(
+    "",
+    limits_plus(
+      "budget = \"2500.5\"\nfees = { commission_rate = \"0.00015\", commission_minimum = 0, sell_tax_rate = \"0.0018\" }\n"
+      "[[limits.transfer]]\nid = \"w-1\"\namount = \"100\"\nwithdrawal = true"
+    ),
+    ""
+  ));
+  snapshot = cmdatl::load_operator_config();
+  REQUIRE(snapshot.state_ == cmdatl::ConfigSnapshot::State::OK);
+  const auto& budgeted = snapshot.config_->limits_;
+  CHECK(budgeted.budget_ == "2500.5");
+  REQUIRE(budgeted.fees_);
+  CHECK(budgeted.fees_->commission_rate_ == "0.00015");
+  CHECK(budgeted.fees_->institution_rate_.empty());
+  CHECK(budgeted.fees_->sell_tax_rate_ == "0.0018");
+  REQUIRE(budgeted.transfers_.size() == 1);
+  CHECK(budgeted.transfers_[0].withdrawal_);
+  const auto limits = cmdatl::run_budget_limits(*snapshot.config_);
+  REQUIRE(limits.run_budget_);
+  CHECK(limits.run_budget_->currency_ == algotradelib::Currency::krw());
+  CHECK(limits.run_fees_->sell_tax_rate_);
 }
 
 TEST_CASE("a broker folder's options in the operator's file are kept as written, with their places") {
