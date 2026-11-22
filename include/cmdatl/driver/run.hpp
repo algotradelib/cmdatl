@@ -144,11 +144,17 @@ struct RunArgs {
   std::vector<std::string> atlc_;
   /** @brief A broker account's options as `cmdatl run` checked them (`run.options`), a JSON object's text, or none. */
   std::optional<std::string> options_;
+  /**
+   * @brief How a budgeted run takes up the account's run (`run.opening`): `new` (the default, the old run's open
+   *   orders cancelled first), `wait` (a new run after the old run's open orders end) or `resume`.
+   */
+  std::string opening_{"new"};
 };
 
 /**
- * @brief Reads the command line: `run.id=ID` exactly once, `run.options=JSON` at most once, then the replay's
- *   arguments; a `paper.*` key, another `run.*` key, a missing id, or an argument without `=` is refused.
+ * @brief Reads the command line: `run.id=ID` exactly once, `run.options=JSON` and `run.opening=new|wait|resume` at
+ *   most once each, then the replay's arguments; a `paper.*` key, another `run.*` key, a missing id, or an argument
+ *   without `=` is refused.
  * @param argc The count.
  * @param argv The arguments.
  * @param args Set to what was read.
@@ -156,6 +162,7 @@ struct RunArgs {
  */
 inline std::optional<std::string> read_args(int argc, char** argv, RunArgs& args) {
   bool id_seen = false;
+  bool opening_seen = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     const auto eq = arg.find('=');
@@ -175,8 +182,11 @@ inline std::optional<std::string> read_args(int argc, char** argv, RunArgs& args
       args.id_ = value;
     } else if (key == "run.options" && !args.options_) {
       args.options_ = value;
+    } else if (key == "run.opening" && !opening_seen && (value == "new" || value == "wait" || value == "resume")) {
+      opening_seen = true;
+      args.opening_ = value;
     } else if (key.rfind("run.", 0) == 0) {
-      return "the run.* keys are run.id and run.options, each once (" + key + ")";
+      return "the run.* keys are run.id, run.options and run.opening (new, wait or resume), each once (" + key + ")";
     } else {
       args.atlc_.push_back(arg);
     }
@@ -375,6 +385,12 @@ int run_main(int argc, char** argv, Load load, Make make) {
     return run_error(base, Exit::USAGE, "usage.bad_value", *problem);
   }
   base["run"] = args.id_;
+  if (args.opening_ != "new") {
+    return run_error(
+      base, Exit::USAGE, "usage.bad_value",
+      "a mock run's market and journal are its own: it has no earlier run to resume or wait for", "leave out --resume"
+    );
+  }
   // Row 2: no bar of a run opens a session before it closes.
   if (Program::atls_session) {
     return run_error(
@@ -615,7 +631,8 @@ int run_main(int argc, char** argv, Load load, Make make) {
     RunClock clock(market, *last_end + BOUND_AFTER_LAST, after_step);
     Wiring wiring;
     wiring.universe_ = ids;
-    wiring.limits_ = risk_limits(config, loaded.symbols_, config.limits_.daily_orders_);
+    // The mock market states buying power; a budget opens a new run in this run's own journal.
+    wiring.limits_ = risk_limits(config, loaded.symbols_, config.limits_.daily_orders_, true);
     wiring.schedule_.tick_ = STEP;
     // Stated, not inherited: the mock's calendar never changes during a run, so a read every six hours of market time.
     wiring.schedule_.calendar_ = std::chrono::hours(6);

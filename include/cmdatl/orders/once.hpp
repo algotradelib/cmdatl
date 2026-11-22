@@ -107,6 +107,7 @@ inline const std::vector<OnceReason> ONCE_REASONS{
   {"not_approved", OnceExit::REFUSED},
   {"nothing_owed", OnceExit::REFUSED},
   {"named", OnceExit::REFUSED},
+  {"no_run", OnceExit::REFUSED},
   {"lock_lost", OnceExit::UNKNOWN},
   {"journal_damaged", OnceExit::UNKNOWN},
   {"unaccounted", OnceExit::UNKNOWN},
@@ -151,6 +152,8 @@ struct OnceConfig {
   bool refuse_unjournaled_orders_{false};
   /** @brief The account's market: the calendar's country, the account's day and the phase. */
   AccountMarket market_;
+  /** @brief With a run budget: how the call takes up the account's run (it resumes it). */
+  std::optional<atl::runner::RunOpening> run_opening_;
 };
 
 /** @brief The order a call placed, as the report and the reserved row name it. */
@@ -539,9 +542,28 @@ OnceResult once(
     return unknown("journal_damaged", "the journal is not open: " + journal.rejection());
   }
   auto bound = once_detail::bind(session, journal, config.limits_, now);
+  if (config.limits_.run_budget_ && config.run_opening_) {
+    bound.set_run_opening(*config.run_opening_);
+  }
 
   // 3. Recovery before any read.
   const auto recovery = atl::runner::recover_runner(bound, journal);
+  // A budget with no run to take up (or a run still closing the old one's orders): refused before any read or send.
+  if (
+    config.limits_.run_budget_ &&
+    !(recovery.truncated_ || recovery.unattributable_ || recovery.unreadable_lines_ > 0 || recovery.unreadable_file_)
+  ) {
+    const auto& run = bound.run_recovery();
+    if (!run || !run->opened_) {
+      return refuse(
+        "no_run",
+        run && run->closing_ ?
+          "the account's new run is still closing the old run's orders" :
+          "no run is open on this account" +
+            (run && !run->refused_.empty() ? " (" + run->refused_ + ")" : std::string())
+      );
+    }
+  }
   if (!once_detail::recovered(recovery, bound)) {
     return unknown("journal_damaged", recovery.detail_.empty() ? "the journal is damaged" : recovery.detail_);
   }

@@ -107,12 +107,13 @@ inline constexpr const char* SESSION_UNSUPPORTED_NEXT =
 
 /** @brief Why a run on a broker that states no buying power does not start: one wording for `run` and the driver. */
 inline constexpr const char* NO_BUYING_POWER_RUN =
-  "the broker states no buying power, so cmdatl does not buy on it, and a run cannot start; nothing was sent to the "
-  "broker";
+  "the broker states no buying power and the operator file writes no limits.budget, so a run cannot start; nothing "
+  "was sent to the broker";
 
 /** @brief What to do on a broker that states no buying power. */
 inline constexpr const char* NO_BUYING_POWER_RUN_NEXT =
-  "a run needs a broker that states buying power; on a built-in broker's account cmdatl's order commands can sell";
+  "the operator writes limits.budget and [limits.fees] to bound a run's buys; on a built-in broker's account cmdatl's "
+  "order commands can sell meanwhile";
 
 /** @brief What to do when a run's reads before its start stayed refused for the broker's request rate. */
 inline constexpr const char* START_RATE_NEXT =

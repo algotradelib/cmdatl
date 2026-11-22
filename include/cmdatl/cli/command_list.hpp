@@ -62,6 +62,9 @@ inline std::vector<Command> command_list() {
       "cash", "the mock market's cash after every fill, before what resting buys reserve; null on a broker's account"
     )
     .returns("buying_power", "the broker's buying power; null where the broker states none")
+    .returns("run_budget", "with limits.budget, the account's run: id, open, closing (the old run's orders); else null")
+    .returns("run_cash", "with limits.budget, the run's cash as its journal books it; null where unknown, or without a budget")
+    .returns("run_holding", "with limits.budget, the run's own shares by symbol (null where unknown); else null")
     .returns("owed", "orders the journal still waits on")
     .returns("orders", "working orders")
     .returns("quotes", "each allowed symbol, as quote's rows")
@@ -81,6 +84,9 @@ inline std::vector<Command> command_list() {
       "cash", "the mock market's cash after every fill, before what resting buys reserve; null on a broker's account"
     )
     .returns("buying_power", "the broker's buying power; null where the broker states none")
+    .returns("run_budget", "with limits.budget, the account's run: id, open, closing (the old run's orders); else null")
+    .returns("run_cash", "with limits.budget, the run's cash as its journal books it; null where unknown, or without a budget")
+    .returns("run_holding", "with limits.budget, the run's own shares by symbol (null where unknown); else null")
     .returns(
       "owed",
       "orders the journal still waits on: symbol, side, quantity, journal_id, state, order_id, broker_status, next"
@@ -110,7 +116,11 @@ inline std::vector<Command> command_list() {
     .returns("atlc", "requested, path, source, version, minimum, ok, and error when the operator's file was not read")
     .returns("config", "the operator's file: path, exists, state (unset, missing, invalid, ok), and error")
     .returns("account", "broker, env and number, or null")
-    .returns("limits", "every limit, defaults filled (the collar as a decimal string), or null")
+    .returns(
+      "limits",
+      "every limit, defaults filled (the collar as a decimal string), the run budget and its fees (null without one) "
+      "and the transfers, or null"
+    )
     .returns("armed", "the armed file: path, exists")
     .returns("state_dir", "the account's state directory")
     .returns("owner", "who last held the account, or null")
@@ -542,6 +552,12 @@ inline std::vector<Command> command_list() {
     .example("cmdatl run dip.atls daily.toml > run.jsonl")
     .arg("TARGET", "a program (.atls), a run spec, or both; replay.market = \"kr\" and limit orders")
     .arg("SETTING", "KEY=VALUE with a dotted key (params.lookback=30), before or after TARGET", false, true)
+    .flag(
+      "resume",
+      "with limits.budget: take up the account's current run, its cash and shares, and its limits.transfer entries; "
+      "without it a new run opens, the old run's open orders cancelled first"
+    )
+    .flag("wait-open-orders", "with limits.budget, for a new run: wait for the old run's open orders instead of cancelling them")
     .returns("run", "the run id")
     .returns("result", "ended, refused, failed or unknown")
     .returns("outcome", "clean, refused_orders, or how the run ended otherwise")

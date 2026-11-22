@@ -72,16 +72,21 @@ inline std::optional<atl::strategy::MarketPhase> phase_named(const std::string& 
 
 /**
  * @brief The risk limits a call enforces, from the operator's file: the allowed universe, the smallest cap of the
- *   symbols (0 for none), the order value, the placements left today over 24 hours, buying power and sellable enforced, and the
- *   permitted phases.
+ *   symbols (0 for none), the order value, the placements left today over 24 hours, sellable enforced, the permitted
+ *   phases, and the run budget with its fees in the account's currency when the file writes one.
+ *
+ * Buying power is enforced unless the broker states none and a budget bounds buys instead: without either, the guard
+ * refuses every buy.
  * @param config The operator's file.
  * @param symbols The symbols whose caps apply: one for an order command, a run's symbols, none for a call that never
  *   places.
  * @param orders_left Placements left today.
+ * @param states_buying_power The broker's `BrokerCaps::has_buying_power`.
  * @return The limits.
  */
 inline algotradelib::strategy::RiskLimits risk_limits(
-  const OperatorConfig& config, const std::vector<std::string>& symbols, std::int64_t orders_left
+  const OperatorConfig& config, const std::vector<std::string>& symbols, std::int64_t orders_left,
+  bool states_buying_power
 ) {
   namespace atl = algotradelib;
   atl::strategy::RiskLimits limits;
@@ -102,8 +107,11 @@ inline algotradelib::strategy::RiskLimits risk_limits(
   limits.max_order_notional_ = atl::Decimal64::parse(config.limits_.order_value_);
   limits.max_orders_per_window_ = static_cast<std::size_t>(std::max<std::int64_t>(orders_left, 0));
   limits.rate_window_ = std::chrono::hours(24);
-  limits.enforce_buying_power_ = true;
+  limits.enforce_buying_power_ = states_buying_power || config.limits_.budget_.empty();
   limits.enforce_sellable_quantity_ = true;
+  const auto run = run_budget_limits(config);
+  limits.run_budget_ = run.run_budget_;
+  limits.run_fees_ = run.run_fees_;
   std::vector<atl::strategy::MarketPhase> phases;
   for (const auto& name : config.limits_.phases_) {
     if (const auto phase = orders_detail::phase_named(name)) {
@@ -112,6 +120,25 @@ inline algotradelib::strategy::RiskLimits risk_limits(
   }
   limits.permitted_phases_ = std::move(phases);
   return limits;
+}
+
+/**
+ * @brief How a budgeted process takes up the account's run: it resumes it, with the operator file's transfers (each
+ *   applied once by its id).
+ * @param config The operator's file.
+ * @return The opening; unread without a budget.
+ */
+inline algotradelib::runner::RunOpening resumed_run(const OperatorConfig& config) {
+  namespace atl = algotradelib;
+  atl::runner::RunOpening opening;
+  opening.resume_ = true;
+  const auto currency = account_market(config).currency_;
+  for (const auto& t : config.limits_.transfers_) {
+    opening.transfers_.push_back(
+      atl::runner::RunTransfer{t.id_, atl::Money{atl::Decimal64::parse(t.amount_), currency}, t.withdrawal_}
+    );
+  }
+  return opening;
 }
 
 namespace orders_detail {

@@ -164,6 +164,26 @@ TEST_CASE("an account's market follows its broker's row and a run on Alpaca is r
   CHECK(code_of(ran.out_) == "config.invalid");
   CHECK(ran.out_.find("states no buying power") != std::string::npos);
   CHECK(!std::filesystem::exists(fixture.dir() / "state"));
+  // With a run budget the refusal is lifted; transfers fund the current run, so a new run refuses them, and --resume
+  // needs a budget.
+  const std::string budgeted =
+    "[account]\nbroker = \"alpaca\"\nenv = \"demo\"\nnumber = \"PA0000000001\"\n\n[limits]\nsymbols = [\"SPY\"]\n"
+    "position = { SPY = 2 }\norder_value = \"1000\"\ndaily_orders = 3\nbudget = \"500\"\n"
+    "fees = { commission_rate = 0, commission_minimum = 0 }\n";
+  fixture.write_config(budgeted);
+  auto lifted = fixture.json({"run", (fixture.dir() / "absent.toml").string()});
+  CHECK(lifted.out_.find("states no buying power") == std::string::npos);
+  fixture.write_config(budgeted + "[[limits.transfer]]\nid = \"d-1\"\namount = 100\n");
+  lifted = fixture.json({"run", (fixture.dir() / "absent.toml").string()});
+  CHECK(code_of(lifted.out_) == "config.invalid");
+  CHECK(lifted.out_.find("limits.transfer") != std::string::npos);
+  fixture.write_config(
+    "[account]\nbroker = \"kis\"\nnumber = \"12345678-01\"\n\n[limits]\nsymbols = [\"005930\"]\n"
+    "position = { \"005930\" = 1 }\norder_value = 1000\ndaily_orders = 3\n"
+  );
+  lifted = fixture.json({"run", "--resume", (fixture.dir() / "absent.toml").string()});
+  CHECK(code_of(lifted.out_) == "usage.bad_value");
+  CHECK(!std::filesystem::exists(fixture.dir() / "state"));
 }
 
 TEST_CASE("the driver's broker.hpp the build writes for each built-in is the fixture its compile target reads") {
@@ -541,7 +561,9 @@ TEST_CASE("the table's run command: arguments, codes and the schema version") {
   const cmdatl::Table table(cmdatl::command_list());
   const auto* run = table.resolve({"run"}).command_;
   REQUIRE(run != nullptr);
-  CHECK(run->options_.empty());
+  REQUIRE(run->options_.size() == 2);
+  CHECK(run->options_[0].name_ == "resume");
+  CHECK(run->options_[1].name_ == "wait-open-orders");
   REQUIRE(run->args_.size() == 2);
   CHECK(run->args_[0].name_ == "TARGET");
   CHECK(run->args_[0].required_);
@@ -568,7 +590,7 @@ TEST_CASE("the table's run command: arguments, codes and the schema version") {
     CHECK(std::find(run->errors_.begin(), run->errors_.end(), code) != run->errors_.end());
   }
   CHECK(cmdatl::check_table(table).empty());
-  CHECK(cmdatl::SCHEMA_VERSION == 21);
+  CHECK(cmdatl::SCHEMA_VERSION == 22);
 }
 
 // --- Processes, against the real atlc and algotradelib ---

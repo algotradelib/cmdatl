@@ -704,6 +704,20 @@ TEST_CASE("order plan on a broker's account plans on its sessions and starts its
   INFO(read.out_);
   REQUIRE(read.exit_ == 0);
   CHECK(reply_of(read.out_).at("buying_power").is_null());
+  CHECK(reply_of(read.out_).at("run_budget").is_null());
+  // With a run budget the buy passes cmdatl's check, and an order command takes up the account's run: there is none.
+  fixture.paper_.write_config(
+    kis_config("12345678-01", "budget = 1000000\nfees = { commission_rate = \"0.00015\", commission_minimum = 0 }\n")
+  );
+  const auto no_run = run_on(none, {"order", "plan", "000660", "--target", "1", "--limit", "181000"});
+  INFO(no_run.out_);
+  CHECK(no_run.exit_ == 3);
+  CHECK(code_of(no_run.out_) == "refused.no_run");
+  const auto budgeted = run_on(none, {"status"});
+  INFO(budgeted.out_);
+  REQUIRE(budgeted.exit_ == 0);
+  CHECK(reply_of(budgeted.out_).at("run_cash").is_null());
+  CHECK(setup.market_->order_history(atl::OrderHistoryQuery{}).orders_.size() == history);
 }
 
 TEST_CASE("a broker account's journal is started only when absent: an empty or foreign one is unknown and untouched") {
@@ -947,7 +961,7 @@ TEST_CASE("on a broker's account once() withdraws only what the run's ownership 
       auto& account = *opened->account_;
       auto journal = cmdatl::orders_detail::open_journal(account);
       REQUIRE(journal.journal_);
-      auto config = cmdatl::once_config(account.config(), cmdatl::risk_limits(account.config(), {"005930"}, 3));
+      auto config = cmdatl::once_config(account.config(), cmdatl::risk_limits(account.config(), {"005930"}, 3, true));
       cmdatl::sending::OnceRequest request;
       request.instrument_ = cmdatl::kr("005930");
       if (withdraw_only) {

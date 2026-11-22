@@ -78,6 +78,12 @@ struct JournalView {
   std::vector<Owed> owed_;
   /** @brief Placements whose first line was written on the account's KST date. */
   std::int64_t placed_today_{0};
+  /** @brief With a run budget: how the journal's run reads (resumed, nothing written), or nothing without one. */
+  std::optional<algotradelib::runner::RunRecoverySummary> run_;
+  /** @brief The run's cash, when open and known. */
+  std::optional<algotradelib::Money> run_cash_;
+  /** @brief The run's own shares by symbol, for the operator's symbols; a symbol absent where unknown. */
+  std::map<std::string, std::string> run_holding_;
 };
 
 /**
@@ -167,13 +173,17 @@ inline void check_ownership(
  * @param scope The account's scope.
  * @param market The account's market, whose day placements are counted on.
  * @param today The account's date to count placements on (`market_day`), as days from 1970-01-01.
+ * @param run A run budget and its fees (`RiskLimits::run_budget_`, `run_fees_`) to read the journal's run with, as a
+ *   resume with no transfers; none for a view without a run.
+ * @param symbols The symbols whose run shares are read.
  * @return The view; not intact when a placement's instant is outside the supported interval, as its date is then
  *   unknown (a salvaged operator-only line at the epoch is not counted at all).
  */
 template <typename Session>
 JournalView journal_view(
   Session& session, const algotradelib::runner::JournalReplay& replay, const std::string& scope,
-  const AccountMarket& market, std::int64_t today
+  const AccountMarket& market, std::int64_t today, const algotradelib::strategy::RiskLimits& run = {},
+  const std::vector<std::string>& symbols = {}
 ) {
   namespace atl = algotradelib;
   JournalView view;
@@ -185,16 +195,36 @@ JournalView journal_view(
   using Bound =
     atl::runner::Runner<account_detail::NoStrategy, typename Session::Caps, typename Session::BrokerTag, Executor>;
   atl::runner::MemoryJournal memory;
+  atl::strategy::RiskLimits limits;
+  limits.run_budget_ = run.run_budget_;
+  limits.run_fees_ = run.run_fees_;
   Bound bound(
-    account_detail::NoStrategy{}, atl::strategy::RiskLimits{}, atl::live::default_series_capacity,
+    account_detail::NoStrategy{}, limits, atl::live::default_series_capacity,
     Executor(atl::live::SessionExecutor<Session>(session, atl::Venue::UNSPECIFIED), memory)
   );
+  if (limits.run_budget_) {
+    // Read only: a resume with no transfers writes nothing, and a journal with no run reports it without damage.
+    atl::runner::RunOpening opening;
+    opening.resume_ = true;
+    bound.set_run_opening(opening);
+  }
   const account_detail::ReadContents contents{&replay};
   const auto recovery = atl::runner::recover_runner(bound, contents);
-  view.intact_ = !(
-    recovery.truncated_ || recovery.unattributable_ || recovery.unreadable_lines_ > 0 || recovery.unreadable_file_ ||
-    bound.guard().halted()
-  );
+  const bool damaged =
+    recovery.truncated_ || recovery.unattributable_ || recovery.unreadable_lines_ > 0 || recovery.unreadable_file_;
+  bool run_refused = false;
+  if (limits.run_budget_) {
+    view.run_ = bound.run_recovery();
+    run_refused = view.run_ && !view.run_->opened_;
+    view.run_cash_ = bound.run_cash();
+    for (const auto& symbol : symbols) {
+      if (const auto held = bound.run_holding(instrument_of(market, symbol))) {
+        view.run_holding_[symbol] = held->str();
+      }
+    }
+  }
+  // A budget with no run to resume halts the view's runner; the journal itself is intact.
+  view.intact_ = !(damaged || (bound.guard().halted() && !run_refused));
   if (!view.intact_) {
     view.detail_ = recovery.detail_.empty() ? "the journal is damaged" : recovery.detail_;
   }
@@ -480,6 +510,14 @@ public:
   }
 
   /**
+   * @brief The operator file's run budget and fees, which the journal's view reads the run with.
+   * @return The limits; empty without a budget.
+   */
+  algotradelib::strategy::RiskLimits run_limits() const {
+    return run_budget_limits(config_);
+  }
+
+  /**
    * @brief The held lock.
    * @return The lock.
    */
@@ -575,7 +613,10 @@ public:
       return;
     }
     replay_ = algotradelib::runner::read_journal_file(journal_path());
-    journal_ = journal_view(desk_->session(), replay_, config_.scope(), market_, market_day(market_, desk_->now()));
+    journal_ = journal_view(
+      desk_->session(), replay_, config_.scope(), market_, market_day(market_, desk_->now()), run_limits(),
+      config_.limits_.symbols_
+    );
     readiness_.reset();
   }
 
@@ -588,7 +629,10 @@ public:
       journal_.owned_ = true;
       journal_.intact_ = true;
     } else {
-      journal_ = journal_view(desk_->session(), replay_, config_.scope(), market_, market_day(market_, desk_->now()));
+      journal_ = journal_view(
+        desk_->session(), replay_, config_.scope(), market_, market_day(market_, desk_->now()), run_limits(),
+        config_.limits_.symbols_
+      );
     }
     phase_ = desk_->phase();
     readiness_.reset();
@@ -905,7 +949,10 @@ private:
       note_journal();
     }
     replay_ = algotradelib::runner::read_journal_file(journal_path());
-    journal_ = journal_view(desk_->session(), replay_, config_.scope(), market_, market_day(market_, desk_->now()));
+    journal_ = journal_view(
+      desk_->session(), replay_, config_.scope(), market_, market_day(market_, desk_->now()), run_limits(),
+      config_.limits_.symbols_
+    );
     return std::nullopt;
   }
 #endif

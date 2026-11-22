@@ -128,7 +128,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"refused.daily_order_limit", Exit::REFUSED, false,
       "cmdatl env shows limits.daily_orders: more orders today are the operator's to allow; ask the operator"},
     {"refused.no_buying_power", Exit::REFUSED, false,
-      "sell or hold: cmdatl does not buy on this account in this version"},
+      "sell or hold: without limits.budget, the operator's run budget, cmdatl does not buy on this account"},
     {"refused.order_value", Exit::REFUSED, false,
       "cmdatl env shows limits.order_value: a larger order is the operator's to allow; ask the operator"},
     {"refused.no_plan", Exit::REFUSED, false, "cmdatl order plan gives a plan id"},
@@ -157,6 +157,9 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"refused.not_approved", Exit::REFUSED, false,
       "the operator writes the approval file beside the operator's file, one SYMBOL JOURNAL_ID line per owed order"},
     {"refused.nothing_owed", Exit::REFUSED, false, "cmdatl account shows what is owed"},
+    {"refused.no_run", Exit::REFUSED, false,
+      "with limits.budget the order commands take up the account's run: the operator starts one with cmdatl run, and "
+      "a run still closing the old run's orders opens once they end"},
     {"refused.named", Exit::REFUSED, true,
       "the broker named the order: cmdatl order reconcile SYMBOL records it from holdings or the order history"},
     {"refused.awaiting", Exit::REFUSED, true,

@@ -253,6 +253,36 @@ json::array positions_json(Desk& desk, const std::optional<std::string>& only) {
 }
 
 /**
+ * @brief A run budget's figures for a reply, from the journal's view: `run_budget` (the run's id, whether it is open,
+ *   closing the old run's orders), `run_cash` and `run_holding` by symbol; null without a budget, a field null where
+ *   unknown.
+ * @tparam Desk The desk type.
+ * @param account The account.
+ * @param body Where the fields go.
+ */
+template <typename Desk>
+void run_json(BasicAccount<Desk>& account, json::object& body) {
+  const auto& view = account.journal();
+  if (account.config().limits_.budget_.empty()) {
+    body["run_budget"] = nullptr;
+    body["run_cash"] = nullptr;
+    body["run_holding"] = nullptr;
+    return;
+  }
+  const auto& run = view.run_;
+  body["run_budget"] = run ?
+    json::value(json::object{{"id", run->id_}, {"open", run->opened_}, {"closing", run->closing_}}) :
+    json::value(nullptr);
+  body["run_cash"] = view.run_cash_ ? json::value(view.run_cash_->amount_.str()) : json::value(nullptr);
+  json::object holding;
+  for (const auto& symbol : account.config().limits_.symbols_) {
+    const auto found = view.run_holding_.find(symbol);
+    holding[symbol] = found == view.run_holding_.end() ? json::value(nullptr) : json::value(found->second);
+  }
+  body["run_holding"] = std::move(holding);
+}
+
+/**
  * @brief The buying power in the account's currency.
  * @tparam Desk The desk type.
  * @param account The account.
@@ -424,6 +454,7 @@ Reply status_reply(const Invocation& invocation, BasicAccount<Desk>& account, De
   body["positions"] = positions_json(desk, std::nullopt);
   body["cash"] = cash_json(desk);
   body["buying_power"] = buying_power_json(account, desk);
+  run_json(account, body);
   const auto working = working_orders(desk);
   body["owed"] = owed_json(account, desk, std::nullopt, working);
   body["orders"] = orders_json(working);
@@ -460,6 +491,7 @@ Reply account_reply(const Invocation& invocation, BasicAccount<Desk>& account, D
   body["positions"] = positions_json(desk, only);
   body["cash"] = cash_json(desk);
   body["buying_power"] = buying_power_json(account, desk);
+  run_json(account, body);
   body["owed"] = owed_rows(account, desk, only);
   body["orders_left_today"] = orders_left_json(account.readiness());
   return read_reply(account, std::move(body));

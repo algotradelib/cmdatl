@@ -239,7 +239,16 @@ inline std::string start_read_next(StartRead refused, std::string otherwise) {
   return otherwise;
 }
 
-/** @brief What the wiring is told: fixed by the driver from the operator's file and the market, never by a run's arguments. */
+/** @brief A budgeted run's figures, read from the runner while `trade_on_rails` holds it; all empty otherwise. */
+struct RunView {
+  /** @brief How recovery took up the run, or nothing. */
+  std::function<std::optional<atl::runner::RunRecoverySummary>()> summary_;
+  /** @brief The run's cash, or nothing (no budget, closing, or unknown). */
+  std::function<std::optional<atl::Money>()> cash_;
+  /** @brief The run's own shares of an instrument, or nothing. */
+  std::function<std::optional<atl::Decimal64>(const atl::InstrumentId&)> holding_;
+};
+
 /** @brief One value of the program's `data {}`, published at `at_`, as the run's mock vendor releases it. */
 struct DataPoint {
   /** @brief When it was published: the loop receives it at its first data poll at or after this. */
@@ -252,6 +261,7 @@ struct DataPoint {
   double value_{0};
 };
 
+/** @brief What the wiring is told: fixed by the driver from the operator's file and the market, never by a run's arguments. */
 struct Wiring {
   /** @brief The run's instruments. */
   std::vector<atl::InstrumentId> universe_;
@@ -276,6 +286,10 @@ struct Wiring {
   atl::Country country_{atl::Country::KR};
   /** @brief The account's currency, whose buying power the guard reads. */
   atl::Currency currency_{atl::Currency::krw()};
+  /** @brief How a budgeted runner takes up the account's run; none: a new run (the library's default). */
+  std::optional<atl::runner::RunOpening> opening_;
+  /** @brief Filled with readers of the run's figures after recovery, emptied before `trade_on_rails` returns. */
+  RunView* run_view_{nullptr};
   /** @brief How long an order may stay owed with nobody able to account for it; the loop's own default, stated. */
   std::chrono::nanoseconds owed_order_limit_{std::chrono::minutes(10)};
   /** @brief The venue an order is sent to. */
@@ -373,6 +387,9 @@ Traded trade_on_rails(
     traded.detail_ = "the program defines on_fill, which a live runner never calls";
     return traded;
   }
+  if (wiring.limits_.run_budget_ && wiring.opening_) {
+    bound.set_run_opening(*wiring.opening_);
+  }
   // Whatever a previous process left owed is withheld until the broker's lists resolve it.
   const auto recovery = atl::runner::recover_runner(bound, journal);
   err << "recovery: " << bound.obligations().size() << " placement(s) owed after restore\n";
@@ -383,6 +400,25 @@ Traded trade_on_rails(
     return traded;
   }
   (void)recovery;
+  struct Unview {
+    RunView* view_;
+    ~Unview() {
+      if (view_ != nullptr) {
+        *view_ = RunView{};
+      }
+    }
+  } unview{wiring.run_view_};
+  if (wiring.run_view_ != nullptr && wiring.limits_.run_budget_) {
+    wiring.run_view_->summary_ = [&bound]() {
+      return bound.run_recovery();
+    };
+    wiring.run_view_->cash_ = [&bound]() {
+      return bound.run_cash();
+    };
+    wiring.run_view_->holding_ = [&bound](const atl::InstrumentId& id) {
+      return bound.run_holding(id);
+    };
+  }
   // Lot size and price grid, once: no order can be priced without them, and the loop does not poll them.
   // Read again after a rate or token refusal, within bounds, before anything is started.
   StartBudget own_budget;

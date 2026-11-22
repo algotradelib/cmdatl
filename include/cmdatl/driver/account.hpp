@@ -212,6 +212,8 @@ struct AccountRun {
    *   its text could carry a credential (its errors' text is replaced before the run sees it, `user_account.hpp`).
    */
   bool opaque_errors_{false};
+  /** @brief How a budgeted run takes up the account's run: `new`, `wait` or `resume` (`run.opening`). */
+  std::string opening_{"new"};
 };
 
 /** @brief What a reply says of an exception whose text is not shown. */
@@ -400,6 +402,40 @@ private:
  * @param phase The phase now.
  * @return The event.
  */
+/**
+ * @brief A budgeted run's figures for an event: `run` (its id, whether it resumed, closing), `run_cash` and
+ *   `run_holding` by symbol; null where unknown, nothing without a budget.
+ * @param view The run's readers.
+ * @param symbols The run's symbols.
+ * @param ids Their instruments, in the same order.
+ * @param event Where the fields go.
+ */
+inline void run_fields(
+  const RunView& view, const std::vector<std::string>& symbols, const std::vector<atl::InstrumentId>& ids,
+  json::object& event
+) {
+  if (!view.summary_) {
+    return;
+  }
+  const auto summary = view.summary_();
+  event["run_budget"] = summary ?
+    json::value(
+      json::object{
+        {"id", summary->id_}, {"opened", summary->opened_}, {"resumed", summary->resumed_},
+        {"closing", summary->closing_}, {"transfers_applied", static_cast<std::int64_t>(summary->transfers_applied_)}
+      }
+    ) :
+    json::value(nullptr);
+  const auto cash = view.cash_();
+  event["run_cash"] = cash ? json::value(cash->amount_.str()) : json::value(nullptr);
+  json::object holding;
+  for (std::size_t i = 0; i < symbols.size() && i < ids.size(); ++i) {
+    const auto held = view.holding_(ids[i]);
+    holding[symbols[i]] = held ? json::value(held->str()) : json::value(nullptr);
+  }
+  event["run_holding"] = std::move(holding);
+}
+
 inline json::object account_heartbeat(
   std::chrono::system_clock::time_point at, const LastReads& reads, atl::strategy::MarketPhase phase
 ) {
@@ -700,17 +736,31 @@ int run_account(
     LastReads market_reads;
     RecordingSession<Market> market_session(market, {}, now, market_reads, take_signal);
     std::optional<std::chrono::steady_clock::time_point> heartbeat;
+    // A budgeted run's figures, readable while the runner exists (filled by trade_on_rails after recovery).
+    RunView run_view;
     on_slice = [&]() {
       const auto wall = clock.monotonic_now();
       if (trading && (!heartbeat || wall - *heartbeat >= ACCOUNT_HEARTBEAT)) {
         heartbeat = wall;
-        guard.emit(account_heartbeat(now(), reads, guarded.phase_now()));
+        auto beat = account_heartbeat(now(), reads, guarded.phase_now());
+        run_fields(run_view, run.symbols_, run.ids_, beat);
+        guard.emit(std::move(beat));
       }
       guard.check(now());
     };
     Wiring wiring;
+    wiring.run_view_ = &run_view;
     wiring.universe_ = run.ids_;
-    wiring.limits_ = risk_limits(config, run.symbols_, left);
+    wiring.limits_ = risk_limits(config, run.symbols_, left, Inner::Caps::has_buying_power);
+    if (wiring.limits_.run_budget_) {
+      if (run.opening_ == "resume") {
+        wiring.opening_ = resumed_run(config);
+      } else {
+        atl::runner::RunOpening opening;
+        opening.wait_for_open_orders_ = run.opening_ == "wait";
+        wiring.opening_ = opening;
+      }
+    }
     wiring.schedule_.tick_ = std::chrono::seconds(10);
     wiring.schedule_.calendar_ = std::chrono::hours(6);
     wiring.schedule_.bars_ = std::chrono::seconds(60);
@@ -752,6 +802,7 @@ int run_account(
         listed.push_back(json::value(symbol));
       }
       start["symbols"] = listed;
+      run_fields(run_view, run.symbols_, run.ids_, start);
       if (!events.write(start)) {
         return false;
       }

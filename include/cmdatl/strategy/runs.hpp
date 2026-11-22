@@ -274,11 +274,14 @@ inline std::optional<Reply> account_options(
  */
 inline std::vector<std::string> driver_args(
   const std::string& driver, const std::string& id, bool broker, const std::string& options,
-  const std::vector<std::string>& args
+  const std::vector<std::string>& args, const std::string& opening = "new"
 ) {
   std::vector<std::string> out{driver, "run.id=" + id};
   if (broker) {
     out.push_back("run.options=" + options);
+  }
+  if (opening != "new") {
+    out.push_back("run.opening=" + opening);
   }
   out.insert(out.end(), args.begin(), args.end());
   return out;
@@ -300,10 +303,34 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
 #else
   const auto& config = *snapshot.config_;
   const bool broker = config.broker_ != "mock";
-  // A built-in without buying power: refused before anything else, since nothing in the spec could change it.
-  if (const auto* entry = brokers::find_entry(config.broker_); entry != nullptr && !entry->buying_power_) {
+  // A built-in without buying power and no budget: refused before anything else, since nothing in the spec could
+  // change it.
+  const bool budget = !config.limits_.budget_.empty();
+  if (const auto* entry = brokers::find_entry(config.broker_); entry != nullptr && !entry->buying_power_ && !budget) {
     return error_reply(Exit::FAILED, "config.invalid", NO_BUYING_POWER_RUN, NO_BUYING_POWER_RUN_NEXT);
   }
+  const bool resume = invocation.has("resume");
+  const bool wait = invocation.has("wait-open-orders");
+  if ((resume || wait) && !budget) {
+    return error_reply(
+      Exit::USAGE, "usage.bad_value",
+      "--resume and --wait-open-orders take up a run budget's run: the operator file has no limits.budget",
+      "leave them out"
+    );
+  }
+  if (resume && wait) {
+    return error_reply(
+      Exit::USAGE, "usage.bad_value", "--wait-open-orders is for a new run, not with --resume", "give one of them"
+    );
+  }
+  if (!resume && !config.limits_.transfers_.empty()) {
+    return error_reply(
+      Exit::FAILED, "config.invalid",
+      "the operator file's limits.transfer entries fund the account's current run; a new run starts with limits.budget",
+      "the operator removes them before a new run, or the run is started with --resume"
+    );
+  }
+  const std::string opening = resume ? "resume" : wait ? "wait" : "new";
   GivenSettings given;
   if (auto refused = sort_words(target_and_settings(invocation), given)) {
     return std::move(*refused);
@@ -457,7 +484,7 @@ inline Reply run_reply(const Invocation& invocation, const ConfigSnapshot& snaps
       return std::move(*failed);
     }
     const auto driver = (dir / "driver").string();
-    auto argv_owned = driver_args(driver, *id, broker, options_text, args);
+    auto argv_owned = driver_args(driver, *id, broker, options_text, args, opening);
     std::vector<std::string> envp_owned;
     for (auto& entry : build::own_environment()) {
       if (entry.rfind("CMDATL_CONFIG=", 0) != 0) {

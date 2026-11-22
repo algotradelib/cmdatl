@@ -199,6 +199,10 @@ inline sending::OnceConfig once_config(const OperatorConfig& config, algotradeli
   once.confirmation_timeout_ = std::chrono::minutes(10);
   once.refuse_unjournaled_orders_ = true;
   once.market_ = account_market(config);
+  // Every order command takes up the account's current run; none is opened here.
+  if (once.limits_.run_budget_) {
+    once.run_opening_ = resumed_run(config);
+  }
   return once;
 }
 
@@ -563,12 +567,13 @@ Precheck precheck(
   if (change == 0) {
     return {};
   }
-  // Without a buying-power figure nothing bounds a buy (the guard would refuse it too): sells only.
+  // Without a buying-power figure or a run budget nothing bounds a buy (the guard would refuse it too): sells only.
   if constexpr (!Desk::Session::Caps::has_buying_power) {
-    if (wanted > std::stoll(held->str())) {
+    if (config.limits_.budget_.empty() && wanted > std::stoll(held->str())) {
       return {
         "refused.no_buying_power",
-        "the broker states no buying power, so cmdatl does not buy on this account; sells, cancels and reads work"
+        "the broker states no buying power and the operator file writes no limits.budget, so cmdatl does not buy on "
+        "this account; sells, cancels and reads work"
       };
     }
   }
@@ -632,7 +637,9 @@ Reply plan_reply(const Invocation& invocation, BasicAccount<Desk>& account, Outp
       return with_body(std::move(*opened.refusal_), std::move(body));
     }
     const auto left = orders_left(account.config(), account.journal()).value_or(0);
-    auto config = once_config(account.config(), risk_limits(account.config(), {symbol}, left));
+    auto config = once_config(
+      account.config(), risk_limits(account.config(), {symbol}, left, Desk::Session::Caps::has_buying_power)
+    );
     config.dry_run_ = true;
     sending::OnceRequest request;
     request.instrument_ = instrument_of(account.market(), symbol);
@@ -793,7 +800,9 @@ Reply place_reply(const Invocation& invocation, BasicAccount<Desk>& account, Out
       return with_body(std::move(*opened.refusal_), std::move(body));
     }
     const auto left = orders_left(account.config(), account.journal()).value_or(0);
-    const auto config = once_config(account.config(), risk_limits(account.config(), {plan->symbol_}, left));
+    const auto config = once_config(
+      account.config(), risk_limits(account.config(), {plan->symbol_}, left, Desk::Session::Caps::has_buying_power)
+    );
     sending::OnceRequest request;
     request.instrument_ = instrument_of(account.market(), plan->symbol_);
     request.target_quantity_ = algotradelib::Decimal64::parse(plan->target_);
@@ -856,7 +865,8 @@ Reply cancel_reply(const Invocation& invocation, BasicAccount<Desk>& account, Ou
     if (opened.refusal_) {
       return with_body(std::move(*opened.refusal_), std::move(body));
     }
-    auto config = once_config(account.config(), risk_limits(account.config(), {}, 0));
+    auto config =
+      once_config(account.config(), risk_limits(account.config(), {}, 0, Desk::Session::Caps::has_buying_power));
     config.withdraw_only_ = true;
     config.limits_.max_orders_per_window_ = 0;
     sending::OnceRequest request;
@@ -924,7 +934,8 @@ Reply reconcile_reply(const Invocation& invocation, BasicAccount<Desk>& account,
         state = {"holdings_unread", Exit::REFUSED, "refused.holdings_unread"};
         row["detail"] = "the holdings could not be read";
       } else {
-        auto config = once_config(account.config(), risk_limits(account.config(), {}, 0));
+        auto config =
+          once_config(account.config(), risk_limits(account.config(), {}, 0, Desk::Session::Caps::has_buying_power));
         config.dry_run_ = true;
         // Reconcile never sends: no phase stands between it and the confirmations holdings support.
         config.limits_.permitted_phases_.reset();

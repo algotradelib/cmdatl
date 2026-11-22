@@ -9,7 +9,7 @@
 // - `std::size_t logins() const`: how many documents `cmdatl run` framed;
 // - `std::string market() const`: the market of the account the driver trades (`builtin::MARKETS`), which a run spec
 //   must name before the operator file is read;
-// - `static constexpr bool STATES_BUYING_POWER`: the client's `BrokerCaps::has_buying_power`; without it no run starts
+// - `static constexpr bool STATES_BUYING_POWER`: the client's `BrokerCaps::has_buying_power`; without it no run starts unless the operator file writes a run budget
 //   (nothing bounds a buy, and the library's loop holds every placement for a reading it never gets);
 // - `std::optional<int> identify(base, config, documents, effective, market_data)`: reads the logins, checks them
 //   against the operator file, sets `effective.number_` to the account they drive and `market_data` for the start
@@ -108,7 +108,17 @@ int account_main(int argc, char** argv, Symbols symbols_of, Make make, Broker& b
   }
   base["env"] = broker.name() + "-" + config.env_;
   if constexpr (!Broker::STATES_BUYING_POWER) {
-    return run_error(base, Exit::FAILED, "config.invalid", NO_BUYING_POWER_RUN, NO_BUYING_POWER_RUN_NEXT);
+    if (config.limits_.budget_.empty()) {
+      return run_error(base, Exit::FAILED, "config.invalid", NO_BUYING_POWER_RUN, NO_BUYING_POWER_RUN_NEXT);
+    }
+  }
+  // Transfers fund the account's current run: a new run starts with the budget alone (the library refuses them too).
+  if (args.opening_ != "resume" && !config.limits_.transfers_.empty()) {
+    return run_error(
+      base, Exit::FAILED, "config.invalid",
+      "the operator file's limits.transfer entries fund the account's current run; a new run starts with limits.budget",
+      "the operator removes them before a new run, or the run is started with --resume"
+    );
   }
   const auto documents = payload ? sys::unframe_credentials(*payload, broker.logins()) : std::nullopt;
   if (!documents) {
@@ -196,6 +206,7 @@ int account_main(int argc, char** argv, Symbols symbols_of, Make make, Broker& b
   run.warmup_ = warmup;
   run.market_data_ = market_data;
   run.account_dir_ = *dir;
+  run.opening_ = args.opening_;
   try {
     return broker.start(run, effective, std::move(*strategy));
   } catch (const std::exception& error) {
