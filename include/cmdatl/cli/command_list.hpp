@@ -164,7 +164,9 @@ inline std::vector<Command> command_list() {
       "broker.toml says what is asked, and its document is stored unchecked, bound to the folder's path, and read\n"
       "by the folder's adapter at a run or a backtest that names the same folder."
     )
-    .option("broker", "NAME", "kis, kiwoom, toss or a broker folder's name; asked on a terminal when not given")
+    .option(
+      "broker", "NAME", "kis, kiwoom, toss, alpaca or a broker folder's name; asked on a terminal when not given"
+    )
     .option("adapter", "PATH", "the broker folder of a broker that is not built in, against the working directory")
     .option("env", "ENV", "demo or real, for a broker with a demo; asked on a terminal when not given")
     .flag("with-secret", "read the broker's credential document as JSON from standard input")
@@ -172,7 +174,7 @@ inline std::vector<Command> command_list() {
     .returns("broker", "the broker")
     .returns("environment", "demo or real")
     .returns("key", "the key, masked")
-    .returns("account", "the account number, masked, for a broker whose login has one (KIS)")
+    .returns("account", "the account number, masked, for a broker whose login has one (KIS, Alpaca)")
     .returns("adapter", "a broker folder's login: the folder it is bound to, canonical (no field of the login is shown)")
     .returns("store", "keychain")
     .returns("checked", "false: the broker has not seen the login")
@@ -202,9 +204,9 @@ inline std::vector<Command> command_list() {
     .returns("store", "keychain, or null where cmdatl has no credential store")
     .returns(
       "logins",
-      "one per stored login: broker, environment, key (masked), account (masked, KIS), store, checked, and locked "
-      "when the store would not open it; a broker folder's login shows adapter (null: the login, which holds its folder, "
-      "is not read) and no field"
+      "one per stored login: broker, environment, key (masked), account (masked, KIS and Alpaca), store, checked, and "
+      "locked when the store would not open it; a broker folder's login shows adapter (null: the login, which holds its "
+      "folder, is not read) and no field"
     )
     .returns("environment_variables", "per broker, which of its environment variables are set (names only)")
     .error("usage.bad_value")

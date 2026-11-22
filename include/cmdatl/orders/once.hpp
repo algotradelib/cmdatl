@@ -562,7 +562,7 @@ OnceResult once(
       switch (run->refusal_) {
         case Kind::NO_RUN:
           if (!config.withdraw_only_) {
-            return refuse("no_run", "no run is open on this account (" + run->refused_ + ")");
+            return refuse("no_run", "no run is open on this account: start a run with cmdatl run first");
           }
           break;
         case Kind::CURRENCY:

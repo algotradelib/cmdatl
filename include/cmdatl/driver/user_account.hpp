@@ -265,30 +265,35 @@ public:
       return run_error(
         base, Exit::FAILED, "auth.account_mismatch",
         "the broker folder's adapter could not use the stored login or the options (its text is not shown); check the "
-        "operator file's [account.options], or log in again"
+        "operator file's [account.options], or log in again",
+        ACCOUNT_MISMATCH_NEXT
       );
     }
     if (!connection_->client_) {
-      return run_error(base, Exit::FAILED, "auth.account_mismatch", "the broker folder's adapter gave no client");
+      return run_error(
+        base, Exit::FAILED, "auth.account_mismatch", "the broker folder's adapter gave no client", ACCOUNT_MISMATCH_NEXT
+      );
     }
     if (connection_->demo_ != demo) {
       return run_error(
         base, Exit::FAILED, "auth.account_mismatch",
         std::string("the login is a ") + (connection_->demo_ ? "demo" : "real") +
-          " login, and the operator file's account is " + (demo ? "demo" : "real")
+          " login, and the operator file's account is " + (demo ? "demo" : "real"),
+        ACCOUNT_MISMATCH_NEXT
       );
     }
     if (!account_number_text(connection_->account_id_)) {
       return run_error(
         base, Exit::FAILED, "auth.account_mismatch",
         "the broker folder's adapter named no account a journal can be kept under (1 to 64 letters, digits, '_' or "
-        "'-')"
+        "'-')",
+        ACCOUNT_MISMATCH_NEXT
       );
     }
     if (!config.number_.empty() && config.number_ != connection_->account_id_) {
       return run_error(
         base, Exit::FAILED, "auth.account_mismatch",
-        "the login's account is not the operator file's account.number " + config.number_
+        "the login's account is not the operator file's account.number " + config.number_, ACCOUNT_MISMATCH_NEXT
       );
     }
     effective.number_ = connection_->account_id_;

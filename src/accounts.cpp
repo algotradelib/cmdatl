@@ -56,7 +56,7 @@ std::string builtin_discover_account(std::string_view word, const std::string& l
     facts != nullptr ? facts->name_ : std::string_view(), [&](auto tag) -> std::string {
       using Client = typename decltype(tag)::type;
       if constexpr (brokers::has_facts<Client>) {
-        if constexpr (algotradelib::BrokerCaps<Client>::has_account_discovery) {
+        if constexpr (algotradelib::BrokerCaps<Client>::has_account_discovery && brokers::facts_of<Client>().account_) {
           return brokers::discover_account<Client>(login);
         }
       }

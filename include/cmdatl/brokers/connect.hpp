@@ -87,7 +87,8 @@ std::string discover_account(const std::string& login) {
     config.from_json_text(login, "the login");
     // The context outlives the client, which is destroyed first.
     const auto tls = broker_tls();
-    const auto client = paced_client<Client>(*tls, std::move(config), run_client_stores());
+    // No token or calendar folder: one read needs neither.
+    const auto client = paced_client<Client>(*tls, std::move(config), atl::network::ClientStores{});
     const auto resolved = atl::resolve_account(*client, std::nullopt, std::string_view());
     if (!resolved) {
       const auto& code = resolved.error().broker_code_;

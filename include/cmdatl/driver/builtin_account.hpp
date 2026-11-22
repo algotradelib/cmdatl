@@ -89,7 +89,7 @@ public:
       const auto mismatch =
         read_builtin_logins<Client>(config, documents, trading_config_, account_, market_config_, effective)
     ) {
-      return run_error(base, Exit::FAILED, "auth.account_mismatch", *mismatch);
+      return run_error(base, Exit::FAILED, "auth.account_mismatch", *mismatch, ACCOUNT_MISMATCH_NEXT);
     }
     // The feed the row names: KRX's tape wherever a config chooses one (`brokers::set_tape`).
     const auto& facts = brokers::facts_of<Client>();
@@ -114,7 +114,7 @@ public:
     const auto check = confirm_account(sessions.trading(), effective.number_);
     if (!check.confirmed_) {
       return check.mismatch_ ?
-        run_error(run.base_, Exit::FAILED, "auth.account_mismatch", check.message_) :
+        run_error(run.base_, Exit::FAILED, "auth.account_mismatch", check.message_, ACCOUNT_MISMATCH_NEXT) :
         run_error(run.base_, Exit::FAILED, "run.account_unreadable", check.message_);
     }
     const auto make_clock = [](std::function<void()> after_slice) {

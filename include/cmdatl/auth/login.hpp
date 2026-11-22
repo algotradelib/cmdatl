@@ -580,9 +580,10 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
         true
       );
     }
-    if (number.empty()) {
+    if (!account_number_text(number)) {
       return error_reply(
-        Exit::FAILED, "auth.account_unread", "the broker named no account for these keys; nothing was stored",
+        Exit::FAILED, "auth.account_unread",
+        "the broker named no account number a journal can be kept under for these keys; nothing was stored",
         "the operator checks the keys and --env (a paper key logs in with --env demo), then runs cmdatl auth login again",
         true
       );

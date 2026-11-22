@@ -736,7 +736,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
         if (thrown.empty()) {
           return traded.run_refusal_ == atl::runner::RunRefusal::NO_RUN ?
             run_error(
-              base, Exit::REFUSED, "refused.no_run", "no run to resume on this account (" + traded.detail_ + ")",
+              base, Exit::REFUSED, "refused.no_run", "no run to resume on this account",
               "start the run without --resume to open a new run"
             ) :
             run_error(

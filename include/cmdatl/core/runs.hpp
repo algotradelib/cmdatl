@@ -116,6 +116,10 @@ inline constexpr const char* RUN_CLOSING_NEXT =
   "process; an order the broker refused to cancel, or one waiting to be booked, holds it until the operator settles "
   "it (the broker's app, cmdatl order release)";
 
+/** @brief What to do when a login is not the operator file's account: one wording for commands and runs. */
+inline constexpr const char* ACCOUNT_MISMATCH_NEXT =
+  "the operator fixes [account] in the operator file, or runs cmdatl auth login for this broker and environment again";
+
 /** @brief What to do with a run budget and no run on the account. */
 inline constexpr const char* NO_RUN_NEXT = "the operator starts a run on this account with cmdatl run";
 

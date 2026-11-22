@@ -55,13 +55,13 @@ public:
     typename algotradelib::BrokerTraits<Client>::Account account;
     std::optional<typename algotradelib::BrokerTraits<Client>::Config> market;
     if (const auto mismatch = read_builtin_logins<Client>(config, documents, trading, account, market, effective)) {
-      return error_reply(Exit::FAILED, "auth.account_mismatch", *mismatch);
+      return error_reply(Exit::FAILED, "auth.account_mismatch", *mismatch, ACCOUNT_MISMATCH_NEXT);
     }
     sessions_.emplace(std::move(trading), std::move(account), std::move(market));
     const auto check = confirm_account(sessions_->trading(), effective.number_);
     if (!check.confirmed_) {
       return check.mismatch_ ?
-        error_reply(Exit::FAILED, "auth.account_mismatch", check.message_) :
+        error_reply(Exit::FAILED, "auth.account_mismatch", check.message_, ACCOUNT_MISMATCH_NEXT) :
         error_reply(Exit::FAILED, "account.unreadable", check.message_);
     }
     return std::nullopt;

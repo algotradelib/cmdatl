@@ -96,7 +96,7 @@ std::optional<std::string> read_builtin_logins(
     const auto parsed = boost::json::parse(documents[0], ec);
     const auto* number =
       !ec && parsed.is_object() ? parsed.as_object().if_contains(brokers::ACCOUNT_NUMBER_KEY) : nullptr;
-    if (number == nullptr || !number->is_string() || number->get_string().empty()) {
+    if (number == nullptr || !number->is_string() || !account_number_text(std::string(number->get_string()))) {
       const std::string login = "cmdatl auth login --broker " + std::string(facts.word_) + " --env " + config.env_;
       return "the stored login has no account number (it was stored before cmdatl learned it): run " + login + " again";
     }
@@ -169,8 +169,7 @@ AccountCheck confirm_account(Session& session, const std::string& number) {
     check.confirmed_ = false;
     if (resolved) {
       check.mismatch_ = true;
-      check.message_ = "the operator file's account.number " + number +
-        " is not written exactly as the broker shows the login's account; write it as the broker shows it";
+      check.message_ = "the account number " + number + " is not written exactly as the broker shows the keys' account";
       return check;
     }
     const auto& error = resolved.error();
@@ -179,7 +178,7 @@ AccountCheck confirm_account(Session& session, const std::string& number) {
       (code == "account_not_found" || code == "no_accounts" || code == "several_accounts" ||
         code == "account_without_number");
     if (check.mismatch_) {
-      check.message_ = "the login's account is not the operator file's account.number " + number;
+      check.message_ = "the broker does not list the account " + number + " for these keys";
     } else {
       // The broker's message may quote its reply body: a short printable code at most, as a read's failure shows.
       check.message_ = "the broker did not answer the account list";
