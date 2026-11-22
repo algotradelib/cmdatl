@@ -67,7 +67,9 @@ inline std::vector<Command> command_list() {
       "with limits.budget, the account's run: id (null without one), opened, and when not open refused (no_run, "
       "currency), detail and next; else null"
     )
-    .returns("run_cash", "with limits.budget, the run's cash as its journal books it; null where unknown, or without a budget")
+    .returns(
+      "run_cash", "with limits.budget, the run's cash as its journal books it; null where unknown, or without a budget"
+    )
     .returns("run_holding", "with limits.budget, the run's own shares by symbol (null where unknown); else null")
     .returns("owed", "orders the journal still waits on")
     .returns("orders", "working orders")
@@ -93,7 +95,9 @@ inline std::vector<Command> command_list() {
       "with limits.budget, the account's run: id (null without one), opened, and when not open refused (no_run, "
       "currency), detail and next; else null"
     )
-    .returns("run_cash", "with limits.budget, the run's cash as its journal books it; null where unknown, or without a budget")
+    .returns(
+      "run_cash", "with limits.budget, the run's cash as its journal books it; null where unknown, or without a budget"
+    )
     .returns("run_holding", "with limits.budget, the run's own shares by symbol (null where unknown); else null")
     .returns(
       "owed",
@@ -148,8 +152,9 @@ inline std::vector<Command> command_list() {
     .describe(
       "Asks on a terminal for what is not given: the broker, demo or real (for a broker with a demo), and the\n"
       "broker's fields (KIS: app key, app secret, account number, product code; Kiwoom: app key, secret key;\n"
-      "Toss: client id, client secret), secrets without echo. --with-secret reads the broker's JSON credential\n"
-      "document from standard input instead. The document is checked with the library's loaders and kept in the\n"
+      "Toss: client id, client secret; Alpaca: API key ID, secret key), secrets without echo. --with-secret reads\n"
+      "the broker's JSON credential document from standard input instead. The document is checked with the\n"
+      "library's loaders and kept in the\n"
       "macOS keychain (no other store in this version), one login per broker and environment. Nothing is sent to\n"
       "the broker: the key is first used, and so first checked, by a demo or real run. Without a terminal nothing\n"
       "is asked. A macOS keychain dialog is the system's: a signal does not dismiss it.\n"
@@ -259,7 +264,8 @@ inline std::vector<Command> command_list() {
     .describe(
       "Sends the plan order plan gave, once, if the account has not moved since and the plan has not lapsed,\n"
       "with the armed file present and the market in a permitted phase. On the mock account the order goes to the\n"
-      "mock market; on a KIS account it goes to KIS, to the demo or the real account the operator's file names."
+      "mock market; on a built-in broker's account it goes to the broker, to the demo or the real account the\n"
+      "operator's file names."
     )
     .arg("PLAN_ID", "a plan id from order plan")
     .returns("now", "the account's time, KST with its offset; on the mock account after the command's simulated second")
@@ -284,8 +290,9 @@ inline std::vector<Command> command_list() {
     .example("cmdatl order cancel 005930")
     .describe(
       "Withdraws the working orders on SYMBOL; needs no armed file and works in any phase. It withdraws only\n"
-      "orders this account placed: on a KIS account, an order its journal placed and KIS acknowledged today with\n"
-      "the same instrument, side, quantity and price; any other order is the operator's to withdraw in KIS's app."
+      "orders this account placed: on a broker's account, an order its journal placed and the broker acknowledged\n"
+      "today with the same instrument, side, quantity and price; any other order is the operator's to withdraw in\n"
+      "the broker's app."
     )
     .arg("SYMBOL", "an instrument")
     .returns(
@@ -546,11 +553,12 @@ inline std::vector<Command> command_list() {
       return reference_reply(invocation);
     }));
 
-  add(make_command({"run"}, "Run", "run a strategy on its own mock market or a KIS account, in the foreground")
+  add(make_command({"run"}, "Run", "run a strategy on its own mock market or a broker's account, in the foreground")
     .describe(
       "Builds the program's driver (CMake and a C++17 compiler are needed; builds are cached) and becomes it: the run "
-      "trades a mock market made from the settings' data or, when the operator's file names a broker account (KIS or "
-      "a broker folder's), that account in real time, and prints its events as JSON lines, its reply last, whatever "
+      "trades a mock market made from the settings' data or, when the operator's file names a broker account (KIS, "
+      "Alpaca with limits.budget, or a broker folder's), that account in real time, and prints its events as JSON "
+      "lines, its reply last, whatever "
       "the output format. Settings are read as strategy backtest reads them. The operator's file limits every order "
       "the run places, and no setting changes it. Ctrl-C, SIGTERM or SIGHUP withdraws the run: no new orders, its "
       "resting orders cancelled; under nohup, SIGHUP is ignored. The agent commands do not see a run's mock market."
@@ -565,7 +573,10 @@ inline std::vector<Command> command_list() {
       "with limits.budget: take up the account's current run, its cash and shares, and its limits.transfer entries; "
       "without it a new run opens, the old run's open orders cancelled first"
     )
-    .flag("wait-open-orders", "with limits.budget, for a new run: wait for the old run's open orders instead of cancelling them")
+    .flag(
+      "wait-open-orders",
+      "with limits.budget, for a new run: wait for the old run's open orders instead of cancelling them"
+    )
     .returns("run", "the run id")
     .returns("result", "ended, refused, failed or unknown")
     .returns("outcome", "clean, refused_orders, or how the run ended otherwise")

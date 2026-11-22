@@ -1284,7 +1284,7 @@ TEST_CASE("order place and order cancel are listed for a broker's account in the
     CHECK(entry.at("may_send").as_bool());
     auto help = cmdatl::split(name, '.');
     help.push_back("--help");
-    CHECK(run(help).out_.find("on a KIS account") != std::string::npos);
+    CHECK(run(help).out_.find("broker's account") != std::string::npos);
   }
   const auto clock = reply_of(run({"--json", "schema", "clock"}).out_).at("commands").as_array().at(0).as_object();
   const auto errors = words(clock.at("errors"));
