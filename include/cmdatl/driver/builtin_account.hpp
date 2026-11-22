@@ -38,7 +38,7 @@ class BuiltinAccountBroker {
 public:
   /** @brief Whether a second login, the real one, is read for market data on demo. */
   static constexpr bool REAL_MARKET_DATA = brokers::facts_of<Client>().real_market_data_on_demo_;
-  /** @brief Whether the broker states buying power; without it no run starts. */
+  /** @brief Whether the broker states buying power; without it no run starts unless limits.budget is written. */
   static constexpr bool STATES_BUYING_POWER = atl::BrokerCaps<Client>::has_buying_power;
 
   /**

@@ -311,7 +311,7 @@ if(CMDATL_BUILD_TESTS)
   target_compile_definitions(driver-kis PRIVATE TOML_HEADER_ONLY=1 CMDATL_DRIVER_BUILTIN=1 CMDATL_DRIVER_BROKER="kis")
   target_link_libraries(driver-kis PRIVATE cmdatl_core)
   # An Alpaca account's driver, as a run's build compiles it: run by a test only up to its refusal (Alpaca states no
-  # buying power, so no run starts), which comes before any login is read or the broker called.
+  # buying power, so no run starts without limits.budget), which comes before any login is read or the broker called.
   add_executable(driver-alpaca driver/main.cpp)
   target_include_directories(driver-alpaca PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/no-data-facts ${CMAKE_CURRENT_SOURCE_DIR}/tests/builtin/alpaca
