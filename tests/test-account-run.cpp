@@ -861,7 +861,7 @@ TEST_CASE("a KIS run reads KRX's tape on every config it builds on demo and on r
   }
 }
 
-TEST_CASE("an Alpaca account is named by number, its paper keys save no token and read bars, and no run starts") {
+TEST_CASE("an Alpaca account's number comes from its login, its paper keys save no token and read bars") {
   using AlpacaBroker = cmdatl::driver::BuiltinAccountBroker<atl::alpaca::AlpacaBlockingClient>;
   // Fake keys: identify only reads the documents, and nothing here connects.
   const std::string paper = R"({"key_id":"fake-key","secret_key":"fake-secret","demo":true})";
@@ -879,19 +879,26 @@ TEST_CASE("an Alpaca account is named by number, its paper keys save no token an
       config, {login}, trading, account, market, effective
     );
   };
-  // Alpaca lists its account: the operator file must name it.
-  const auto unnamed = read(paper);
-  REQUIRE(unnamed);
-  CHECK(unnamed->find("names no account.number") != std::string::npos);
+  // auth login stores the number Alpaca names; a login stored before that is refused with what to run.
+  const auto old_login = read(paper);
+  REQUIRE(old_login);
+  CHECK(old_login->find("run cmdatl auth login --broker alpaca --env demo again") != std::string::npos);
+  const std::string numbered =
+    R"({"key_id":"fake-key","secret_key":"fake-secret","demo":true,"account_number":"PA0000000001"})";
+  CHECK(!read(numbered));
+  // The operator file's number, when written, must be the login's.
+  config.number_ = "PA0000000002";
+  CHECK(read(numbered));
   config.number_ = "PA0000000001";
-  CHECK(!read(paper));
+  CHECK(!read(numbered));
   // A live login in a demo file is refused before anything is sent.
-  CHECK(read(live));
+  CHECK(read(R"({"key_id":"fake-key","secret_key":"fake-secret","demo":false,"account_number":"PA0000000001"})"));
   {
+    config.number_.clear();
     AlpacaBroker broker;
     auto effective = config;
     std::string market_data;
-    REQUIRE(!broker.identify(json::object{}, config, {paper}, effective, market_data));
+    REQUIRE(!broker.identify(json::object{}, config, {numbered}, effective, market_data));
     CHECK(effective.number_ == "PA0000000001");
     CHECK(market_data == "own, IEX");
   }

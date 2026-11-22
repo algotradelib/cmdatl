@@ -121,9 +121,16 @@ std::string read_login(const std::string& text, const std::string& origin) {
 }
 
 /**
+ * @brief The key a login document of a broker that lists its accounts carries the account's number under, learned
+ *   from the broker by `auth login` (KIS's login carries it as one of its fields, under the same name).
+ */
+inline constexpr std::string_view ACCOUNT_NUMBER_KEY = "account_number";
+
+/**
  * @brief A built-in broker: cmdatl's facts, whether its config has a demo, its login's loader (`read_login`), of
  *   cmdatl's interval words those its traits serve (`supports_interval`), whether it states buying power, and whether
- *   it saves an access token.
+ *   it saves an access token, and whether it lists its accounts and is traded as one (its login then stores the number
+ *   `auth login` learns).
  */
 struct Entry {
   const builtin::Facts* facts_{nullptr};
@@ -132,6 +139,7 @@ struct Entry {
   std::vector<std::string> intervals_;
   bool buying_power_{false};
   bool saves_token_{false};
+  bool discovers_{false};
 };
 
 /**
@@ -146,6 +154,8 @@ Entry entry() {
     algotradelib::BrokerCaps<Client>::has_buying_power,
     HasTokenIdentity<typename algotradelib::BrokerTraits<Client>::Config>::value
   };
+  // Only an account cmdatl trades needs its number: a bar source's login (Kiwoom, Toss) is stored as typed.
+  out.discovers_ = algotradelib::BrokerCaps<Client>::has_account_discovery && facts_of<Client>().account_;
   for (const auto word : INTERVAL_WORDS) {
     for (const auto interval : algotradelib::all_bar_intervals) {
       if (

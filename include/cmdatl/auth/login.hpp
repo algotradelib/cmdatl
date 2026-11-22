@@ -18,10 +18,12 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <sys/stat.h>
@@ -41,7 +43,24 @@ struct LoginRequest {
   bool with_secret_{false};
   /** @brief `--force`: replace a stored login without asking. */
   bool force_{false};
+  /**
+   * @brief Asks a broker that lists its accounts which account the login's keys trade; empty for the binary's own
+   *   (`account_discoverer`). The tests give one that sends nothing.
+   */
+  std::function<std::string(const std::string& login)> discover_;
 };
+
+/**
+ * @brief How `auth login` asks a broker that lists its accounts which account a login's keys trade: one read through
+ *   the library's client, registered by `main` (the clients are compiled in `src/accounts.cpp` alone); null where
+ *   nothing registered it.
+ * @return The function: the broker's word and the canonical login, to the account's number; it throws with a message
+ *   that shows nothing of the broker's reply.
+ */
+inline std::string (*&account_discoverer())(std::string_view word, const std::string& login) {
+  static std::string (*discoverer)(std::string_view, const std::string&) = nullptr;
+  return discoverer;
+}
 
 /** @brief What `auth status` and `auth logout` were given. */
 struct LoginFilter {
@@ -201,6 +220,13 @@ inline json::object login_row(const Broker& broker, bool demo, const json::objec
       continue;
     }
     const auto* value = document.if_contains(field.json_);
+    row["account"] = value != nullptr && value->is_string() ?
+      json::value(masked(std::string(value->get_string()))) :
+      json::value(nullptr);
+  }
+  if (broker.discovers_) {
+    // The number the broker named at login (null for a login stored before cmdatl learned it).
+    const auto* value = document.if_contains(brokers::ACCOUNT_NUMBER_KEY);
     row["account"] = value != nullptr && value->is_string() ?
       json::value(masked(std::string(value->get_string()))) :
       json::value(nullptr);
@@ -522,7 +548,7 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
   if (const auto problem = canonical_document(*broker, demo, document, canonical)) {
     return bad_document(*problem);
   }
-  const auto text = named && named->folder_ ?
+  auto text = named && named->folder_ ?
     folder_login_text(named->folder_->folder_.string(), canonical) :
     json::serialize(canonical);
   if (broker->read_ != nullptr) {
@@ -532,6 +558,37 @@ inline Reply login(const LoginRequest& request, int in, std::ostream& prompts, C
       // The library's messages name the source and the field, never a value.
       return bad_document(e.what());
     }
+  }
+  // A broker that lists its accounts: its keys are the account, so the number is learned now (one read) and stored
+  // with the login, as KIS's login carries its own; a paper key read on the live host, or the reverse, is refused here.
+  if (broker->discovers_ && !(named && named->folder_)) {
+    prompts << "asking " << broker->display_ << " which account the keys trade (one read, nothing is changed)\n";
+    std::string number;
+    try {
+      if (request.discover_) {
+        number = request.discover_(text);
+      } else if (const auto discoverer = account_discoverer()) {
+        number = discoverer(broker->name_, text);
+      } else {
+        throw std::runtime_error("this cmdatl cannot read a broker's account");
+      }
+    } catch (const std::exception& e) {
+      return error_reply(
+        Exit::FAILED, "auth.account_unread",
+        "the account of these keys could not be read for " + name + ": " + e.what() + "; nothing was stored",
+        "the operator checks the keys and --env (a paper key logs in with --env demo), then runs cmdatl auth login again",
+        true
+      );
+    }
+    if (number.empty()) {
+      return error_reply(
+        Exit::FAILED, "auth.account_unread", "the broker named no account for these keys; nothing was stored",
+        "the operator checks the keys and --env (a paper key logs in with --env demo), then runs cmdatl auth login again",
+        true
+      );
+    }
+    canonical[std::string(brokers::ACCOUNT_NUMBER_KEY)] = number;
+    text = json::serialize(canonical);
   }
   if (interrupted()) {
     return interrupted_auth();

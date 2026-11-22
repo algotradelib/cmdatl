@@ -156,7 +156,9 @@ inline std::vector<Command> command_list() {
       "the broker's JSON credential document from standard input instead. The document is checked with the\n"
       "library's loaders and kept in the\n"
       "macOS keychain (no other store in this version), one login per broker and environment. Nothing is sent to\n"
-      "the broker: the key is first used, and so first checked, by a demo or real run. Without a terminal nothing\n"
+      "the broker but, for one that lists its accounts (Alpaca), one read of the account, whose number is stored\n"
+      "with the login; otherwise the key is first used, and so first checked, by a demo or real run. Without a\n"
+      "terminal nothing\n"
       "is asked. A macOS keychain dialog is the system's: a signal does not dismiss it.\n"
       "A broker or data vendor cmdatl was not built for is a broker folder, named by its path with --adapter: its\n"
       "broker.toml says what is asked, and its document is stored unchecked, bound to the folder's path, and read\n"
@@ -184,6 +186,7 @@ inline std::vector<Command> command_list() {
     .error("auth.exists")
     .error("auth.bad_document")
     .error("auth.not_confirmed")
+    .error("auth.account_unread")
     .error("auth.no_answer")
     .error("adapter.invalid")
     .error("adapter.unsafe")

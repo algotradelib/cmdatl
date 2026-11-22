@@ -47,6 +47,8 @@ struct Broker {
   std::string (*read_)(const std::string& text, const std::string& origin){nullptr};
   /** @brief Whether a login of it saves an access token in the token folder (a broker folder's never does). */
   bool token_{false};
+  /** @brief Whether it lists its accounts: `auth login` asks it which account the keys trade and stores the number. */
+  bool discovers_{false};
 };
 
 /**
@@ -76,6 +78,7 @@ inline const std::vector<Broker>& brokers() {
       }
       broker.read_ = entry.read_login_;
       broker.token_ = entry.saves_token_;
+      broker.discovers_ = entry.discovers_;
       out.push_back(std::move(broker));
     }
     return out;

@@ -217,6 +217,10 @@ Reply login_with(
   }
   request.with_secret_ = true;
   request.force_ = force;
+  // A broker that lists its accounts names one; nothing is sent.
+  request.discover_ = [](const std::string&) {
+    return std::string("PA0000000001");
+  };
   const Input in(document);
   std::ostringstream prompts;
   auto reply = auth::login(request, in.fd(), prompts, &store);
@@ -650,9 +654,25 @@ TEST_CASE("auth logout and a replacing login remove the old login's saved token 
     login_with(store, "alpaca", "demo", R"({"key_id":")" + KEY + R"(","secret_key":")" + SECRET + R"("})").exit_ ==
     Exit::OK
   );
+  CHECK(store.items_.at("alpaca/demo").find(R"("account_number":"PA0000000001")") != std::string::npos);
   reply = logout(store, "alpaca", "demo");
   REQUIRE(reply.exit_ == Exit::OK);
   CHECK(!reply.body_.contains("token_warning"));
+  // An account the broker does not name refuses the login, and nothing is stored.
+  {
+    auth::LoginRequest refused;
+    refused.broker_ = "alpaca";
+    refused.env_ = "demo";
+    refused.with_secret_ = true;
+    refused.discover_ = [](const std::string&) -> std::string {
+      throw std::runtime_error("the broker refused the account read (code 40110000)");
+    };
+    const Input keys(R"({"key_id":")" + KEY + R"(","secret_key":")" + SECRET + R"("})");
+    std::ostringstream asked;
+    reply = auth::login(refused, keys.fd(), asked, &store);
+    CHECK(code(reply) == "auth.account_unread");
+    CHECK(store.items_.count("alpaca/demo") == 0);
+  }
 
   // No token folder: nothing to remove, nothing created, no warning.
   {

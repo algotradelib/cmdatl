@@ -71,5 +71,44 @@ Connection<Client> connect_bars(const std::string& login, const std::string& opt
   return out;
 }
 
+/**
+ * @brief Asks the broker which account a login's keys trade: one read of its account listing, which changes nothing;
+ *   for a broker that lists its accounts (`BrokerCaps::has_account_discovery`) only.
+ * @tparam Client The client.
+ * @param login The canonical login document, without the number.
+ * @return The account's number as the broker shows it.
+ * @throws std::runtime_error naming whether the read reached the broker and a short code, never the broker's text.
+ */
+template <typename Client>
+std::string discover_account(const std::string& login) {
+  namespace atl = algotradelib;
+  if constexpr (atl::BrokerCaps<Client>::has_account_discovery) {
+    typename atl::BrokerTraits<Client>::Config config;
+    config.from_json_text(login, "the login");
+    // The context outlives the client, which is destroyed first.
+    const auto tls = broker_tls();
+    const auto client = paced_client<Client>(*tls, std::move(config), run_client_stores());
+    const auto resolved = atl::resolve_account(*client, std::nullopt, std::string_view());
+    if (!resolved) {
+      const auto& code = resolved.error().broker_code_;
+      const bool shown = !code.empty() && code.size() <= 32 &&
+        code.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-.") ==
+          std::string::npos;
+      throw std::runtime_error(
+        std::string(
+          resolved.error().reached_broker_ ?
+            "the broker refused the account read" :
+            "the account read did not reach the broker"
+        ) +
+        (shown ? " (code " + code + ")" : std::string())
+      );
+    }
+    return resolved.value().display_number_;
+  } else {
+    static_cast<void>(login);
+    throw std::logic_error("the broker's login carries its account");
+  }
+}
+
 } // namespace brokers
 } // namespace cmdatl

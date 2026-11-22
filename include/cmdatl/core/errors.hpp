@@ -71,6 +71,9 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"auth.bad_document", Exit::FAILED, false, "cmdatl help auth login shows each broker's fields"},
     {"auth.not_confirmed", Exit::FAILED, false,
       "a real login asks for real to be typed: only the operator can give it"},
+    {"auth.account_unread", Exit::FAILED, true,
+      "the operator checks the keys and the environment (a paper key logs in with --env demo), then runs cmdatl auth "
+      "login again; nothing was stored"},
     {"auth.adapter_mismatch", Exit::FAILED, false,
       "the login is bound to another broker folder, or to none: the operator logs in again with --adapter naming this "
       "folder"},

@@ -8,8 +8,9 @@
 // and the holiday calendar, `EGW02006`), it is read with the traits' `no_account()`, which cannot trade, as the
 // library's `example-live-program` does. Every client is paced at one request a second, the rate a KIS demo key is
 // refused above (`EGW00201`), and reads KRX's tape wherever its config chooses one (`brokers::set_tape`).
-// A broker that lists its accounts (Alpaca: the keys are the account) carries no account in its login: the operator
-// file names it by number, and `confirm_account` checks that number with the broker before the account is opened.
+// A broker that lists its accounts (Alpaca: the keys are the account) has its number learned by `auth login` and stored
+// in the login (`brokers::ACCOUNT_NUMBER_KEY`), as KIS's login carries its own; `confirm_account` checks it with the
+// broker before the account is opened.
 
 #include "../brokers/derive.hpp"
 #include "../brokers/stores.hpp"
@@ -21,6 +22,7 @@
 #include <algotradelib/network>
 
 #include <boost/asio/ssl/context.hpp>
+#include <boost/json.hpp>
 
 #include <exception>
 #include <memory>
@@ -57,16 +59,16 @@ inline std::optional<std::string> account_mismatch(
  * @brief Reads a built-in account's logins and checks them against the operator's file; every config reads KRX's tape
  *   where it chooses one.
  *
- * Where the broker lists its accounts the login carries none: the operator file must name the number, which becomes
- * the effective one (`confirm_account` checks it with the broker), and `account` stays the traits' default.
+ * Where the broker lists its accounts the number is the one `auth login` learned from the broker and stored in the
+ * login; the operator file's, when written, must equal it (`confirm_account` checks it with the broker), and `account`
+ * stays the traits' default. A login stored before cmdatl learned the number is refused with what to run.
  * @tparam Client The broker's blocking client.
  * @param config The operator's file.
  * @param documents The account's login, then where the facts say so on demo the real login (read for market data only).
  * @param trading Set to the account's config.
  * @param account Set to the account.
  * @param market Set to the real login's config where that login is read.
- * @param effective Its number set to the login's account, which the operator file's number, when given, matched; or,
- *   where the broker lists its accounts, to the operator file's number.
+ * @param effective Its number set to the login's account, which the operator file's number, when given, matched.
  * @return What is wrong (`auth.account_mismatch`), or nothing; the loaders' messages may quote what they read, so they
  *   are never repeated.
  */
@@ -90,14 +92,19 @@ std::optional<std::string> read_builtin_logins(
     return std::string("the stored login could not be read; log in again");
   }
   if constexpr (discovers) {
-    if (config.number_.empty()) {
-      return "the operator file names no account.number, and " + std::string(facts.short_) +
-        " lists its account: write [account] number = \"...\" as " + std::string(facts.short_) + " shows it";
+    boost::system::error_code ec;
+    const auto parsed = boost::json::parse(documents[0], ec);
+    const auto* number =
+      !ec && parsed.is_object() ? parsed.as_object().if_contains(brokers::ACCOUNT_NUMBER_KEY) : nullptr;
+    if (number == nullptr || !number->is_string() || number->get_string().empty()) {
+      const std::string login = "cmdatl auth login --broker " + std::string(facts.word_) + " --env " + config.env_;
+      return "the stored login has no account number (it was stored before cmdatl learned it): run " + login + " again";
     }
-    if (const auto mismatch = account_mismatch(config.number_, demo, config.number_, brokers::is_demo(trading))) {
+    const std::string account_id(number->get_string());
+    if (const auto mismatch = account_mismatch(config.number_, demo, account_id, brokers::is_demo(trading))) {
       return mismatch;
     }
-    effective.number_ = config.number_;
+    effective.number_ = account_id;
   } else {
     const std::string account_id = Traits::display_of(account);
     if (account_id.empty()) {
