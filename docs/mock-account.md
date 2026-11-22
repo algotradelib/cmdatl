@@ -34,6 +34,7 @@ start = "2024-03-25T16:00" # KST, at or after the first date's close
   - `limits.phases`: `["open"]`.
   - `limits.plan_ttl`: 60, the seconds a plan id stays good (1 to 3600).
   - `limits.portfolio_age`: 30, how old, in seconds, holdings and the order list may be when an order is decided (1 to 86400).
+  - `limits.budget`, `[limits.fees]` and `[[limits.transfer]]`: none; a run budget, see [Runs](runs.md#a-run-budget).
 - The account's state is tied to the bars, `cash` and `start`: changing any of them on a used account is refused (exit 4, `unknown.mock_state`).
   To start an account again, move its state directory aside.
 - The armed file is `<stem>.armed` beside the operator's file (`mock.toml` gives `mock.armed`); while it is missing nothing may be placed, and `orders_accepted_now` says so.

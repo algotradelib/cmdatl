@@ -169,9 +169,35 @@ daily_orders = 3 # per US trading day, counted from 00:00 at UTC-5
 cmdatl auth login --broker alpaca --env demo # the paper keys: the API key ID and the secret key
 ```
 
-- Alpaca states no buying power (its account is a margin account), so cmdatl does not buy on it yet: `cmdatl run` is refused before anything is read (`config.invalid`, exit 1), and an `order plan` or `order place` that would buy is refused (`refused.no_buying_power`, exit 3, nothing sent).
-  Sells, `order cancel`, `order reconcile`, `order release`, `status`, `account`, `quote` and `order list` work as on a KIS account (see [Commands on a KIS account](#commands-on-a-kis-account)).
+- Alpaca states no buying power (its account is a margin account), so without a [run budget](#a-run-budget) cmdatl does not buy on it: `cmdatl run` is refused before anything is read (`config.invalid`, exit 1), and an `order plan` or `order place` that would buy is refused (`refused.no_buying_power`, exit 3, nothing sent).
+  With `limits.budget` the run and the buys go ahead within the run's cash. Sells, `order cancel`, `order reconcile`, `order release`, `status`, `account`, `quote` and `order list` work as on a KIS account (see [Commands on a KIS account](#commands-on-a-kis-account)).
 - The account number is checked with Alpaca before the account's directory is made: one listing request, which changes nothing; a number Alpaca does not list, or one not written exactly as Alpaca shows it, is refused `auth.account_mismatch`.
 - The phase comes from Alpaca's stated session hours, so `open` is exactly Alpaca's regular session, daylight saving and early closes included; times in replies stay KST with their offset.
 - `buying_power` and `cash` are `null`.
 - An order cmdatl lets through is also refused by Alpaca's adapter while Alpaca's clock does not say the regular session (Alpaca's `market_closed`: nothing sent, exit 3 `refused.withheld`); a sell takes three reads (the asset, the position, the clock) before it is sent, at one request a second per host, so a few seconds.
+
+### A run budget
+
+`limits.budget` in the operator's file is a run's starting cash, in the account's currency: buys spend it, sells return their proceeds, and the run never borrows; a run sells only the shares it bought.
+The library keeps the run's cash and shares in the account's journal (algotradelib's run budget).
+
+```toml
+[limits]
+budget = "5000" # the run's starting cash, written as order_value is
+fees = { commission_rate = 0, commission_minimum = 0 } # required with budget; Alpaca charges none
+# fees = { commission_rate = "0.00015", commission_minimum = 0, sell_tax_rate = "0.0018" } # a Korean broker's, as its fee page states
+
+[[limits.transfer]] # optional: cash added to the current run, or taken from it with withdrawal = true, once by its id
+id = "2026-11-22-a"
+amount = "1000"
+```
+
+- `[limits.fees]` takes `commission_rate` and `commission_minimum` (required, 0 where the broker charges none), `institution_rate` and `sell_tax_rate` (optional); rates are fractions (`"0.00015"` is 0.015 %), written as strings.
+  A fee the broker states on a fill is booked as stated; otherwise it is estimated from these, rounded up.
+- `cmdatl run` opens a new run: the old run's open orders are cancelled first and booked to it (`--wait-open-orders` waits for them instead), then the new run starts with `limits.budget` and no shares.
+  `cmdatl run --resume` takes up the account's current run, its cash and shares, and applies the `[[limits.transfer]]` entries it has not applied yet; a new run refuses a file that lists transfers.
+- The order commands always take up the account's current run; with no run on the account (or a new run still closing the old run's orders) they answer `refused.no_run` (exit 3, nothing sent).
+  On the mock account the order commands therefore need a run that only a broker account's `cmdatl run` opens: a mock run keeps its own market and journal, and opens its own run.
+- A buy must fit the run's cash less what its open buys reserve, and a sell the run's own shares less its open sells; the guard's reasons are `run_budget_exceeded`, `run_buy_needs_limit` (a market buy; cmdatl's orders carry a limit), `run_holding_exceeded` and `run_ledger_unsettled` (the run's figures unknown, as while an order's outcome is unknown), in a refusal's detail and a run's `refused` events.
+- `status` and `account` show `run_budget` (the run's `id`, whether it is `open`, and `closing` while a new run waits for the old run's orders), `run_cash` and `run_holding` by symbol; a run's `start` event and its heartbeats show them too.
+- On a broker that states no buying power (Alpaca) a budget is what lets a run start and a command buy; on one that does (KIS), both the broker's buying power and the run's cash bound a buy.
