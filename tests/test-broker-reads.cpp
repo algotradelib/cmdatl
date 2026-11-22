@@ -713,6 +713,11 @@ TEST_CASE("order plan on a broker's account plans on its sessions and starts its
   INFO(no_run.out_);
   CHECK(no_run.exit_ == 3);
   CHECK(code_of(no_run.out_) == "refused.no_run");
+  // A cancel is not refused for lack of a run: with nothing working it is done.
+  const auto cancel = run_on(none, {"order", "cancel", "000660"});
+  INFO(cancel.out_);
+  CHECK(cancel.exit_ == 0);
+  CHECK(reply_of(cancel.out_).at("reason") == "nothing_working");
   const auto budgeted = run_on(none, {"status"});
   INFO(budgeted.out_);
   REQUIRE(budgeted.exit_ == 0);
