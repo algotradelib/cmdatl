@@ -270,9 +270,17 @@ void run_json(BasicAccount<Desk>& account, json::object& body) {
     return;
   }
   const auto& run = view.run_;
-  body["run_budget"] = run ?
-    json::value(json::object{{"id", run->id_}, {"open", run->opened_}, {"closing", run->closing_}}) :
-    json::value(nullptr);
+  if (run) {
+    json::object out{{"id", run->id_}, {"open", run->opened_}, {"closing", run->closing_}};
+    if (run->closing_) {
+      out["next"] = RUN_CLOSING_NEXT;
+    } else if (!run->opened_) {
+      out["next"] = NO_RUN_NEXT;
+    }
+    body["run_budget"] = std::move(out);
+  } else {
+    body["run_budget"] = nullptr;
+  }
   body["run_cash"] = view.run_cash_ ? json::value(view.run_cash_->amount_.str()) : json::value(nullptr);
   json::object holding;
   for (const auto& symbol : account.config().limits_.symbols_) {

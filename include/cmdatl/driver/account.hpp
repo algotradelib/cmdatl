@@ -418,14 +418,21 @@ inline void run_fields(
     return;
   }
   const auto summary = view.summary_();
-  event["run_budget"] = summary ?
-    json::value(
-      json::object{
-        {"id", summary->id_}, {"opened", summary->opened_}, {"resumed", summary->resumed_},
-        {"closing", summary->closing_}, {"transfers_applied", static_cast<std::int64_t>(summary->transfers_applied_)}
-      }
-    ) :
-    json::value(nullptr);
+  if (summary) {
+    json::object run{
+      {"id", summary->id_},
+      {"opened", summary->opened_},
+      {"resumed", summary->resumed_},
+      {"closing", summary->closing_},
+      {"transfers_applied", static_cast<std::int64_t>(summary->transfers_applied_)},
+    };
+    if (summary->closing_) {
+      run["next"] = RUN_CLOSING_NEXT;
+    }
+    event["run_budget"] = std::move(run);
+  } else {
+    event["run_budget"] = nullptr;
+  }
   const auto cash = view.cash_();
   event["run_cash"] = cash ? json::value(cash->amount_.str()) : json::value(nullptr);
   json::object holding;

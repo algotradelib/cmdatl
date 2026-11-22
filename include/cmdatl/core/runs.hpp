@@ -110,6 +110,15 @@ inline constexpr const char* NO_BUYING_POWER_RUN =
   "the broker states no buying power and the operator file writes no limits.budget, so a run cannot start; nothing "
   "was sent to the broker";
 
+/** @brief What to do while a new run waits for the old run's open orders: one wording for events and replies. */
+inline constexpr const char* RUN_CLOSING_NEXT =
+  "the new run opens once the old run's open orders end: each is cancelled once per process, so an order the broker "
+  "refused to cancel holds it; the operator cancels it in the broker's app, or starts the run again with "
+  "--wait-open-orders";
+
+/** @brief What to do with a run budget and no run on the account. */
+inline constexpr const char* NO_RUN_NEXT = "the operator starts a run on this account with cmdatl run";
+
 /** @brief What to do on a broker that states no buying power. */
 inline constexpr const char* NO_BUYING_POWER_RUN_NEXT =
   "the operator writes limits.budget and [limits.fees] to bound a run's buys; on a built-in broker's account cmdatl's "
