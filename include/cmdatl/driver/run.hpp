@@ -629,7 +629,9 @@ int run_main(int argc, char** argv, Load load, Make make) {
       guard.check(market.now());
     };
     RunClock clock(market, *last_end + BOUND_AFTER_LAST, after_step);
+    RunView run_view;
     Wiring wiring;
+    wiring.run_view_ = &run_view;
     wiring.universe_ = ids;
     // The mock market states buying power; a budget opens a new run in this run's own journal.
     wiring.limits_ = risk_limits(config, loaded.symbols_, config.limits_.daily_orders_, true);
@@ -668,6 +670,7 @@ int run_main(int argc, char** argv, Load load, Make make) {
       }
       start["symbols"] = listed;
       start["pid"] = static_cast<std::int64_t>(::getpid());
+      run_fields(run_view, loaded.symbols_, ids, start);
       if (!events.write(start)) {
         return false;
       }

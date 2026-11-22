@@ -402,47 +402,6 @@ private:
  * @param phase The phase now.
  * @return The event.
  */
-/**
- * @brief A budgeted run's figures for an event: `run` (its id, whether it resumed, closing), `run_cash` and
- *   `run_holding` by symbol; null where unknown, nothing without a budget.
- * @param view The run's readers.
- * @param symbols The run's symbols.
- * @param ids Their instruments, in the same order.
- * @param event Where the fields go.
- */
-inline void run_fields(
-  const RunView& view, const std::vector<std::string>& symbols, const std::vector<atl::InstrumentId>& ids,
-  json::object& event
-) {
-  if (!view.summary_) {
-    return;
-  }
-  const auto summary = view.summary_();
-  if (summary) {
-    json::object run{
-      {"id", summary->id_},
-      {"opened", summary->opened_},
-      {"resumed", summary->resumed_},
-      {"closing", summary->closing_},
-      {"transfers_applied", static_cast<std::int64_t>(summary->transfers_applied_)},
-    };
-    if (summary->closing_) {
-      run["next"] = RUN_CLOSING_NEXT;
-    }
-    event["run_budget"] = std::move(run);
-  } else {
-    event["run_budget"] = nullptr;
-  }
-  const auto cash = view.cash_();
-  event["run_cash"] = cash ? json::value(cash->amount_.str()) : json::value(nullptr);
-  json::object holding;
-  for (std::size_t i = 0; i < symbols.size() && i < ids.size(); ++i) {
-    const auto held = view.holding_(ids[i]);
-    holding[symbols[i]] = held ? json::value(held->str()) : json::value(nullptr);
-  }
-  event["run_holding"] = std::move(holding);
-}
-
 inline json::object account_heartbeat(
   std::chrono::system_clock::time_point at, const LastReads& reads, atl::strategy::MarketPhase phase
 ) {

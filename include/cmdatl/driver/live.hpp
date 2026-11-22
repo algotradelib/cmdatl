@@ -14,6 +14,8 @@
 #include <algotradelib/runner>
 #include <algotradelib/strategy>
 
+#include <boost/json.hpp>
+
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -248,6 +250,47 @@ struct RunView {
   /** @brief The run's own shares of an instrument, or nothing. */
   std::function<std::optional<atl::Decimal64>(const atl::InstrumentId&)> holding_;
 };
+
+/**
+ * @brief A budgeted run's figures for an event: `run` (its id, whether it resumed, closing), `run_cash` and
+ *   `run_holding` by symbol; null where unknown, nothing without a budget.
+ * @param view The run's readers.
+ * @param symbols The run's symbols.
+ * @param ids Their instruments, in the same order.
+ * @param event Where the fields go.
+ */
+inline void run_fields(
+  const RunView& view, const std::vector<std::string>& symbols, const std::vector<atl::InstrumentId>& ids,
+  boost::json::object& event
+) {
+  if (!view.summary_) {
+    return;
+  }
+  const auto summary = view.summary_();
+  if (summary) {
+    boost::json::object run{
+      {"id", summary->id_},
+      {"opened", summary->opened_},
+      {"resumed", summary->resumed_},
+      {"closing", summary->closing_},
+      {"transfers_applied", static_cast<std::int64_t>(summary->transfers_applied_)},
+    };
+    if (summary->closing_) {
+      run["next"] = RUN_CLOSING_NEXT;
+    }
+    event["run_budget"] = std::move(run);
+  } else {
+    event["run_budget"] = nullptr;
+  }
+  const auto cash = view.cash_();
+  event["run_cash"] = cash ? boost::json::value(cash->amount_.str()) : boost::json::value(nullptr);
+  boost::json::object holding;
+  for (std::size_t i = 0; i < symbols.size() && i < ids.size(); ++i) {
+    const auto held = view.holding_(ids[i]);
+    holding[symbols[i]] = held ? boost::json::value(held->str()) : boost::json::value(nullptr);
+  }
+  event["run_holding"] = std::move(holding);
+}
 
 /** @brief One value of the program's `data {}`, published at `at_`, as the run's mock vendor releases it. */
 struct DataPoint {
