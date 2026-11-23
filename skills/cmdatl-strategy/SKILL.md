@@ -22,7 +22,7 @@ Look a built-in up there rather than guess.
 
 ```
 params { int<lower=2> slow = 30; int<lower=0> quantity = 50; }
-series { real m = sma(close, slow); }
+series { real m = ma(close, slow); }
 on_bar { if (close > m) { target(quantity); } else { target(0); } }
 ```
 

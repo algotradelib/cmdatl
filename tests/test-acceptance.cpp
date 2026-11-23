@@ -176,7 +176,7 @@ std::filesystem::path driver_of(const std::string& err) {
 std::string program_with_a_warning() {
   std::string text = cmdatl::TEMPLATES[0].text_;
   const std::string series = "series {\n";
-  text.insert(text.find(series) + series.size(), "  real unused = sma(close, 5);\n");
+  text.insert(text.find(series) + series.size(), "  real unused = ma(close, 5);\n");
   return text;
 }
 

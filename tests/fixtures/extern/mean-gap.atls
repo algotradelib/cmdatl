@@ -1,5 +1,5 @@
 // Buys when the close is well below its mean and sells when it is back above it; the mean and the cap are C++ of
-// one's own (include/user.hpp), restating sma and an atls function.
+// one's own (include/user.hpp), restating ma and an atls function.
 params {
   int<lower=2> lookback = 20;
   real<lower=0> entry = 0.03;

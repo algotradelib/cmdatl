@@ -6,8 +6,8 @@ params {
   int<lower=0> quantity = 50;
 }
 series {
-  real fast_mean = sma(close, fast);
-  real slow_mean = sma(close, slow);
+  real fast_mean = ma(close, fast);
+  real slow_mean = ma(close, slow);
 }
 on_bar {
   if (fast_mean > slow_mean) {

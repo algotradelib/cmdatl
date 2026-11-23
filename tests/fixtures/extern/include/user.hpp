@@ -1,4 +1,4 @@
-// The external indicator and function of mean-gap.atls: sma's running sum, and a cap from another header.
+// The external indicator and function of mean-gap.atls: ma's running sum, and a cap from another header.
 #pragma once
 
 #include "clip.hpp"
@@ -9,7 +9,7 @@
 
 namespace atls::user {
 
-/** @brief The mean of the last n values, by a running sum, as the built-in sma keeps it. */
+/** @brief The mean of the last n values, by a running sum, as the built-in ma keeps it. */
 class mean_of {
 public:
   /**

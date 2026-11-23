@@ -6,7 +6,7 @@ params {
   int<lower=0> quantity = 100;
 }
 series {
-  real z = zscore(close, lookback);
+  real z = roll_zscore(close, lookback);
 }
 on_bar {
   if (z < -entry) {

@@ -6,8 +6,8 @@ params {
   int<lower=0> quantity = 50;
 }
 series {
-  real channel_high = ts_max(high, entry)[1];
-  real channel_low = ts_min(low, exit)[1];
+  real channel_high = roll_max(high, entry)[1];
+  real channel_low = roll_min(low, exit)[1];
 }
 on_bar {
   if (close > channel_high) {

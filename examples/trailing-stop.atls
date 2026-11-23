@@ -6,7 +6,7 @@ params {
   int<lower=0> quantity = 100;
 }
 series {
-  real breakout = ts_max(high, lookback)[1];
+  real breakout = roll_max(high, lookback)[1];
 }
 state {
   bool in_trade = false;

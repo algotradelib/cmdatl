@@ -8,7 +8,7 @@ params {
 }
 series {
   real last_close = close;
-  real trend = sma(close, lookback);
+  real trend = ma(close, lookback);
 }
 on_open {
   real gap = open / last_close - 1;
