@@ -71,7 +71,7 @@ cmake --build build
 cmake --install build --prefix /your/prefix # bin/cmdatl, include/cmdatl/replay/, share/cmdatl/skills/
 ```
 
-CLI11, toml++ and Catch2 are downloaded when they are not installed (`CMDATL_FETCH_DEPS`, on by default); `-DCMDATL_BUILD_TESTS=OFF` leaves the tests out.
+`-DCMDATL_FETCH_DEPS=ON` downloads CLI11, toml++ and Catch2 when they are not installed.
 Backtests and runs also need CMake, a C++17 compiler and atlc at run time: see [What backtests and runs need](docs/install.md).
 
 ## Documentation
