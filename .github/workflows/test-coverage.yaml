@@ -59,6 +59,7 @@ jobs:
           options: |
             CMAKE_BUILD_TYPE=Debug
             CMAKE_CXX_FLAGS_DEBUG=-g0
+            CMDATL_BUILD_TESTS=ON
             CMDATL_FETCH_DEPS=ON
             "CMAKE_PREFIX_PATH=${{ steps.atl.outputs.path }}"
 
@@ -74,7 +75,7 @@ jobs:
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
-        run: .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
+        run: .github/scripts/acceptance.sh build/tests/test-cli "$RUNNER_TEMP/acceptance.xml"
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5

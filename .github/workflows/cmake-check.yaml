@@ -70,6 +70,7 @@ jobs:
         with:
           run-build: true
           options: |
+            CMDATL_BUILD_TESTS=ON
             CMDATL_FETCH_DEPS=ON
             "CMAKE_PREFIX_PATH=${{ steps.atl.outputs.path }}"
 
@@ -86,4 +87,4 @@ jobs:
         env:
           CMDATL_TEST_ATLC: ${{ steps.atlc.outputs.atlc }}
           CMDATL_TEST_PREFIX: ${{ steps.atl.outputs.path }}
-        run: .github/scripts/acceptance.sh build/test-cli "$RUNNER_TEMP/acceptance.xml"
+        run: .github/scripts/acceptance.sh build/tests/test-cli "$RUNNER_TEMP/acceptance.xml"
