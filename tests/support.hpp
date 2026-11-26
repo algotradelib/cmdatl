@@ -66,6 +66,62 @@ private:
 
 /** @brief The isolation, set up before main, once per test executable. */
 inline const Isolated ISOLATED{};
+
+#if defined(CMDATL_HOLD_LOCK)
+/**
+ * @brief The hold-lock helper, started on a directory (an account's, or a build's shape) whose `lock` it holds as
+ *   another cmdatl process would, killed if the test leaves it running.
+ */
+class LockHolder {
+public:
+  /**
+   * @brief Starts it and waits until it holds the lock.
+   * @param dir The directory.
+   */
+  explicit LockHolder(const std::filesystem::path& dir) {
+    std::filesystem::create_directories(dir);
+    int out[2];
+    REQUIRE(::pipe(out) == 0);
+    posix_spawn_file_actions_t actions;
+    posix_spawn_file_actions_init(&actions);
+    posix_spawn_file_actions_adddup2(&actions, out[1], STDOUT_FILENO);
+    posix_spawn_file_actions_addclose(&actions, out[0]);
+    posix_spawn_file_actions_addclose(&actions, out[1]);
+    const std::string program = CMDATL_HOLD_LOCK;
+    const std::string where = dir.string();
+    char* argv[] = {const_cast<char*>(program.c_str()), const_cast<char*>(where.c_str()), nullptr};
+    const int spawned = posix_spawn(&pid_, argv[0], &actions, nullptr, argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    ::close(out[1]);
+    cmdatl::ScopedFd read_end(out[0]);
+    REQUIRE(spawned == 0);
+    pollfd p{read_end.get(), POLLIN, 0};
+    REQUIRE(::poll(&p, 1, 10000) == 1);
+    char buffer[64];
+    REQUIRE(::read(read_end.get(), buffer, sizeof(buffer)) > 0);
+  }
+
+  LockHolder(const LockHolder&) = delete;
+  LockHolder& operator=(const LockHolder&) = delete;
+
+  /** @brief Kills and reaps it. */
+  ~LockHolder() {
+    release();
+  }
+
+  /** @brief Kills it now, releasing the lock. */
+  void release() {
+    if (pid_ > 0) {
+      ::kill(pid_, SIGKILL);
+      ::waitpid(pid_, nullptr, 0);
+      pid_ = -1;
+    }
+  }
+
+private:
+  pid_t pid_{-1};
+};
+#endif
 #endif
 
 /** @brief When above zero, the allocation that brings it to zero throws `std::bad_alloc` (a one-shot failure). */

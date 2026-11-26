@@ -104,57 +104,6 @@ std::vector<std::string> words(const boost::json::value& value) {
   return out;
 }
 
-/** @brief The hold-lock helper, started on an account's directory, killed if the test leaves it running. */
-class Holder {
-public:
-  /**
-   * @brief Starts it and waits until it holds the lock.
-   * @param dir The account's directory.
-   */
-  explicit Holder(const std::filesystem::path& dir) {
-    std::filesystem::create_directories(dir);
-    int out[2];
-    REQUIRE(::pipe(out) == 0);
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    posix_spawn_file_actions_adddup2(&actions, out[1], STDOUT_FILENO);
-    posix_spawn_file_actions_addclose(&actions, out[0]);
-    posix_spawn_file_actions_addclose(&actions, out[1]);
-    const std::string program = CMDATL_HOLD_LOCK;
-    const std::string where = dir.string();
-    char* argv[] = {const_cast<char*>(program.c_str()), const_cast<char*>(where.c_str()), nullptr};
-    const int spawned = posix_spawn(&pid_, argv[0], &actions, nullptr, argv, environ);
-    posix_spawn_file_actions_destroy(&actions);
-    ::close(out[1]);
-    cmdatl::ScopedFd read_end(out[0]);
-    REQUIRE(spawned == 0);
-    pollfd p{read_end.get(), POLLIN, 0};
-    REQUIRE(::poll(&p, 1, 10000) == 1);
-    char buffer[64];
-    REQUIRE(::read(read_end.get(), buffer, sizeof(buffer)) > 0);
-  }
-
-  Holder(const Holder&) = delete;
-  Holder& operator=(const Holder&) = delete;
-
-  /** @brief Kills and reaps it. */
-  ~Holder() {
-    release();
-  }
-
-  /** @brief Kills it now, releasing the lock. */
-  void release() {
-    if (pid_ > 0) {
-      ::kill(pid_, SIGKILL);
-      ::waitpid(pid_, nullptr, 0);
-      pid_ = -1;
-    }
-  }
-
-private:
-  pid_t pid_{-1};
-};
-
 /**
  * @brief The fixture's account initialized by a first `status`.
  * @param fixture The account.
@@ -903,7 +852,7 @@ TEST_CASE("the lock: a waiting command says who holds it, then answers busy.lock
   const Watchdog watchdog("the lock's wait", 60);
   const PaperFixture fixture;
   initialize(fixture);
-  Holder holder(fixture.account());
+  LockHolder holder(fixture.account());
   Spawned cmdatl({"--json", "status"});
   const auto first = cmdatl.line(true, 5);
   REQUIRE(first.has_value());
@@ -921,7 +870,7 @@ TEST_CASE("the lock: SIGINT while waiting is exit 130 with one interrupted reply
   const Watchdog watchdog("an interrupted wait", 60);
   const PaperFixture fixture;
   initialize(fixture);
-  Holder holder(fixture.account());
+  LockHolder holder(fixture.account());
   const auto log = slurp(fixture.log());
   Spawned cmdatl({"--json", "clock", "advance", "--minutes", "5"});
   REQUIRE(cmdatl.line(true, 5).has_value());
@@ -940,7 +889,7 @@ TEST_CASE("the lock: replaced while a command waits, the waiter locks the new fi
   const Watchdog watchdog("a lock replaced during the wait", 60);
   const PaperFixture fixture;
   initialize(fixture);
-  Holder holder(fixture.account());
+  LockHolder holder(fixture.account());
   Spawned cmdatl({"--json", "status"});
   REQUIRE(cmdatl.line(true, 5).has_value());
   std::filesystem::rename(fixture.account() / "lock", fixture.account() / "lock.old");
@@ -1071,7 +1020,7 @@ TEST_CASE("a failing output: during the wait, in a read's reply, and after a com
   const int before = open_fds();
   {
     // The waiting line cannot be written: the lock is given back.
-    Holder holder(fixture.account());
+    LockHolder holder(fixture.account());
     std::ostringstream out;
     std::ostringstream err;
     err.setstate(std::ios::badbit);
