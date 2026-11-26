@@ -653,6 +653,11 @@ inline std::vector<Command> command_list() {
       return cache::dir_reply();
     }));
   add(make_command({"cache", "size"}, "Cache", "how large each folder of the cache is; reads only")
+    .describe(
+      "Counts each folder's regular files, links never followed. When a part cannot be read the reply is "
+      "cache.unavailable (exit 1), with the counts and each folder's error kept, so a partial count never reads as a "
+      "success."
+    )
     .example("cmdatl cache size")
     .example("cmdatl cache size --value drivers.bytes")
     .returns("path", "the cache's folder")

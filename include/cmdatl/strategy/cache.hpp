@@ -288,7 +288,8 @@ inline void measure_tree(int dir, const std::string& path, int depth, Measured& 
 
 /**
  * @brief `cmdatl cache size`: each folder's bytes and entries, links never followed; it reads only.
- * @return The reply: `path`, an object per folder, and `bytes` in total.
+ * @return The reply: `path`, an object per folder, and `bytes` in total; `cache.unavailable` with the same fields when
+ *   a part could not be read, so a partial count never reads as a success.
  */
 inline Reply size_reply() {
 #if defined(_WIN32)
@@ -303,6 +304,7 @@ inline Reply size_reply() {
   const ScopedFd root(open_lifted(dir->c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
   const int root_error = root.get() < 0 ? errno : 0;
   std::uint64_t total = 0;
+  std::string first_error;
   for (const std::string bucket : BUCKETS) {
     const auto path = *dir + "/" + bucket;
     Measured measured;
@@ -323,12 +325,25 @@ inline Reply size_reply() {
     out["entries"] = measured.entries_;
     if (!measured.error_.empty()) {
       out["error"] = measured.error_;
+      if (first_error.empty()) {
+        first_error = measured.error_;
+      }
     }
     reply.body_[bucket] = std::move(out);
     total += measured.bytes_;
   }
   reply.body_["bytes"] = total;
-  return reply;
+  if (first_error.empty()) {
+    return reply;
+  }
+  auto failed = error_reply(
+    Exit::FAILED, "cache.unavailable", "the cache could not be read whole: " + first_error,
+    "the operator makes that folder readable; the counts in this reply leave out what could not be read"
+  );
+  for (const auto& field : reply.body_) {
+    failed.body_[field.key()] = field.value();
+  }
+  return failed;
 #endif
 }
 

@@ -1054,11 +1054,15 @@ TEST_CASE("cache dir names the cache, and cache size counts each folder's files 
     CHECK(!folder.contains("error"));
   }
   CHECK(reply.at("bytes").as_int64() == 110);
-  // A folder that cannot be read says so instead of counting as empty (root reads it anyway: then nothing to check).
+  // A folder that cannot be read fails the reply instead of counting as empty, even for one value (root reads it
+  // anyway: then nothing to check).
   const auto locked = root / "backtests" / "a1b2c3";
   ::chmod(locked.c_str(), 0);
   if (::access(locked.c_str(), R_OK) != 0) {
-    CHECK(reply_of(run({"--json", "cache", "size"}).out_).at("backtests").as_object().contains("error"));
+    const auto partial = run({"--json", "cache", "size", "--value", "backtests.bytes"});
+    CHECK(partial.exit_ == 1);
+    CHECK(code_of(partial.out_) == "cache.unavailable");
+    CHECK(reply_of(partial.out_).at("backtests").as_object().contains("error"));
   }
   ::chmod(locked.c_str(), 0700);
 }
