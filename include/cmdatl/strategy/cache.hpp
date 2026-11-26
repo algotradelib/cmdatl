@@ -3,11 +3,13 @@
 // The build cache's commands: where it is (`cache dir`), how large each of its folders is (`cache size`), and clearing
 // the builds no process is using (`cache clean`).
 //
-// A clean touches only the shapes `build_driver` makes under `drivers/`: a real directory named as `shape_name` names
-// one, holding its `lock`. Under that lock, taken without waiting, it removes the shape's `src/`, `next/` and `build/`,
-// which the next build of the shape makes again; the shape's folder and its lock stay, so a build waiting on the lock
-// gets the same file when the clean lets go. Every step goes through descriptors opened without following a link, from
-// the validated `drivers/` down.
+// A clean touches only what looks like a shape `build_driver` makes under `drivers/`: a real directory named as
+// `shape_name` names one, holding its `lock`. Under that lock, taken without waiting, it removes the shape's `src/`,
+// `next/` and `build/`, which the next build of the shape makes again; the shape's folder and its lock stay, so a build
+// waiting on the lock gets the same file when the clean lets go. Every step goes through descriptors opened without
+// following a link, from the validated `drivers/` down, and never enters a directory on another file system than
+// `drivers/`'s. A name and a lock show the layout, not who made it: `drivers/` is reserved for cmdatl's builds, as the
+// docs say.
 
 #include "../core/reply.hpp"
 #include "../system/files.hpp"

@@ -361,7 +361,9 @@ cmdatl compiles each program once per shape: `atlc build` translates the program
 A store backtest also links DuckDB's prebuilt C library (`duckdb.h` and the shared library), from `build.duckdb` alone when it is set, else `DUCKDB_ROOT`, then the system's library paths; the executable finds the library by an rpath to its directory.
 Builds are cached under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`), and CMake decides what to rebuild.
 `cmdatl cache size` shows how large the cache is, and `cmdatl cache clean` clears every build no backtest or run is building; the next backtest or run of a cleared program builds it again.
-After a build was killed with SIGKILL, let its compiler end before cleaning.
+`drivers/` is reserved for cmdatl's builds: `cmdatl cache clean` removes `src/`, `next/` and `build/` from every folder there named `<Struct>-<16 hex digits>` that holds a `lock` file, whoever made it, and never enters a folder on another file system.
+The `CACHEDIR.TAG` cmdatl writes in `drivers/` tells backup tools to skip the whole folder.
+After a build was killed with SIGKILL, let its children (atlc, CMake and the compiler) end before cleaning.
 Parameters, data and replay settings are arguments of the executable, so changing them never rebuilds.
 The program's `header` is compiled with it: its path and its bytes are part of the build's key, so an edited header is built again, and CMake tracks the headers it includes.
 A backtest's `measures`, and the names in the program's `measures {}`, are part of the key too, by name and order, so a changed list builds once.

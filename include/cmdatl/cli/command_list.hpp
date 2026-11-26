@@ -677,15 +677,18 @@ inline std::vector<Command> command_list() {
     }));
   add(make_command({"cache", "clean"}, "Cache", "clear the builds no process is using; the next run builds again")
     .describe(
-      "Clears each build's sources and objects under drivers/, under the build's lock taken without waiting: a build "
-      "another cmdatl holds is left as it is, and the next backtest or run of a cleared program builds it again. "
-      "Nothing but cmdatl's own builds is touched: not the backtests', calendars or tokens folders, nor anything in "
-      "drivers/ cmdatl did not make. After a build was killed with SIGKILL, let its compiler end before cleaning."
+      "drivers/ is reserved for cmdatl's builds. Every entry there named <Struct>-<16 hex digits> that is a real "
+      "directory holding a lock file is taken as a build, whoever made it: under its lock, taken without waiting, its "
+      "src/, next/ and build/ folders are removed, and the folder and its lock stay; the next backtest or run of that "
+      "program builds it again. A build another cmdatl holds is left as it is, and so is every other entry. Nothing "
+      "outside drivers/ is touched, and no folder on another file system is entered. The CACHEDIR.TAG cmdatl writes "
+      "in drivers/ tells backup tools to skip the whole folder. After a build was killed with SIGKILL, let its "
+      "children (atlc, CMake and the compiler) end before cleaning."
     )
     .example("cmdatl cache clean")
     .returns("cleared", "builds whose sources and objects were removed (a build already empty is not counted)")
     .returns("in_use", "builds another process holds, left as they are")
-    .returns("ignored", "entries in drivers/ that are not a build cmdatl made, left as they are")
+    .returns("ignored", "entries in drivers/ that do not look like a build (name, type or no lock), left as they are")
     .returns("failed", "builds that could not be cleared: path and error")
     .error("cache.unavailable")
     .error("cache.partial")
