@@ -362,7 +362,7 @@ A store backtest also links DuckDB's prebuilt C library (`duckdb.h` and the shar
 Builds are cached under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`), and CMake decides what to rebuild.
 `cmdatl cache size` shows how large the cache is, and `cmdatl cache clean` clears every build no backtest or run is building; the next backtest or run of a cleared program builds it again.
 `drivers/` is reserved for cmdatl's builds: `cmdatl cache clean` removes `src/`, `next/` and `build/` from every folder there named `<Struct>-<16 lowercase hex digits>` that holds a regular `lock` file, whoever made it, and never enters a folder behind a mount point.
-On Linux before 5.6 (no `openat2`) a bind mount of the same file system inside `drivers/` is not seen: do not mount anything there.
+On Linux `cmdatl cache clean` needs `openat2` (Linux 5.6 or later), which sees a bind mount of the same file system, and refuses without it.
 The `CACHEDIR.TAG` cmdatl writes in `drivers/` tells backup tools to skip the whole folder.
 After a build was killed with SIGKILL, let its children (atlc, CMake and the compiler) end before cleaning.
 Parameters, data and replay settings are arguments of the executable, so changing them never rebuilds.

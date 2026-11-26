@@ -681,10 +681,10 @@ inline std::vector<Command> command_list() {
       "real directory holding a regular lock file is taken as a build, whoever made it: under its lock, taken without "
       "waiting, its src/, next/ and build/ folders are removed, and the folder and its lock stay; the next backtest or "
       "run of that program builds it again. A build another cmdatl holds is left as it is, and so is every other "
-      "entry. Nothing outside drivers/ is touched, and no folder behind a mount point is entered (on Linux before 5.6, "
-      "a bind mount of the same file system is not seen). The CACHEDIR.TAG cmdatl writes in drivers/ tells backup "
-      "tools to skip the whole folder. After a build was killed with SIGKILL, let its children (atlc, CMake and the "
-      "compiler) end before cleaning."
+      "entry. Nothing outside drivers/ is touched, and no folder behind a mount point is entered; on Linux this needs "
+      "openat2 (Linux 5.6 or later), and the clean refuses without it. The CACHEDIR.TAG cmdatl writes in drivers/ "
+      "tells backup tools to skip the whole folder. After a build was killed with SIGKILL, let its children (atlc, "
+      "CMake and the compiler) end before cleaning."
     )
     .example("cmdatl cache clean")
     .returns("cleared", "builds whose sources and objects were removed (a build already empty is not counted)")
