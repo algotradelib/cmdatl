@@ -34,6 +34,18 @@
 #include <unistd.h>
 #endif
 
+// openat2(2), Linux 5.6 and later: its RESOLVE_NO_XDEV refuses to cross any mount, a bind mount of the same file
+// system included, which a device number cannot show.
+#if defined(__linux__) && defined(__has_include)
+#if __has_include(<linux/openat2.h>)
+#include <linux/openat2.h>
+#include <sys/syscall.h>
+#if defined(SYS_openat2)
+#define CMDATL_HAS_OPENAT2 1
+#endif
+#endif
+#endif
+
 namespace cmdatl {
 namespace cache {
 
@@ -177,6 +189,46 @@ inline int open_directory_at(int parent, const std::string& name) noexcept {
 }
 
 /**
+ * @brief Opens a directory inside another for a clean, never through a link nor across a mount: with openat2's
+ *   `RESOLVE_NO_XDEV` on Linux, which sees a bind mount of the same file system; elsewhere, and on a kernel without
+ *   openat2, as `open_directory_at` (the caller compares devices too).
+ * @param parent The parent's descriptor.
+ * @param name The directory's name.
+ * @return The descriptor, or -1 with `errno` set (`EXDEV` for a mount point).
+ */
+inline int open_inside(int parent, const std::string& name) noexcept {
+#if defined(CMDATL_HAS_OPENAT2)
+  open_how how{};
+  how.flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+  how.resolve = RESOLVE_NO_XDEV | RESOLVE_NO_SYMLINKS;
+  const int fd = static_cast<int>(::syscall(SYS_openat2, parent, name.c_str(), &how, sizeof how));
+  if (fd > STDERR_FILENO) {
+    return fd;
+  }
+  if (fd >= 0) {
+    const int lifted = ::fcntl(fd, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+    const int error = errno;
+    ::close(fd);
+    errno = error;
+    return lifted;
+  }
+  if (errno != ENOSYS) {
+    return -1;
+  }
+#endif
+  return open_directory_at(parent, name);
+}
+
+/**
+ * @brief Why a clean could not open a directory.
+ * @param error The error number.
+ * @return The text: `OTHER_FILE_SYSTEM` for a mount point.
+ */
+inline std::string open_failure(int error) {
+  return error == EXDEV ? std::string(OTHER_FILE_SYSTEM) : std::string(std::strerror(error));
+}
+
+/**
  * @brief Removes a directory and everything in it, relative to its parent's descriptor: a link inside is removed as a
  *   link, never followed, and a directory on another file system than `drivers/` is never entered; it goes on past a
  *   failure and removes what it can.
@@ -200,10 +252,10 @@ inline bool remove_tree(
   if (depth >= MAX_DEPTH) {
     return fail(path, TOO_DEEP);
   }
-  const ScopedFd dir(open_directory_at(parent, name));
+  const ScopedFd dir(open_inside(parent, name));
   if (dir.get() < 0) {
     const int error = errno;
-    return fail(path, std::strerror(error));
+    return fail(path, open_failure(error));
   }
   struct stat info{};
   if (::fstat(dir.get(), &info) != 0) {
@@ -421,12 +473,22 @@ inline ShapeClean clean_shape(int drivers, dev_t device, const std::string& name
     error = OTHER_FILE_SYSTEM;
     return ShapeClean::FAILED;
   }
-  const ScopedFd shape(open_directory_at(drivers, name));
+  const ScopedFd shape(open_inside(drivers, name));
   if (shape.get() < 0) {
-    if (errno == ENOENT || errno == ELOOP || errno == ENOTDIR) {
+    const int failed = errno;
+    if (failed == ENOENT || failed == ELOOP || failed == ENOTDIR) {
       return ShapeClean::IGNORED;
     }
+    error = open_failure(failed);
+    return ShapeClean::FAILED;
+  }
+  // The directory opened, not the name checked above: a mount made in between is caught before its lock is touched.
+  if (::fstat(shape.get(), &info) != 0) {
     error = std::strerror(errno);
+    return ShapeClean::FAILED;
+  }
+  if (!S_ISDIR(info.st_mode) || info.st_dev != device) {
+    error = OTHER_FILE_SYSTEM;
     return ShapeClean::FAILED;
   }
   // The lock as build_driver makes it, never created here: a regular file, not reached through a link.
