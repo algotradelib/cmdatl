@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -110,6 +111,24 @@ inline Reply dir_reply() {
 }
 
 #if !defined(_WIN32)
+/** @brief Closes a directory stream, its descriptor with it. */
+struct DirCloser {
+  /**
+   * @brief Closes it.
+   * @param stream The stream.
+   */
+  void operator()(DIR* stream) const noexcept {
+    ::closedir(stream);
+  }
+};
+
+/** @brief Why a walk stopped at a directory nested too deep. */
+inline constexpr const char* TOO_DEEP = "more than 128 folders deep; not entered";
+static_assert(MAX_DEPTH == 128, "TOO_DEEP names MAX_DEPTH");
+
+/** @brief Why a clean stopped at a directory on another file system than `drivers/`. */
+inline constexpr const char* OTHER_FILE_SYSTEM = "on another file system (a mount); not entered";
+
 /**
  * @brief The names in a directory, but `.` and `..`, sorted.
  * @param dir The directory's descriptor, which stays open.
@@ -122,8 +141,8 @@ inline int names_in(int dir, std::vector<std::string>& names) {
   if (copy < 0) {
     return errno;
   }
-  DIR* stream = ::fdopendir(copy);
-  if (stream == nullptr) {
+  const std::unique_ptr<DIR, DirCloser> stream(::fdopendir(copy));
+  if (!stream) {
     const int error = errno;
     ::close(copy);
     return error;
@@ -131,7 +150,7 @@ inline int names_in(int dir, std::vector<std::string>& names) {
   int error = 0;
   for (;;) {
     errno = 0;
-    const dirent* entry = ::readdir(stream);
+    const dirent* entry = ::readdir(stream.get());
     if (entry == nullptr) {
       error = errno;
       break;
@@ -141,7 +160,6 @@ inline int names_in(int dir, std::vector<std::string>& names) {
       names.push_back(name);
     }
   }
-  ::closedir(stream);
   std::sort(names.begin(), names.end());
   return error;
 }
@@ -158,49 +176,61 @@ inline int open_directory_at(int parent, const std::string& name) noexcept {
 
 /**
  * @brief Removes a directory and everything in it, relative to its parent's descriptor: a link inside is removed as a
- *   link, never followed; it goes on past a failure and removes what it can.
+ *   link, never followed, and a directory on another file system than `drivers/` is never entered; it goes on past a
+ *   failure and removes what it can.
  * @param parent The parent's descriptor.
  * @param name The directory's name.
+ * @param path The directory's path in the shape, for a failure's text.
  * @param depth How deep this directory is.
- * @param where Set to the path, relative to the parent, of the first failure.
- * @return 0, or the first error number.
+ * @param device The file system of `drivers/`.
+ * @param failure Set to the first failure, `<path>: <reason>`, when it is empty.
+ * @return Whether the directory was removed whole.
  */
-inline int remove_tree(int parent, const std::string& name, int depth, std::string& where) {
+inline bool remove_tree(
+  int parent, const std::string& name, const std::string& path, int depth, dev_t device, std::string& failure
+) {
+  const auto fail = [&failure](const std::string& at, const std::string& why) -> bool {
+    if (failure.empty()) {
+      failure = at + ": " + why;
+    }
+    return false;
+  };
+  if (depth >= MAX_DEPTH) {
+    return fail(path, TOO_DEEP);
+  }
   const ScopedFd dir(open_directory_at(parent, name));
   if (dir.get() < 0) {
-    where = name;
-    return errno;
+    const int error = errno;
+    return fail(path, std::strerror(error));
   }
-  if (depth >= MAX_DEPTH) {
-    where = name;
-    return ELOOP;
+  struct stat info{};
+  if (::fstat(dir.get(), &info) != 0) {
+    const int error = errno;
+    return fail(path, std::strerror(error));
+  }
+  if (info.st_dev != device) {
+    return fail(path, OTHER_FILE_SYSTEM);
   }
   std::vector<std::string> names;
-  int first = names_in(dir.get(), names);
-  if (first != 0) {
-    where = name;
+  bool whole = true;
+  if (const int error = names_in(dir.get(), names)) {
+    whole = fail(path, std::strerror(error));
   }
   for (const auto& entry : names) {
-    struct stat info{};
-    int error = 0;
-    std::string inner;
+    const auto at = path + "/" + entry;
     // Anything but a directory, a link included, is unlinked; one whose type cannot be read is tried as a file.
     if (::fstatat(dir.get(), entry.c_str(), &info, AT_SYMLINK_NOFOLLOW) == 0 && S_ISDIR(info.st_mode)) {
-      error = remove_tree(dir.get(), entry, depth + 1, inner);
+      whole = remove_tree(dir.get(), entry, at, depth + 1, device, failure) && whole;
     } else if (::unlinkat(dir.get(), entry.c_str(), 0) != 0) {
-      error = errno;
-      inner = entry;
-    }
-    if (error != 0 && first == 0) {
-      first = error;
-      where = name + "/" + inner;
+      const int error = errno;
+      whole = fail(at, std::strerror(error));
     }
   }
-  if (::unlinkat(parent, name.c_str(), AT_REMOVEDIR) != 0 && first == 0) {
-    first = errno;
-    where = name;
+  if (whole && ::unlinkat(parent, name.c_str(), AT_REMOVEDIR) != 0) {
+    const int error = errno;
+    whole = fail(path, std::strerror(error));
   }
-  return first;
+  return whole;
 }
 
 /** @brief A folder's size as `cache size` reports it. */
@@ -221,14 +251,14 @@ struct Measured {
  * @param measured Where the sizes and the first failure go.
  */
 inline void measure_tree(int dir, const std::string& path, int depth, Measured& measured) {
-  const auto fail = [&measured](const std::string& at, int error) {
+  const auto fail = [&measured](const std::string& at, const std::string& why) {
     if (measured.error_.empty()) {
-      measured.error_ = at + ": " + std::strerror(error);
+      measured.error_ = at + ": " + why;
     }
   };
   std::vector<std::string> names;
   if (const int error = names_in(dir, names)) {
-    fail(path, error);
+    fail(path, std::strerror(error));
   }
   if (depth == 0) {
     measured.entries_ = names.size();
@@ -237,17 +267,17 @@ inline void measure_tree(int dir, const std::string& path, int depth, Measured& 
     const auto at = path + "/" + name;
     struct stat info{};
     if (::fstatat(dir, name.c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0) {
-      fail(at, errno);
+      fail(at, std::strerror(errno));
     } else if (S_ISREG(info.st_mode)) {
       measured.bytes_ += static_cast<std::uint64_t>(info.st_size);
     } else if (S_ISDIR(info.st_mode)) {
       if (depth + 1 >= MAX_DEPTH) {
-        fail(at, ELOOP);
+        fail(at, TOO_DEEP);
         continue;
       }
       const ScopedFd inner(open_directory_at(dir, name));
       if (inner.get() < 0) {
-        fail(at, errno);
+        fail(at, std::strerror(errno));
       } else {
         measure_tree(inner.get(), at, depth + 1, measured);
       }
@@ -350,11 +380,12 @@ enum class ShapeClean {
 /**
  * @brief Clears one entry of `drivers/` if it is a shape: its `src/`, `next/` and `build/`, under its lock.
  * @param drivers The descriptor of `drivers/`.
+ * @param device The file system of `drivers/`: a shape or a folder in it on another is not entered.
  * @param name The entry's name.
  * @param error Set to the failure, for `FAILED`.
  * @return What happened.
  */
-inline ShapeClean clean_shape(int drivers, const std::string& name, std::string& error) {
+inline ShapeClean clean_shape(int drivers, dev_t device, const std::string& name, std::string& error) {
   if (!shape_named(name)) {
     return ShapeClean::IGNORED;
   }
@@ -368,6 +399,10 @@ inline ShapeClean clean_shape(int drivers, const std::string& name, std::string&
   }
   if (!S_ISDIR(info.st_mode)) {
     return ShapeClean::IGNORED;
+  }
+  if (info.st_dev != device) {
+    error = OTHER_FILE_SYSTEM;
+    return ShapeClean::FAILED;
   }
   const ScopedFd shape(open_directory_at(drivers, name));
   if (shape.get() < 0) {
@@ -416,12 +451,7 @@ inline ShapeClean clean_shape(int drivers, const std::string& name, std::string&
     if (!S_ISDIR(info.st_mode)) {
       continue;
     }
-    std::string where;
-    if (const int failed = remove_tree(shape.get(), folder, 0, where)) {
-      if (error.empty()) {
-        error = where + ": " + std::strerror(failed);
-      }
-    } else {
+    if (remove_tree(shape.get(), folder, folder, 0, device, error)) {
       removed = true;
     }
   }
@@ -481,6 +511,10 @@ inline Reply clean_reply() {
   if (const int error = open_owned(root.get(), "drivers", drivers, why)) {
     return error == ENOENT ? done : refuse(drivers_path, why);
   }
+  struct stat bucket{};
+  if (::fstat(drivers.get(), &bucket) != 0) {
+    return refuse(drivers_path, std::strerror(errno));
+  }
   build::write_cache_tag(drivers.get());
   std::vector<std::string> names;
   if (const int error = names_in(drivers.get(), names)) {
@@ -495,7 +529,7 @@ inline Reply clean_reply() {
       continue;
     }
     std::string error;
-    switch (clean_shape(drivers.get(), name, error)) {
+    switch (clean_shape(drivers.get(), bucket.st_dev, name, error)) {
       case ShapeClean::CLEARED:
         ++cleared;
         break;
