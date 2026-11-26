@@ -193,6 +193,7 @@ inline const std::vector<ErrorSpec>& error_catalog() {
     {"run.reference_unreadable", Exit::FAILED, true, "nothing was sent: run cmdatl run again"},
     {"cache.unavailable", Exit::FAILED, false,
       "ask the operator, who sets XDG_CACHE_HOME to a writable absolute directory"},
+    {"cache.partial", Exit::FAILED, false, "read failed[].error; a permission error needs the operator"},
     {"unknown.owed_at_end", Exit::UNKNOWN, false, run_unknown_next()},
     {"unknown.recovery_halted", Exit::UNKNOWN, false,
       std::string("the run's journal halted recovery and nothing was started: ") + RUN_END},

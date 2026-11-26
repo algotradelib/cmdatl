@@ -5,6 +5,7 @@
 #include "../core/table.hpp"
 #include "../orders/orders.hpp"
 #include "../strategy/backtest.hpp"
+#include "../strategy/cache.hpp"
 #include "../strategy/evaluate.hpp"
 #include "../strategy/runs.hpp"
 #include "../strategy/strategy.hpp"
@@ -642,6 +643,51 @@ inline std::vector<Command> command_list() {
     .error("unknown.clock_advance")
     .mutates("cmdatl clock shows where the clock stands: read it before any other command")
     .on_account(AccountKind::ADVANCE, check_advance));
+
+  add(make_command({"cache", "dir"}, "Cache", "where cmdatl's build cache is")
+    .example("cmdatl cache dir")
+    .returns("path", "the cache's folder: $XDG_CACHE_HOME/cmdatl, else ~/.cache/cmdatl")
+    .error("cache.unavailable")
+    .error("unavailable.platform")
+    .runs([](const Invocation&, const Table&, Output&) {
+      return cache::dir_reply();
+    }));
+  add(make_command({"cache", "size"}, "Cache", "how large each folder of the cache is; reads only")
+    .example("cmdatl cache size")
+    .example("cmdatl cache size --value drivers.bytes")
+    .returns("path", "the cache's folder")
+    .returns(
+      "drivers",
+      "the builds: bytes (regular files' sizes, links never followed), entries (at the top level), and error when a "
+      "part could not be read; a missing folder is 0 bytes"
+    )
+    .returns("backtests", "the backtests' copies of their builds, as drivers")
+    .returns("calendars", "the market calendars a broker's reads cached, as drivers")
+    .returns("tokens", "the brokers' access tokens, as drivers")
+    .returns("bytes", "the four folders' bytes together")
+    .error("cache.unavailable")
+    .error("unavailable.platform")
+    .runs([](const Invocation&, const Table&, Output&) {
+      return cache::size_reply();
+    }));
+  add(make_command({"cache", "clean"}, "Cache", "clear the builds no process is using; the next run builds again")
+    .describe(
+      "Clears each build's sources and objects under drivers/, under the build's lock taken without waiting: a build "
+      "another cmdatl holds is left as it is, and the next backtest or run of a cleared program builds it again. "
+      "Nothing but cmdatl's own builds is touched: not the backtests', calendars or tokens folders, nor anything in "
+      "drivers/ cmdatl did not make. After a build was killed with SIGKILL, let its compiler end before cleaning."
+    )
+    .example("cmdatl cache clean")
+    .returns("cleared", "builds whose sources and objects were removed (a build already empty is not counted)")
+    .returns("in_use", "builds another process holds, left as they are")
+    .returns("ignored", "entries in drivers/ that are not a build cmdatl made, left as they are")
+    .returns("failed", "builds that could not be cleared: path and error")
+    .error("cache.unavailable")
+    .error("cache.partial")
+    .error("unavailable.platform")
+    .runs([](const Invocation&, const Table&, Output&) {
+      return cache::clean_reply();
+    }));
 
   add(make_command({"help"}, "Help", "help for cmdatl, a group or a command (as --help)")
     .example("cmdatl help")

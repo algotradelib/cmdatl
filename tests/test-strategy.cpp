@@ -957,4 +957,109 @@ TEST_CASE("SIGINT or SIGTERM while atlc reference runs stops it and answers 130 
     CHECK(all_gone(fake.pids()));
   }
 }
+
+TEST_CASE("cache clean clears each build under its lock and nothing else, never following a link") {
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+  const auto drivers = dir.path() / "cache" / "cmdatl" / "drivers";
+  const auto outside = dir.path() / "outside";
+  std::filesystem::create_directories(outside / "keep");
+  spit(outside / "keep" / "sentinel", "keep");
+  spit(outside / "lock", "");
+  std::filesystem::create_directories(outside / "build");
+  // A build: its lock and the three folders, one holding a link out of the cache.
+  const auto built = drivers / "Dip-0123456789abcdef";
+  for (const auto* folder : {"src", "next", "build/CMakeFiles"}) {
+    std::filesystem::create_directories(built / folder);
+  }
+  spit(built / "lock", "");
+  spit(built / "src" / "program.hpp", "#pragma once\n");
+  std::filesystem::create_directory_symlink(outside / "keep", built / "build" / "link");
+  // A build another process holds.
+  const auto held = drivers / "Dip-fedcba9876543210";
+  std::filesystem::create_directories(held / "build");
+  spit(held / "lock", "");
+  spit(held / "build" / "driver", "x");
+  // Not builds: one without a lock, a name cmdatl does not make, and a link named as a build.
+  std::filesystem::create_directories(drivers / "Dip-00000000000000aa" / "build");
+  std::filesystem::create_directories(drivers / "models" / "build");
+  spit(drivers / "models" / "lock", "");
+  std::filesystem::create_directory_symlink(outside, drivers / "Dip-1111111111111111");
+  LockHolder holder(held);
+  const auto ran = run({"--json", "cache", "clean"});
+  CHECK(ran.exit_ == 0);
+  const auto reply = reply_of(ran.out_);
+  CHECK(reply.at("cleared").as_int64() == 1);
+  CHECK(reply.at("in_use").as_int64() == 1);
+  CHECK(reply.at("ignored").as_int64() == 3);
+  CHECK(reply.at("failed").as_array().empty());
+  // The build keeps its folder and its lock; its contents are gone, and the link's target is untouched.
+  CHECK(std::filesystem::is_regular_file(built / "lock"));
+  for (const auto* folder : {"src", "next", "build"}) {
+    CHECK(!std::filesystem::exists(built / folder));
+  }
+  CHECK(slurp(outside / "keep" / "sentinel") == "keep");
+  CHECK(std::filesystem::exists(held / "build" / "driver"));
+  CHECK(std::filesystem::exists(drivers / "Dip-00000000000000aa" / "build"));
+  CHECK(std::filesystem::exists(drivers / "models" / "build"));
+  CHECK(std::filesystem::exists(outside / "build"));
+  CHECK(slurp(drivers / "CACHEDIR.TAG").rfind("Signature: 8a477f597d28d172789f06886806bc55\n", 0) == 0);
+}
+
+TEST_CASE("cache clean refuses a drivers folder that is a link and touches nothing") {
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+  const auto shape = dir.path() / "outside" / "Dip-0123456789abcdef";
+  std::filesystem::create_directories(shape / "build");
+  spit(shape / "lock", "");
+  std::filesystem::create_directories(dir.path() / "cache" / "cmdatl");
+  std::filesystem::create_directory_symlink(dir.path() / "outside", dir.path() / "cache" / "cmdatl" / "drivers");
+  const auto ran = run({"--json", "cache", "clean"});
+  CHECK(ran.exit_ == 1);
+  CHECK(code_of(ran.out_) == "cache.unavailable");
+  CHECK(declares({"cache", "clean"}, 1, "cache.unavailable"));
+  CHECK(std::filesystem::exists(shape / "build"));
+  CHECK(!std::filesystem::exists(dir.path() / "outside" / "CACHEDIR.TAG"));
+}
+
+TEST_CASE("cache dir names the cache, and cache size counts each folder's files without following a link") {
+  const ScratchDir dir;
+  const ScopedVariable cache("XDG_CACHE_HOME", (dir.path() / "cache").string());
+  const auto root = dir.path() / "cache" / "cmdatl";
+  CHECK(reply_of(run({"--json", "cache", "dir"}).out_).at("path").as_string() == root.string());
+  const auto shape = root / "drivers" / "Dip-0123456789abcdef";
+  std::filesystem::create_directories(shape / "build");
+  spit(shape / "lock", "");
+  spit(shape / "build" / "driver", std::string(100, 'x'));
+  std::filesystem::create_directories(root / "backtests" / "a1b2c3");
+  spit(root / "backtests" / "a1b2c3" / "driver", std::string(10, 'x'));
+  spit(dir.path() / "large", std::string(1000, 'x'));
+  std::filesystem::create_symlink(dir.path() / "large", root / "backtests" / "link");
+  const auto ran = run({"--json", "cache", "size"});
+  CHECK(ran.exit_ == 0);
+  const auto reply = reply_of(ran.out_);
+  CHECK(reply.at("path").as_string() == root.string());
+  const auto& drivers = reply.at("drivers").as_object();
+  CHECK(drivers.at("bytes").as_int64() == 100);
+  CHECK(drivers.at("entries").as_int64() == 1);
+  CHECK(!drivers.contains("error"));
+  const auto& backtests = reply.at("backtests").as_object();
+  CHECK(backtests.at("bytes").as_int64() == 10);
+  CHECK(backtests.at("entries").as_int64() == 2);
+  // A missing folder is empty, not an error.
+  for (const auto* missing : {"calendars", "tokens"}) {
+    const auto& folder = reply.at(missing).as_object();
+    CHECK(folder.at("bytes").as_int64() == 0);
+    CHECK(folder.at("entries").as_int64() == 0);
+    CHECK(!folder.contains("error"));
+  }
+  CHECK(reply.at("bytes").as_int64() == 110);
+  // A folder that cannot be read says so instead of counting as empty (root reads it anyway: then nothing to check).
+  const auto locked = root / "backtests" / "a1b2c3";
+  ::chmod(locked.c_str(), 0);
+  if (::access(locked.c_str(), R_OK) != 0) {
+    CHECK(reply_of(run({"--json", "cache", "size"}).out_).at("backtests").as_object().contains("error"));
+  }
+  ::chmod(locked.c_str(), 0700);
+}
 #endif
