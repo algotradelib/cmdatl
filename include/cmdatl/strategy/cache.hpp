@@ -195,18 +195,25 @@ inline int open_directory_at(int parent, const std::string& name) noexcept {
   return openat_lifted(parent, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
 }
 
+/** @brief How a clean opens a directory below `drivers/`. */
+inline constexpr int DIRECTORY_FLAGS = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+
+/** @brief How a clean opens a shape's lock: never created, never through a link, never blocking on a FIFO. */
+inline constexpr int LOCK_FLAGS = O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC;
+
 /**
- * @brief Opens a directory inside another for a clean, never through a link nor across a mount: on Linux only with
- *   openat2's `RESOLVE_NO_XDEV`, which sees a bind mount of the same file system (without openat2 it opens nothing:
- *   `ENOSYS`); elsewhere as `open_directory_at`, and the caller compares devices.
+ * @brief Opens a file or a directory inside a directory for a clean, never through a link nor across a mount: on Linux
+ *   only with openat2's `RESOLVE_NO_XDEV`, which sees a bind mount of the same file system (without openat2 it opens
+ *   nothing: `ENOSYS`); elsewhere with `openat`, and the caller compares devices.
  * @param parent The parent's descriptor.
- * @param name The directory's name.
+ * @param name The name.
+ * @param flags The open flags: `DIRECTORY_FLAGS` or `LOCK_FLAGS`.
  * @return The descriptor, or -1 with `errno` set (`EXDEV` for a mount point, `ENOSYS` without openat2).
  */
-inline int open_inside(int parent, const std::string& name) noexcept {
+inline int open_inside(int parent, const std::string& name, int flags) noexcept {
 #if defined(CMDATL_HAS_OPENAT2)
   open_how how{};
-  how.flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
+  how.flags = static_cast<std::uint64_t>(flags);
   how.resolve = RESOLVE_NO_XDEV | RESOLVE_NO_SYMLINKS;
   const int fd = static_cast<int>(::syscall(SYS_openat2, parent, name.c_str(), &how, sizeof how));
   if (fd < 0 || fd > STDERR_FILENO) {
@@ -220,10 +227,11 @@ inline int open_inside(int parent, const std::string& name) noexcept {
 #elif defined(__linux__)
   (void)parent;
   (void)name;
+  (void)flags;
   errno = ENOSYS;
   return -1;
 #else
-  return open_directory_at(parent, name);
+  return openat_lifted(parent, name.c_str(), flags);
 #endif
 }
 
@@ -263,7 +271,7 @@ inline bool remove_tree(
   if (depth >= MAX_DEPTH) {
     return fail(path, TOO_DEEP);
   }
-  const ScopedFd dir(open_inside(parent, name));
+  const ScopedFd dir(open_inside(parent, name, DIRECTORY_FLAGS));
   if (dir.get() < 0) {
     const int error = errno;
     return fail(path, open_failure(error));
@@ -484,7 +492,7 @@ inline ShapeClean clean_shape(int drivers, dev_t device, const std::string& name
     error = OTHER_FILE_SYSTEM;
     return ShapeClean::FAILED;
   }
-  const ScopedFd shape(open_inside(drivers, name));
+  const ScopedFd shape(open_inside(drivers, name, DIRECTORY_FLAGS));
   if (shape.get() < 0) {
     const int failed = errno;
     if (failed == ENOENT || failed == ELOOP || failed == ENOTDIR) {
@@ -502,17 +510,23 @@ inline ShapeClean clean_shape(int drivers, dev_t device, const std::string& name
     error = OTHER_FILE_SYSTEM;
     return ShapeClean::FAILED;
   }
-  // The lock as build_driver makes it, never created here: a regular file, not reached through a link.
-  const ScopedFd lock(openat_lifted(shape.get(), "lock", O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
+  // The lock as build_driver makes it, never created here: a regular file, not reached through a link nor a mount, so
+  // the clean locks the file a builder locks.
+  const ScopedFd lock(open_inside(shape.get(), "lock", LOCK_FLAGS));
   if (lock.get() < 0) {
-    if (errno == ENOENT || errno == ELOOP || errno == EISDIR || errno == ENXIO) {
+    const int failed = errno;
+    if (failed == ENOENT || failed == ELOOP || failed == EISDIR || failed == ENXIO) {
       return ShapeClean::IGNORED;
     }
-    error = std::string("lock: ") + std::strerror(errno);
+    error = "lock: " + open_failure(failed);
     return ShapeClean::FAILED;
   }
   if (::fstat(lock.get(), &info) != 0) {
     error = std::string("lock: ") + std::strerror(errno);
+    return ShapeClean::FAILED;
+  }
+  if (info.st_dev != device) {
+    error = std::string("lock: ") + MOUNT_POINT;
     return ShapeClean::FAILED;
   }
   if (!S_ISREG(info.st_mode)) {
@@ -609,7 +623,7 @@ inline Reply clean_reply() {
   // touched, as a bind mount would go unseen.
 #if defined(__linux__)
   {
-    const ScopedFd probe(open_inside(drivers.get(), "."));
+    const ScopedFd probe(open_inside(drivers.get(), ".", DIRECTORY_FLAGS));
     if (probe.get() < 0) {
       const int error = errno;
       auto reply = refuse(drivers_path, error == ENOSYS ? NO_OPENAT2 : "openat2: " + std::string(std::strerror(error)));
