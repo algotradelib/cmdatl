@@ -77,6 +77,29 @@ inline std::optional<std::string> cache_root() {
   return cache_folder("drivers");
 }
 
+#if !defined(_WIN32)
+/** @brief The file the Cache Directory Tagging Specification names, which backup tools read to skip a cache. */
+inline constexpr const char* CACHE_TAG_NAME = "CACHEDIR.TAG";
+
+/** @brief The tag's text: the specification's signature line, then a comment naming cmdatl. */
+inline constexpr const char* CACHE_TAG_TEXT =
+  "Signature: 8a477f597d28d172789f06886806bc55\n"
+  "# This file is a cache directory tag created by cmdatl: the builds here are made again when needed.\n"
+  "# For information about cache directory tags, see https://bford.info/cachedir/\n";
+
+/**
+ * @brief Writes the tag in a directory that has none, never replacing or following a file; a failure is ignored.
+ * @param dir The directory's descriptor.
+ */
+inline void write_cache_tag(int dir) noexcept {
+  ScopedFd fd(openat_lifted(dir, CACHE_TAG_NAME, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
+  if (fd.get() >= 0) {
+    std::size_t written = 0;
+    write_whole(fd.get(), CACHE_TAG_TEXT, std::strlen(CACHE_TAG_TEXT), written);
+  }
+}
+#endif
+
 /**
  * @brief FNV-1a, 64 bits.
  * @param text The bytes.
@@ -707,6 +730,13 @@ inline std::optional<Reply> build_driver(
   const std::filesystem::path shape = std::filesystem::path(*root) / name;
   if (make_private_dirs(shape) != 0) {
     return error_reply(Exit::FAILED, "cache.unavailable", "the build cache " + shape.string() + " cannot be made");
+  }
+  // The tag that tells backup tools the builds can be made again, when the cache has none.
+  {
+    const ScopedFd drivers(open_lifted(root->c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+    if (drivers.get() >= 0) {
+      write_cache_tag(drivers.get());
+    }
   }
   ShapeLock lock;
   if (!lock.take(shape / "lock", progress)) {

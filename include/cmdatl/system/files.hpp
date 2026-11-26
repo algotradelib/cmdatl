@@ -192,6 +192,26 @@ inline int open_lifted(const char* path, int flags, mode_t mode = 0) noexcept {
 }
 
 /**
+ * @brief `openat(2)`, with the descriptor moved above the standard ones, as `open_lifted`.
+ * @param dir The directory's descriptor the name is relative to.
+ * @param name The name.
+ * @param flags The flags; `O_CLOEXEC` is kept.
+ * @param mode The mode, when creating.
+ * @return The descriptor, or -1 with `errno` set.
+ */
+inline int openat_lifted(int dir, const char* name, int flags, mode_t mode = 0) noexcept {
+  const int fd = ::openat(dir, name, flags, mode);
+  if (fd < 0 || fd > STDERR_FILENO) {
+    return fd;
+  }
+  const int lifted = ::fcntl(fd, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+  const int error = errno;
+  ::close(fd);
+  errno = error;
+  return lifted;
+}
+
+/**
  * @brief Reads a regular file whole through an open descriptor: its size from `fstat`, at most `limit` bytes, read to
  *   that size (a read error or an early end is a failure), and its size read again afterwards, which must not have
  *   changed.

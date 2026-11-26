@@ -223,7 +223,7 @@ TEST_CASE("a broker folder's driver header names the folder it is built from, ev
 }
 
 /**
- * @brief The names in a directory.
+ * @brief The names in a directory but the cache's tag: the shapes, in the drivers' cache.
  * @param dir The directory; none when it does not exist.
  * @return The names.
  */
@@ -234,7 +234,9 @@ static std::set<std::string> files_in(const std::filesystem::path& dir) {
     auto it = std::filesystem::directory_iterator(dir, ec); !ec && it != std::filesystem::directory_iterator();
     it.increment(ec)
   ) {
-    out.insert(it->path().filename().string());
+    if (it->path().filename() != build::CACHE_TAG_NAME) {
+      out.insert(it->path().filename().string());
+    }
   }
   return out;
 }
@@ -1218,7 +1220,9 @@ TEST_CASE(
   CHECK(std::filesystem::exists(work.path() / "run-b" / "driver"));
   std::map<std::string, std::filesystem::path> shapes;
   for (const auto& entry : std::filesystem::directory_iterator(work.path() / "cache" / "cmdatl" / "drivers")) {
-    shapes[used_package(entry.path())] = entry.path();
+    if (entry.is_directory()) {
+      shapes[used_package(entry.path())] = entry.path();
+    }
   }
   REQUIRE(shapes.size() == 2);
   CHECK(shapes.count(build::real_path(package_a)) == 1);
