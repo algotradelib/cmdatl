@@ -361,7 +361,8 @@ cmdatl compiles each program once per shape: `atlc build` translates the program
 A store backtest also links DuckDB's prebuilt C library (`duckdb.h` and the shared library), from `build.duckdb` alone when it is set, else `DUCKDB_ROOT`, then the system's library paths; the executable finds the library by an rpath to its directory.
 Builds are cached under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`), and CMake decides what to rebuild.
 `cmdatl cache size` shows how large the cache is, and `cmdatl cache clean` clears every build no backtest or run is building; the next backtest or run of a cleared program builds it again.
-`drivers/` is reserved for cmdatl's builds: `cmdatl cache clean` removes `src/`, `next/` and `build/` from every folder there named `<Struct>-<16 hex digits>` that holds a `lock` file, whoever made it, and never enters a folder on another file system.
+`drivers/` is reserved for cmdatl's builds: `cmdatl cache clean` removes `src/`, `next/` and `build/` from every folder there named `<Struct>-<16 lowercase hex digits>` that holds a regular `lock` file, whoever made it, and never enters a folder behind a mount point.
+On Linux before 5.6 (no `openat2`) a bind mount of the same file system inside `drivers/` is not seen: do not mount anything there.
 The `CACHEDIR.TAG` cmdatl writes in `drivers/` tells backup tools to skip the whole folder.
 After a build was killed with SIGKILL, let its children (atlc, CMake and the compiler) end before cleaning.
 Parameters, data and replay settings are arguments of the executable, so changing them never rebuilds.
