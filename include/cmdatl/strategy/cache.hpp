@@ -143,6 +143,13 @@ static_assert(MAX_DEPTH == 128, "TOO_DEEP names MAX_DEPTH");
 /** @brief Why a clean stopped at a directory on another file system than `drivers/`. */
 inline constexpr const char* OTHER_FILE_SYSTEM = "on another file system (a mount); not entered";
 
+/** @brief Why a clean stopped at a mount point openat2 refused to cross. */
+inline constexpr const char* MOUNT_POINT = "crosses a mount point; not entered";
+
+/** @brief Why a clean on Linux refuses to start without openat2. */
+inline constexpr const char* NO_OPENAT2 =
+  "this system cannot check mount points (openat2, Linux 5.6 or later, is unavailable)";
+
 /**
  * @brief The names in a directory, but `.` and `..`, sorted.
  * @param dir The directory's descriptor, which stays open.
@@ -189,12 +196,12 @@ inline int open_directory_at(int parent, const std::string& name) noexcept {
 }
 
 /**
- * @brief Opens a directory inside another for a clean, never through a link nor across a mount: with openat2's
- *   `RESOLVE_NO_XDEV` on Linux, which sees a bind mount of the same file system; elsewhere, and on a kernel without
- *   openat2, as `open_directory_at` (the caller compares devices too).
+ * @brief Opens a directory inside another for a clean, never through a link nor across a mount: on Linux only with
+ *   openat2's `RESOLVE_NO_XDEV`, which sees a bind mount of the same file system (without openat2 it opens nothing:
+ *   `ENOSYS`); elsewhere as `open_directory_at`, and the caller compares devices.
  * @param parent The parent's descriptor.
  * @param name The directory's name.
- * @return The descriptor, or -1 with `errno` set (`EXDEV` for a mount point).
+ * @return The descriptor, or -1 with `errno` set (`EXDEV` for a mount point, `ENOSYS` without openat2).
  */
 inline int open_inside(int parent, const std::string& name) noexcept {
 #if defined(CMDATL_HAS_OPENAT2)
@@ -202,30 +209,34 @@ inline int open_inside(int parent, const std::string& name) noexcept {
   how.flags = O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC;
   how.resolve = RESOLVE_NO_XDEV | RESOLVE_NO_SYMLINKS;
   const int fd = static_cast<int>(::syscall(SYS_openat2, parent, name.c_str(), &how, sizeof how));
-  if (fd > STDERR_FILENO) {
+  if (fd < 0 || fd > STDERR_FILENO) {
     return fd;
   }
-  if (fd >= 0) {
-    const int lifted = ::fcntl(fd, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
-    const int error = errno;
-    ::close(fd);
-    errno = error;
-    return lifted;
-  }
-  if (errno != ENOSYS) {
-    return -1;
-  }
-#endif
+  const int lifted = ::fcntl(fd, F_DUPFD_CLOEXEC, STDERR_FILENO + 1);
+  const int error = errno;
+  ::close(fd);
+  errno = error;
+  return lifted;
+#elif defined(__linux__)
+  (void)parent;
+  (void)name;
+  errno = ENOSYS;
+  return -1;
+#else
   return open_directory_at(parent, name);
+#endif
 }
 
 /**
  * @brief Why a clean could not open a directory.
  * @param error The error number.
- * @return The text: `OTHER_FILE_SYSTEM` for a mount point.
+ * @return The text: `MOUNT_POINT` for a mount point, `NO_OPENAT2` without openat2.
  */
 inline std::string open_failure(int error) {
-  return error == EXDEV ? std::string(OTHER_FILE_SYSTEM) : std::string(std::strerror(error));
+  if (error == EXDEV) {
+    return MOUNT_POINT;
+  }
+  return error == ENOSYS ? std::string(NO_OPENAT2) + "; not entered" : std::string(std::strerror(error));
 }
 
 /**
@@ -594,6 +605,19 @@ inline Reply clean_reply() {
   if (::fstat(drivers.get(), &bucket) != 0) {
     return refuse(drivers_path, std::strerror(errno));
   }
+  // On Linux every folder below drivers/ is opened with openat2, so it is tried once first: without it nothing is
+  // touched, as a bind mount would go unseen.
+#if defined(__linux__)
+  {
+    const ScopedFd probe(open_inside(drivers.get(), "."));
+    if (probe.get() < 0) {
+      const int error = errno;
+      auto reply = refuse(drivers_path, error == ENOSYS ? NO_OPENAT2 : "openat2: " + std::string(std::strerror(error)));
+      put_counts(reply, 0, 0, 0, json::array{});
+      return reply;
+    }
+  }
+#endif
   build::write_cache_tag(drivers.get());
   std::vector<std::string> names;
   if (const int error = names_in(drivers.get(), names)) {
