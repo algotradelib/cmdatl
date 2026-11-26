@@ -986,6 +986,8 @@ TEST_CASE("cache clean clears each build under its lock and nothing else, never 
   spit(drivers / "models" / "lock", "");
   std::filesystem::create_directory_symlink(outside, drivers / "Dip-1111111111111111");
   LockHolder holder(held);
+  struct stat lock_before{};
+  REQUIRE(::stat((built / "lock").c_str(), &lock_before) == 0);
   const auto ran = run({"--json", "cache", "clean"});
   CHECK(ran.exit_ == 0);
   const auto reply = reply_of(ran.out_);
@@ -993,8 +995,12 @@ TEST_CASE("cache clean clears each build under its lock and nothing else, never 
   CHECK(reply.at("in_use").as_int64() == 1);
   CHECK(reply.at("ignored").as_int64() == 3);
   CHECK(reply.at("failed").as_array().empty());
-  // The build keeps its folder and its lock; its contents are gone, and the link's target is untouched.
-  CHECK(std::filesystem::is_regular_file(built / "lock"));
+  // The build keeps its folder and its lock file itself (a waiting build gets the same file); its contents are gone,
+  // and the link's target is untouched.
+  struct stat lock_after{};
+  REQUIRE(::stat((built / "lock").c_str(), &lock_after) == 0);
+  CHECK(lock_after.st_dev == lock_before.st_dev);
+  CHECK(lock_after.st_ino == lock_before.st_ino);
   for (const auto* folder : {"src", "next", "build"}) {
     CHECK(!std::filesystem::exists(built / folder));
   }
