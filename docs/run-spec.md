@@ -360,6 +360,8 @@ Changing `[orders]` does not rebuild: the pricing is an argument, like the param
 cmdatl compiles each program once per shape: `atlc build` translates the program, and CMake builds it with a C++17 compiler against the algotradelib cmdatl was built with, in Release, with floating-point contraction off (`-ffp-contract=off` on GCC, the runtime's pragmas on Clang).
 A store backtest also links DuckDB's prebuilt C library (`duckdb.h` and the shared library), from `build.duckdb` alone when it is set, else `DUCKDB_ROOT`, then the system's library paths; the executable finds the library by an rpath to its directory.
 Builds are cached under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`), and CMake decides what to rebuild.
+`cmdatl cache size` shows how large the cache is, and `cmdatl cache clean` clears every build no backtest or run is building; the next backtest or run of a cleared program builds it again.
+After a build was killed with SIGKILL, let its compiler end before cleaning.
 Parameters, data and replay settings are arguments of the executable, so changing them never rebuilds.
 The program's `header` is compiled with it: its path and its bytes are part of the build's key, so an edited header is built again, and CMake tracks the headers it includes.
 A backtest's `measures`, and the names in the program's `measures {}`, are part of the key too, by name and order, so a changed list builds once.

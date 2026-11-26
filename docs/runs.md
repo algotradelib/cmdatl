@@ -30,6 +30,7 @@ cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
   For a run that outlives its terminal, start it with `nohup` and redirect its output: a SIGHUP ignored when cmdatl starts stays ignored.
   `--fields` and `--value` do not apply to `run`, which prints every event and its whole reply.
 - A run needs CMake and a C++17 compiler: `run` builds a program once per shape under `$XDG_CACHE_HOME/cmdatl/drivers` (else `~/.cache/cmdatl/drivers`); a later run of an unchanged program builds nothing, and a change to the program, atlc or algotradelib builds again.
+  `cmdatl cache clean` clears the builds no other cmdatl is building, and the next run builds again; after a build was killed with SIGKILL, let its compiler end before cleaning.
 
 ### Runs on a KIS account
 
