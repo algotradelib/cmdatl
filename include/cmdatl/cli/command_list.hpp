@@ -691,6 +691,8 @@ inline std::vector<Command> command_list() {
     .returns("in_use", "builds another process holds, left as they are")
     .returns("ignored", "entries in drivers/ that do not look like a build (name, type or no lock), left as they are")
     .returns("failed", "builds that could not be cleared: path and error")
+    .exits({Exit::OK, Exit::FAILED, Exit::USAGE, Exit::INTERRUPTED})
+    .error("interrupted")
     .error("cache.unavailable")
     .error("cache.partial")
     .error("unavailable.platform")

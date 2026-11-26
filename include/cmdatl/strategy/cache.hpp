@@ -13,6 +13,7 @@
 
 #include "../core/reply.hpp"
 #include "../system/files.hpp"
+#include "../system/process.hpp"
 #include "./build.hpp"
 #include "./spec.hpp"
 
@@ -642,6 +643,15 @@ inline Reply clean_reply() {
   std::uint64_t ignored = 0;
   json::array failed;
   for (const auto& name : names) {
+    // Ctrl-C, SIGTERM or SIGHUP stops the clean between two shapes, never inside one.
+    if (interrupted()) {
+      auto reply = error_reply(
+        Exit::INTERRUPTED, "interrupted", "interrupted by a signal: the clean stopped between two builds",
+        "run the command again", true
+      );
+      put_counts(reply, cleared, in_use, ignored, std::move(failed));
+      return reply;
+    }
     if (name == build::CACHE_TAG_NAME) {
       continue;
     }
