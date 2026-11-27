@@ -1851,7 +1851,6 @@ inline constexpr double TRADING_DAYS_PER_YEAR = 252;
  *   (`backtest::periods_per_year`) for the bars' interval over the session and `TRADING_DAYS_PER_YEAR`.
  *
  * The count assumes one bar per interval of the regular session, every symbol's bars ending at the same instants.
- * @param s The settings.
  * Whether any bar replays is the caller's to check (`prepare_data` gives none when the replay has no bar event).
  * @param s The settings.
  * @param data The data, as loaded and filtered: wide tables are daily; OHLCV series with bars count only when they
