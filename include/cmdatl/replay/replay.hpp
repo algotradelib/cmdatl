@@ -1859,13 +1859,15 @@ inline std::optional<double> counted_periods_per_year(const atl::backtest::Repla
   if (curve.size() < 2) {
     return std::nullopt;
   }
-  // Each end in floating seconds before the difference: an integer difference of the clock's ticks can overflow.
-  using Seconds = std::chrono::duration<double>;
-  const double span =
-    Seconds(curve.back().at_.time_since_epoch()).count() - Seconds(curve.front().at_.time_since_epoch()).count();
-  if (!(span > 0)) {
+  // The span exactly, in clock ticks: unsigned, so a long one does not overflow; then once into seconds.
+  using Clock = std::chrono::system_clock;
+  const auto first = curve.front().at_.time_since_epoch().count();
+  const auto last = curve.back().at_.time_since_epoch().count();
+  if (!(first < last)) {
     return std::nullopt;
   }
+  const double span = static_cast<double>(static_cast<std::uint64_t>(last) - static_cast<std::uint64_t>(first)) *
+    Clock::period::num / Clock::period::den;
   const double year = 365.25 * 24 * 60 * 60;
   return static_cast<double>(curve.size() - 1) / (span / year);
 }
