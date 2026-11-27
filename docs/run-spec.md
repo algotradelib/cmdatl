@@ -273,7 +273,8 @@ So daily bars give the trading days the data holds (about 245 a year on KRX, abo
 Annualizing needs that count known: a replay shorter than a year extrapolates its own rate, so its annualized ratio can be inflated (a week of daily KRX bars about 1.22 times, one day of `1m` bars about 2.34 times); give `replay.periods_per_year` to set it.
 The annualized ratio is the per-period one times the square root of the count, which assumes uncorrelated returns.
 Each set of a grid, each window, each walk-forward test and the chained tests, and each bootstrap path count their own curve.
-With fewer than two points, or all at one instant, there is no count: `sharpe_annualized` is null; a measure's `periods_per_year` is undefined, and the report prints a measure as null when its value is not finite (a measure that tests `defined(periods_per_year)` can still print a number); and `evaluate.objective = "sharpe_annualized"` chooses nothing among such replays unless the key is given or another objective is named.
+Without the key, a curve of fewer than two points, or all at one instant, has no count: `periods_per_year` and `sharpe_annualized` are null; a measure's `periods_per_year` is undefined, and the report prints a measure as null when its value is not finite (a measure that tests `defined(periods_per_year)` can still print a number); and `evaluate.objective = "sharpe_annualized"` chooses nothing among such replays unless another objective is named.
+A given key is the count whatever the curve: the report and the measures get it even when too few returns leave no Sharpe ratio to annualize.
 
 A market order fills against the bar after its decision, at the price `replay.fill` names:
 
@@ -389,7 +390,7 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 | `executions` | integer | fills |
 | `opening_equity`, `closing_equity` | decimal string | equity at the first and last recorded point |
 | `total_return` | number or null | over the replay, as a fraction |
-| `sharpe_per_period`, `sharpe_annualized` | number or null | the Sharpe ratio per bar, and annualized with `periods_per_year` (null without a count) |
+| `sharpe_per_period`, `sharpe_annualized` | number or null | the Sharpe ratio per equity period (bars at one instant share a period), and annualized with `periods_per_year` (null without a count) |
 | `periods_per_year` | number or null | the periods a year the annualized ratio used: `replay.periods_per_year`, or the count of the replay's own equity curve (above) |
 | `sortino_per_period` | number or null | the Sortino ratio per bar |
 | `max_drawdown` | number or null | the worst peak-to-trough fall of equity, as a fraction |
