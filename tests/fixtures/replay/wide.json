@@ -6,6 +6,7 @@
   "total_return": 0.00676,
   "sharpe_per_period": 0.03223354846,
   "sharpe_annualized": 0.509657151,
+  "periods_per_year": 250,
   "sortino_per_period": 0.04772960825,
   "max_drawdown": 0.0107367422,
   "turnover": 5.61092,

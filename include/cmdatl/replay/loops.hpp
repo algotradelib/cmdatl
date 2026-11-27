@@ -724,11 +724,14 @@ int loops_main(
       try {
         const auto chain = bt::chain_results(results);
         const auto fills = fills_of(prepared->fills_);
-        const auto input = bt::measure_input(chain, fills, prepared->periods_);
+        // The chained tests' own curve gives their periods a year.
+        const auto periods = periods_per_year_of(prepared->given_periods_, chain);
+        const auto input = bt::measure_input(chain, fills, periods);
         SessionFacts session{Strategy::atls_session, sum.opened_, sum.closed_, sum.outside_, prepared->open_point_};
         const auto values = run_measures(measures, input);
-        chained =
-          one_line(report_json(chain, input.report_, sum.pricing_, session, reads_data<Strategy>::value, {}, values));
+        chained = one_line(
+          report_json(chain, input.report_, sum.pricing_, periods, session, reads_data<Strategy>::value, {}, values)
+        );
       } catch (const std::bad_alloc&) {
         throw;
       } catch (const std::exception& e) {

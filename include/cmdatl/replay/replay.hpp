@@ -1729,6 +1729,7 @@ struct SessionFacts {
  * @param result The replay's result.
  * @param r The report.
  * @param pricing The targets limit pricing did not submit.
+ * @param periods_per_year The periods a year the annualized figures used, or none (`periods_per_year_of`).
  * @param session What a session program met; empty for any other.
  * @param reads_data Whether the program has `data {}`: the report then counts the records fed.
  * @param warning What the reader must know about the run's files, or empty (the report then has no `warning`).
@@ -1738,8 +1739,8 @@ struct SessionFacts {
 template <typename Refusals>
 std::string report_json(
   const atl::backtest::ReplayResult& result, const atl::backtest::Report& r, const Refusals& pricing,
-  const SessionFacts& session = {}, bool reads_data = false, const std::string& warning = {},
-  const std::vector<std::pair<std::string, double>>& measures = {}
+  const std::optional<double>& periods_per_year, const SessionFacts& session = {}, bool reads_data = false,
+  const std::string& warning = {}, const std::vector<std::pair<std::string, double>>& measures = {}
 ) {
   std::ostringstream o;
   auto opt = [](const auto& value) {
@@ -1756,6 +1757,7 @@ std::string report_json(
   o << "  \"total_return\": " << number(r.total_return_) << ",\n";
   o << "  \"sharpe_per_period\": " << number(r.sharpe_) << ",\n";
   o << "  \"sharpe_annualized\": " << number(r.annualized_sharpe_) << ",\n";
+  o << "  \"periods_per_year\": " << (periods_per_year ? number(*periods_per_year) : "null") << ",\n";
   o << "  \"sortino_per_period\": " << number(r.sortino_) << ",\n";
   o << "  \"max_drawdown\": " << number(r.max_drawdown_) << ",\n";
   o << "  \"turnover\": " << number(r.total_turnover_) << ",\n";
@@ -1843,46 +1845,39 @@ std::string report_json(
   return o.str();
 }
 
-/** @brief Trading days a year for both market presets, as the replay has always used: a daily report is unchanged. */
-inline constexpr double TRADING_DAYS_PER_YEAR = 252;
-
 /**
- * @brief The periods a year of the annualized figures: `replay.periods_per_year` when given, else the library's count
- *   (`backtest::periods_per_year`) for the bars' interval over the session and `TRADING_DAYS_PER_YEAR`.
+ * @brief The periods a year a replay's equity curve holds: its points less one, over the years between its first and
+ *   last point, a year being 365.25 days.
  *
- * The count assumes one bar per interval of the regular session, every symbol's bars ending at the same instants.
- * Whether any bar replays is the caller's to check (`prepare_data` gives none when the replay has no bar event).
- * @param s The settings.
- * @param data The data, as loaded and filtered: wide tables are daily; OHLCV series with bars count only when they
- *   share one interval.
- * @param session The replay's session window (`ReplayConfig::session_`).
- * @return The count; none without the key for weekly or longer bars, series of different intervals, or no data.
+ * The Sharpe ratio is computed on the curve's period returns, so this is their frequency as the data has it: the
+ * trading days of daily bars, two a day with open points, extended-hours and staggered points as they are.
+ * @param result The finished replay.
+ * @return The count; none with fewer than two points, or all at one instant.
  */
-inline std::optional<double> periods_per_year_of(
-  const Settings& s, const Data& data, const atl::strategy::SessionWindow& session
-) {
-  if (const auto given = s.get("replay.periods_per_year")) {
-    return std::stod(*given);
-  }
-  std::optional<atl::BarInterval> interval;
-  if (data.series_.empty() && !data.close_.names_.empty()) {
-    interval = atl::BarInterval::ONE_DAY;
-  }
-  for (const auto& series : data.series_) {
-    // A series the filters emptied (a store read before its first fetch, dates outside replay.from and replay.to)
-    // replays nothing, so its interval says nothing about the periods.
-    if (series.bars_.empty()) {
-      continue;
-    }
-    if (interval && *interval != series.interval_) {
-      return std::nullopt;
-    }
-    interval = series.interval_;
-  }
-  if (!interval) {
+inline std::optional<double> counted_periods_per_year(const atl::backtest::ReplayResult& result) {
+  const auto& curve = result.equity_;
+  if (curve.size() < 2) {
     return std::nullopt;
   }
-  return atl::backtest::periods_per_year(*interval, session, TRADING_DAYS_PER_YEAR);
+  const std::chrono::duration<double> span = curve.back().at_ - curve.front().at_;
+  if (!(span.count() > 0)) {
+    return std::nullopt;
+  }
+  const double year = 365.25 * 24 * 60 * 60;
+  return static_cast<double>(curve.size() - 1) / (span.count() / year);
+}
+
+/**
+ * @brief The periods a year of a replay's annualized figures: `replay.periods_per_year` when given, else the count of
+ *   its own curve (`counted_periods_per_year`).
+ * @param given The given count, or none.
+ * @param result The finished replay.
+ * @return The count, or none.
+ */
+inline std::optional<double> periods_per_year_of(
+  const std::optional<double>& given, const atl::backtest::ReplayResult& result
+) {
+  return given ? given : counted_periods_per_year(result);
 }
 
 /** @brief What every replay of one data set shares, read-only once built (`prepare`). */
@@ -1891,11 +1886,8 @@ struct Prepared {
   std::string market_;
   /** @brief Whether each daily bar is replayed as a point at the open and the day (`bars.open_point`). */
   bool open_point_{false};
-  /**
-   * @brief The periods a year of the annualized figures (`periods_per_year_of`), or none, which leaves them null:
-   *   check it before reading it.
-   */
-  std::optional<double> periods_{TRADING_DAYS_PER_YEAR};
+  /** @brief `replay.periods_per_year` when given; without it each replay counts its own (`periods_per_year_of`). */
+  std::optional<double> given_periods_;
   /** @brief The bar events, in time order. */
   std::vector<atl::strategy::BarEvent> events_;
   /** @brief The program's `data {}` values in time order, or null for a program without; shared, never copied. */
@@ -1947,11 +1939,8 @@ Prepared prepare_data(const Settings& s, const Data& data, bool open_point) {
     p.ids_.push_back(instrument_of(symbol, p.market_).id_);
   }
   p.symbols_ = data.symbols_;
-  // A replay with no bar event has no periods, whatever shape the data kept after filtering; a given count still wins.
-  if (p.events_.empty() && !s.get("replay.periods_per_year")) {
-    p.periods_ = std::nullopt;
-  } else {
-    p.periods_ = periods_per_year_of(s, data, p.config_.session_);
+  if (const auto periods = s.get("replay.periods_per_year")) {
+    p.given_periods_ = std::stod(*periods);
   }
   if constexpr (reads_data<Strategy>::value) {
     p.rows_ = std::make_shared<const std::vector<DataRow>>(load_data(s, Strategy::atls_data(), data.symbols_));
@@ -2237,10 +2226,12 @@ auto replay_one(
   // One summary: the measures' input holds it when there are measures.
   std::optional<atl::backtest::MeasureInput> input;
   std::optional<atl::backtest::Report> summary;
+  // The periods a year are the replay's own: each set, window and path counts its curve.
+  const auto periods = periods_per_year_of(prepared.given_periods_, result);
   if (measures.empty()) {
-    summary.emplace(atl::backtest::summarize(result, engine.fills(), prepared.periods_));
+    summary.emplace(atl::backtest::summarize(result, engine.fills(), periods));
   } else {
-    input.emplace(atl::backtest::measure_input(result, engine.fills(), prepared.periods_));
+    input.emplace(atl::backtest::measure_input(result, engine.fills(), periods));
   }
   const auto& report = input ? input->report_ : *summary;
   auto counts = counters_of(engine.strategy());
@@ -2268,7 +2259,7 @@ auto replay_one(
   Outcome<decltype(keep(result, engine.fills()))> out{
     {}, {}, report.halted_.has_value(), keep(result, engine.fills()), counts
   };
-  out.report_ = report_json(result, report, counts.pricing_, session, reads_data<Strategy>::value, {}, values);
+  out.report_ = report_json(result, report, counts.pricing_, periods, session, reads_data<Strategy>::value, {}, values);
   out.figures_ = {
     {"total_return", report.total_return_},
     {"sharpe_per_period", report.sharpe_},

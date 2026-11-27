@@ -668,18 +668,18 @@ TEST_CASE("replay main: shorts go through only with replay.shorts true") {
   CHECK(refused.out_.find("\"guard:") != std::string::npos);
 }
 
-TEST_CASE("replay main: the periods a year follow the bars' interval and a given count wins") {
+TEST_CASE("replay main: the periods a year are counted from the replay's own curve and a given count wins") {
   const FreshScript fresh;
   Scratch dir;
   // Bars a fixed number of seconds apart whose returns vary, so a Sharpe ratio is defined.
-  const auto spaced = [&dir](long long seconds) {
+  const auto spaced = [&dir](long long seconds, int count) {
     std::string text = "ts,open,high,low,close,volume\n";
-    for (int k = 0; k < 8; ++k) {
+    for (int k = 0; k < count; ++k) {
       const auto close = 100 + 2 * k + (k % 2 == 0 ? 0 : 4);
       text += std::to_string(1577836800 + seconds * k) + "," + std::to_string(close - 1) + "," +
         std::to_string(close + 2) + "," + std::to_string(close - 3) + "," + std::to_string(close) + ",1000\n";
     }
-    return dir.write("bars-" + std::to_string(seconds) + ".csv", text);
+    return dir.write("bars-" + std::to_string(seconds) + "-" + std::to_string(count) + ".csv", text);
   };
   // A buy limit far above the next bar's high: it fills there, its price moved inside the bar.
   runtest::script().decisions_[1] = runtest::Decision{1, "1.5", false};
@@ -698,21 +698,21 @@ TEST_CASE("replay main: the periods a year follow the bars' interval and a given
     REQUIRE((std::isfinite(value) && used == text.size()));
     return value;
   };
-  const auto five = measured(on(spaced(300), "5m"));
-  INFO(five.err_);
-  REQUIRE(five.exit_ == 0);
-  CHECK(five.out_.find("\"measures\": {\"periods\": 19656}") != std::string::npos);
-  // The session's 6.5 hours hold seven hourly bars, the last one short.
-  const auto hourly = measured(on(spaced(3600), "1h"));
-  REQUIRE(hourly.exit_ == 0);
-  CHECK(hourly.out_.find("\"measures\": {\"periods\": 1764}") != std::string::npos);
-  // Weekly bars have no count: the annualized ratio and the measure are null, the per-period ratio is not.
-  const auto weeks = spaced(7LL * 86400);
+  // Eight bars a day apart: seven periods over seven days, 365.25 a year, reported and given to the measures.
+  const auto daily = measured(on(spaced(86400, 8), "1d"));
+  INFO(daily.err_);
+  REQUIRE(daily.exit_ == 0);
+  CHECK(field(daily.out_, "periods_per_year") == "365.25");
+  CHECK(daily.out_.find("\"measures\": {\"periods\": 365.25}") != std::string::npos);
+  // Weekly bars: 365.25 / 7 a year, the annualized ratio the per-period one times its square root.
+  const auto weeks = spaced(7LL * 86400, 8);
   const auto weekly = replay_main<runtest::Program>(on(weeks, "1w"));
   INFO(weekly.out_);
   REQUIRE(weekly.exit_ == 0);
   const auto per_period = number_of(field(weekly.out_, "sharpe_per_period"));
-  CHECK(field(weekly.out_, "sharpe_annualized") == "null");
+  CHECK(field(weekly.out_, "periods_per_year") == replay::number(365.25 / 7));
+  const auto counted = number_of(field(weekly.out_, "sharpe_annualized"));
+  CHECK(std::abs(counted - per_period * std::sqrt(365.25 / 7)) <= 1e-8 * std::abs(counted));
   CHECK(field(weekly.out_, "executions") == "1");
   CHECK(
     weekly.out_.find(
@@ -722,16 +722,23 @@ TEST_CASE("replay main: the periods a year follow the bars' interval and a given
   );
   CHECK(field(weekly.out_, "unchecked_fill_causality") != "0");
   CHECK(weekly.out_.find("\"limit_fills_bounded\": 1}") != std::string::npos);
-  CHECK(measured(on(weeks, "1w")).out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
+  // A given count wins.
   auto given = on(weeks, "1w");
   given.push_back("replay.periods_per_year=52");
-  const auto counted = replay_main<runtest::Program>(given);
-  REQUIRE(counted.exit_ == 0);
-  const auto annualized = number_of(field(counted.out_, "sharpe_annualized"));
+  const auto fixed = replay_main<runtest::Program>(given);
+  REQUIRE(fixed.exit_ == 0);
+  CHECK(field(fixed.out_, "periods_per_year") == "52");
+  const auto annualized = number_of(field(fixed.out_, "sharpe_annualized"));
   CHECK(std::abs(annualized - per_period * std::sqrt(52.0)) <= 1e-8 * std::abs(annualized));
   CHECK(measured(given).out_.find("\"measures\": {\"periods\": 52}") != std::string::npos);
-  // A replay with no bar has no count, whatever shape its data kept: wide closes all before replay.from, and wide
-  // closes with no usable close for the symbol traded; a given count still wins.
+  // One bar is one point: no count, no annualized ratio.
+  const auto one = measured(on(spaced(86400, 1), "1d"));
+  REQUIRE(one.exit_ == 0);
+  CHECK(field(one.out_, "periods_per_year") == "null");
+  CHECK(field(one.out_, "sharpe_annualized") == "null");
+  CHECK(one.out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
+  // A replay with no bar has no count: wide closes all before replay.from, and wide closes with no usable close for
+  // the symbol traded; a given count still wins.
   const auto closes = dir.write("closes.csv", "date,AAA\n20200101,100\n20200102,101\n");
   const auto none = measured({"bars.source=wide", "bars.file=" + closes, "instrument.x=AAA", "replay.from=20210101"});
   INFO(none.err_);
@@ -746,30 +753,33 @@ TEST_CASE("replay main: the periods a year follow the bars' interval and a given
   CHECK(empty.out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
   unusable.push_back("replay.periods_per_year=52");
   CHECK(measured(unusable).out_.find("\"measures\": {\"periods\": 52}") != std::string::npos);
-  // One daily series that filtering emptied (a store read before its first fetch) replays nothing.
-  replay::Data emptied;
-  emptied.symbols_ = {"AAA"};
-  emptied.series_.resize(1);
-  emptied.series_[0].symbol_ = "AAA";
-  CHECK(!replay::prepare_data<runtest::Program>(settings({"instrument.x=AAA"}), emptied, false).periods_);
-  // Series of different intervals have no count, unless the key gives one; only series with bars count; wide tables
-  // are daily.
-  const auto session = replay::session_of("us");
-  replay::Data mixed;
-  mixed.series_.resize(2);
-  mixed.series_[0].bars_.resize(1);
-  mixed.series_[1].bars_.resize(1);
-  mixed.series_[1].interval_ = atl::BarInterval::FIVE_MINUTES;
-  CHECK(!replay::periods_per_year_of(settings({}), mixed, session));
-  CHECK(
-    replay::periods_per_year_of(settings({"replay.periods_per_year=52"}), mixed, session) == std::optional<double>(52)
-  );
-  mixed.series_[1].bars_.clear();
-  CHECK(replay::periods_per_year_of(settings({}), mixed, session) == std::optional<double>(252));
-  CHECK(!replay::periods_per_year_of(settings({}), replay::Data{}, session));
-  replay::Data wide;
-  wide.close_.names_ = {"AAA"};
-  CHECK(replay::periods_per_year_of(settings({}), wide, session) == std::optional<double>(252));
+  // The count of a curve: two points a day (open points) give about twice one a day; no point, one point, or two at
+  // one instant give none.
+  const auto curve = [](const std::vector<long long>& seconds) {
+    atl::backtest::ReplayResult result;
+    for (const auto s : seconds) {
+      atl::backtest::EquityPoint point;
+      point.at_ = std::chrono::system_clock::time_point(std::chrono::seconds(1577836800 + s));
+      result.equity_.push_back(point);
+    }
+    return replay::counted_periods_per_year(result);
+  };
+  std::vector<long long> days;
+  std::vector<long long> halves;
+  for (long long d = 0; d < 8; ++d) {
+    days.push_back(86400 * d + 75600);
+    halves.push_back(86400 * d + 52200);
+    halves.push_back(86400 * d + 75600);
+  }
+  const auto daily_count = curve(days);
+  REQUIRE(daily_count);
+  CHECK(std::abs(*daily_count - 365.25) < 1e-9);
+  const auto twice = curve(halves);
+  REQUIRE(twice);
+  CHECK((*twice > 1.9 * 365.25 && *twice < 2.2 * 365.25));
+  CHECK(!curve({}));
+  CHECK(!curve({0}));
+  CHECK(!curve({0, 0}));
 }
 
 TEST_CASE("replay main: a market-price rule prices market orders and the report names it") {
