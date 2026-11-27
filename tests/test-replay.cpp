@@ -668,6 +668,72 @@ TEST_CASE("replay main: shorts go through only with replay.shorts true") {
   CHECK(refused.out_.find("\"guard:") != std::string::npos);
 }
 
+TEST_CASE("replay main: the periods a year follow the bars' interval and a given count wins") {
+  const FreshScript fresh;
+  Scratch dir;
+  // Bars a fixed number of seconds apart whose returns vary, so a Sharpe ratio is defined.
+  const auto spaced = [&dir](long long seconds) {
+    std::string text = "ts,open,high,low,close,volume\n";
+    for (int k = 0; k < 8; ++k) {
+      const auto close = 100 + 2 * k + (k % 2 == 0 ? 0 : 4);
+      text += std::to_string(1577836800 + seconds * k) + "," + std::to_string(close - 1) + "," +
+        std::to_string(close + 2) + "," + std::to_string(close - 3) + "," + std::to_string(close) + ",1000\n";
+    }
+    return dir.write("bars-" + std::to_string(seconds) + ".csv", text);
+  };
+  // A buy limit far above the next bar's high: it fills there, its price moved inside the bar.
+  runtest::script().decisions_[1] = runtest::Decision{1, "1.5", false};
+  const auto on = [](const std::string& file, const std::string& interval) {
+    return std::vector<std::string>{
+      "bars.source=csv", "bars.file=" + file, "bars.symbol=AAA", "instrument.x=AAA", "bars.interval=" + interval
+    };
+  };
+  const auto measured = [](const std::vector<std::string>& args) {
+    return replay_main<runtest::Program>(args, same_fills, measures_of({{"periods", periods}}));
+  };
+  const auto five = measured(on(spaced(300), "5m"));
+  INFO(five.err_);
+  REQUIRE(five.exit_ == 0);
+  CHECK(five.out_.find("\"measures\": {\"periods\": 19656}") != std::string::npos);
+  // The session's 6.5 hours hold seven hourly bars, the last one short.
+  const auto hourly = measured(on(spaced(3600), "1h"));
+  REQUIRE(hourly.exit_ == 0);
+  CHECK(hourly.out_.find("\"measures\": {\"periods\": 1764}") != std::string::npos);
+  // Weekly bars have no count: the annualized ratio and the measure are null, the per-period ratio is not.
+  const auto weeks = spaced(7LL * 86400);
+  const auto weekly = replay_main<runtest::Program>(on(weeks, "1w"));
+  INFO(weekly.out_);
+  REQUIRE(weekly.exit_ == 0);
+  CHECK(field(weekly.out_, "sharpe_per_period") != "null");
+  CHECK(field(weekly.out_, "sharpe_annualized") == "null");
+  CHECK(field(weekly.out_, "executions") == "1");
+  CHECK(
+    weekly.out_.find(
+      "\"shorts_borrow_nothing\": true, \"bar_tape_unverified\": true, \"sellable_is_whole_holding\": true, "
+      "\"buying_power_is_ledger_cash\": true, \"unchecked_fill_causality\": "
+    ) != std::string::npos
+  );
+  CHECK(field(weekly.out_, "unchecked_fill_causality") != "0");
+  CHECK(weekly.out_.find("\"limit_fills_bounded\": 1}") != std::string::npos);
+  CHECK(measured(on(weeks, "1w")).out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
+  auto given = on(weeks, "1w");
+  given.push_back("replay.periods_per_year=52");
+  const auto counted = replay_main<runtest::Program>(given);
+  REQUIRE(counted.exit_ == 0);
+  CHECK(field(counted.out_, "sharpe_annualized") != "null");
+  CHECK(field(counted.out_, "sharpe_annualized") != field(counted.out_, "sharpe_per_period"));
+  // Series of different intervals have no count, and no data none; wide tables are daily.
+  const auto session = replay::session_of("us");
+  replay::Data mixed;
+  mixed.series_.resize(2);
+  mixed.series_[1].interval_ = atl::BarInterval::FIVE_MINUTES;
+  CHECK(!replay::periods_per_year_of(settings({}), mixed, session));
+  CHECK(!replay::periods_per_year_of(settings({}), replay::Data{}, session));
+  replay::Data wide;
+  wide.close_.names_ = {"AAA"};
+  CHECK(replay::periods_per_year_of(settings({}), wide, session) == std::optional<double>(252));
+}
+
 TEST_CASE("replay main: a market-price rule prices market orders and the report names it") {
   const FreshScript fresh;
   Scratch dir;

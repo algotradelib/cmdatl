@@ -1843,14 +1843,52 @@ std::string report_json(
   return o.str();
 }
 
+/** @brief Trading days a year for both market presets, as the replay has always used: a daily report is unchanged. */
+inline constexpr double TRADING_DAYS_PER_YEAR = 252;
+
+/**
+ * @brief The periods a year of the annualized figures: `replay.periods_per_year` when given, else the library's count
+ *   (`backtest::periods_per_year`) for the bars' interval over the session and `TRADING_DAYS_PER_YEAR`.
+ *
+ * The count assumes one bar per interval of the regular session, every symbol's bars ending at the same instants.
+ * @param s The settings.
+ * @param data The data: wide tables are daily; OHLCV series count only when they share one interval.
+ * @param session The replay's session window (`ReplayConfig::session_`).
+ * @return The count; none without the key for weekly or longer bars, series of different intervals, or no data.
+ */
+inline std::optional<double> periods_per_year_of(
+  const Settings& s, const Data& data, const atl::strategy::SessionWindow& session
+) {
+  if (const auto given = s.get("replay.periods_per_year")) {
+    return std::stod(*given);
+  }
+  std::optional<atl::BarInterval> interval;
+  if (data.series_.empty() && !data.close_.names_.empty()) {
+    interval = atl::BarInterval::ONE_DAY;
+  }
+  for (const auto& series : data.series_) {
+    if (interval && *interval != series.interval_) {
+      return std::nullopt;
+    }
+    interval = series.interval_;
+  }
+  if (!interval) {
+    return std::nullopt;
+  }
+  return atl::backtest::periods_per_year(*interval, session, TRADING_DAYS_PER_YEAR);
+}
+
 /** @brief What every replay of one data set shares, read-only once built (`prepare`). */
 struct Prepared {
   /** @brief The market preset, `kr` or `us`. */
   std::string market_;
   /** @brief Whether each daily bar is replayed as a point at the open and the day (`bars.open_point`). */
   bool open_point_{false};
-  /** @brief The periods a year of the annualized figures (`replay.periods_per_year`). */
-  double periods_{252};
+  /**
+   * @brief The periods a year of the annualized figures (`periods_per_year_of`), or none, which leaves them null:
+   *   check it before reading it.
+   */
+  std::optional<double> periods_{TRADING_DAYS_PER_YEAR};
   /** @brief The bar events, in time order. */
   std::vector<atl::strategy::BarEvent> events_;
   /** @brief The program's `data {}` values in time order, or null for a program without; shared, never copied. */
@@ -1902,9 +1940,7 @@ Prepared prepare_data(const Settings& s, const Data& data, bool open_point) {
     p.ids_.push_back(instrument_of(symbol, p.market_).id_);
   }
   p.symbols_ = data.symbols_;
-  if (const auto periods = s.get("replay.periods_per_year")) {
-    p.periods_ = std::stod(*periods);
-  }
+  p.periods_ = periods_per_year_of(s, data, p.config_.session_);
   if constexpr (reads_data<Strategy>::value) {
     p.rows_ = std::make_shared<const std::vector<DataRow>>(load_data(s, Strategy::atls_data(), data.symbols_));
   }
