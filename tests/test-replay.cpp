@@ -668,7 +668,7 @@ TEST_CASE("replay main: shorts go through only with replay.shorts true") {
   CHECK(refused.out_.find("\"guard:") != std::string::npos);
 }
 
-TEST_CASE("replay main: the periods a year are counted from a curve of a year or more and a given count wins") {
+TEST_CASE("replay main: the periods a year are counted from the replay's own curve and a given count wins") {
   const FreshScript fresh;
   Scratch dir;
   // Bars a fixed number of seconds apart whose returns vary, so a Sharpe ratio is defined.
@@ -698,29 +698,14 @@ TEST_CASE("replay main: the periods a year are counted from a curve of a year or
     REQUIRE((std::isfinite(value) && used == text.size()));
     return value;
   };
-  // 367 bars a day apart span 366 days: 365.25 a year, reported and given to the measures.
-  const auto daily = measured(on(spaced(86400, 367), "1d"));
+  // Eight bars a day apart: seven periods over seven days, 365.25 a year, reported and given to the measures.
+  const auto daily = measured(on(spaced(86400, 8), "1d"));
   INFO(daily.err_);
   REQUIRE(daily.exit_ == 0);
   CHECK(field(daily.out_, "periods_per_year") == "365.25");
   CHECK(daily.out_.find("\"measures\": {\"periods\": 365.25}") != std::string::npos);
-  // 366 bars span 365 days, just under a year: no count, though the per-period ratio is reported.
-  const auto under = measured(on(spaced(86400, 366), "1d"));
-  REQUIRE(under.exit_ == 0);
-  CHECK(field(under.out_, "periods_per_year") == "null");
-  CHECK(field(under.out_, "sharpe_annualized") == "null");
-  number_of(field(under.out_, "sharpe_per_period"));
-  CHECK(under.out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
-  // A given count is used on a short span.
-  auto short_given = on(spaced(86400, 8), "1d");
-  short_given.push_back("replay.periods_per_year=252");
-  const auto week = measured(short_given);
-  REQUIRE(week.exit_ == 0);
-  CHECK(field(week.out_, "periods_per_year") == "252");
-  number_of(field(week.out_, "sharpe_annualized"));
-  CHECK(week.out_.find("\"measures\": {\"periods\": 252}") != std::string::npos);
-  // 54 weekly bars span 53 weeks: 365.25 / 7 a year, the annualized ratio the per-period one times its square root.
-  const auto weeks = spaced(7LL * 86400, 54);
+  // Weekly bars: 365.25 / 7 a year, the annualized ratio the per-period one times its square root.
+  const auto weeks = spaced(7LL * 86400, 8);
   const auto weekly = replay_main<runtest::Program>(on(weeks, "1w"));
   INFO(weekly.out_);
   REQUIRE(weekly.exit_ == 0);
@@ -746,7 +731,7 @@ TEST_CASE("replay main: the periods a year are counted from a curve of a year or
   const auto annualized = number_of(field(fixed.out_, "sharpe_annualized"));
   CHECK(std::abs(annualized - per_period * std::sqrt(52.0)) <= 1e-8 * std::abs(annualized));
   CHECK(measured(given).out_.find("\"measures\": {\"periods\": 52}") != std::string::npos);
-  // One bar is one point: no span, no count.
+  // One bar is one point: no count, no annualized ratio.
   const auto one = measured(on(spaced(86400, 1), "1d"));
   REQUIRE(one.exit_ == 0);
   CHECK(field(one.out_, "periods_per_year") == "null");
@@ -768,8 +753,8 @@ TEST_CASE("replay main: the periods a year are counted from a curve of a year or
   CHECK(empty.out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
   unusable.push_back("replay.periods_per_year=52");
   CHECK(measured(unusable).out_.find("\"measures\": {\"periods\": 52}") != std::string::npos);
-  // The count of a curve of a year or more: two points a day (open points) give about twice one a day; a span of
-  // exactly a year counts; one just under a year, one point or none give none.
+  // The count of a curve: two points a day (open points) give about twice one a day; no point, one point, or two at
+  // one instant give none.
   const auto curve = [](const std::vector<long long>& seconds) {
     atl::backtest::ReplayResult result;
     for (const auto s : seconds) {
@@ -781,7 +766,7 @@ TEST_CASE("replay main: the periods a year are counted from a curve of a year or
   };
   std::vector<long long> days;
   std::vector<long long> halves;
-  for (long long d = 0; d < 400; ++d) {
+  for (long long d = 0; d < 8; ++d) {
     days.push_back(86400 * d + 75600);
     halves.push_back(86400 * d + 52200);
     halves.push_back(86400 * d + 75600);
@@ -792,8 +777,6 @@ TEST_CASE("replay main: the periods a year are counted from a curve of a year or
   const auto twice = curve(halves);
   REQUIRE(twice);
   CHECK((*twice > 1.9 * 365.25 && *twice < 2.2 * 365.25));
-  CHECK(curve({0, 31557600}) == std::optional<double>(1));
-  CHECK(!curve({0, 31557599}));
   CHECK(!curve({}));
   CHECK(!curve({0}));
   CHECK(!curve({0, 0}));
