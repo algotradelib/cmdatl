@@ -1849,8 +1849,10 @@ std::string report_json(
  * @brief The periods a year a replay's equity curve holds: its points less one, over the years between its first and
  *   last point, a year being 365.25 days.
  *
- * The Sharpe ratio is computed on the curve's period returns, so this is their frequency as the data has it: the
- * trading days of daily bars, two a day with open points, extended-hours and staggered points as they are.
+ * The rate of intervals between recorded equity points, on whose period returns the Sharpe ratio is computed: the
+ * trading days of daily bars, two a day with open points, extended-hours and staggered points as they are. A replay
+ * shorter than a session has no night or weekend in its span and counts as if the market never closed; a long gap
+ * before the second point lowers the count.
  * @param result The finished replay.
  * @return The count; none with fewer than two points, or all at one instant.
  */
@@ -1859,12 +1861,15 @@ inline std::optional<double> counted_periods_per_year(const atl::backtest::Repla
   if (curve.size() < 2) {
     return std::nullopt;
   }
-  const std::chrono::duration<double> span = curve.back().at_ - curve.front().at_;
-  if (!(span.count() > 0)) {
+  // Each end in floating seconds before the difference: an integer difference of the clock's ticks can overflow.
+  using Seconds = std::chrono::duration<double>;
+  const double span =
+    Seconds(curve.back().at_.time_since_epoch()).count() - Seconds(curve.front().at_.time_since_epoch()).count();
+  if (!(span > 0)) {
     return std::nullopt;
   }
   const double year = 365.25 * 24 * 60 * 60;
-  return static_cast<double>(curve.size() - 1) / (span.count() / year);
+  return static_cast<double>(curve.size() - 1) / (span / year);
 }
 
 /**
