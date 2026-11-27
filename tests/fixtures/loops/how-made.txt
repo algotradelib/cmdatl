@@ -23,7 +23,3 @@ file byte for byte,
 
 The same file then passed the byte comparison unchanged with whole-bar paths against algotradelib ea4e34f
 (ai/bootstrap-paths), the library head this branch merges with (2026-11-18).
-
-Re-recorded on 2026-11-27 (macOS, atlc 4cc4c16, algotradelib bdc7514) with the same command, when each report's caveats
-gained `bar_tape_unverified`, `sellable_is_whole_holding`, `buying_power_is_ledger_cash`, `unchecked_fill_causality` and
-`limit_fills_bounded` (`ai/report-fixes`); removing those five keys gives the earlier file byte for byte.
