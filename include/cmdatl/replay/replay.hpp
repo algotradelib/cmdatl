@@ -1729,7 +1729,7 @@ struct SessionFacts {
  * @param result The replay's result.
  * @param r The report.
  * @param pricing The targets limit pricing did not submit.
- * @param periods_per_year The periods a year the annualized figures used, or none (`periods_per_year_of`).
+ * @param periods_per_year The periods a year the annualized figures used, or none.
  * @param session What a session program met; empty for any other.
  * @param reads_data Whether the program has `data {}`: the report then counts the records fed.
  * @param warning What the reader must know about the run's files, or empty (the report then has no `warning`).
@@ -1849,12 +1849,10 @@ std::string report_json(
  * @brief The periods a year a replay's equity curve holds: its points less one, over the years between its first and
  *   last point, a year being 365.25 days.
  *
- * The rate of intervals between recorded equity points, on whose period returns the Sharpe ratio is computed: the
- * trading days of daily bars, two a day with open points, extended-hours and staggered points as they are. A replay
- * shorter than a session has no night or weekend in its span and counts as if the market never closed; a long gap
- * before the second point lowers the count.
+ * The rate of intervals between recorded equity points, on whose period returns the Sharpe ratio is computed. A replay
+ * shorter than a year extrapolates its own rate, nights, weekends and holidays it did not span left out.
  * @param result The finished replay.
- * @return The count; none with fewer than two points, or all at one instant.
+ * @return The count; none with fewer than two points, or all at one instant, where it is not defined.
  */
 inline std::optional<double> counted_periods_per_year(const atl::backtest::ReplayResult& result) {
   const auto& curve = result.equity_;
@@ -1872,26 +1870,13 @@ inline std::optional<double> counted_periods_per_year(const atl::backtest::Repla
   return static_cast<double>(curve.size() - 1) / (span / year);
 }
 
-/**
- * @brief The periods a year of a replay's annualized figures: `replay.periods_per_year` when given, else the count of
- *   its own curve (`counted_periods_per_year`).
- * @param given The given count, or none.
- * @param result The finished replay.
- * @return The count, or none.
- */
-inline std::optional<double> periods_per_year_of(
-  const std::optional<double>& given, const atl::backtest::ReplayResult& result
-) {
-  return given ? given : counted_periods_per_year(result);
-}
-
 /** @brief What every replay of one data set shares, read-only once built (`prepare`). */
 struct Prepared {
   /** @brief The market preset, `kr` or `us`. */
   std::string market_;
   /** @brief Whether each daily bar is replayed as a point at the open and the day (`bars.open_point`). */
   bool open_point_{false};
-  /** @brief `replay.periods_per_year` when given; without it each replay counts its own (`periods_per_year_of`). */
+  /** @brief `replay.periods_per_year` when given; without it each replay counts its own (`counted_periods_per_year`). */
   std::optional<double> given_periods_;
   /** @brief The bar events, in time order. */
   std::vector<atl::strategy::BarEvent> events_;
@@ -2232,7 +2217,7 @@ auto replay_one(
   std::optional<atl::backtest::MeasureInput> input;
   std::optional<atl::backtest::Report> summary;
   // The periods a year are the replay's own: each set, window and path counts its curve.
-  const auto periods = periods_per_year_of(prepared.given_periods_, result);
+  const auto periods = prepared.given_periods_ ? prepared.given_periods_ : counted_periods_per_year(result);
   if (measures.empty()) {
     summary.emplace(atl::backtest::summarize(result, engine.fills(), periods));
   } else {

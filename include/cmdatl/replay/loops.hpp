@@ -725,7 +725,7 @@ int loops_main(
         const auto chain = bt::chain_results(results);
         const auto fills = fills_of(prepared->fills_);
         // The chained tests' own curve gives their periods a year.
-        const auto periods = periods_per_year_of(prepared->given_periods_, chain);
+        const auto periods = prepared->given_periods_ ? prepared->given_periods_ : counted_periods_per_year(chain);
         const auto input = bt::measure_input(chain, fills, periods);
         SessionFacts session{Strategy::atls_session, sum.opened_, sum.closed_, sum.outside_, prepared->open_point_};
         const auto values = run_measures(measures, input);
