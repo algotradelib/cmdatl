@@ -39,6 +39,7 @@ cmdatl run dip.toml params.lookback=30 > run.jsonl # the same, into a file
 
 `cmdatl run` trades a KIS account when the operator's file names one; every account and order command but `clock` and `clock advance` works on it too, and of those only `order place` and `order cancel` send (see [Commands on a KIS account](#commands-on-a-kis-account)).
 A demo account (모의투자) is the default, and the code is the same for a real one: only `env` differs.
+What cmdatl cannot stop a process of the operator's own user from changing is under [Commands on a KIS account](#commands-on-a-kis-account).
 
 ```toml
 [account]
@@ -117,6 +118,7 @@ cmdatl run probe.toml > run.jsonl # in the foreground: tmux, nohup or a launchd 
 On the KIS account the operator's file names, `status`, `account`, `quote`, `order list`, `order plan`, `order place`, `order cancel`, `order reconcile` and `order release` work with the same logins a run reads, on the same code path for demo and real (only `env` differs); only `order place` and `order cancel` send.
 
 - On `env = "real"` they are real orders with real money: the operator's file bounds them, and for a placement the armed file.
+  cmdatl applies the operator's file to every command, but the agent runs as the operator's own user: cmdatl cannot stop a process of that user from changing the operator's file, the armed file, the release approval or the account's state directory.
 - `clock` and `clock advance` answer `unsupported.broker` (exit 1, nothing read or sent) before any login is read: a KIS account's time is the market's own.
 - `cash` and `data_end` are `null`: the broker reports holdings and buying power, not a cash figure, and its data has no end.
 - `now` is the instant the reply is as of, taken after the calendar is read and before the account's figures, which are later by the seconds the reads take; the phase, `orders_left_today` and every quote row's acceptance are at that instant.
