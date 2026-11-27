@@ -691,6 +691,13 @@ TEST_CASE("replay main: the periods a year follow the bars' interval and a given
   const auto measured = [](const std::vector<std::string>& args) {
     return replay_main<runtest::Program>(args, same_fills, measures_of({{"periods", periods}}));
   };
+  // A figure the report prints as a finite number.
+  const auto number_of = [](const std::string& text) {
+    std::size_t used = 0;
+    const double value = text.empty() || text == "null" ? std::nan("") : std::stod(text, &used);
+    REQUIRE((std::isfinite(value) && used == text.size()));
+    return value;
+  };
   const auto five = measured(on(spaced(300), "5m"));
   INFO(five.err_);
   REQUIRE(five.exit_ == 0);
@@ -704,7 +711,7 @@ TEST_CASE("replay main: the periods a year follow the bars' interval and a given
   const auto weekly = replay_main<runtest::Program>(on(weeks, "1w"));
   INFO(weekly.out_);
   REQUIRE(weekly.exit_ == 0);
-  CHECK(field(weekly.out_, "sharpe_per_period") != "null");
+  const auto per_period = number_of(field(weekly.out_, "sharpe_per_period"));
   CHECK(field(weekly.out_, "sharpe_annualized") == "null");
   CHECK(field(weekly.out_, "executions") == "1");
   CHECK(
@@ -720,17 +727,36 @@ TEST_CASE("replay main: the periods a year follow the bars' interval and a given
   given.push_back("replay.periods_per_year=52");
   const auto counted = replay_main<runtest::Program>(given);
   REQUIRE(counted.exit_ == 0);
-  CHECK(field(counted.out_, "sharpe_annualized") != "null");
-  CHECK(field(counted.out_, "sharpe_annualized") != field(counted.out_, "sharpe_per_period"));
-  // Series of different intervals have no count, and no data none; wide tables are daily.
+  const auto annualized = number_of(field(counted.out_, "sharpe_annualized"));
+  CHECK(std::abs(annualized - per_period * std::sqrt(52.0)) <= 1e-8 * std::abs(annualized));
+  CHECK(measured(given).out_.find("\"measures\": {\"periods\": 52}") != std::string::npos);
+  // Wide closes whose every date replay.from leaves out replay nothing, so there is no count.
+  const auto closes = dir.write("closes.csv", "date,AAA\n20200101,100\n20200102,101\n");
+  const auto none = measured({"bars.source=wide", "bars.file=" + closes, "instrument.x=AAA", "replay.from=20210101"});
+  INFO(none.err_);
+  REQUIRE(none.exit_ == 0);
+  CHECK(none.out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
+  // Series of different intervals have no count, unless the key gives one; a series with no bar left (a store read
+  // before its first fetch) and no data have none; wide tables with a date are daily.
   const auto session = replay::session_of("us");
   replay::Data mixed;
   mixed.series_.resize(2);
+  mixed.series_[0].bars_.resize(1);
+  mixed.series_[1].bars_.resize(1);
   mixed.series_[1].interval_ = atl::BarInterval::FIVE_MINUTES;
+  CHECK(!replay::periods_per_year_of(settings({}), mixed, session));
+  CHECK(
+    replay::periods_per_year_of(settings({"replay.periods_per_year=52"}), mixed, session) == std::optional<double>(52)
+  );
+  mixed.series_[1].bars_.clear();
+  CHECK(replay::periods_per_year_of(settings({}), mixed, session) == std::optional<double>(252));
+  mixed.series_[0].bars_.clear();
   CHECK(!replay::periods_per_year_of(settings({}), mixed, session));
   CHECK(!replay::periods_per_year_of(settings({}), replay::Data{}, session));
   replay::Data wide;
   wide.close_.names_ = {"AAA"};
+  CHECK(!replay::periods_per_year_of(settings({}), wide, session));
+  wide.close_.dates_ = {20200101};
   CHECK(replay::periods_per_year_of(settings({}), wide, session) == std::optional<double>(252));
 }
 

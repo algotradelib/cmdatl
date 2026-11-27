@@ -268,9 +268,9 @@ timezone = "UTC"
 | `replay.shorts` | boolean | `false` | whether a position may go below zero; no borrow is modelled |
 | `replay.periods_per_year` | number above 0 | from the bars' interval (below) | bars a year, for the annualized Sharpe ratio |
 
-Without `replay.periods_per_year`, the annualized Sharpe ratio counts 252 trading days a year in both markets: 252 bars for daily bars (also with `bars.open_point`, below), and for intraday bars the bars of the market's 6.5-hour regular session times 252 (98,280 for `1m`, 19,656 for `5m`, 1,764 for `1h`).
-That count assumes one bar per interval of the regular session and every symbol's bars ending at the same instants; give the key for bars outside the session (Alpaca's pre- and post-market minutes), for bars further apart than their interval (a CSV's interval is `bars.interval`, whatever its rows' spacing), or for symbols whose bars end at different instants.
-On weekly or monthly bars, and on series of different intervals, there is no count: `sharpe_annualized` and a measure's `periods_per_year` are null, and `evaluate.objective = "sharpe_annualized"` chooses nothing (a walk-forward then tests no fold) unless the key is given or another objective is named.
+Without `replay.periods_per_year`, the annualized Sharpe ratio counts 252 trading days a year in both markets: 252 bars for daily bars (also with `bars.open_point`, below), and for intraday bars the bars of the market's 6.5-hour regular session times 252 (98,280 for `1m`, 19,656 for `5m`, 1,764 for `1h`); the annualized ratio is the per-bar ratio times the count's square root.
+That count assumes one bar per interval of the regular session and every symbol's bars ending at the same instants; give the key for bars outside the session (Alpaca's pre- and post-market minutes, Toss's `1m` bars of KRX and NXT combined), for bars further apart than their interval (a CSV's interval is `bars.interval`, whatever its rows' spacing), or for symbols whose bars end at different instants.
+On weekly or monthly bars, on series of different intervals, and with no bar to replay, there is no count: `sharpe_annualized` is null, a measure's `periods_per_year` is undefined (a measure whose value depends on it is null), and `evaluate.objective = "sharpe_annualized"` chooses nothing (a walk-forward then tests no fold) unless the key is given or another objective is named.
 
 A market order fills against the bar after its decision, at the price `replay.fill` names:
 
