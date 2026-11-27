@@ -182,6 +182,7 @@ A stamp is `open` or `close`, and a series' bars share one stamp.
   `bars.source = "store"` with `bars.as_of = fetched_at` reads the store as it stood after the fetch: every bar's latest version up to that instant, which can include bars this fetch did not return (an older history, or bars an earlier fetch had and this one did not); it is the same history only when the store held nothing else for those series.
 - Prices are raw (not adjusted), each within `DECIMAL(18,4)`, and the history is the vendor's as of the fetch, revisions included: it is not what was known on each day.
   An adapter's option cannot change that: an answer marked adjusted is refused.
+  So a split is a false one-day move in the bars, a fall for a split and a rise for a reverse split, which the replay books as a loss or a gain on the shares held and a signal may act on: a backtest across a split needs adjusted bars, from a CSV or a store that holds adjusted ones.
 - An option the folder does not declare, of another type, outside its choices, or a required one missing, is refused before anything is built (`spec.invalid`); the adapter receives the options as a JSON object's text.
 - An adapter's error is reported by its category, HTTP status and code (`fetch.failed`), never by its text, which could carry a credential.
 - A login bound to another folder, or to none, is refused before anything is built (`auth.adapter_mismatch`).
