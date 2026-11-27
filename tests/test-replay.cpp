@@ -753,7 +753,8 @@ TEST_CASE("replay main: the periods a year are counted from the replay's own cur
   CHECK(empty.out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
   unusable.push_back("replay.periods_per_year=52");
   CHECK(measured(unusable).out_.find("\"measures\": {\"periods\": 52}") != std::string::npos);
-  // The count of a curve: two points a day (open points) give about twice one a day; no point, one point, or two at
+  // The count of a curve: two points a day (open points) give their intervals over their exact span, about twice one
+  // a day, and an hour apart 8,766 a year (a span floored to whole days would fail both); no point, one point, or two at
   // one instant give none.
   const auto curve = [](const std::vector<long long>& seconds) {
     atl::backtest::ReplayResult result;
@@ -776,7 +777,12 @@ TEST_CASE("replay main: the periods a year are counted from the replay's own cur
   CHECK(std::abs(*daily_count - 365.25) < 1e-9);
   const auto twice = curve(halves);
   REQUIRE(twice);
+  const double exact = 15 * 31557600.0 / (7 * 86400 + 23400);
+  CHECK(std::abs(*twice - exact) < 1e-9 * exact);
   CHECK((*twice > 1.9 * 365.25 && *twice < 2.2 * 365.25));
+  const auto hourly = curve({0, 3600});
+  REQUIRE(hourly);
+  CHECK(std::abs(*hourly - 8766) < 1e-9);
   CHECK(!curve({}));
   CHECK(!curve({0}));
   CHECK(!curve({0, 0}));
