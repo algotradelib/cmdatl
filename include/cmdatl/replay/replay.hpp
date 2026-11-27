@@ -1805,7 +1805,14 @@ std::string report_json(
     << ", \"cost_totals_incomplete\": " << (c.cost_totals_incomplete_ ? "true" : "false")
     << ", \"volume_ignored\": " << (atl::backtest::ReportCaveats::volume_ignored ? "true" : "false")
     << ", \"lowest_cash\": " << (result.lowest_cash_ ? quoted(result.lowest_cash_->amount_.str()) : "null")
-    << ", \"shorts_borrow_nothing\": true";
+    << ", \"shorts_borrow_nothing\": true"
+    << ", \"bar_tape_unverified\": " << (atl::backtest::ReportCaveats::bar_tape_unverified ? "true" : "false")
+    << ", \"sellable_is_whole_holding\": "
+    << (atl::backtest::ReportCaveats::sellable_is_whole_holding ? "true" : "false")
+    << ", \"buying_power_is_ledger_cash\": "
+    << (atl::backtest::ReportCaveats::buying_power_is_ledger_cash ? "true" : "false")
+    << ", \"unchecked_fill_causality\": " << c.unchecked_fill_causality_
+    << ", \"limit_fills_bounded\": " << c.limit_fills_bounded_;
   if (!c.market_price_rule_.empty()) {
     o << ", \"market_price_rule\": " << quoted(c.market_price_rule_)
       << ", \"market_fills_by_rule\": " << c.market_fills_by_rule_;
