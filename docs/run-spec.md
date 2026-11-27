@@ -266,11 +266,13 @@ timezone = "UTC"
 | `replay.fill_header` | path, in the spec file only | none | a C++ header declaring a market-price rule of your own (below); with `replay.fill_function` |
 | `replay.fill_function` | a C++ name, such as `decision_close` or `rules::decision_close`, in the spec file only | none | the rule the header declares; with `replay.fill_header` |
 | `replay.shorts` | boolean | `false` | whether a position may go below zero; no borrow is modelled |
-| `replay.periods_per_year` | number above 0 | from the bars' interval (below) | bars a year, for the annualized Sharpe ratio |
+| `replay.periods_per_year` | number above 0 | counted from each replay (below) | periods a year, for the annualized Sharpe ratio |
 
-Without `replay.periods_per_year`, the annualized Sharpe ratio counts 252 trading days a year in both markets: 252 bars for daily bars (also with `bars.open_point`, below), and for intraday bars the bars of the market's 6.5-hour regular session times 252 (98,280 for `1m`, 19,656 for `5m`, 1,764 for `1h`); the annualized ratio is the per-bar ratio times the count's square root.
-That count assumes one bar per interval of the regular session and every symbol's bars ending at the same instants; give the key for bars outside the session (Alpaca's pre- and post-market minutes, Toss's `1m` bars of KRX and NXT combined), for bars further apart than their interval (a CSV's interval is `bars.interval`, whatever its rows' spacing), or for symbols whose bars end at different instants.
-On weekly or monthly bars, on series of different intervals (counting only the series that still hold bars after `replay.from`, `replay.to` and `bars.as_of`), and with no bar to replay, there is no count: `sharpe_annualized` is null; a measure's `periods_per_year` is undefined, and the report prints a measure as null when its value is not finite (a measure that tests `defined(periods_per_year)` can still print a number); and `evaluate.objective = "sharpe_annualized"` chooses nothing (a walk-forward then tests no fold) unless the key is given or another objective is named.
+Without `replay.periods_per_year`, each replay counts its own periods a year from its equity curve, whose period returns the Sharpe ratio is computed on: the curve's points less one, over the years between its first and last point (a year being 365.25 days).
+So daily bars give the trading days the data holds (about 245 a year on KRX, about 252 in the US), `bars.open_point` two a day, weekly bars about 52 and monthly bars about 12, and extended-hours bars or symbols whose bars end at different instants count as the points they make.
+Each set of a grid, each window, each walk-forward test and the chained tests, and each bootstrap path count their own curve; the report gives the count used as `periods_per_year`.
+A short replay's count is noisy: give the key to fix it.
+With fewer than two points, or all at one instant, there is no count: `sharpe_annualized` is null; a measure's `periods_per_year` is undefined, and the report prints a measure as null when its value is not finite (a measure that tests `defined(periods_per_year)` can still print a number); and `evaluate.objective = "sharpe_annualized"` chooses nothing for such a replay unless the key is given or another objective is named.
 
 A market order fills against the bar after its decision, at the price `replay.fill` names:
 
@@ -324,7 +326,7 @@ A replay in which such a program met no session's open or close fails, naming th
 With `fill = "decision-close"`, a target stated in `on_open` fills at the open it saw and one in `on_close` at the close it saw; with `next-open`, at the next bar's open.
 With `next-close`, at the next bar's close: with `bars.open_point`, a target stated in `on_open` fills at that day's close, and one in `on_close` at the next open point, whose close is the next day's open.
 A fill is dated at the bar it fills against: an `on_close` exit at the next session's first bar, so the last session's exit does not fill.
-With `bars.open_point` a day is two bars and two equity points, so set `replay.periods_per_year` to twice the trading days (504) for the annualized ratios.
+With `bars.open_point` a day is two bars and two equity points, so its counted periods a year are about twice the trading days.
 A `DAY` order still resting at an open point (a rule that named no price there) expires with it, since a daily bar ends its session.
 
 A run (`cmdatl run`) takes neither a program with `on_open` or `on_close`, nor `replay.fill` other than `next-open`, nor a market-price rule of your own, nor `bars.open_point`: a run's orders fill at the market.
@@ -386,7 +388,8 @@ One JSON object, as `cmdatl strategy backtest` returns it in `report`:
 | `executions` | integer | fills |
 | `opening_equity`, `closing_equity` | decimal string | equity at the first and last recorded point |
 | `total_return` | number or null | over the replay, as a fraction |
-| `sharpe_per_period`, `sharpe_annualized` | number or null | the Sharpe ratio per bar, and annualized with `replay.periods_per_year` (null without a count) |
+| `sharpe_per_period`, `sharpe_annualized` | number or null | the Sharpe ratio per bar, and annualized with `periods_per_year` (null without a count) |
+| `periods_per_year` | number or null | the periods a year the annualized ratio used: `replay.periods_per_year`, or the count of the replay's own equity curve (above) |
 | `sortino_per_period` | number or null | the Sortino ratio per bar |
 | `max_drawdown` | number or null | the worst peak-to-trough fall of equity, as a fraction |
 | `turnover` | number or null | one-way turnover summed over the replay, as a fraction of equity |
