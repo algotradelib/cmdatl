@@ -268,12 +268,13 @@ timezone = "UTC"
 | `replay.shorts` | boolean | `false` | whether a position may go below zero; no borrow is modelled |
 | `replay.periods_per_year` | number above 0 | counted from each replay (below) | periods a year, for the annualized Sharpe ratio |
 
-Without `replay.periods_per_year`, each replay counts its own periods a year from its equity curve, whose period returns the Sharpe ratio is computed on: the curve's points less one, over the years between its first and last point (a year being 365.25 days).
-So daily bars give the trading days the data holds (about 245 a year on KRX, about 252 in the US), `bars.open_point` two a day, weekly bars about 52 and monthly bars about 12, and extended-hours bars or symbols whose bars end at different instants count as the points they make.
-Each set of a grid, each window, each walk-forward test and the chained tests, and each bootstrap path count their own curve; the report gives the count used as `periods_per_year`.
-The count is the rate of intervals between recorded points, and the first point after an unvalued bar carries no return.
-A short replay's count is noisy: one shorter than a session has no night or weekend in its span, so its count is as if the market never closed (about 525,960 a year for `1m` bars against about 95,550 over whole KRX years), which inflates `sharpe_annualized`, and a long gap before its second point lowers the count; give the key to fix it.
-With fewer than two points, or all at one instant, there is no count: `sharpe_annualized` is null; a measure's `periods_per_year` is undefined, and the report prints a measure as null when its value is not finite (a measure that tests `defined(periods_per_year)` can still print a number); and `evaluate.objective = "sharpe_annualized"` chooses nothing for such a replay unless the key is given or another objective is named.
+The per-period Sharpe ratio is always reported; the annualized one is the per-period ratio times the square root of the periods a year, which assumes the period returns are serially uncorrelated.
+Without `replay.periods_per_year`, a replay whose equity curve spans at least a year (its last point at least 365.25 days after its first) counts its own periods a year: the curve's points less one, over the years between its first and last point.
+The count is the rate of intervals between recorded points, whose period returns the Sharpe ratio is computed on (the first point after an unvalued bar carries no return): daily bars give the trading days the data holds (about 245 a year on KRX, about 252 in the US), `bars.open_point` two a day, weekly bars about 52 and monthly bars about 12, and extended-hours bars or symbols whose bars end at different instants count as the points they make.
+A replay spanning less than a year has no count, since it cannot hold a year's nights, weekends and holidays and could only extrapolate (a day of `1m` bars would count as if the market never closed): give the key to annualize it.
+A replay of one calendar year of daily bars spans just under a year (2 January to 30 December, say), so it needs the key or a slightly longer span.
+Each set of a grid, each window, each walk-forward test and the chained tests, and each bootstrap path count their own curve, so a window or a test shorter than a year has no count; the report gives the count used as `periods_per_year`.
+With no count, `sharpe_annualized` is null; a measure's `periods_per_year` is undefined, and the report prints a measure as null when its value is not finite (a measure that tests `defined(periods_per_year)` can still print a number); and `evaluate.objective = "sharpe_annualized"` chooses nothing among such replays unless the key is given or another objective is named.
 
 A market order fills against the bar after its decision, at the price `replay.fill` names:
 
