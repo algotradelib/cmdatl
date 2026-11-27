@@ -1852,11 +1852,12 @@ inline constexpr double TRADING_DAYS_PER_YEAR = 252;
  *
  * The count assumes one bar per interval of the regular session, every symbol's bars ending at the same instants.
  * @param s The settings.
+ * Whether any bar replays is the caller's to check (`prepare_data` gives none when the replay has no bar event).
+ * @param s The settings.
  * @param data The data, as loaded and filtered: wide tables are daily; OHLCV series with bars count only when they
  *   share one interval.
  * @param session The replay's session window (`ReplayConfig::session_`).
- * @return The count; none without the key for weekly or longer bars, series of different intervals, or no bar to
- *   replay.
+ * @return The count; none without the key for weekly or longer bars, series of different intervals, or no data.
  */
 inline std::optional<double> periods_per_year_of(
   const Settings& s, const Data& data, const atl::strategy::SessionWindow& session
@@ -1865,7 +1866,7 @@ inline std::optional<double> periods_per_year_of(
     return std::stod(*given);
   }
   std::optional<atl::BarInterval> interval;
-  if (data.series_.empty() && !data.close_.names_.empty() && !data.close_.dates_.empty()) {
+  if (data.series_.empty() && !data.close_.names_.empty()) {
     interval = atl::BarInterval::ONE_DAY;
   }
   for (const auto& series : data.series_) {
@@ -1947,7 +1948,12 @@ Prepared prepare_data(const Settings& s, const Data& data, bool open_point) {
     p.ids_.push_back(instrument_of(symbol, p.market_).id_);
   }
   p.symbols_ = data.symbols_;
-  p.periods_ = periods_per_year_of(s, data, p.config_.session_);
+  // A replay with no bar event has no periods, whatever shape the data kept after filtering; a given count still wins.
+  if (p.events_.empty() && !s.get("replay.periods_per_year")) {
+    p.periods_ = std::nullopt;
+  } else {
+    p.periods_ = periods_per_year_of(s, data, p.config_.session_);
+  }
   if constexpr (reads_data<Strategy>::value) {
     p.rows_ = std::make_shared<const std::vector<DataRow>>(load_data(s, Strategy::atls_data(), data.symbols_));
   }

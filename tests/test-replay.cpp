@@ -730,14 +730,30 @@ TEST_CASE("replay main: the periods a year follow the bars' interval and a given
   const auto annualized = number_of(field(counted.out_, "sharpe_annualized"));
   CHECK(std::abs(annualized - per_period * std::sqrt(52.0)) <= 1e-8 * std::abs(annualized));
   CHECK(measured(given).out_.find("\"measures\": {\"periods\": 52}") != std::string::npos);
-  // Wide closes whose every date replay.from leaves out replay nothing, so there is no count.
+  // A replay with no bar has no count, whatever shape its data kept: wide closes all before replay.from, and wide
+  // closes with no usable close for the symbol traded; a given count still wins.
   const auto closes = dir.write("closes.csv", "date,AAA\n20200101,100\n20200102,101\n");
   const auto none = measured({"bars.source=wide", "bars.file=" + closes, "instrument.x=AAA", "replay.from=20210101"});
   INFO(none.err_);
   REQUIRE(none.exit_ == 0);
   CHECK(none.out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
-  // Series of different intervals have no count, unless the key gives one; a series with no bar left (a store read
-  // before its first fetch) and no data have none; wide tables with a date are daily.
+  const auto holes = dir.write("holes.csv", "date,AAA,BBB\n20200101,NaN,100\n20200102,,101\n");
+  std::vector<std::string> unusable{"bars.source=wide", "bars.file=" + holes, "instrument.x=AAA"};
+  const auto empty = measured(unusable);
+  INFO(empty.err_);
+  REQUIRE(empty.exit_ == 0);
+  CHECK(field(empty.out_, "bars") == "0");
+  CHECK(empty.out_.find("\"measures\": {\"periods\": null}") != std::string::npos);
+  unusable.push_back("replay.periods_per_year=52");
+  CHECK(measured(unusable).out_.find("\"measures\": {\"periods\": 52}") != std::string::npos);
+  // One daily series that filtering emptied (a store read before its first fetch) replays nothing.
+  replay::Data emptied;
+  emptied.symbols_ = {"AAA"};
+  emptied.series_.resize(1);
+  emptied.series_[0].symbol_ = "AAA";
+  CHECK(!replay::prepare_data<runtest::Program>(settings({"instrument.x=AAA"}), emptied, false).periods_);
+  // Series of different intervals have no count, unless the key gives one; only series with bars count; wide tables
+  // are daily.
   const auto session = replay::session_of("us");
   replay::Data mixed;
   mixed.series_.resize(2);
@@ -750,13 +766,9 @@ TEST_CASE("replay main: the periods a year follow the bars' interval and a given
   );
   mixed.series_[1].bars_.clear();
   CHECK(replay::periods_per_year_of(settings({}), mixed, session) == std::optional<double>(252));
-  mixed.series_[0].bars_.clear();
-  CHECK(!replay::periods_per_year_of(settings({}), mixed, session));
   CHECK(!replay::periods_per_year_of(settings({}), replay::Data{}, session));
   replay::Data wide;
   wide.close_.names_ = {"AAA"};
-  CHECK(!replay::periods_per_year_of(settings({}), wide, session));
-  wide.close_.dates_ = {20200101};
   CHECK(replay::periods_per_year_of(settings({}), wide, session) == std::optional<double>(252));
 }
 
